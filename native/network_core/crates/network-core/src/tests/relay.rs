@@ -694,6 +694,27 @@ async fn relay_state_with_peer(
     state
 }
 
+async fn install_disconnected_relay_test_path(
+    state: &Arc<RuntimeState>,
+    data: &Arc<RelayDataClient>,
+) {
+    let session_id = crate::session::SessionId::new();
+    state
+        .connection_sessions
+        .register_pending_session("sender", session_id)
+        .await
+        .expect("reserve Relay test session");
+    state
+        .admit_authenticated_session("sender", Some(session_id), "relay-test-binding")
+        .await
+        .expect("admit Relay test session");
+    assert!(
+        state
+            .mark_relay_route_connected("sender", session_id, Some(Arc::clone(data)))
+            .await
+    );
+}
+
 fn relay_temp_dir(label: &str) -> std::path::PathBuf {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     std::env::temp_dir().join(format!(
@@ -1631,6 +1652,7 @@ async fn relay_accept_pending_failures_keep_checkpoint_and_route_ownership_safe(
                 "sender",
             ),
         );
+    install_disconnected_relay_test_path(&send_failure_state, &data).await;
     let error = accept_pending_relay_incoming(&send_failure_state, &data, &manifest.transfer_id)
         .await
         .expect_err("a failed Relay acceptance send must be recoverable");
@@ -1994,6 +2016,7 @@ async fn relay_completion_validates_sender_hash_destination_and_ack_boundary() {
         },
     )
     .await;
+    install_disconnected_relay_test_path(&already_state, &data).await;
     let error = complete_relay_incoming(
         &already_state,
         &data,
@@ -2150,6 +2173,7 @@ async fn relay_completion_validates_sender_hash_destination_and_ack_boundary() {
         },
     )
     .await;
+    install_disconnected_relay_test_path(&success_state, &data).await;
     let error = complete_relay_incoming(
         &success_state,
         &data,
@@ -2189,6 +2213,7 @@ async fn relay_completion_validates_sender_hash_destination_and_ack_boundary() {
         },
     )
     .await;
+    install_disconnected_relay_test_path(&idem_state, &data).await;
     tokio::fs::write(&idem_final, payload).await.unwrap();
     let error = complete_relay_incoming(
         &idem_state,

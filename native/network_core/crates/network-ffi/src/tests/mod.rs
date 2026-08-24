@@ -1,11 +1,11 @@
 use super::*;
 use network_protocol::{
     network_command, network_event, ChannelMessageEvent, CommandResult, CommandResultEvent,
-    NetworkCommand, NetworkEvent, PeerStateChangedEvent, PeerTransferProgressEvent,
-    RealtimeSessionState, RealtimeSignalEvent, RealtimeSignalKind, RealtimeStateChangedEvent,
-    RelayStateChangedEvent, SshStreamClosedEvent, SshStreamDataCommand, SshStreamDataReceivedEvent,
-    SshStreamOpenCommand, StartRealtimeSessionCommand, StreamHandle, TransferProgressEvent,
-    NETWORK_PROTOCOL_VERSION,
+    CommandResultState, NetworkCommand, NetworkEvent, PeerStateChangedEvent,
+    PeerTransferProgressEvent, RealtimeSessionState, RealtimeSignalEvent, RealtimeSignalKind,
+    RealtimeStateChangedEvent, RelayStateChangedEvent, SshStreamClosedEvent, SshStreamDataCommand,
+    SshStreamDataReceivedEvent, SshStreamOpenCommand, StartRealtimeSessionCommand, StreamHandle,
+    TransferProgressEvent, NETWORK_PROTOCOL_VERSION,
 };
 use prost::Message;
 use std::mem::{align_of, offset_of, size_of};
@@ -129,6 +129,51 @@ fn carries_realtime_commands_and_events_through_the_ffi_wire() {
         })) => assert_eq!(state, RealtimeSessionState::Connected as i32),
         other => panic!("unexpected realtime event payload: {other:?}"),
     }
+}
+
+#[test]
+fn realtime_failure_returns_a_terminal_result_through_the_live_ffi_runtime() {
+    let mut handle = ptr::null_mut();
+    assert_eq!(unsafe { ssh_net_runtime_create(&mut handle) }, 0);
+    assert_eq!(unsafe { ssh_net_runtime_start(handle) }, 0);
+    let command = NetworkCommand {
+        command_id: "realtime-start-ffi-result".into(),
+        protocol_version: NETWORK_PROTOCOL_VERSION,
+        payload: Some(network_command::Payload::StartRealtimeSession(
+            StartRealtimeSessionCommand {
+                realtime_id: "00112233445566778899aabbccddeeff".into(),
+                peer_id: "missing-peer".into(),
+            },
+        )),
+    }
+    .encode_to_vec();
+    assert_eq!(
+        unsafe { ssh_net_runtime_command(handle, command.as_ptr(), command.len()) },
+        0
+    );
+
+    let mut buffer = SshNetBuffer {
+        ptr: ptr::null_mut(),
+        len: 0,
+    };
+    assert_eq!(
+        unsafe { ssh_net_runtime_poll_event(handle, 1000, &mut buffer) },
+        1
+    );
+    let encoded = unsafe { std::slice::from_raw_parts(buffer.ptr, buffer.len) };
+    let event = NetworkEvent::decode(encoded).expect("command result event");
+    let Some(network_event::Payload::CommandResultV2(result)) = event.payload else {
+        panic!("expected CommandResultV2");
+    };
+    assert_eq!(result.command_id, "realtime-start-ffi-result");
+    assert_eq!(result.peer_id, "missing-peer");
+    assert_eq!(result.state, CommandResultState::Failed as i32);
+    assert_eq!(
+        result.error.expect("NoRoute error").code,
+        NetworkErrorCode::NoRoute as i32
+    );
+    unsafe { ssh_net_buffer_free(buffer) };
+    assert_eq!(unsafe { ssh_net_runtime_destroy(handle) }, 0);
 }
 
 /// 验证 ReliableStream（§17）的 SSH 字节流命令与事件沿用现有 FFI Protobuf

@@ -63,7 +63,7 @@ async fn owns_topology_replacement_and_exact_session_cleanup() {
     assert!(!store.has_alive(peer_id, replacement_session).await);
     assert!(store.has_alive(peer_id, first_session).await);
 
-    store.remove_topology(peer_id, RouteTopology::Relay).await;
+    store.remove_handle(peer_id, &relay_handle).await;
     assert!(!store.has_alive(peer_id, first_session).await);
     assert!(store.remove_peer(peer_id).await.is_none());
 }
@@ -83,4 +83,46 @@ async fn remove_peer_returns_the_first_projection_handle() {
         .await;
 
     assert_eq!(store.remove_peer(peer_id).await.as_ref(), Some(&handle));
+}
+
+#[tokio::test]
+async fn exact_handle_cleanup_preserves_a_same_topology_replacement() {
+    let peer_id = "projection-replacement-peer";
+    let registry = Arc::new(PathRegistry::new());
+    let mut manager = PeerPathManager::new(
+        PeerId::new(peer_id).expect("peer id"),
+        Arc::clone(&registry),
+    );
+    let old_handle = manager
+        .publish_ready(ConnectionProfile::new(Route::direct(RouteTransport::Tcp)))
+        .expect("old direct path");
+    let old_projection = manager.projection(&old_handle).expect("old projection");
+    assert!(registry.revoke(&old_handle));
+    let replacement_handle = manager
+        .publish_ready(ConnectionProfile::new(Route::direct(RouteTransport::Tcp)))
+        .expect("replacement direct path");
+    let replacement_projection = manager
+        .projection(&replacement_handle)
+        .expect("replacement projection");
+
+    let old_session = SessionId::new();
+    let replacement_session = SessionId::new();
+    let store = RuntimePathProjectionStore::new();
+    store
+        .replace_topology(peer_id, old_session, old_projection)
+        .await;
+    store
+        .replace_topology(peer_id, replacement_session, replacement_projection)
+        .await;
+    store.remove_handle(peer_id, &old_handle).await;
+
+    assert!(store.has_alive(peer_id, replacement_session).await);
+    assert_eq!(
+        store
+            .handles_for_session(peer_id, replacement_session)
+            .await
+            .direct
+            .as_ref(),
+        Some(&replacement_handle)
+    );
 }

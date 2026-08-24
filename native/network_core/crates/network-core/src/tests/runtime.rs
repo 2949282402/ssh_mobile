@@ -256,9 +256,123 @@ async fn failing_an_exact_session_closes_its_owned_direct_projection() {
         .await
         .is_none());
     assert!(!state.path_is_connected(peer_id).await);
-    assert!(state.peer_path_managers.read().await.get(peer_id).is_none());
+    assert!(state.peer_path_managers.read().await.get(peer_id).is_some());
     let _ = route.release.send(());
     route.worker.abort();
+}
+
+#[tokio::test]
+async fn closing_last_direct_and_relay_paths_keeps_managers_for_reconnect() {
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
+
+    for (peer_id, profile) in [
+        (
+            "closed-direct-manager-peer",
+            ConnectionProfile::new(Route::direct(RouteTransport::Tcp)),
+        ),
+        (
+            "closed-relay-manager-peer",
+            ConnectionProfile::new(Route::relay(RouteTransport::WebSocket)),
+        ),
+    ] {
+        let manager = state
+            .peer_path_manager(peer_id)
+            .await
+            .expect("path manager");
+        let (handle, projection) = {
+            let mut manager = manager.lock().expect("peer path manager lock");
+            let handle = manager.publish_ready(profile).expect("ready path");
+            let projection = manager.projection(&handle).expect("path projection");
+            (handle, projection)
+        };
+        state
+            .path_projections
+            .replace_topology(peer_id, SessionId::new(), projection)
+            .await;
+
+        let closed = match handle.profile().topology() {
+            crate::connection::RouteTopology::Direct => {
+                state.close_direct_path(peer_id, None).await
+            }
+            crate::connection::RouteTopology::Relay => state.close_relay_path(peer_id, None).await,
+        };
+        assert_eq!(closed.as_ref(), Some(&handle));
+        assert!(
+            state.peer_path_managers.read().await.get(peer_id).is_some(),
+            "normal path cleanup must leave the lightweight manager registered"
+        );
+        assert!(!state.path_is_connected(peer_id).await);
+    }
+}
+
+#[tokio::test]
+async fn stale_direct_cleanup_preserves_a_concurrent_replacement() {
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
+    let peer_id = "concurrent-replacement-peer";
+    let old_session = SessionId::new();
+    let replacement_session = SessionId::new();
+    let manager = state
+        .peer_path_manager(peer_id)
+        .await
+        .expect("path manager");
+
+    let (old_handle, old_projection) = {
+        let mut manager = manager.lock().expect("peer path manager lock");
+        let handle = manager
+            .publish_ready(ConnectionProfile::new(Route::direct(RouteTransport::Tcp)))
+            .expect("old direct path");
+        let projection = manager.projection(&handle).expect("old projection");
+        (handle, projection)
+    };
+    state
+        .path_projections
+        .replace_topology(peer_id, old_session, old_projection)
+        .await;
+
+    let closed_handle = manager
+        .lock()
+        .expect("peer path manager lock")
+        .hard_close_direct_if_handle(&old_handle)
+        .expect("close old direct path");
+
+    let (replacement_handle, replacement_projection) = {
+        let mut manager = manager.lock().expect("peer path manager lock");
+        let handle = manager
+            .publish_ready(ConnectionProfile::new(Route::direct(RouteTransport::Quic)))
+            .expect("replacement direct path");
+        let projection = manager.projection(&handle).expect("replacement projection");
+        (handle, projection)
+    };
+    state
+        .path_projections
+        .replace_topology(peer_id, replacement_session, replacement_projection)
+        .await;
+
+    state.cleanup_closed_path(peer_id, &closed_handle).await;
+
+    assert!(state
+        .peer_path_managers
+        .read()
+        .await
+        .get(peer_id)
+        .is_some_and(|current| Arc::ptr_eq(current, &manager)));
+    assert_eq!(
+        state
+            .path_projections
+            .handles_for_session(peer_id, replacement_session)
+            .await
+            .direct
+            .as_ref(),
+        Some(&replacement_handle)
+    );
+    let lease = state
+        .acquire_path_lease(peer_id, CAPABILITY_RELIABLE_STREAM)
+        .await
+        .expect("replacement path lease");
+    assert_eq!(lease.handle(), &replacement_handle);
+    lease.release();
 }
 
 #[tokio::test]

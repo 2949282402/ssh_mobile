@@ -112,10 +112,13 @@ impl RuntimePathProjectionStore {
         }
     }
 
-    pub(crate) async fn remove_topology(&self, peer_id: &str, topology: RouteTopology) {
+    /// Remove only the projection for the path identity that was actually
+    /// closed. A replacement of the same topology may already have been
+    /// published while asynchronous cleanup was waiting for this lock.
+    pub(crate) async fn remove_handle(&self, peer_id: &str, expected: &PathHandle) {
         let mut paths = self.entries.write().await;
         if let Some(entries) = paths.get_mut(peer_id) {
-            entries.retain(|entry| entry.projection.handle().profile().topology() != topology);
+            entries.retain(|entry| entry.projection.handle() != expected);
             if entries.is_empty() {
                 paths.remove(peer_id);
             }

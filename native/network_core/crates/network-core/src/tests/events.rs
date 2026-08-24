@@ -1,8 +1,8 @@
 use super::*;
 use network_protocol::network_event;
 
-#[test]
-fn command_result_emits_one_correlated_success_terminal() {
+#[tokio::test]
+async fn command_result_emits_one_correlated_success_terminal() {
     let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
     let event_sender = EventSender::from(sender);
 
@@ -11,7 +11,9 @@ fn command_result_emits_one_correlated_success_terminal() {
         "connect-a".into(),
         Some("peer-a".into()),
         Ok(()),
-    );
+    )
+    .await
+    .expect("terminal result");
 
     let event = receiver.try_recv().expect("terminal event");
     let Some(network_event::Payload::CommandResultV2(result)) = event.payload else {
@@ -27,8 +29,8 @@ fn command_result_emits_one_correlated_success_terminal() {
     );
 }
 
-#[test]
-fn command_result_maps_stale_and_cancelled_errors_to_cancelled() {
+#[tokio::test]
+async fn command_result_maps_stale_and_cancelled_errors_to_cancelled() {
     for code in [
         NetworkErrorCode::Cancelled,
         NetworkErrorCode::StaleOperation,
@@ -45,7 +47,9 @@ fn command_result_maps_stale_and_cancelled_errors_to_cancelled() {
                 "connect",
                 "peer-a",
             )),
-        );
+        )
+        .await
+        .expect("terminal result");
 
         let event = receiver.try_recv().expect("terminal event");
         let Some(network_event::Payload::CommandResultV2(result)) = event.payload else {
@@ -61,8 +65,8 @@ fn command_result_maps_stale_and_cancelled_errors_to_cancelled() {
     }
 }
 
-#[test]
-fn command_result_maps_other_errors_to_failed_and_uses_command_scope() {
+#[tokio::test]
+async fn command_result_maps_other_errors_to_failed_and_uses_command_scope() {
     let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
     let event_sender = EventSender::from(sender);
     emit_command_result(
@@ -70,7 +74,9 @@ fn command_result_maps_other_errors_to_failed_and_uses_command_scope() {
         "message-a".into(),
         Some("peer-a".into()),
         Err(protocol_error(NetworkErrorCode::NoRoute, "no route")),
-    );
+    )
+    .await
+    .expect("terminal result");
 
     let event = receiver.try_recv().expect("terminal event");
     let Some(network_event::Payload::CommandResultV2(result)) = event.payload else {
@@ -85,6 +91,34 @@ fn command_result_maps_other_errors_to_failed_and_uses_command_scope() {
     assert!(
         receiver.try_recv().is_err(),
         "terminal must be emitted once"
+    );
+}
+
+#[tokio::test]
+async fn oversized_command_result_is_replaced_by_a_bounded_terminal_error() {
+    let (event_sender, mut receiver) = crate::runtime_event_lanes::BoundedEventLanes::channel();
+    emit_command_result(
+        &event_sender,
+        "oversized-result".into(),
+        Some("peer-a".into()),
+        Err(protocol_error(
+            NetworkErrorCode::IoError,
+            "x".repeat(crate::runtime_event_lanes::MAX_EVENT_BYTES),
+        )),
+    )
+    .await
+    .expect("bounded fallback result");
+
+    let event = receiver.recv().await.expect("terminal event");
+    let Some(network_event::Payload::CommandResultV2(result)) = event.payload else {
+        panic!("expected CommandResultV2");
+    };
+    assert_eq!(result.command_id, "oversized-result");
+    assert_eq!(result.peer_id, "peer-a");
+    assert_eq!(result.state, CommandResultState::Failed as i32);
+    assert_eq!(
+        result.error.expect("bounded error").message,
+        "command result exceeded native event limit"
     );
 }
 

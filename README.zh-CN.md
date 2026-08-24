@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-23
+> 最新更新时间：2026-08-24
 
 <p align="center">
   <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile 图标" width="112" />
@@ -621,6 +621,7 @@ canonical Skill 位于 `.agents/skills/`，由 Claude Code 直接加载，无镜
 - [性能验收标准](docs/PERFORMANCE_ACCEPTANCE.md)
 - [安全人工回归](docs/security_manual_regression.md)
 - [Android 原生重写指南](docs/ANDROID_NATIVE_REWRITE_GUIDE.md)
+- [历史工作流审查与验收记录](docs/reports/README.md)
 
 ## 运行注意事项
 

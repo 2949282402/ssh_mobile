@@ -1,4 +1,4 @@
-> Last updated: 2026-08-23
+> Last updated: 2026-08-24
 
 # Network V2 Final Acceptance Report
 
@@ -36,13 +36,13 @@ Platform CI: PASS — Android, Windows, macOS, iOS, Linux owner jobs, App covera
 | Phase | Result | Evidence |
 | --- | --- | --- |
 | 0. Baseline | CONFIRMED | PR #48 baseline is `926967e08ed2abb638bf13596fa4d25595c75da9`; code validation and CI are bound to `2253282f3afa7dc64ff38e5604eb2f272518969b` |
-| 1. Connectivity audit | CLOSED WHERE RUNNABLE | `CONNECTIVITY_STAGE_REPORT.md` records Stage A/B/C local evidence and the retained platform/deployment gaps |
-| 2. Coordinator review | PASS (runnable owner gates) | `COORDINATOR_REVIEW.md`; the double-Resolve defect and stub-only confidence gap are closed |
-| 3. Architecture freeze | PASS (runnable owner gates) | `FREEZE_GATE_REPORT.md`; protocol, ownership, and PathLease invariants remain frozen |
+| 1. Connectivity audit | CLOSED WHERE RUNNABLE | `reports/CONNECTIVITY_STAGE_REPORT.md` records Stage A/B/C local evidence and the retained platform/deployment gaps |
+| 2. Coordinator review | PASS (runnable owner gates) | `reports/COORDINATOR_REVIEW.md`; the double-Resolve defect and stub-only confidence gap are closed |
+| 3. Architecture freeze | PASS (runnable owner gates) | `reports/FREEZE_GATE_REPORT.md`; protocol, ownership, and PathLease invariants remain frozen |
 | 4. SDK migration | COMPLETED | V2 domain ports/adapters, App Shell owners, `RuntimeLifecycleState`, typed Rust Relay/Transfer ports, and ownership-scoped tests are present |
-| 5. Compatibility and graph | PASS | `SDK_API_COMPATIBILITY_REPORT.md`, `architecture_dependency_graph.md`, and `OWNERSHIP_LOCK.md` |
-| 6. Dead code | PASS WITH DEFERRED ALIASES | `DEAD_CODE_REPORT.md`; compatibility aliases remain intentionally retained |
-| 7. Performance | PASS (local smoke) | `PERFORMANCE_REGRESSION_REPORT.md`; production benchmark is deferred and non-blocking |
+| 5. Compatibility and graph | PASS | `reports/SDK_API_COMPATIBILITY_REPORT.md`, `architecture/ARCHITECTURE_DEPENDENCY_GRAPH.md`, and `reports/OWNERSHIP_LOCK.md` |
+| 6. Dead code | PASS WITH DEFERRED ALIASES | `reports/DEAD_CODE_REPORT.md`; compatibility aliases remain intentionally retained |
+| 7. Performance | PASS (local smoke) | `reports/PERFORMANCE_REGRESSION_REPORT.md`; production benchmark is deferred and non-blocking |
 | 8. Final validation | PASS WITH LOCAL ENVIRONMENT GAP | Strict acceptance, E2E memory/MySQL, workspace tests, concrete Relay integration, SDK/transport/FFI, app static/unit shards, and final platform CI pass; the coverage-enabled App aggregate stalled in WSL |
 
 ## Final-fix evidence

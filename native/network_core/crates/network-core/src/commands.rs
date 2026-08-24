@@ -1,6 +1,6 @@
 //! Network Protocol V2 运行时的命令校验、确认与任务分发。
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use crate::events::{
@@ -30,26 +30,48 @@ const MAX_COMPLETED_COMMANDS: usize = 4096;
 /// runtime. The set is deliberately bounded; a runtime restart starts a fresh
 /// correlation domain instead of allowing unbounded bookkeeping growth.
 struct CommandResultLedger {
-    seen: Mutex<HashSet<String>>,
+    state: Mutex<CommandResultLedgerState>,
+}
+
+#[derive(Default)]
+struct CommandResultLedgerState {
+    pending: HashSet<String>,
+    completed: HashSet<String>,
+    completed_order: VecDeque<String>,
 }
 
 impl CommandResultLedger {
     fn new() -> Self {
         Self {
-            seen: Mutex::new(HashSet::new()),
+            state: Mutex::new(CommandResultLedgerState::default()),
         }
     }
 
     fn claim(&self, command_id: &str) -> Result<bool, CoreNetworkError> {
-        let mut seen = self.seen.lock().expect("command result ledger lock");
-        if seen.contains(command_id) {
+        let mut state = self.state.lock().expect("command result ledger lock");
+        if state.pending.contains(command_id) || state.completed.contains(command_id) {
             return Ok(false);
         }
-        if seen.len() >= MAX_COMPLETED_COMMANDS {
-            return Err(CoreNetworkError::ResourceLimit("command result ledger"));
+        if state.pending.len() >= crate::runtime::COMMAND_MAILBOX_CAPACITY {
+            return Err(CoreNetworkError::ResourceLimit("pending command results"));
         }
-        seen.insert(command_id.to_string());
+        state.pending.insert(command_id.to_string());
         Ok(true)
+    }
+
+    fn complete(&self, command_id: &str) {
+        let mut state = self.state.lock().expect("command result ledger lock");
+        if !state.pending.remove(command_id) {
+            return;
+        }
+        if state.completed.insert(command_id.to_string()) {
+            state.completed_order.push_back(command_id.to_string());
+        }
+        while state.completed_order.len() > MAX_COMPLETED_COMMANDS {
+            if let Some(expired) = state.completed_order.pop_front() {
+                state.completed.remove(&expired);
+            }
+        }
     }
 }
 
@@ -70,7 +92,7 @@ pub(crate) async fn run_command_worker(
             // join the same supervisor generation below; only a repeated
             // envelope id is rejected here.
             Ok(false) => {
-                emit_command_result(
+                if let Err(error) = emit_command_result(
                     &state.event_tx,
                     command_id,
                     command_peer_id,
@@ -78,21 +100,37 @@ pub(crate) async fn run_command_worker(
                         NetworkErrorCode::InvalidArgument,
                         "command_id has already been completed",
                     )),
-                );
+                )
+                .await
+                {
+                    tracing::error!(?error, "command result lane closed");
+                    break;
+                }
                 continue;
             }
             Err(error) => {
-                emit_command_result(
+                if let Err(send_error) = emit_command_result(
                     &state.event_tx,
                     command_id,
                     command_peer_id,
                     Err(protocol_error(NetworkErrorCode::IoError, error.to_string())),
-                );
+                )
+                .await
+                {
+                    tracing::error!(?send_error, "command result lane closed");
+                    break;
+                }
                 continue;
             }
         }
         let result = dispatch_command(command, Arc::clone(&state)).await;
-        emit_command_result(&state.event_tx, command_id, command_peer_id, result);
+        if let Err(error) =
+            emit_command_result(&state.event_tx, command_id.clone(), command_peer_id, result).await
+        {
+            tracing::error!(?error, "command result lane closed");
+            break;
+        }
+        result_ledger.complete(&command_id);
     }
     tracing::info!("Network runtime worker shut down");
 }

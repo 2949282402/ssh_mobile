@@ -12,6 +12,8 @@ use std::sync::atomic::AtomicU16;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+use crate::connect::CAPABILITY_RELIABLE_STREAM;
+
 const DATA_ENV_FILE_OFFER: u8 = 0x02;
 const DATA_ENV_FILE_ACCEPT: u8 = 0x03;
 const DATA_ENV_FILE_COMPLETE: u8 = 0x04;
@@ -227,6 +229,10 @@ async fn relay_file_transfer_round_trip_exercises_offer_chunk_and_completion() {
             offset: 0,
         },
         Arc::clone(&sender_state),
+        sender_state
+            .acquire_relay_path_lease("receiver", CAPABILITY_RELIABLE_STREAM)
+            .await
+            .expect("sender Relay lease"),
     )
     .await;
 

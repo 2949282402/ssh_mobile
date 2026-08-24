@@ -1,4 +1,4 @@
-> Last updated: 2026-08-23
+> Last updated: 2026-08-24
 
 <p align="center">
   <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile icon" width="112" />
@@ -751,6 +751,7 @@ Never store passwords, private keys, API keys, tokens, or server credentials in 
 - [Performance Acceptance](docs/PERFORMANCE_ACCEPTANCE.md)
 - [Security Manual Regression](docs/security_manual_regression.md)
 - [Android Native Rewrite Guide](docs/ANDROID_NATIVE_REWRITE_GUIDE.md)
+- [Historical Workstream Reports](docs/reports/README.md)
 
 ## Operational Notes
 

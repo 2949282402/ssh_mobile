@@ -399,6 +399,29 @@ impl RuntimeState {
         Ok(lease)
     }
 
+    /// Acquire the current Relay path for Relay-only business I/O. Generic
+    /// path selection prefers Direct and therefore cannot preserve Relay
+    /// reservation identity for these operations.
+    pub(crate) async fn acquire_relay_path_lease(
+        &self,
+        peer_id: &str,
+        required_capabilities: u8,
+    ) -> Result<crate::connect::PathLease, CoreNetworkError> {
+        let _peer_id = PeerId::new(peer_id)?;
+        let manager = self
+            .peer_path_managers
+            .read()
+            .await
+            .get(peer_id)
+            .cloned()
+            .ok_or(CoreNetworkError::NoRoute)?;
+        let lease = manager
+            .lock()
+            .expect("peer path manager lock")
+            .acquire_relay(required_capabilities)?;
+        Ok(lease)
+    }
+
     /// Acquire the lease for the exact QUIC carrier that delivered an inbound
     /// stream. Inbound work must not silently move to whichever path happens
     /// to be preferred after the frame was received.
@@ -1018,25 +1041,6 @@ impl RuntimeState {
                 relay_handle.as_ref().filter(|_| relay_closed),
             )
             .await;
-
-        // Remove an empty manager only after taking the map write lock and
-        // rechecking the same manager, so a concurrent replacement cannot be
-        // erased after it publishes a new ready path.
-        let mut managers = self.peer_path_managers.write().await;
-        let remove_manager = managers.get(peer_id).is_some_and(|current| {
-            if !Arc::ptr_eq(current, &manager) {
-                return false;
-            }
-            let manager = manager.lock().expect("peer path manager lock");
-            manager.direct_ready().is_empty() && manager.relay_ready().is_none()
-        });
-        if remove_manager {
-            managers.remove(peer_id);
-        }
-        drop(managers);
-        if remove_manager {
-            self.path_projections.remove_peer(peer_id).await;
-        }
         true
     }
 
@@ -1084,7 +1088,7 @@ impl RuntimeState {
     ) -> Option<PathHandle> {
         let manager = self.peer_path_managers.read().await.get(peer_id).cloned()?;
         let relay_handle = {
-            let manager = manager.lock().expect("peer path manager lock");
+            let mut manager = manager.lock().expect("peer path manager lock");
             let handle = manager.relay_ready()?.clone();
             if let Some(wanted) = data {
                 let projection = manager.projection(&handle)?;
@@ -1094,25 +1098,15 @@ impl RuntimeState {
                     return None;
                 }
             }
-            handle
-        };
-        manager
-            .lock()
-            .expect("peer path manager lock")
-            .hard_close_relay();
-        self.close_inactive_streams(peer_id).await;
-        if let Ok(mut recovery) = self.direct_recovery.lock() {
-            if let Some(policy) = recovery.get_mut(peer_id) {
-                policy.mark_relay_lost();
+            let closed = manager.hard_close_relay_if_handle(&handle)?;
+            if let Ok(mut recovery) = self.direct_recovery.lock() {
+                if let Some(policy) = recovery.get_mut(peer_id) {
+                    policy.mark_relay_lost();
+                }
             }
-        }
-        self.path_projections
-            .remove_topology(peer_id, crate::connection::RouteTopology::Relay)
-            .await;
-        if !self.manager_has_ready_path(&manager).await {
-            self.peer_path_managers.write().await.remove(peer_id);
-            self.path_projections.remove_peer(peer_id).await;
-        }
+            closed
+        };
+        self.cleanup_closed_path(peer_id, &relay_handle).await;
         Some(relay_handle)
     }
 
@@ -1123,30 +1117,20 @@ impl RuntimeState {
     ) -> Option<PathHandle> {
         let manager = self.peer_path_managers.read().await.get(peer_id).cloned()?;
         let direct_handle = {
-            let manager = manager.lock().expect("peer path manager lock");
+            let mut manager = manager.lock().expect("peer path manager lock");
             let handle = manager.direct_ready().first()?.clone();
             if route_id.is_some_and(|id| id != handle.id()) {
                 return None;
             }
-            handle
-        };
-        manager
-            .lock()
-            .expect("peer path manager lock")
-            .hard_close_direct();
-        self.close_inactive_streams(peer_id).await;
-        if let Ok(mut recovery) = self.direct_recovery.lock() {
-            if let Some(policy) = recovery.get_mut(peer_id) {
-                policy.mark_direct_unavailable();
+            let closed = manager.hard_close_direct_if_handle(&handle)?;
+            if let Ok(mut recovery) = self.direct_recovery.lock() {
+                if let Some(policy) = recovery.get_mut(peer_id) {
+                    policy.mark_direct_unavailable();
+                }
             }
-        }
-        self.path_projections
-            .remove_topology(peer_id, crate::connection::RouteTopology::Direct)
-            .await;
-        if !self.manager_has_ready_path(&manager).await {
-            self.peer_path_managers.write().await.remove(peer_id);
-            self.path_projections.remove_peer(peer_id).await;
-        }
+            closed
+        };
+        self.cleanup_closed_path(peer_id, &direct_handle).await;
         Some(direct_handle)
     }
 
@@ -1156,15 +1140,25 @@ impl RuntimeState {
         connection: &quinn::Connection,
     ) -> Option<PathHandle> {
         let manager = self.peer_path_managers.read().await.get(peer_id).cloned()?;
-        let route_id = {
-            let manager = manager.lock().expect("peer path manager lock");
+        let direct_handle = {
+            let mut manager = manager.lock().expect("peer path manager lock");
             let handle = manager.direct_ready().first()?.clone();
             let projection = manager.projection(&handle)?;
             let lease = projection.acquire().ok()?;
             let candidate = lease.connection()?;
-            (candidate.stable_id() == connection.stable_id()).then_some(handle.id())
+            if candidate.stable_id() != connection.stable_id() {
+                return None;
+            }
+            let closed = manager.hard_close_direct_if_handle(&handle)?;
+            if let Ok(mut recovery) = self.direct_recovery.lock() {
+                if let Some(policy) = recovery.get_mut(peer_id) {
+                    policy.mark_direct_unavailable();
+                }
+            }
+            closed
         };
-        self.close_direct_path(peer_id, route_id).await
+        self.cleanup_closed_path(peer_id, &direct_handle).await;
+        Some(direct_handle)
     }
 
     pub(crate) async fn close_all_relay_paths(&self) {
@@ -1200,9 +1194,14 @@ impl RuntimeState {
         }
     }
 
-    async fn manager_has_ready_path(&self, manager: &Arc<Mutex<PeerPathManager>>) -> bool {
-        let manager = manager.lock().expect("peer path manager lock");
-        !manager.direct_ready().is_empty() || manager.relay_ready().is_some()
+    /// Finish asynchronous cleanup for one exact closed path.
+    ///
+    /// Keep an empty manager registered: a concurrent publisher may already
+    /// hold a clone of that manager outside the map lock. Only explicit peer
+    /// transport close and runtime shutdown remove the manager registration.
+    async fn cleanup_closed_path(&self, peer_id: &str, handle: &PathHandle) {
+        self.close_inactive_streams(peer_id).await;
+        self.path_projections.remove_handle(peer_id, handle).await;
     }
 
     #[cfg(test)]
