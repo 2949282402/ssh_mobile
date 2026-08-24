@@ -9,6 +9,16 @@ the retired v1 route/session owner model.
 
 - `network_sdk` provides typed bootstrap, authenticated API, Session, event,
   and Feature-safe Realtime contracts.
+- The bootstrap `RefreshRequest` requires an integer Unix-seconds timestamp.
+  LAN Share and the real Dart/Rust E2E callers sign
+  `POST\n/v1/devices/refresh\n<timestamp>\n<nonce>` exactly; the retired
+  timestamp-less transcript has no SDK or Relay compatibility fallback
+  ([ADR-031](../../docs/adr/ADR-031-relay-refresh-proof-freshness.md)).
+- The Rust `network-relay` shared WebSocket request builder gives every Control
+  and RelayData upgrade an independent positive Unix-seconds
+  `X-Relay-Timestamp`, 32-byte nonce, and Ed25519 signature over
+  `GET\n<path>\n<timestamp>\n<nonce>` with no trailing newline. Both physical
+  paths use the hard-cut contract; no timestamp-less builder remains.
 - `network_transport` provides the single App-scoped native runtime and
   borrowed command/Realtime gateways.
 - `ssh_mobile_network_native` runs native event polling on a helper isolate and

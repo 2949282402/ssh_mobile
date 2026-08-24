@@ -101,12 +101,29 @@ void main() {
       RefreshRequest(
         deviceId: deviceA.id,
         identityPublicKey: deviceA.publicKey,
+        timestamp:
+            DateTime.now().toUtc().millisecondsSinceEpoch ~/
+            Duration.millisecondsPerSecond,
         nonce: _nonce(),
         signature: base64UrlEncode(List<int>.filled(64, 0)).replaceAll('=', ''),
       ),
     );
     final invalidProofFailure = _failure(invalidProof, 'invalid refresh proof');
     expect(invalidProofFailure.code, NetworkErrorCode.authenticationFailed);
+
+    final staleProof = await bootstrap.refresh(
+      endpoint,
+      await _refreshRequest(
+        algorithm,
+        deviceA,
+        timestamp:
+            DateTime.now().toUtc().millisecondsSinceEpoch ~/
+                Duration.millisecondsPerSecond -
+            301,
+      ),
+    );
+    final staleProofFailure = _failure(staleProof, 'stale refresh proof');
+    expect(staleProofFailure.code, NetworkErrorCode.authenticationFailed);
 
     final unknownDevice = await _newDevice(algorithm, 'e2e-dart-unknown');
     final missingEnrollment = await bootstrap.refresh(
@@ -160,10 +177,15 @@ Future<_Device> _newDevice(Ed25519 algorithm, String id) async {
 
 Future<RefreshRequest> _refreshRequest(
   Ed25519 algorithm,
-  _Device device,
-) async {
+  _Device device, {
+  int? timestamp,
+}) async {
   final nonce = _nonce();
-  final transcript = 'POST\n/v1/devices/refresh\n$nonce';
+  final proofTimestamp =
+      timestamp ??
+      DateTime.now().toUtc().millisecondsSinceEpoch ~/
+          Duration.millisecondsPerSecond;
+  final transcript = 'POST\n/v1/devices/refresh\n$proofTimestamp\n$nonce';
   final signature = await algorithm.sign(
     utf8.encode(transcript),
     keyPair: device.keyPair,
@@ -171,6 +193,7 @@ Future<RefreshRequest> _refreshRequest(
   return RefreshRequest(
     deviceId: device.id,
     identityPublicKey: device.publicKey,
+    timestamp: proofTimestamp,
     nonce: nonce,
     signature: base64UrlEncode(signature.bytes).replaceAll('=', ''),
   );

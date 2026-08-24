@@ -128,6 +128,14 @@ pub(crate) async fn start_session(
     state: Arc<RuntimeState>,
     command: StartRealtimeSessionCommand,
 ) -> Result<(), network_protocol::NetworkError> {
+    start_session_with_config(state, command, runtime_webrtc_config()).await
+}
+
+async fn start_session_with_config(
+    state: Arc<RuntimeState>,
+    command: StartRealtimeSessionCommand,
+    config: WebRtcConfig,
+) -> Result<(), network_protocol::NetworkError> {
     validate_realtime_id(&command.realtime_id)?;
     validate_peer(&state, &command.peer_id).await?;
 
@@ -150,16 +158,14 @@ pub(crate) async fn start_session(
         ));
     }
 
-    let mut driver = create_io_driver(&state, runtime_webrtc_config())
-        .await
-        .map_err(|error| {
-            realtime_error(
-                network_protocol::NetworkErrorCode::IoError,
-                error.to_string(),
-                "start_realtime",
-                &command.peer_id,
-            )
-        })?;
+    let mut driver = create_io_driver(&state, config).await.map_err(|error| {
+        realtime_error(
+            network_protocol::NetworkErrorCode::IoError,
+            error.to_string(),
+            "start_realtime",
+            &command.peer_id,
+        )
+    })?;
     driver
         .peer_mut()
         .create_data_channel("ssh-mobile-realtime", Default::default())
@@ -817,14 +823,28 @@ fn with_session_peer<T>(
 }
 
 fn runtime_webrtc_config() -> WebRtcConfig {
-    let mut config = WebRtcConfig::default();
     let turn_urls = std::env::var("SSH_MOBILE_TURN_SERVERS")
         .ok()
-        .or_else(|| std::env::var("SSH_MOBILE_TURN_URL").ok())
-        .unwrap_or_default();
+        .or_else(|| std::env::var("SSH_MOBILE_TURN_URL").ok());
+    runtime_webrtc_config_from_values(
+        turn_urls,
+        std::env::var("SSH_MOBILE_TURN_USERNAME").ok(),
+        std::env::var("SSH_MOBILE_TURN_CREDENTIAL").ok(),
+        std::env::var("SSH_MOBILE_TURN_RELAY_ONLY").ok(),
+    )
+}
+
+fn runtime_webrtc_config_from_values(
+    turn_urls: Option<String>,
+    username: Option<String>,
+    credential: Option<String>,
+    relay_only: Option<String>,
+) -> WebRtcConfig {
+    let mut config = WebRtcConfig::default();
+    let turn_urls = turn_urls.unwrap_or_default();
     if !turn_urls.trim().is_empty() {
-        let username = std::env::var("SSH_MOBILE_TURN_USERNAME").unwrap_or_default();
-        let credential = std::env::var("SSH_MOBILE_TURN_CREDENTIAL").unwrap_or_default();
+        let username = username.unwrap_or_default();
+        let credential = credential.unwrap_or_default();
         config.ice_servers = turn_urls
             .split(',')
             .map(str::trim)
@@ -832,7 +852,7 @@ fn runtime_webrtc_config() -> WebRtcConfig {
             .map(|url| IceServerConfig::turn(url, &username, &credential))
             .collect();
         config.relay_only = matches!(
-            std::env::var("SSH_MOBILE_TURN_RELAY_ONLY").ok().as_deref(),
+            relay_only.as_deref(),
             Some("1" | "true" | "TRUE" | "yes" | "YES")
         );
     }

@@ -280,7 +280,7 @@
           {
             "owner": "go",
             "path": "relay/internal/relay/reservation_l1_test.go",
-            "name": "TestRelayDataRegistryRejectsDuplicateRoleAndConsumesPair"
+            "name": "TestRelayDataRegistryPairReadyBarrierAbortsPartialQueue"
           }
         ]
       },
@@ -1119,7 +1119,7 @@
     {
       "id": "flow.role_token_pairready",
       "category": "relay-path-handshake",
-      "acceptance": "Role/token binding, one-writer pairing, and PairReady are enforced before payload flow.",
+      "acceptance": "Role/token binding, newest same-role endpoint replacement, and PairReady are enforced before payload flow.",
       "status": "covered",
       "behavioral_verification": {
         "kind": "owner_behavior_test",
@@ -1132,7 +1132,12 @@
           {
             "owner": "go",
             "path": "relay/internal/relay/control_v2_test.go",
-            "name": "TestRelayDataSameRoleRetryRejectsDuplicate"
+            "name": "TestRelayDataSameRoleRetryReplacesPendingEndpoint"
+          },
+          {
+            "owner": "go",
+            "path": "relay/internal/relay/control_v2_test.go",
+            "name": "TestRelayDataSameRoleRetryInvalidatesActivePairAndRequiresFreshCounterpart"
           },
           {
             "owner": "go",
@@ -1146,7 +1151,8 @@
           "path": "relay/internal/relay/control_v2_test.go",
           "contains": [
             "TestRelayDataAdmissionBindsDeviceRoleAndToken",
-            "TestRelayDataSameRoleRetryRejectsDuplicate",
+            "TestRelayDataSameRoleRetryReplacesPendingEndpoint",
+            "TestRelayDataSameRoleRetryInvalidatesActivePairAndRequiresFreshCounterpart",
             "TestRelayDataPairReadyRequiresBothRoles"
           ]
         }
@@ -1297,7 +1303,7 @@
       },
       "evidence": [
         {
-          "path": "native/network_core/crates/network-core/src/runtime.rs",
+          "path": "native/network_core/crates/network-core/src/runtime_event_lanes.rs",
           "contains": [
             "EVENT_MAILBOX_CAPACITY",
             "MAX_EVENT_QUEUE_BYTES",
@@ -1444,7 +1450,7 @@
       "acceptance": "Runtime keeps only a non-owning path projection beside PeerPathManager.",
       "status": "covered",
       "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/runtime.rs", "name": "runtime_path_projection_is_non_owning"}]},
-      "evidence": [{"path": "native/network_core/crates/network-core/src/runtime.rs", "contains": ["OwnedPathProjection", "path_projections"]}]
+      "evidence": [{"path": "native/network_core/crates/network-core/src/runtime_path_projections.rs", "contains": ["OwnedPathProjection", "RuntimePathProjectionStore"]}]
     },
     {
       "id": "ownership.stale_session_preserves_replacement_path",

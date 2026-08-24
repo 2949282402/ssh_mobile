@@ -123,8 +123,8 @@ async fn rate_budget_gates_oversized_bursts() {
     ));
 }
 
-/// 回归 #1：Go 端 connectRelayData 在升级前要求 reservation 本地 token
-/// （`?token=` 或 `X-Relay-Token`），升级请求必须携带 hex 编码的 token 头。
+/// 回归 #1：Go 端 connectRelayData 在升级前只接受 `X-Relay-Token`，升级请求必须
+/// 携带 hex 编码的 token 头且不得把凭据放入 URL query。
 #[test]
 fn data_upgrade_request_carries_reservation_token_header() {
     let client = RelayDataClient::new(
@@ -149,6 +149,17 @@ fn data_upgrade_request_carries_reservation_token_header() {
     );
     // 设备认证头仍然保留。
     assert!(request.headers().get("Authorization").is_some());
+    let timestamp = request
+        .headers()
+        .get("X-Relay-Timestamp")
+        .expect("timestamp header")
+        .to_str()
+        .expect("timestamp ASCII")
+        .parse::<i64>()
+        .expect("timestamp integer");
+    assert!(timestamp > 0);
+    assert!(request.headers().get("X-Relay-Nonce").is_some());
+    assert!(request.headers().get("X-Relay-Signature").is_some());
 }
 
 /// 回归 #14a：主动断开必须向事件通道发出终态事件，否则消费者阻塞在 recv()

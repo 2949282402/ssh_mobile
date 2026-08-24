@@ -333,9 +333,12 @@ class FrozenNetworkContractTest(unittest.TestCase):
 
         events = _read("native/network_core/crates/network-core/src/events.rs")
         self.assertNotIn("UnboundedSender", events)
-        runtime = _read("native/network_core/crates/network-core/src/runtime.rs")
-        self.assertIn("EVENT_MAILBOX_CAPACITY", runtime)
-        self.assertIn("MAX_EVENT_QUEUE_BYTES", runtime)
+        event_lanes = _read_with_tests(
+            "native/network_core/crates/network-core/src/runtime_event_lanes.rs"
+        )
+        self.assertIn("EVENT_MAILBOX_CAPACITY", event_lanes)
+        self.assertIn("MAX_EVENT_QUEUE_BYTES", event_lanes)
+        self.assertIn("EventSender::Bounded", event_lanes)
         ffi = _read("native/network_core/crates/network-ffi/src/lib.rs")
         self.assertIn("EventMux", ffi)
         self.assertIn("SSH_NET_MAX_CONSECUTIVE_CONTROL_EVENTS", ffi)

@@ -60,7 +60,8 @@ func (a relayDataAdmission) authorize(ctx context.Context, r *http.Request, rese
 
 // connectRelayData 处理 /v2/relay/{reservation_id} 升级。先完成与控制面相同的
 // authenticatedRequest，再按 authenticated device -> reservation role -> role token
-// 绑定校验 query/header token；首帧 RelayDataConnect 会再次执行同一绑定校验。
+// 绑定校验 X-Relay-Token header；URL query token 会 fail closed。首帧
+// RelayDataConnect 会再次执行同一绑定校验。
 func (s *Server) connectRelayData(w http.ResponseWriter, r *http.Request) {
 	reservationID := r.PathValue("reservation_id")
 	if !validReservationID(reservationID) {

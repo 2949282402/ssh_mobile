@@ -382,13 +382,16 @@ void main() {
       }),
     ]);
     final client = JsonBootstrapClient(executor: executor);
+    final nonce = _encodedBytes(32, 3);
+    final signature = _encodedBytes(64, 5);
     final result = await client.refresh(
       Uri.parse('https://relay.example'),
       RefreshRequest(
         deviceId: 'device-1',
         identityPublicKey: Uint8List.fromList(List<int>.filled(32, 7)),
-        nonce: 'abc',
-        signature: 'sig',
+        timestamp: 1700000000,
+        nonce: nonce,
+        signature: signature,
       ),
     );
 
@@ -403,8 +406,54 @@ void main() {
     expect(request.headers.containsKey('authorization'), isFalse);
     final body = jsonDecode(utf8.decode(request.body!)) as Map<String, dynamic>;
     expect(body['device_id'], 'device-1');
-    expect(body['nonce'], 'abc');
-    expect(body['signature'], 'sig');
+    expect(body['timestamp'], 1700000000);
+    expect(body['nonce'], nonce);
+    expect(body['signature'], signature);
+  });
+
+  test('bootstrap client rejects malformed refresh proofs locally', () async {
+    final executor = _FakeExecutor(const <SdkResponse>[]);
+    final client = JsonBootstrapClient(executor: executor);
+    final nonce = _encodedBytes(32, 3);
+    final signature = _encodedBytes(64, 5);
+    final invalidProofs = <RefreshRequest>[
+      for (final timestamp in <int>[0, -1, 1 << 63])
+        RefreshRequest(
+          deviceId: 'device-1',
+          identityPublicKey: Uint8List.fromList(List<int>.filled(32, 7)),
+          timestamp: timestamp,
+          nonce: nonce,
+          signature: signature,
+        ),
+      RefreshRequest(
+        deviceId: 'device-1',
+        identityPublicKey: Uint8List.fromList(List<int>.filled(32, 7)),
+        timestamp: 1700000000,
+        nonce: 'not-canonical',
+        signature: signature,
+      ),
+      RefreshRequest(
+        deviceId: 'device-1',
+        identityPublicKey: Uint8List.fromList(List<int>.filled(32, 7)),
+        timestamp: 1700000000,
+        nonce: nonce,
+        signature: '$signature=',
+      ),
+    ];
+
+    for (final request in invalidProofs) {
+      final result = await client.refresh(
+        Uri.parse('https://relay.example'),
+        request,
+      );
+
+      expect(result, isA<SdkFailure<DeviceEnrollment>>());
+      expect(
+        (result as SdkFailure<DeviceEnrollment>).error.code,
+        NetworkErrorCode.invalidArgument,
+      );
+    }
+    expect(executor.requests, isEmpty);
   });
 
   test(
@@ -424,8 +473,9 @@ void main() {
         RefreshRequest(
           deviceId: 'device-1',
           identityPublicKey: Uint8List.fromList(List<int>.filled(32, 7)),
-          nonce: 'abc',
-          signature: 'sig',
+          timestamp: 1700000000,
+          nonce: _encodedBytes(32, 3),
+          signature: _encodedBytes(64, 5),
         ),
       );
 
@@ -451,8 +501,9 @@ void main() {
       RefreshRequest(
         deviceId: 'device-1',
         identityPublicKey: Uint8List.fromList(List<int>.filled(32, 7)),
-        nonce: 'abc',
-        signature: 'sig',
+        timestamp: 1700000000,
+        nonce: _encodedBytes(32, 3),
+        signature: _encodedBytes(64, 5),
       ),
     );
 
@@ -478,8 +529,9 @@ void main() {
       RefreshRequest(
         deviceId: 'device-1',
         identityPublicKey: Uint8List.fromList(List<int>.filled(32, 7)),
-        nonce: 'abc',
-        signature: 'sig',
+        timestamp: 1700000000,
+        nonce: _encodedBytes(32, 3),
+        signature: _encodedBytes(64, 5),
       ),
     );
 
@@ -818,6 +870,9 @@ final class _FakeRealtimeClient implements RealtimeClient {
   @override
   Future<void> dispose() async {}
 }
+
+String _encodedBytes(int length, int value) =>
+    base64UrlEncode(List<int>.filled(length, value)).replaceAll('=', '');
 
 final class _FakeRealtimeSession implements RealtimeSession {
   const _FakeRealtimeSession({required this.realtimeId, required this.peerId});

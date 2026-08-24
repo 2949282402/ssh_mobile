@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
@@ -254,6 +254,15 @@ fn authenticate_request(request: &Request, identities: &[TestIdentity]) -> Optio
     let identity = identities
         .iter()
         .find(|identity| identity.credential == credential)?;
+    let timestamp_header = request.headers().get("X-Relay-Timestamp")?.to_str().ok()?;
+    let timestamp = timestamp_header.parse::<i64>().ok()?;
+    if timestamp <= 0 || timestamp_header != timestamp.to_string() {
+        return None;
+    }
+    let now = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs()).ok()?;
+    if timestamp.abs_diff(now) > 300 {
+        return None;
+    }
     let nonce = request.headers().get("X-Relay-Nonce")?.to_str().ok()?;
     let nonce_bytes = URL_SAFE_NO_PAD.decode(nonce).ok()?;
     if nonce_bytes.len() != 32 {
@@ -265,7 +274,7 @@ fn authenticate_request(request: &Request, identities: &[TestIdentity]) -> Optio
         .and_then(|header| header.to_str().ok())
         .and_then(|encoded| URL_SAFE_NO_PAD.decode(encoded).ok())
         .and_then(|bytes| Signature::from_slice(&bytes).ok())?;
-    let transcript = format!("GET\n/v2/control\n{nonce}");
+    let transcript = format!("GET\n/v2/control\n{timestamp}\n{nonce}");
     identity
         .verifying_key
         .verify(transcript.as_bytes(), &signature)

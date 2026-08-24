@@ -174,9 +174,29 @@ git diff --check
   format/analyze，架构/依赖/资源 owner/兼容性门禁，Client coverage 不低于
   80%，新手写生产文件不低于 90%。
 
-## SDK（待 Client 完成后展开）
+## SDK
 
-- [ ] **S-AUDIT 完整 SDK 审查、TODO、修复与 Domain 验收**。
+- [x] **S-01 Relay 设备证明时效与转录一致性**：Dart refresh 与 Rust
+  Control/Data WebSocket 必须签名时间戳、随机 nonce 和实际请求路径；本地严格拒绝
+  非规范长度/编码、越界时间戳和签名路径分歧，不保留旧证明回退。
+- [x] **S-02 RelayData 凭据边界**：reservation token 只允许通过
+  `X-Relay-Token` 传递；URL query 中的凭据保持 fail-closed，日志、错误和连接 URL
+  不携带 token。
+- [x] **S-03 Dart/Rust/Go 跨进程契约**：覆盖有效、无效和过期证明，Redis 密码配置
+  以及废弃 Relay 环境变量清理，确保客户端、原生 SDK 与 Relay 执行同一 ADR-031
+  契约。
+- [x] **S-04 SDK Domain 验收**：通过 Dart/Rust focused tests、format、analyze、
+  clippy、Network v2 acceptance 与 SDK coverage；Domain 覆盖率不低于 80%，新手写
+  生产文件不低于 90%。
+
+SDK 验收证据：`network_sdk` 81 项测试和 `feature_lan_share` 全量测试通过；
+`network-relay` 46 项测试、all-target clippy 与 workspace rustfmt 通过；严格跨进程
+Client/Relay 验收返回 `CLIENT_BACKEND_STRICT_PASS`；Network v2 strict acceptance 通过。
+SDK coverage 为 Dart aggregate 90.88%（各 package 91.87% / 90.24% / 90.41%），
+Rust public SDK crates 95.73%，均高于 80% 门禁。文件规模复扫仍将
+`network_http_clients.dart` 视为两个独立请求客户端及共享纯函数的无状态组合，不以物理
+分文件替代逻辑解耦；冻结矩阵的事件 lane、path projection 与 same-role replacement
+证据已路由到当前真实 Owner。
 
 ## 最终跨域验收
 

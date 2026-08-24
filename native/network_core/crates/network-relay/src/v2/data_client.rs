@@ -375,13 +375,11 @@ impl RelayDataClient {
     /// 构建数据面 WebSocket 升级请求：设备认证头 + 校验 reservation 本地 token 的
     /// `X-Relay-Token` 头。
     ///
-    /// Go 端 connectRelayData 在升级前必须校验 reservation token（validRelayToken，
-    /// 从 `?token=` query 或 `X-Relay-Token` header 读取），否则直接返回 401；而
-    /// [`normalize_data_endpoint`] 拒绝端点携带 query，因此 token 只能经 header 传递。
+    /// Go 端 connectRelayData 在升级前只从 `X-Relay-Token` header 校验 reservation
+    /// token；query token 会 fail closed，避免凭据进入代理日志、历史记录或遥测 URL。
     fn build_data_upgrade_request(&self) -> Result<Request, RelayError> {
-        let path = self.data_url.path().to_string();
         let mut request =
-            authenticated_ws_request(&self.data_url, &path, &self.credential, &self.signing_key)?;
+            authenticated_ws_request(&self.data_url, &self.credential, &self.signing_key)?;
         request.headers_mut().insert(
             "X-Relay-Token",
             HeaderValue::from_str(&hex::encode(&self.local_token))

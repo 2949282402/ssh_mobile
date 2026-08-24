@@ -513,7 +513,14 @@ async fn refresh(base_url: &str, identity: &Identity) -> Result<String, String> 
     let mut nonce_bytes = [0u8; 32];
     rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
     let nonce = URL_SAFE_NO_PAD.encode(nonce_bytes);
-    let transcript = format!("POST\n/v1/devices/refresh\n{nonce}");
+    let timestamp = i64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| format!("system clock precedes Unix epoch: {error}"))?
+            .as_secs(),
+    )
+    .map_err(|_| "system clock exceeds signed Unix seconds".to_string())?;
+    let transcript = format!("POST\n/v1/devices/refresh\n{timestamp}\n{nonce}");
     let signature = URL_SAFE_NO_PAD.encode(
         SigningKey::from_bytes(&identity.signing_seed)
             .sign(transcript.as_bytes())
@@ -522,6 +529,7 @@ async fn refresh(base_url: &str, identity: &Identity) -> Result<String, String> 
     let body = serde_json::to_vec(&json!({
         "device_id": identity.device_id,
         "public_key": URL_SAFE_NO_PAD.encode(identity.public_key),
+        "timestamp": timestamp,
         "nonce": nonce,
         "signature": signature,
     }))

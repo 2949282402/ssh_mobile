@@ -321,12 +321,8 @@ impl RelayControlClient {
         }
         self.disconnect_notified.store(false, Ordering::Release);
         self.intentional_disconnect.store(false, Ordering::Release);
-        let request = authenticated_ws_request(
-            &self.relay_url,
-            RELAY_V2_CONTROL_PATH,
-            &self.credential,
-            &self.signing_key,
-        )?;
+        let request =
+            authenticated_ws_request(&self.relay_url, &self.credential, &self.signing_key)?;
         let (socket, _) = tokio::time::timeout(SOCKET_OPERATION_TIMEOUT, connect_async(request))
             .await
             .map_err(|_| RelayError::Socket("Relay control connection timed out".into()))?

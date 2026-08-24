@@ -1567,36 +1567,35 @@ async fn v2_signal_rejects_an_empty_established_peer_binding() {
 
 #[tokio::test]
 async fn realtime_turn_configuration_is_parsed_and_invalid_driver_setup_fails_closed() {
-    std::env::set_var(
-        "SSH_MOBILE_TURN_SERVERS",
-        " turn:a.example, ,turn:b.example ",
+    let config = runtime_webrtc_config_from_values(
+        Some(" turn:a.example, ,turn:b.example ".into()),
+        Some("turn-user".into()),
+        Some("turn-credential".into()),
+        Some("yes".into()),
     );
-    std::env::set_var("SSH_MOBILE_TURN_USERNAME", "turn-user");
-    std::env::set_var("SSH_MOBILE_TURN_CREDENTIAL", "turn-credential");
-    std::env::set_var("SSH_MOBILE_TURN_RELAY_ONLY", "yes");
-    let config = runtime_webrtc_config();
     assert_eq!(config.ice_servers.len(), 2);
     assert_eq!(config.ice_servers[0].urls, vec!["turn:a.example"]);
     assert!(config.relay_only);
 
     let (state, _event_rx) = realtime_test_state().await;
     register_realtime_peer(&state, "peer-a").await;
-    std::env::set_var("SSH_MOBILE_TURN_SERVERS", "x".repeat(2049));
-    let error = start_session(
+    let invalid_config = runtime_webrtc_config_from_values(
+        Some("x".repeat(2049)),
+        Some("turn-user".into()),
+        Some("turn-credential".into()),
+        Some("yes".into()),
+    );
+    let error = start_session_with_config(
         Arc::clone(&state),
         StartRealtimeSessionCommand {
             realtime_id: "00112233445566778899aabbccddeeff".into(),
             peer_id: "peer-a".into(),
         },
+        invalid_config,
     )
     .await
     .expect_err("an invalid TURN URL must fail before creating a driver");
     assert_eq!(error.code, NetworkErrorCode::IoError as i32);
-
-    std::env::remove_var("SSH_MOBILE_TURN_SERVERS");
-    std::env::remove_var("SSH_MOBILE_TURN_USERNAME");
-    std::env::remove_var("SSH_MOBILE_TURN_CREDENTIAL");
-    std::env::remove_var("SSH_MOBILE_TURN_RELAY_ONLY");
 }
 
 #[tokio::test]

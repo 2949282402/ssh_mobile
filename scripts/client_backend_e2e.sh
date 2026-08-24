@@ -149,7 +149,7 @@ start_compose() {
   PROJECT_NAME="ssh-mobile-client-backend-${BASHPID}"
   ENV_FILE="$TMP_ROOT/relay.env"
   local http_port https_port credential_key network_octet network_subnet caddy_ip
-  local mysql_root_password mysql_user mysql_password relay_storage_mode relay_database_url relay_redis_url
+  local mysql_root_password mysql_user mysql_password redis_password relay_storage_mode relay_database_url relay_redis_url
   http_port="$(find_free_port)"
   https_port="$(find_free_port)"
   ENROLLMENT_TOKEN="$(random_hex 24)"
@@ -159,6 +159,7 @@ start_compose() {
   mysql_root_password="$(random_hex 24)"
   mysql_user="e2e_relay"
   mysql_password="$(random_hex 24)"
+  redis_password="$(random_hex 24)"
   BASE_URL="http://127.0.0.1:${http_port}"
   network_octet=$((16 + $(od -An -N1 -tu1 /dev/urandom) % 16))
   while [[ "$network_octet" == 17 || "$network_octet" == 30 ]]; do
@@ -207,12 +208,12 @@ start_compose() {
     "RELAY_STORAGE_MODE=$relay_storage_mode" \
     "RELAY_DATABASE_URL=$relay_database_url" \
     "RELAY_REDIS_URL=$relay_redis_url" \
+    "RELAY_REDIS_PASSWORD=$redis_password" \
     'RELAY_INSTANCE_ID=client-backend-e2e' \
     'RELAY_PRESENCE_TTL=60s' \
     "RELAY_ENROLLMENT_TOKEN=$ENROLLMENT_TOKEN" \
     "RELAY_CREDENTIAL_KEY=$credential_key" \
     "RELAY_CREDENTIAL_TTL=$credential_ttl" \
-    'RELAY_SESSION_TTL=15m' \
     'RELAY_ADMIN_SESSION_TTL=24h' \
     'RELAY_MAX_CONNECTIONS=2048' \
     'RELAY_MAX_ENROLLED_DEVICES=4096' \

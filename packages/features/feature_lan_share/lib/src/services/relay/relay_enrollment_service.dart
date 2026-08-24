@@ -135,7 +135,10 @@ final class RelayEnrollmentService implements LanRelayEnrollmentPort {
       final pair = await _signingKeyPair();
       final publicKey = await pair.extractPublicKey();
       final nonce = _randomRefreshNonce();
-      final transcript = 'POST\n/v1/devices/refresh\n$nonce';
+      final timestamp =
+          DateTime.now().toUtc().millisecondsSinceEpoch ~/
+          Duration.millisecondsPerSecond;
+      final transcript = 'POST\n/v1/devices/refresh\n$timestamp\n$nonce';
       final signatureBytes = (await Ed25519().sign(
         utf8.encode(transcript),
         keyPair: pair,
@@ -145,6 +148,7 @@ final class RelayEnrollmentService implements LanRelayEnrollmentPort {
         RefreshRequest(
           deviceId: currentDeviceId,
           identityPublicKey: Uint8List.fromList(publicKey.bytes),
+          timestamp: timestamp,
           nonce: nonce,
           signature: base64UrlEncode(signatureBytes).replaceAll('=', ''),
         ),

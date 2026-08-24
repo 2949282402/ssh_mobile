@@ -9,6 +9,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use ed25519_dalek::{Signer, SigningKey};
 use rand::RngCore;
 use serde_json::Value;
+use std::time::{SystemTime, UNIX_EPOCH};
 use url::Url;
 
 /// 描述 Relay v2 连接、认证和帧校验失败。
@@ -42,23 +43,48 @@ pub enum RelayError {
 
 /// 返回当前 Unix 毫秒时间戳。
 pub(crate) fn unix_timestamp_ms() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
+}
+
+fn unix_timestamp_seconds() -> Result<i64, RelayError> {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| {
+            RelayError::InvalidConfiguration(
+                "system clock is before the Unix epoch; cannot sign Relay proof".into(),
+            )
+        })?
+        .as_secs();
+    let timestamp = i64::try_from(seconds).map_err(|_| {
+        RelayError::InvalidConfiguration("system clock exceeds Relay timestamp range".into())
+    })?;
+    if timestamp <= 0 {
+        return Err(RelayError::InvalidConfiguration(
+            "system clock cannot produce a positive Relay timestamp".into(),
+        ));
+    }
+    Ok(timestamp)
+}
+
+fn authenticated_proof_transcript(path: &str, timestamp: i64, nonce: &str) -> String {
+    format!("{}\n{}\n{}\n{}", Method::GET, path, timestamp, nonce)
 }
 
 /// 将 HTTPS/WSS 源站规范化为固定 WebSocket 路径，并返回带设备认证头的请求。
 pub(crate) fn authenticated_ws_request(
     relay_url: &Url,
-    path: &str,
     credential: &str,
     signing_key: &SigningKey,
 ) -> Result<tokio_tungstenite::tungstenite::handshake::client::Request, RelayError> {
+    let path = relay_url.path();
     let mut nonce_bytes = [0u8; 32];
     rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
     let nonce = URL_SAFE_NO_PAD.encode(nonce_bytes);
-    let transcript = format!("{}\n{}\n{}", Method::GET, path, nonce);
+    let timestamp = unix_timestamp_seconds()?;
+    let transcript = authenticated_proof_transcript(path, timestamp, &nonce);
     let signature = URL_SAFE_NO_PAD.encode(signing_key.sign(transcript.as_bytes()).to_bytes());
     let mut request = relay_url
         .as_str()
@@ -67,6 +93,11 @@ pub(crate) fn authenticated_ws_request(
     request.headers_mut().insert(
         "Authorization",
         HeaderValue::from_str(&format!("Bearer {credential}"))
+            .map_err(|error| RelayError::InvalidConfiguration(error.to_string()))?,
+    );
+    request.headers_mut().insert(
+        "X-Relay-Timestamp",
+        HeaderValue::from_str(&timestamp.to_string())
             .map_err(|error| RelayError::InvalidConfiguration(error.to_string()))?,
     );
     request.headers_mut().insert(
@@ -168,3 +199,7 @@ use tokio_tungstenite::tungstenite::{
     client::IntoClientRequest,
     http::{HeaderValue, Method},
 };
+
+#[cfg(test)]
+#[path = "../tests/v2/shared.rs"]
+mod tests;
