@@ -43,7 +43,7 @@ void main() {
 
       expect(
         guard
-            .requirePendingUpload(
+            .consumePendingUpload(
               messageId: 'same-id',
               senderDeviceId: 'sender-a',
               fileName: 'a.bin',
@@ -52,18 +52,14 @@ void main() {
             .expectedBytes,
         10,
       );
-      guard.completePendingUpload('sender-a', 'same-id');
-      expect(
-        guard
-            .requirePendingUpload(
-              messageId: 'same-id',
-              senderDeviceId: 'sender-b',
-              fileName: 'b.bin',
-              encrypted: false,
-            )
-            .expectedBytes,
-        20,
+      final senderBUpload = guard.consumePendingUpload(
+        messageId: 'same-id',
+        senderDeviceId: 'sender-b',
+        fileName: 'b.bin',
+        encrypted: false,
       );
+      expect(senderBUpload.expectedBytes, 20);
+      guard.completeUpload(senderBUpload);
     });
 
     test('encrypted uploads above the memory budget are rejected', () {

@@ -16,7 +16,19 @@ extension _LanWebShareUploadOperations on LanDiscoveryService {
     }
     final builder = BytesBuilder(copy: false);
     var total = 0;
-    await for (final chunk in request) {
+    await for (final chunk in request.timeout(
+      LanTransferProtocolGuard.requestBodyIdleTimeout,
+      onTimeout: (sink) {
+        sink
+          ..addError(
+            const _WebShareHttpException(
+              HttpStatus.requestTimeout,
+              'Request body timed out.',
+            ),
+          )
+          ..close();
+      },
+    )) {
       total += chunk.length;
       if (total > maxBytes) {
         throw const _WebShareHttpException(
@@ -118,6 +130,24 @@ extension _LanWebShareUploadOperations on LanDiscoveryService {
     _pendingWebUploads.removeWhere((_, upload) => upload.isExpired);
   }
 
+  void _requireWebUploadReservationAvailable(String messageId) {
+    _prunePendingWebUploads();
+    if (_pendingWebUploads.containsKey(messageId) ||
+        _activeWebUploads.containsKey(messageId)) {
+      throw const _WebShareHttpException(
+        HttpStatus.conflict,
+        'A Web Share upload with this ID is already pending or active.',
+      );
+    }
+    if (_pendingWebUploads.length + _activeWebUploads.length >=
+        LanDiscoveryService._maxPendingWebUploads) {
+      throw const _WebShareHttpException(
+        HttpStatus.tooManyRequests,
+        'Too many Web Share uploads are pending or active.',
+      );
+    }
+  }
+
   /// 校验 WebShare 元数据，并在需要时预留上传会话。
   Future<void> _handleWebMetaRequest(
     HttpRequest request,
@@ -136,6 +166,7 @@ extension _LanWebShareUploadOperations on LanDiscoveryService {
     final plainBody = encrypted
         ? await _decryptWebPayload(rawBody, securityService)
         : rawBody;
+    _LanWebShareServerOperations(this)._requireWebShareToken(request);
     if (plainBody.length > LanTransferProtocolGuard.maxControlBodyBytes) {
       throw const _WebShareHttpException(
         HttpStatus.requestEntityTooLarge,
@@ -172,26 +203,14 @@ extension _LanWebShareUploadOperations on LanDiscoveryService {
       );
     }
 
-    _prunePendingWebUploads();
-    if (_pendingWebUploads.containsKey(messageId)) {
-      throw const _WebShareHttpException(
-        HttpStatus.conflict,
-        'A Web Share upload with this ID is already pending.',
-      );
-    }
-    if (_pendingWebUploads.length >=
-        LanDiscoveryService._maxPendingWebUploads) {
-      throw const _WebShareHttpException(
-        HttpStatus.tooManyRequests,
-        'Too many Web Share uploads are pending.',
-      );
-    }
+    _requireWebUploadReservationAvailable(messageId);
     if (!await storageService.hasSufficientSpace(fileSize)) {
       throw const _WebShareHttpException(
         HttpStatus.insufficientStorage,
         'Insufficient storage.',
       );
     }
+    _LanWebShareServerOperations(this)._requireWebShareToken(request);
 
     final message = LanMessage(
       id: messageId,
@@ -206,6 +225,9 @@ extension _LanWebShareUploadOperations on LanDiscoveryService {
       createdAt: DateTime.now(),
       isIncoming: true,
     );
+    // 磁盘检查是异步边界；必须在其后重新校验并同步登记，防止并发请求
+    // 同时越过 duplicate/capacity 检查。
+    _requireWebUploadReservationAvailable(messageId);
     _pendingWebUploads[messageId] = _PendingWebUpload(
       messageId: messageId,
       fileName: fileName,
@@ -268,8 +290,10 @@ extension _LanWebShareUploadOperations on LanDiscoveryService {
       );
     }
 
-    // 在第一次 await 前移除，避免并发请求重复消费同一份已接受元数据。
+    // 在第一次 await 前原子转为 active 租约，避免并发重放，
+    // 并让流式请求在整个生命周期内持续占用有界容量。
     _pendingWebUploads.remove(messageId);
+    _activeWebUploads[messageId] = pending;
     File? targetFile;
     var completed = false;
     var bytesReceived = 0;
@@ -301,7 +325,19 @@ extension _LanWebShareUploadOperations on LanDiscoveryService {
       } else {
         final sink = targetFile.openWrite();
         try {
-          await for (final chunk in request) {
+          await for (final chunk in request.timeout(
+            LanTransferProtocolGuard.requestBodyIdleTimeout,
+            onTimeout: (sink) {
+              sink
+                ..addError(
+                  const _WebShareHttpException(
+                    HttpStatus.requestTimeout,
+                    'Upload body timed out.',
+                  ),
+                )
+                ..close();
+            },
+          )) {
             bytesReceived += chunk.length;
             if (bytesReceived > pending.expectedBytes) {
               throw const _WebShareHttpException(
@@ -322,6 +358,8 @@ extension _LanWebShareUploadOperations on LanDiscoveryService {
           await sink.close();
         }
       }
+
+      _LanWebShareServerOperations(this)._requireWebShareToken(request);
 
       final completedMessage = LanMessage(
         id: pending.messageId,
@@ -346,7 +384,7 @@ extension _LanWebShareUploadOperations on LanDiscoveryService {
         {'messageId': messageId, 'bytesReceived': bytesReceived},
       );
     } catch (_) {
-      if (!completed) {
+      if (!completed && !_closing && !_closed && _isWebShareActive) {
         transferService.handleMessageProgressFromWeb(
           LanMessage(
             id: pending.messageId,
@@ -366,6 +404,9 @@ extension _LanWebShareUploadOperations on LanDiscoveryService {
       }
       rethrow;
     } finally {
+      if (identical(_activeWebUploads[messageId], pending)) {
+        _activeWebUploads.remove(messageId);
+      }
       if (!completed && targetFile != null) {
         try {
           await storageService.deleteSandboxFile(targetFile.path);

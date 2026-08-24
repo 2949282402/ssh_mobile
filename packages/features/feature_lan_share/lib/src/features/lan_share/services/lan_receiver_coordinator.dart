@@ -438,9 +438,8 @@ final class LanReceiverCoordinator extends ChangeNotifier {
       if (initializeNetwork) relay.connectConfiguredInBackground();
     } catch (_) {
       await _cancelReceiverSubscriptions();
-      await transfer?.stopListening();
-      discovery?.dispose();
-      transfer?.dispose();
+      await discovery?.close();
+      await transfer?.close();
       await _disposeNetworkFacade();
       await relay?.close();
       _discoveryService = null;
@@ -587,17 +586,33 @@ final class LanReceiverCoordinator extends ChangeNotifier {
   Future<void> _closeResources() async {
     if (_disposed) return;
     _disposed = true;
-    await _viewModel?.shutdown();
-    _viewModel?.dispose();
+    Object? firstError;
+    StackTrace? firstStackTrace;
+
+    Future<void> attempt(FutureOr<void> Function() action) async {
+      try {
+        await action();
+      } catch (error, stackTrace) {
+        firstError ??= error;
+        firstStackTrace ??= stackTrace;
+      }
+    }
+
+    final viewModel = _viewModel;
+    final transferService = _transferService;
+    final discoveryService = _discoveryService;
+    final relayCoordinator = _relayCoordinator;
+    await attempt(() => viewModel?.shutdown());
+    await attempt(() => viewModel?.dispose());
     _viewModel = null;
-    await _cancelReceiverSubscriptions();
-    await _transferService?.stopListening();
-    await _discoveryService?.stopAdvertising();
-    await _disposeNetworkFacade();
-    await _relayCoordinator?.close();
+    await attempt(_cancelReceiverSubscriptions);
+    await attempt(() => transferService?.stopListening());
+    await attempt(() => discoveryService?.stopAdvertising());
+    await attempt(_disposeNetworkFacade);
+    await attempt(() => relayCoordinator?.close());
     _relayCoordinator = null;
-    _transferService?.dispose();
-    _discoveryService?.dispose();
+    await attempt(() => discoveryService?.close());
+    await attempt(() => transferService?.close());
     _transferService = null;
     _discoveryService = null;
     _securityService = null;
@@ -605,11 +620,14 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     _initialized = false;
     _receiverActive = false;
     if (!_pairingRequestController.isClosed) {
-      await _pairingRequestController.close();
+      await attempt(_pairingRequestController.close);
     }
     if (!_notifierDisposed) {
       _notifierDisposed = true;
       super.dispose();
+    }
+    if (firstError != null) {
+      Error.throwWithStackTrace(firstError!, firstStackTrace!);
     }
   }
 
@@ -620,7 +638,14 @@ final class LanReceiverCoordinator extends ChangeNotifier {
       _notifierDisposed = true;
       super.dispose();
     }
-    unawaited(close());
+    unawaited(
+      close().catchError((Object error) {
+        logger.warning(
+          'LAN receiver cleanup failed',
+          details: 'errorType=${error.runtimeType}',
+        );
+      }),
+    );
   }
 }
 

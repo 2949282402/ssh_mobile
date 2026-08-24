@@ -335,11 +335,11 @@ extension _LanPairingServerOperations on LanTransferService {
     final String status;
     if (!reciprocalReady) {
       status = 'pending_remote';
-      _handshakePendingController.add(device);
+      _emit(_handshakePendingController, device);
     } else {
       status = 'paired';
       await securityService.confirmDevicePairing(senderDeviceId);
-      _handshakeSuccessController.add(device);
+      _emit(_handshakeSuccessController, device);
     }
 
     final requestHash = LanPairingCrypto.requestHash(pending.clientContext);

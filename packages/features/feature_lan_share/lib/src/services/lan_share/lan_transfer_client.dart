@@ -30,6 +30,19 @@ class _AcceptedPairingOffer {
 }
 
 extension LanTransferClientApi on LanTransferService {
+  Uri _lanEndpoint(LanDevice device, String path) {
+    final rawHost = device.ip.trim();
+    final host = rawHost.startsWith('[') && rawHost.endsWith(']')
+        ? rawHost.substring(1, rawHost.length - 1)
+        : rawHost;
+    if (host.isEmpty ||
+        host.length > 253 ||
+        RegExp(r'[\x00-\x20/@?#\\\[\]]').hasMatch(host)) {
+      throw const FormatException('LAN peer address is invalid.');
+    }
+    return Uri(scheme: 'https', host: host, port: device.port, path: path);
+  }
+
   /// 创建配置为连接一个已配对对端的 HTTP 客户端。
   Future<HttpClient> createHttpClientForPeer(String peerDeviceId) {
     return _createHttpClient(peerDeviceId: peerDeviceId);
@@ -230,9 +243,7 @@ extension LanTransferClientApi on LanTransferService {
         ),
       );
     }
-    final url = Uri.parse(
-      'https://${device.ip}:${device.port}/api/lan/handshake',
-    );
+    final url = _lanEndpoint(device, '/api/lan/handshake');
     final nonce = LanPairingCrypto.randomToken();
     final localFingerprint =
         (await securityService.getLocalCertificateFingerprint(
@@ -272,6 +283,7 @@ extension LanTransferClientApi on LanTransferService {
       final request = await beginClient
           .postUrl(url)
           .timeout(const Duration(seconds: 4));
+      request.followRedirects = false;
       request.headers.contentType = ContentType.json;
       request.write(
         jsonEncode({
@@ -368,6 +380,7 @@ extension LanTransferClientApi on LanTransferService {
       final request = await confirmClient
           .postUrl(url)
           .timeout(const Duration(seconds: 4));
+      request.followRedirects = false;
       request.headers.contentType = ContentType.json;
       request.write(
         jsonEncode({
@@ -524,15 +537,14 @@ extension LanTransferClientApi on LanTransferService {
   }) async {
     return _executeWithRetry(
       () async {
-        final url = Uri.parse(
-          'https://${device.ip}:${device.port}/api/lan/meta',
-        );
+        final url = _lanEndpoint(device, '/api/lan/meta');
         final client = await _createHttpClient(peerDeviceId: device.id);
 
         try {
           final request = await client
               .postUrl(url)
               .timeout(const Duration(seconds: 4));
+          request.followRedirects = false;
           final authorization = await addPairingAuthorization(
             request.headers,
             device.id,
@@ -602,15 +614,14 @@ extension LanTransferClientApi on LanTransferService {
   ) async {
     return _executeWithRetry(
       () async {
-        final url = Uri.parse(
-          'https://${device.ip}:${device.port}/api/lan/recall',
-        );
+        final url = _lanEndpoint(device, '/api/lan/recall');
         final client = await _createHttpClient(peerDeviceId: device.id);
 
         try {
           final request = await client
               .postUrl(url)
               .timeout(const Duration(seconds: 4));
+          request.followRedirects = false;
           final authorization = await addPairingAuthorization(
             request.headers,
             device.id,
@@ -663,15 +674,14 @@ extension LanTransferClientApi on LanTransferService {
   ) async {
     return _executeWithRetry(
       () async {
-        final url = Uri.parse(
-          'https://${targetDevice.ip}:${targetDevice.port}/api/lan/announce',
-        );
+        final url = _lanEndpoint(targetDevice, '/api/lan/announce');
         final client = await _createHttpClient(peerDeviceId: targetDevice.id);
 
         try {
           final request = await client
               .postUrl(url)
               .timeout(const Duration(seconds: 4));
+          request.followRedirects = false;
           request.headers.contentType = ContentType.json;
           request.write(
             jsonEncode({
@@ -732,9 +742,7 @@ extension LanTransferClientApi on LanTransferService {
     required String sessionId,
     required DateTime expiresAt,
   }) async {
-    final url = Uri.parse(
-      'https://${targetDevice.ip}:${targetDevice.port}/api/lan/pairing_invite',
-    );
+    final url = _lanEndpoint(targetDevice, '/api/lan/pairing_invite');
     final client = await _createHttpClient(
       peerDeviceId: targetDevice.id,
       expectedFingerprint: targetDevice.certFingerprint,
@@ -748,6 +756,7 @@ extension LanTransferClientApi on LanTransferService {
       final request = await client
           .postUrl(url)
           .timeout(const Duration(seconds: 4));
+      request.followRedirects = false;
       request.headers.contentType = ContentType.json;
       request.write(
         jsonEncode({

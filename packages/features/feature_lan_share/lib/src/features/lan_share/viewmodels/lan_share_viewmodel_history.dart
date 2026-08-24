@@ -89,13 +89,11 @@ extension LanShareViewModelHistory on LanShareViewModel {
             !dataProtection.isEncrypted(record.manifestJson!)) ||
         (record.sftpRemotePath != null &&
             !dataProtection.isEncrypted(record.sftpRemotePath!))) {
-      unawaited(
-        historyDao.updateSensitiveFields(
-          record.id,
-          textContent: Value(await _encryptSensitive(textContent)),
-          manifestJson: Value(await _encryptSensitive(manifestJson)),
-          sftpRemotePath: Value(await _encryptSensitive(sftpRemotePath)),
-        ),
+      await historyDao.updateSensitiveFields(
+        record.id,
+        textContent: Value(await _encryptSensitive(textContent)),
+        manifestJson: Value(await _encryptSensitive(manifestJson)),
+        sftpRemotePath: Value(await _encryptSensitive(sftpRemotePath)),
       );
     }
     return LanMessage(

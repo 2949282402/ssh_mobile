@@ -162,7 +162,7 @@ git diff --check
 - [x] **C-13 AppRuntime/后台服务回滚**：构造失败时取消并有界等待已启动的
   initializer，迟到任务不得访问已释放 DB/logger；后台服务启动返回
   `false` 时立即释放已获取 power locks。
-- [ ] **C-14 LAN Share 会话、存储与配对边界**：native/WebShare 上传元数据
+- [x] **C-14 LAN Share 会话、存储与配对边界**：native/WebShare 上传元数据
   必须原子消费且 pending+active 共享并发上限；桌面端导出不得把最大
   20 GiB 文件整体读入内存；远程配对复查不得在 unpair 后迟到恢复，
   HTTP client/响应有界释放；Transfer/Discovery 最终关闭必须可等待且先

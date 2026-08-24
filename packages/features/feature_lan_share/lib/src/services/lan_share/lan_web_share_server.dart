@@ -58,9 +58,14 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
           securityContext,
           requestClientCertificate: false,
         );
+        if (_closing || _closed) {
+          await bound.close(force: true);
+          throw StateError('Web Share service is shutting down.');
+        }
         boundPort = bound.port;
         break;
       } catch (e) {
+        if (_closing || _closed) rethrow;
         debugPrint(
           '[LanDiscoveryService] WebShare HTTPS port $candidate unavailable: $e — trying next',
         );
@@ -78,6 +83,10 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
         securityContext,
         requestClientCertificate: false,
       );
+      if (_closing || _closed) {
+        await bound.close(force: true);
+        throw StateError('Web Share service is shutting down.');
+      }
       boundPort = bound.port;
       debugPrint(
         '[LanDiscoveryService] WebShare using ephemeral port $boundPort',
@@ -90,11 +99,16 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
           .getLocalCertificateFingerprint(currentDeviceId);
       final webShareToken = _generateWebShareToken();
       final ips = await LanDiscoveryService.getLocalIpAddresses();
+      if (_closing || _closed) {
+        await bound.close(force: true);
+        throw StateError('Web Share service is shutting down.');
+      }
       final hostIp = _customIp ?? (ips.isNotEmpty ? ips.first : '127.0.0.1');
       const scheme = 'https';
 
       _webShareToken = webShareToken;
       _pendingWebUploads.clear();
+      _activeWebUploads.clear();
       _webShareServer = bound;
       _isWebShareActive = true;
       _webShareUrl = Uri(
@@ -109,15 +123,22 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
         },
       ).toString();
 
-      _webShareServer!.listen((HttpRequest request) async {
-        await _handleWebShareRequest(
-          request,
-          webShareToken: webShareToken,
-          pubKeyB64: pubKeyB64,
-          securityService: securityService,
-          transferService: transferService,
-          storageService: storageService,
-        );
+      _webShareServer!.listen((HttpRequest request) {
+        late final Future<void> operation;
+        operation =
+            _handleWebShareRequest(
+                  request,
+                  webShareToken: webShareToken,
+                  pubKeyB64: pubKeyB64,
+                  securityService: securityService,
+                  transferService: transferService,
+                  storageService: storageService,
+                )
+                .then<void>((_) {}, onError: (Object _, StackTrace _) {})
+                .whenComplete(() {
+                  _webShareRequestOperations.remove(operation);
+                });
+        _webShareRequestOperations.add(operation);
       });
 
       debugPrint(
@@ -141,8 +162,14 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
     _isWebShareActive = false;
     _webShareUrl = null;
     _webShareToken = null;
-    _pendingWebUploads.clear();
     if (server != null) await server.close(force: true);
+    final requestOperations = _webShareRequestOperations.toList();
+    if (requestOperations.isNotEmpty) {
+      await Future.wait(requestOperations);
+    }
+    _webShareRequestOperations.clear();
+    _pendingWebUploads.clear();
+    _activeWebUploads.clear();
   }
 
   /// 路由一个 WebShare HTTP 请求，并写入规范化错误响应。
@@ -157,6 +184,15 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
     _setWebShareResponseHeaders(request.response);
     final path = request.uri.path;
     try {
+      if (_closing ||
+          _closed ||
+          !_isWebShareActive ||
+          _webShareToken != webShareToken) {
+        throw const _WebShareHttpException(
+          HttpStatus.serviceUnavailable,
+          'Web Share service is shutting down.',
+        );
+      }
       if (request.method == 'GET' && (path == '/' || path == '/index.html')) {
         _requireWebShareToken(request, allowQueryParameter: true);
         request.response.headers.contentType = ContentType.html;
@@ -206,7 +242,10 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
         'operation': _webOperationForPath(path).wireName,
       });
     } catch (error) {
-      debugPrint('[LanDiscoveryService] Web Share request failed: $error');
+      debugPrint(
+        '[LanDiscoveryService] Web Share request failed: '
+        'errorType=${error.runtimeType}',
+      );
       try {
         await _writeWebShareJson(
           request.response,
@@ -264,6 +303,12 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
     HttpRequest request, {
     bool allowQueryParameter = false,
   }) {
+    if (_closing || _closed || !_isWebShareActive) {
+      throw const _WebShareHttpException(
+        HttpStatus.serviceUnavailable,
+        'Web Share service is shutting down.',
+      );
+    }
     final expected = _webShareToken;
     final provided = allowQueryParameter
         ? request.uri.queryParameters['access']

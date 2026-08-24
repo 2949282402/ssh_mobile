@@ -45,11 +45,19 @@ class LanDiscoveryService {
   int? _advertisedPort;
   nsd.Discovery? _discovery;
   RawDatagramSocket? _udpSocket;
+  StreamSubscription<RawSocketEvent>? _udpSocketSubscription;
   Timer? _udpBroadcastTimer;
   Timer? _deviceCleanupTimer;
   int _udpBroadcastCount = 0;
   int _discoveryGeneration = 0;
+  int _advertisingGeneration = 0;
   Future<void> _discoveryLifecycle = Future<void>.value();
+  Future<void> _advertisingLifecycle = Future<void>.value();
+  Future<void> _webShareLifecycle = Future<void>.value();
+  final Set<Future<void>> _webShareRequestOperations = {};
+  Future<void>? _closeFuture;
+  bool _closing = false;
+  bool _closed = false;
 
   final _discoveredDevicesController =
       StreamController<List<LanDevice>>.broadcast();
@@ -74,6 +82,7 @@ class LanDiscoveryService {
   String? get webShareUrl => _webShareUrl;
   String? _webShareToken;
   final Map<String, _PendingWebUpload> _pendingWebUploads = {};
+  final Map<String, _PendingWebUpload> _activeWebUploads = {};
 
   String? _customIp;
 
@@ -101,6 +110,9 @@ class LanDiscoveryService {
 
   /// 动态更新当前设备别名；若正在广播则重新启动广播。
   Future<NetworkResult<void>> updateDeviceAlias(String newAlias) async {
+    if (_closing || _closed) {
+      return _closedFailure<void>(NetworkOperation.startAdvertising);
+    }
     if (currentDeviceAlias == newAlias) {
       return const NetworkSuccess<void>(null);
     }
@@ -238,20 +250,42 @@ class LanDiscoveryService {
   }
 
   /// 启动 mDNS 注册，向附近对端广播本设备。
-  Future<NetworkResult<void>> startAdvertising({int port = defaultPort}) async {
-    _advertisedPort = port;
-    try {
-      await performStartAdvertising(port);
-      return const NetworkSuccess<void>(null);
-    } catch (error) {
-      return NetworkFailure(
-        NetworkError(
-          code: NetworkErrorCode.ioError,
-          message: 'LAN advertising failed.',
-          operation: NetworkOperation.startAdvertising,
-        ),
+  Future<NetworkResult<void>> startAdvertising({int port = defaultPort}) {
+    if (_closing || _closed) {
+      return Future.value(
+        _closedFailure<void>(NetworkOperation.startAdvertising),
       );
     }
+    final generation = ++_advertisingGeneration;
+    return _enqueueAdvertisingLifecycle(() async {
+      if (_closing || _closed || generation != _advertisingGeneration) {
+        return _closedFailure<void>(NetworkOperation.startAdvertising);
+      }
+      try {
+        // Repeated starts are a restart, not an additional registration. Close
+        // the previous mDNS/UDP owners before creating the next generation.
+        if (_advertisedPort != null ||
+            _registration != null ||
+            _udpSocket != null) {
+          await performStopAdvertising();
+        }
+        await performStartAdvertising(port);
+        if (_closing || _closed || generation != _advertisingGeneration) {
+          await performStopAdvertising();
+          return _closedFailure<void>(NetworkOperation.startAdvertising);
+        }
+        _advertisedPort = port;
+        return const NetworkSuccess<void>(null);
+      } catch (error) {
+        return NetworkFailure(
+          const NetworkError(
+            code: NetworkErrorCode.ioError,
+            message: 'LAN advertising failed.',
+            operation: NetworkOperation.startAdvertising,
+          ),
+        );
+      }
+    });
   }
 
   /// 执行平台 mDNS/UDP 广播初始化。
@@ -284,20 +318,32 @@ class LanDiscoveryService {
   }
 
   /// 停止 mDNS 注册。
-  Future<NetworkResult<void>> stopAdvertising() async {
-    try {
-      await performStopAdvertising();
-      _advertisedPort = null;
-      return const NetworkSuccess<void>(null);
-    } catch (error) {
-      return NetworkFailure(
-        NetworkError(
-          code: NetworkErrorCode.ioError,
-          message: 'LAN advertising stop failed.',
-          operation: NetworkOperation.stopAdvertising,
-        ),
-      );
-    }
+  Future<NetworkResult<void>> stopAdvertising() {
+    _advertisingGeneration++;
+    _advertisedPort = null;
+    return _enqueueAdvertisingLifecycle(() async {
+      try {
+        await performStopAdvertising();
+        return const NetworkSuccess<void>(null);
+      } catch (error) {
+        return NetworkFailure(
+          const NetworkError(
+            code: NetworkErrorCode.ioError,
+            message: 'LAN advertising stop failed.',
+            operation: NetworkOperation.stopAdvertising,
+          ),
+        );
+      }
+    });
+  }
+
+  Future<T> _enqueueAdvertisingLifecycle<T>(Future<T> Function() operation) {
+    final next = _advertisingLifecycle.then((_) => operation());
+    _advertisingLifecycle = next.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return next;
   }
 
   /// 执行平台 mDNS/UDP 广播清理。
@@ -312,11 +358,14 @@ class LanDiscoveryService {
         debugPrint('[LanDiscoveryService] mDNS Unregister error: $e');
       }
     }
-    _stopUdpListener();
+    await _stopUdpListener();
   }
 
   /// 启动主动发现（mDNS 与限速 UDP 广播备用路径）。
   Future<NetworkResult<void>> startDiscovery() async {
+    if (_closing || _closed) {
+      return _closedFailure<void>(NetworkOperation.startDiscovery);
+    }
     if (_isScanning) return const NetworkSuccess<void>(null);
     _isScanning = true;
     final generation = ++_discoveryGeneration;
@@ -455,7 +504,10 @@ class LanDiscoveryService {
 
   /// 返回 [generation] 是否仍是当前主动发现请求。
   bool _isCurrentDiscoveryStart(int generation) =>
-      _isScanning && generation == _discoveryGeneration;
+      !_closing &&
+      !_closed &&
+      _isScanning &&
+      generation == _discoveryGeneration;
 
   /// 串行化发现生命周期操作。
   Future<void> _enqueueDiscoveryLifecycle(Future<void> Function() operation) {
@@ -530,7 +582,7 @@ class LanDiscoveryService {
 
   /// 发布当前已发现设备快照。
   void _notifyDevicesUpdated() {
-    if (!_discoveredDevicesController.isClosed) {
+    if (!_closing && !_closed && !_discoveredDevicesController.isClosed) {
       _discoveredDevicesController.add(currentDiscoveredDevices);
     }
   }
@@ -575,16 +627,22 @@ class LanDiscoveryService {
   /// 启动接收发现广播的 UDP 备用监听器。
   Future<void> _startUdpListener(int listeningHttpPort) async {
     try {
-      _udpSocket = await RawDatagramSocket.bind(
+      final socket = await RawDatagramSocket.bind(
         InternetAddress.anyIPv4,
         udpDiscoveryPort,
         reuseAddress: true,
         reusePort: false,
       );
-      _udpSocket!.broadcastEnabled = true;
-      _udpSocket!.listen((event) {
+      if (_closing || _closed) {
+        socket.close();
+        return;
+      }
+      _udpSocket = socket;
+      socket.broadcastEnabled = true;
+      _udpSocketSubscription = socket.listen((event) {
+        if (!identical(_udpSocket, socket)) return;
         if (event == RawSocketEvent.read) {
-          final datagram = _udpSocket!.receive();
+          final datagram = socket.receive();
           if (datagram == null) return;
           try {
             final messageStr = utf8.decode(datagram.data);
@@ -650,14 +708,22 @@ class LanDiscoveryService {
   }
 
   /// 停止 UDP 发现监听器。
-  void _stopUdpListener() {
-    _udpSocket?.close();
+  Future<void> _stopUdpListener() async {
+    final socket = _udpSocket;
+    final subscription = _udpSocketSubscription;
     _udpSocket = null;
+    _udpSocketSubscription = null;
+    try {
+      await subscription?.cancel();
+    } finally {
+      socket?.close();
+    }
   }
 
   /// 向发现 ping 发送 UDP 响应。
   void _sendUdpPong(InternetAddress targetAddress, int port) {
-    if (_udpSocket == null) return;
+    final socket = _udpSocket;
+    if (socket == null) return;
     try {
       final payload = jsonEncode({
         'type': 'PONG',
@@ -667,13 +733,14 @@ class LanDiscoveryService {
         'os': Platform.operatingSystem,
       });
       final bytes = utf8.encode(payload);
-      _udpSocket!.send(bytes, targetAddress, udpDiscoveryPort);
+      socket.send(bytes, targetAddress, udpDiscoveryPort);
     } catch (_) {}
   }
 
   /// 向已发现对端广播 v1 离线通知。
   Future<void> _sendUdpDisconnect() async {
-    if (_udpSocket == null) return;
+    final socket = _udpSocket;
+    if (socket == null) return;
     try {
       final payload = jsonEncode({
         'type': 'BYE',
@@ -682,17 +749,14 @@ class LanDiscoveryService {
         'os': Platform.operatingSystem,
       });
       final bytes = utf8.encode(payload);
-      _udpSocket!.send(
-        bytes,
-        InternetAddress('255.255.255.255'),
-        udpDiscoveryPort,
-      );
+      socket.send(bytes, InternetAddress('255.255.255.255'), udpDiscoveryPort);
 
       final localIps = await getLocalIpAddresses();
+      if (!identical(_udpSocket, socket)) return;
       for (final ip in localIps) {
         final subnetBroadcast = _calculateSubnetBroadcast(ip);
         if (subnetBroadcast != '255.255.255.255') {
-          _udpSocket!.send(
+          socket.send(
             bytes,
             InternetAddress(subnetBroadcast),
             udpDiscoveryPort,
@@ -717,7 +781,7 @@ class LanDiscoveryService {
 
   /// 根据扫描速率限制安排下一次 UDP 发现 ping。
   void _scheduleNextUdpPing() {
-    if (!_isScanning) return;
+    if (!_isScanning || _closing || _closed) return;
     _udpBroadcastCount++;
 
     // 保持低频扫描，使热点或网络配置完成后加入的对端仍能出现，
@@ -725,7 +789,7 @@ class LanDiscoveryService {
     final int delaySeconds = _udpBroadcastCount < 10 ? 1 : 5;
 
     _udpBroadcastTimer = Timer(Duration(seconds: delaySeconds), () {
-      if (_isScanning) {
+      if (_isScanning && !_closing && !_closed) {
         _sendUdpPing();
         _scheduleNextUdpPing();
       }
@@ -759,7 +823,8 @@ class LanDiscoveryService {
 
   /// 向全局、子网和限速主机目标发送发现 ping。
   Future<void> _sendUdpPing() async {
-    if (_udpSocket == null) return;
+    final socket = _udpSocket;
+    if (socket == null || !_isScanning || _closing || _closed) return;
     try {
       final payload = jsonEncode(
         createUdpPingPayload(
@@ -772,18 +837,20 @@ class LanDiscoveryService {
       final bytes = utf8.encode(payload);
 
       // 1. 发送到全局广播地址。
-      _udpSocket!.send(
-        bytes,
-        InternetAddress('255.255.255.255'),
-        udpDiscoveryPort,
-      );
+      socket.send(bytes, InternetAddress('255.255.255.255'), udpDiscoveryPort);
 
       // 2. 发送到所有本地子网广播地址（热点 AP 模式必须支持）。
       final localIps = await getLocalIpAddresses();
+      if (!identical(_udpSocket, socket) ||
+          !_isScanning ||
+          _closing ||
+          _closed) {
+        return;
+      }
       for (final ip in localIps) {
         final subnetBroadcast = _calculateSubnetBroadcast(ip);
         if (subnetBroadcast != '255.255.255.255') {
-          _udpSocket!.send(
+          socket.send(
             bytes,
             InternetAddress(subnetBroadcast),
             udpDiscoveryPort,
@@ -802,7 +869,7 @@ class LanDiscoveryService {
             for (int i = 1; i <= 254; i++) {
               if (i == selfHost) continue; // 跳过本机。
               try {
-                _udpSocket!.send(
+                socket.send(
                   bytes,
                   InternetAddress('$prefix.$i'),
                   udpDiscoveryPort,
@@ -839,11 +906,13 @@ class LanDiscoveryService {
     required LanStorageService storageService,
     required LanTransferService transferService,
   }) {
-    return _startWebShareServerResult(
-      port: port,
-      securityService: securityService,
-      storageService: storageService,
-      transferService: transferService,
+    return _enqueueWebShareLifecycle(
+      () => _startWebShareServerResult(
+        port: port,
+        securityService: securityService,
+        storageService: storageService,
+        transferService: transferService,
+      ),
     );
   }
 
@@ -854,6 +923,9 @@ class LanDiscoveryService {
     required LanStorageService storageService,
     required LanTransferService transferService,
   }) async {
+    if (_closing || _closed) {
+      return _closedFailure<String>(NetworkOperation.startWebShare);
+    }
     try {
       final url = await _LanWebShareServerOperations(this)._startWebShareServer(
         port: port,
@@ -861,6 +933,10 @@ class LanDiscoveryService {
         storageService: storageService,
         transferService: transferService,
       );
+      if (_closing || _closed) {
+        await _LanWebShareServerOperations(this)._stopWebShareServer();
+        return _closedFailure<String>(NetworkOperation.startWebShare);
+      }
       if (url == null || url.isEmpty) {
         return NetworkFailure(
           const NetworkError(
@@ -884,18 +960,29 @@ class LanDiscoveryService {
 
   /// 停止 WebShare 服务并返回类型化结果。
   Future<NetworkResult<void>> stopWebShareServer() async {
-    try {
-      await _LanWebShareServerOperations(this)._stopWebShareServer();
-      return const NetworkSuccess<void>(null);
-    } catch (error) {
-      return NetworkFailure(
-        NetworkError(
-          code: NetworkErrorCode.ioError,
-          message: 'WebShare stop failed.',
-          operation: NetworkOperation.stopWebShare,
-        ),
-      );
-    }
+    return _enqueueWebShareLifecycle(() async {
+      try {
+        await _LanWebShareServerOperations(this)._stopWebShareServer();
+        return const NetworkSuccess<void>(null);
+      } catch (error) {
+        return NetworkFailure(
+          const NetworkError(
+            code: NetworkErrorCode.ioError,
+            message: 'WebShare stop failed.',
+            operation: NetworkOperation.stopWebShare,
+          ),
+        );
+      }
+    });
+  }
+
+  Future<T> _enqueueWebShareLifecycle<T>(Future<T> Function() operation) {
+    final next = _webShareLifecycle.then((_) => operation());
+    _webShareLifecycle = next.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return next;
   }
 
   /// 新增或替换手动配置的对端。
@@ -913,11 +1000,36 @@ class LanDiscoveryService {
     _notifyDevicesUpdated();
   }
 
-  /// 停止发现、广播、WebShare 以及设备事件流。
+  NetworkFailure<T> _closedFailure<T>(NetworkOperation operation) {
+    return NetworkFailure<T>(
+      NetworkError(
+        code: NetworkErrorCode.ioError,
+        message: 'LAN discovery service is closed.',
+        operation: operation,
+      ),
+    );
+  }
+
+  /// 可等待且幂等地停止发现、广播、WebShare，再关闭事件流。
+  Future<void> close() => _closeFuture ??= _closeResources();
+
+  Future<void> _closeResources() async {
+    _closing = true;
+    _discoveryGeneration++;
+    _advertisingGeneration++;
+    await Future.wait([
+      stopDiscovery(),
+      stopAdvertising(),
+      stopWebShareServer(),
+    ]);
+    if (!_discoveredDevicesController.isClosed) {
+      await _discoveredDevicesController.close();
+    }
+    _closed = true;
+  }
+
+  /// Flutter 同步生命周期入口；正式 owner 应等待 [close]。
   void dispose() {
-    stopDiscovery();
-    stopAdvertising();
-    stopWebShareServer();
-    _discoveredDevicesController.close();
+    unawaited(close());
   }
 }

@@ -33,8 +33,27 @@ explicit and configuration-controlled, not an import or app-start side effect.
 - Post-pair endpoints authenticate the peer and pin its certificate identity.
   Remote `localPath` input is ignored; receive and recall cleanup stay inside
   the LAN sandbox.
-- Pending state, bodies, names, sizes, and preview decoding are bounded. A
-  failed upload releases reservations, deletes partial data, and records failure.
+- Native and WebShare upload metadata is consumed exactly once before the first
+  asynchronous body read. Pending and active leases share one capacity budget;
+  replay or metadata reuse cannot create parallel untracked writes. Bodies,
+  names, sizes, and preview decoding remain bounded. A failed upload releases
+  its exact lease, deletes partial data, and records failure.
+- Desktop export selects a destination directory and copies through bounded
+  streams; it never materializes an accepted multi-gigabyte file in memory.
+- Temporary remote-pair verification is bound to the pairing generation. An
+  unpair/cache reset invalidates an in-flight verification, and the pinned HTTP
+  response has an overall size/time deadline with the client closed in
+  `finally`. TLS-context and static-X25519 first creation are single-flight, and
+  a cached TLS context is bound to exactly one local device identity.
+- LAN client endpoints use structured host/port URI construction, certificate
+  pinning, direct connections, and disabled redirects. Advertising restart
+  releases the previous mDNS/UDP generation; callbacks and delayed sends retain
+  the socket identity they were created with.
+- Final Receiver release awaits Discovery/WebShare first and Transfer second.
+  Each service serializes in-flight starts/stops, closes sockets/servers before
+  event streams, and rejects late publication after shutdown begins. The
+  ViewModel drains keep-alive, history migration, and persistence operations;
+  cleanup continues across individual release failures.
 - Direct is preferred and Relay is fallback; history records the route actually used.
 
 Typed network contracts, native command/event semantics, route migration,

@@ -21,6 +21,12 @@ LAN Quick Share 的独立 Feature Package，负责设备发现、配对、HTTPS/
   绝不停止或释放 App Scope Runtime。
 - 数据库只保存传输历史和不含密钥、Token 的配对元数据；密钥、PIN、Bearer
   Token 和 Relay 凭据继续由安全存储边界管理。
+- Native/WebShare 上传使用一次性租约，pending 与 active 共用并发上限；
+  重放、重复元数据和中途失败都不得留下无 owner 写入。桌面导出通过
+  目录选择和流式复制完成，不整体加载大文件。
+- TLS context 与静态 X25519 密钥首次创建为单飞操作，TLS cache 绑定唯一
+  device ID；所有 LAN 客户端端点用结构化 URI 构造、固定证书并关闭自动重定向。
+  重复广播会先收敛旧 mDNS/UDP owner，旧 socket 回调不得读取新代次数据。
 - Relay 设置页只接收当前会话的 enrollment Token；Token 不进入偏好设置、数据库、
   日志或导出。Relay origin 可持久化，但更换 origin 会先断开旧 socket 并清除旧
   enrollment。原生层只保持一个 Relay socket，直连优先、Relay 兜底；断线按
@@ -54,5 +60,9 @@ App Shell 只保留 `lan_share_feature_adapters.dart` 以及 Network Protocol V2
   Runtime-owned `NetworkCommandGateway`（因此不隐式要求 QUIC）适配为
   `network_sdk.SessionClient`，并将控制面请求执行器组装为
   `network_sdk.BootstrapClient`；Feature 只能释放自己的订阅和 Session 使用状态。
+  最终释放先等待 Discovery/WebShare 停止，再等待 Transfer 关闭全部
+  socket/server 和事件流；ViewModel 在释放前还会收敛 keep-alive、历史迁移和
+  持久化队列，单项 cleanup 失败不跳过后续 owner。同步 `dispose()` 只是
+  Flutter 兼容入口。
 - 测试命令：`dart format --output=none --set-exit-if-changed lib test`、
   `flutter analyze --no-pub`、`flutter test --no-pub`。

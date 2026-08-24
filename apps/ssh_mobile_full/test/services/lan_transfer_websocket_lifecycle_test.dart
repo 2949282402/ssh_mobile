@@ -5,9 +5,13 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:feature_lan_share/feature_lan_share.dart';
+import 'package:network_sdk/network_sdk.dart';
 
 class _ControllableWebSocket extends Fake implements WebSocket {
+  _ControllableWebSocket({this.closeGate});
+
   final StreamController<dynamic> _controller = StreamController<dynamic>();
+  final Completer<void>? closeGate;
   int closeCalls = 0;
 
   @override
@@ -37,10 +41,21 @@ class _ControllableWebSocket extends Fake implements WebSocket {
   @override
   Future<void> close([int? closeCode, String? closeReason]) async {
     closeCalls++;
+    await closeGate?.future;
     if (!_controller.isClosed) {
       await _controller.close();
     }
   }
+}
+
+class _BlockingCredentialSecurityService extends LanSecurityService {
+  _BlockingCredentialSecurityService(this.credentialGate);
+
+  final Completer<String?> credentialGate;
+
+  @override
+  Future<String?> getOutboundAccessToken(String deviceId) =>
+      credentialGate.future;
 }
 
 /// 执行类型化 LAN WebSocket 生命周期测试。
@@ -81,8 +96,66 @@ void main() {
       expect(states.last.connected, isFalse);
     } finally {
       await subscription.cancel();
-      await service.closeConnections();
-      service.dispose();
+      await service.close();
     }
+  });
+
+  test('close waits for sockets before closing event streams', () async {
+    final closeGate = Completer<void>();
+    final service = LanTransferService(
+      currentDeviceId: 'local-device',
+      securityService: LanSecurityService(),
+      storageService: LanStorageService(),
+    );
+    final socket = _ControllableWebSocket(closeGate: closeGate);
+    final streamClosed = Completer<void>();
+    final subscription = service.connectionStateStream.listen(
+      (_) {},
+      onDone: streamClosed.complete,
+    );
+    service.registerActiveWebSocketForTesting('peer-device', socket);
+
+    var closeCompleted = false;
+    final closing = service.close().whenComplete(() => closeCompleted = true);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(socket.closeCalls, 1);
+    expect(closeCompleted, isFalse);
+    expect(streamClosed.isCompleted, isFalse);
+
+    closeGate.complete();
+    await closing;
+    expect(streamClosed.isCompleted, isTrue);
+    expect(service.isWebSocketConnected('peer-device'), isFalse);
+    await subscription.cancel();
+  });
+
+  test('close waits for an in-flight outbound connection attempt', () async {
+    final credentialGate = Completer<String?>();
+    final service = LanTransferService(
+      currentDeviceId: 'local-device',
+      securityService: _BlockingCredentialSecurityService(credentialGate),
+      storageService: LanStorageService(),
+    );
+    final device = LanDevice(
+      id: 'peer-device',
+      alias: 'Peer',
+      ip: '192.0.2.10',
+      port: 53317,
+      deviceType: LanDeviceType.desktop,
+      osName: 'linux',
+      lastSeen: DateTime.now(),
+    );
+
+    final connecting = service.connectWebSocket(device);
+    var closeCompleted = false;
+    final closing = service.close().whenComplete(() => closeCompleted = true);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(closeCompleted, isFalse);
+    credentialGate.complete(null);
+    expect(await connecting, isA<NetworkFailure<void>>());
+    await closing;
+    expect(closeCompleted, isTrue);
   });
 }

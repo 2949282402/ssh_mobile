@@ -42,12 +42,19 @@ class LanTransferService {
 
   HttpServer? _server;
   bool _isListening = false;
+  bool _closing = false;
+  bool _closed = false;
+  Future<void>? _closeFuture;
+  Future<NetworkResult<int>>? _startListeningFuture;
+  Future<NetworkResult<void>>? _stopListeningFuture;
 
   /// LAN HTTPS 监听器当前是否已绑定。
   bool get isListening => _isListening;
 
   final Map<String, WebSocket> _activeWebSockets = {};
-  final Set<String> _connectingDeviceIds = {};
+  final Set<WebSocket> _trackedWebSockets = {};
+  final Map<String, Future<NetworkResult<void>>> _webSocketConnectAttempts = {};
+  final Set<Future<void>> _requestOperations = {};
   final Map<String, _PendingPairingHandshake> _pendingPairingHandshakes = {};
   final _connectionStateController =
       StreamController<LanConnectionStateChanged>.broadcast();
@@ -112,10 +119,37 @@ class LanTransferService {
 
   /// 启动接收 LAN 传输的 HTTPS 服务。
   /// 按 [httpPortCandidates] 顺序尝试，直到一个端口绑定成功。
-  Future<NetworkResult<int>> startListening({
-    int port = defaultHttpPort,
-  }) async {
-    if (_isListening) return NetworkSuccess(_server!.port);
+  Future<NetworkResult<int>> startListening({int port = defaultHttpPort}) {
+    if (_closing || _closed) {
+      return Future.value(
+        NetworkFailure<int>(
+          lanNetworkError(
+            StateError('LAN transfer service is closed.'),
+            operation: NetworkOperation.startLanListener,
+          ),
+        ),
+      );
+    }
+    final activeStop = _stopListeningFuture;
+    if (activeStop != null) {
+      return activeStop.then((_) => startListening(port: port));
+    }
+    if (_isListening) {
+      return Future.value(NetworkSuccess<int>(_server!.port));
+    }
+    final activeStart = _startListeningFuture;
+    if (activeStart != null) return activeStart;
+    late final Future<NetworkResult<int>> start;
+    start = _startListening(port).whenComplete(() {
+      if (identical(_startListeningFuture, start)) {
+        _startListeningFuture = null;
+      }
+    });
+    _startListeningFuture = start;
+    return start;
+  }
+
+  Future<NetworkResult<int>> _startListening(int port) async {
     try {
       return NetworkSuccess(await _bindListeningServer(port: port));
     } catch (error) {
@@ -130,16 +164,24 @@ class LanTransferService {
     final securityContext = await securityService.getOrCreateSecurityContext(
       currentDeviceId,
     );
+    if (_closing || _closed) {
+      throw StateError('LAN transfer service is closed.');
+    }
     final candidates = [port, ...httpPortCandidates.where((p) => p != port)];
 
     for (final candidate in candidates) {
       try {
-        _server = await HttpServer.bindSecure(
+        final server = await HttpServer.bindSecure(
           InternetAddress.anyIPv4,
           candidate,
           securityContext,
           requestClientCertificate: false,
         );
+        if (_closing || _closed) {
+          await server.close(force: true);
+          throw StateError('LAN transfer service is closed.');
+        }
+        _server = server;
         _isListening = true;
         _server!.listen(handleHttpRequest);
         debugPrint(
@@ -147,18 +189,24 @@ class LanTransferService {
         );
         return _server!.port;
       } catch (error) {
+        if (_closing || _closed) rethrow;
         debugPrint(
           '[LanTransferService] HTTPS port $candidate unavailable: $error',
         );
       }
     }
 
-    _server = await HttpServer.bindSecure(
+    final server = await HttpServer.bindSecure(
       InternetAddress.anyIPv4,
       0,
       securityContext,
       requestClientCertificate: false,
     );
+    if (_closing || _closed) {
+      await server.close(force: true);
+      throw StateError('LAN transfer service is closed.');
+    }
+    _server = server;
     _isListening = true;
     _server!.listen(handleHttpRequest);
     debugPrint(
@@ -168,14 +216,32 @@ class LanTransferService {
   }
 
   /// 停止 HTTPS 监听器并返回类型化 v1 结果。
-  Future<NetworkResult<void>> stopListening() async {
+  Future<NetworkResult<void>> stopListening() {
+    final activeStop = _stopListeningFuture;
+    if (activeStop != null) return activeStop;
+    late final Future<NetworkResult<void>> stop;
+    stop = _stopListening().whenComplete(() {
+      if (identical(_stopListeningFuture, stop)) {
+        _stopListeningFuture = null;
+      }
+    });
+    _stopListeningFuture = stop;
+    return stop;
+  }
+
+  Future<NetworkResult<void>> _stopListening() async {
     try {
+      // A stop requested during TLS-context creation or bind owns the result:
+      // wait for that start generation and close whatever it created.
+      final activeStart = _startListeningFuture;
+      if (activeStart != null) await activeStart;
       if (_server != null) {
         await _server!.close(force: true);
         _server = null;
       }
       _isListening = false;
       _pendingPairingHandshakes.clear();
+      _protocolGuard.clearUploadSessions();
       return const NetworkSuccess<void>(null);
     } catch (error) {
       return NetworkFailure(
@@ -187,12 +253,15 @@ class LanTransferService {
   /// 关闭所有活跃的 LAN WebSocket 连接。
   Future<NetworkResult<void>> closeConnections() async {
     try {
-      for (final ws in _activeWebSockets.values.toList()) {
-        try {
-          await ws.close();
-        } catch (_) {}
-      }
+      await Future.wait(
+        _trackedWebSockets.toList().map((socket) async {
+          try {
+            await socket.close();
+          } catch (_) {}
+        }),
+      );
       _activeWebSockets.clear();
+      _trackedWebSockets.clear();
       return const NetworkSuccess<void>(null);
     } catch (error) {
       return NetworkFailure(
@@ -201,10 +270,25 @@ class LanTransferService {
     }
   }
 
-  /// 路由一个传入 LAN HTTP 请求，并写入规范化安全响应。
-  void handleHttpRequest(HttpRequest request) async {
+  /// 路由一个传入 LAN HTTP 请求，并将处理任务纳入关闭屏障。
+  void handleHttpRequest(HttpRequest request) {
+    late final Future<void> operation;
+    operation = _handleHttpRequest(request).whenComplete(() {
+      _requestOperations.remove(operation);
+    });
+    _requestOperations.add(operation);
+  }
+
+  /// 处理一个 LAN HTTP 请求并写入规范化安全响应。
+  Future<void> _handleHttpRequest(HttpRequest request) async {
     final path = request.uri.path;
     try {
+      if (_closing || _closed) {
+        throw const LanHttpException(
+          HttpStatus.serviceUnavailable,
+          'LAN transfer service is shutting down.',
+        );
+      }
       if (request.method == 'POST' && path == '/api/lan/handshake') {
         await _handleSecureHandshakeRequest(request);
       } else if (request.method == 'GET' && path == '/api/lan/ws') {
@@ -246,9 +330,10 @@ class LanTransferService {
         );
         await request.response.close();
       } catch (_) {}
-    } catch (error, stackTrace) {
+    } catch (error) {
       debugPrint(
-        '[LanTransferService] Error handling request $path: $error\n$stackTrace',
+        '[LanTransferService] Error handling request $path: '
+        'errorType=${error.runtimeType}',
       );
       try {
         request.response.statusCode = HttpStatus.internalServerError;
@@ -363,7 +448,16 @@ class LanTransferService {
 
     try {
       final socket = await WebSocketTransformer.upgrade(request);
+      if (_closing || _closed) {
+        await socket.close();
+        throw const LanHttpException(
+          HttpStatus.serviceUnavailable,
+          'LAN transfer service is shutting down.',
+        );
+      }
       _registerActiveWebSocket(deviceId, socket);
+    } on LanHttpException {
+      rethrow;
     } catch (_) {
       throw const LanHttpException(
         HttpStatus.internalServerError,
@@ -373,24 +467,40 @@ class LanTransferService {
   }
 
   /// 连接一个已配对 LAN 对端，只返回命令层状态。
-  Future<NetworkResult<void>> connectWebSocket(LanDevice device) async {
-    if (_activeWebSockets.containsKey(device.id)) {
-      return const NetworkSuccess<void>(null);
-    }
-    if (_connectingDeviceIds.contains(device.id)) {
-      return NetworkFailure(
-        NetworkError(
-          code: NetworkErrorCode.peerOffline,
-          message: 'LAN peer connection is already in progress.',
-          operation: NetworkOperation.connectWebSocket,
-          peerId: device.id,
+  Future<NetworkResult<void>> connectWebSocket(LanDevice device) {
+    if (_closing || _closed) {
+      return Future.value(
+        NetworkFailure(
+          lanNetworkError(
+            StateError('LAN transfer service is closed.'),
+            operation: NetworkOperation.connectWebSocket,
+            peerId: device.id,
+          ),
         ),
       );
     }
+    if (_activeWebSockets.containsKey(device.id)) {
+      return Future.value(const NetworkSuccess<void>(null));
+    }
+    final activeAttempt = _webSocketConnectAttempts[device.id];
+    if (activeAttempt != null) return activeAttempt;
+    late final Future<NetworkResult<void>> attempt;
+    attempt = _connectWebSocket(device).whenComplete(() {
+      if (identical(_webSocketConnectAttempts[device.id], attempt)) {
+        _webSocketConnectAttempts.remove(device.id);
+      }
+    });
+    _webSocketConnectAttempts[device.id] = attempt;
+    return attempt;
+  }
 
-    _connectingDeviceIds.add(device.id);
-    final url = Uri.parse(
-      'wss://${device.ip}:${device.port}/api/lan/ws?deviceId=$currentDeviceId',
+  Future<NetworkResult<void>> _connectWebSocket(LanDevice device) async {
+    final url = Uri(
+      scheme: 'wss',
+      host: device.ip,
+      port: device.port,
+      path: '/api/lan/ws',
+      queryParameters: {'deviceId': currentDeviceId},
     );
 
     try {
@@ -406,14 +516,30 @@ class LanTransferService {
         );
       }
       final client = await _createHttpClient(peerDeviceId: device.id);
-      final socket = await WebSocket.connect(
-        url.toString(),
-        headers: {
-          'x-device-id': currentDeviceId,
-          HttpHeaders.authorizationHeader: 'Bearer $token',
-        },
-        customClient: client,
-      ).timeout(const Duration(seconds: 4));
+      WebSocket? openedSocket;
+      try {
+        openedSocket = await WebSocket.connect(
+          url.toString(),
+          headers: {
+            'x-device-id': currentDeviceId,
+            HttpHeaders.authorizationHeader: 'Bearer $token',
+          },
+          customClient: client,
+        ).timeout(const Duration(seconds: 4));
+      } finally {
+        client.close(force: openedSocket == null);
+      }
+      final socket = openedSocket;
+      if (_closing || _closed) {
+        await socket.close();
+        return NetworkFailure(
+          lanNetworkError(
+            StateError('LAN transfer service is closed.'),
+            operation: NetworkOperation.connectWebSocket,
+            peerId: device.id,
+          ),
+        );
+      }
       _registerActiveWebSocket(device.id, socket);
       return const NetworkSuccess<void>(null);
     } catch (error) {
@@ -424,8 +550,6 @@ class LanTransferService {
           peerId: device.id,
         ),
       );
-    } finally {
-      _connectingDeviceIds.remove(device.id);
     }
   }
 
@@ -435,24 +559,31 @@ class LanTransferService {
   }
 
   /// 注册 socket，并发布类型化的已连接事件。
-  void _registerActiveWebSocket(String deviceId, WebSocket socket) {
+  bool _registerActiveWebSocket(String deviceId, WebSocket socket) {
+    if (_closing || _closed) {
+      unawaited(socket.close());
+      return false;
+    }
     socket.pingInterval = const Duration(seconds: 5);
+    _trackedWebSockets.add(socket);
     final previousSocket = _activeWebSockets[deviceId];
     _activeWebSockets[deviceId] = socket;
     if (previousSocket != null && !identical(previousSocket, socket)) {
-      unawaited(previousSocket.close());
+      unawaited(_closeTrackedWebSocket(previousSocket));
     }
 
-    if (!_connectionStateController.isClosed) {
-      _connectionStateController.add(
-        LanConnectionStateChanged(deviceId: deviceId, connected: true),
-      );
-    }
+    _emit(
+      _connectionStateController,
+      LanConnectionStateChanged(deviceId: deviceId, connected: true),
+    );
 
     socket.listen(
       (data) {},
       onError: (e) {
-        debugPrint('[LanTransferService] WebSocket error for $deviceId: $e');
+        debugPrint(
+          '[LanTransferService] WebSocket failed: '
+          'errorType=${e.runtimeType}',
+        );
         _unregisterActiveWebSocket(deviceId, socket);
       },
       onDone: () {
@@ -461,17 +592,27 @@ class LanTransferService {
       },
       cancelOnError: true,
     );
+    return true;
   }
 
   /// 仅当 socket 仍是该对端的活跃 socket 时移除它。
   void _unregisterActiveWebSocket(String deviceId, WebSocket socket) {
-    if (!identical(_activeWebSockets[deviceId], socket)) return;
-    _activeWebSockets.remove(deviceId);
-    unawaited(socket.close());
-    if (!_connectionStateController.isClosed) {
-      _connectionStateController.add(
+    if (identical(_activeWebSockets[deviceId], socket)) {
+      _activeWebSockets.remove(deviceId);
+      _emit(
+        _connectionStateController,
         LanConnectionStateChanged(deviceId: deviceId, connected: false),
       );
+    }
+    unawaited(_closeTrackedWebSocket(socket));
+  }
+
+  Future<void> _closeTrackedWebSocket(WebSocket socket) async {
+    try {
+      await socket.close();
+    } catch (_) {
+    } finally {
+      _trackedWebSockets.remove(socket);
     }
   }
 
@@ -522,7 +663,7 @@ class LanTransferService {
         osName: os,
         lastSeen: DateTime.now(),
       );
-      _announcedDeviceController.add(device);
+      _emit(_announcedDeviceController, device);
     }
 
     request.response.statusCode = HttpStatus.ok;
@@ -587,7 +728,8 @@ class LanTransferService {
       osName: os,
       lastSeen: DateTime.now(),
     );
-    _pairingInviteController.add(
+    _emit(
+      _pairingInviteController,
       LanPairingRequest(
         device: device,
         sessionId: sessionId,
@@ -734,6 +876,12 @@ class LanTransferService {
         'Insufficient LAN storage.',
       );
     }
+    if (_closing || _closed) {
+      throw const LanHttpException(
+        HttpStatus.serviceUnavailable,
+        'LAN transfer service is shutting down.',
+      );
+    }
 
     if (isFilePayload) {
       _protocolGuard.registerPendingUpload(
@@ -748,7 +896,7 @@ class LanTransferService {
       );
     }
 
-    _incomingMessageController.add(message);
+    _emit(_incomingMessageController, message);
 
     request.response.statusCode = HttpStatus.ok;
     request.response.headers.contentType = ContentType.json;
@@ -771,25 +919,25 @@ class LanTransferService {
       );
     }
     final isEncrypted = request.headers.value('x-e2e-pubkey') == '1';
-    final pending = _protocolGuard.requirePendingUpload(
+    final pending = _protocolGuard.consumePendingUpload(
       messageId: messageId,
       senderDeviceId: senderDeviceId,
       fileName: fileName,
       encrypted: isEncrypted,
     );
-    if (!isEncrypted &&
-        request.contentLength >= 0 &&
-        request.contentLength != pending.expectedBytes) {
-      throw const LanHttpException(
-        HttpStatus.badRequest,
-        'Upload size does not match accepted metadata.',
-      );
-    }
 
     File? targetFile;
     var bytesReceived = 0;
     var completed = false;
     try {
+      if (!isEncrypted &&
+          request.contentLength >= 0 &&
+          request.contentLength != pending.expectedBytes) {
+        throw const LanHttpException(
+          HttpStatus.badRequest,
+          'Upload size does not match accepted metadata.',
+        );
+      }
       final file = await storageService.getSandboxTargetFile(fileName);
       targetFile = file;
       if (isEncrypted) {
@@ -809,7 +957,19 @@ class LanTransferService {
       } else {
         final sink = file.openWrite();
         try {
-          await for (final chunk in request) {
+          await for (final chunk in request.timeout(
+            LanTransferProtocolGuard.requestBodyIdleTimeout,
+            onTimeout: (sink) {
+              sink
+                ..addError(
+                  const LanHttpException(
+                    HttpStatus.requestTimeout,
+                    'Upload body timed out.',
+                  ),
+                )
+                ..close();
+            },
+          )) {
             bytesReceived += chunk.length;
             if (bytesReceived > pending.expectedBytes) {
               throw const LanHttpException(
@@ -832,8 +992,8 @@ class LanTransferService {
       }
       completed = true;
     } catch (_) {
-      _protocolGuard.completePendingUpload(senderDeviceId, messageId);
-      _messageProgressController.add(
+      _emit(
+        _messageProgressController,
         LanMessage(
           id: messageId,
           senderId: senderDeviceId,
@@ -857,11 +1017,11 @@ class LanTransferService {
           await partialFile.delete();
         } catch (_) {}
       }
+      _protocolGuard.completeUpload(pending);
     }
 
-    _protocolGuard.completePendingUpload(senderDeviceId, messageId);
-
-    _messageProgressController.add(
+    _emit(
+      _messageProgressController,
       LanMessage(
         id: messageId,
         senderId: senderDeviceId,
@@ -897,7 +1057,8 @@ class LanTransferService {
         'Invalid recalled message ID.',
       );
     }
-    _recalledMessageIdController.add(
+    _emit(
+      _recalledMessageIdController,
       LanRecallRequest(senderDeviceId: senderDeviceId, messageId: messageId),
     );
 
@@ -935,7 +1096,7 @@ class LanTransferService {
         (providedFingerprint?.isNotEmpty == true ? providedFingerprint : null);
     // 使用空信任库，确保每张证书都会到达回调。
     // 否则链到系统或企业 CA 的证书可能绕过应用层指纹固定。
-    final client = HttpClient(context: SecurityContext())
+    final client = HttpClient(context: SecurityContext(withTrustedRoots: false))
       ..connectionTimeout = const Duration(seconds: 4)
       ..idleTimeout = const Duration(seconds: 15)
       ..findProxy = (_) => 'DIRECT';
@@ -950,27 +1111,56 @@ class LanTransferService {
 
   /// 手动分发 Web Share 服务传入的 LanMessage。
   void handleIncomingMessageFromWeb(LanMessage message) {
-    _incomingMessageController.add(message);
+    _emit(_incomingMessageController, message);
   }
 
   /// 手动分发 Web Share 服务的消息进度更新。
   void handleMessageProgressFromWeb(LanMessage message) {
-    _messageProgressController.add(message);
+    _emit(_messageProgressController, message);
   }
 
-  /// 停止网络资源并关闭所有事件流。
-  void dispose() {
-    unawaited(stopListening());
-    unawaited(closeConnections());
+  /// 只在服务未进入关闭阶段时发布事件。
+  void _emit<T>(StreamController<T> controller, T event) {
+    if (_closing || _closed || controller.isClosed) return;
+    controller.add(event);
+  }
+
+  /// 可等待且幂等地停止网络资源，再关闭所有事件流。
+  Future<void> close() => _closeFuture ??= _closeResources();
+
+  Future<void> _closeResources() async {
+    _closing = true;
+    final activeStart = _startListeningFuture;
+    if (activeStart != null) await activeStart;
+    await stopListening();
+    final requestOperations = _requestOperations.toList();
+    if (requestOperations.isNotEmpty) {
+      await Future.wait(requestOperations);
+    }
+    final connectAttempts = _webSocketConnectAttempts.values.toList();
+    if (connectAttempts.isNotEmpty) {
+      await Future.wait(connectAttempts);
+    }
+    await closeConnections();
     _activeWebSockets.clear();
+    _webSocketConnectAttempts.clear();
+    _requestOperations.clear();
     _pendingPairingHandshakes.clear();
-    _incomingMessageController.close();
-    _messageProgressController.close();
-    _recalledMessageIdController.close();
-    _handshakeSuccessController.close();
-    _handshakePendingController.close();
-    _announcedDeviceController.close();
-    _pairingInviteController.close();
-    _connectionStateController.close();
+    await Future.wait([
+      _incomingMessageController.close(),
+      _messageProgressController.close(),
+      _recalledMessageIdController.close(),
+      _handshakeSuccessController.close(),
+      _handshakePendingController.close(),
+      _announcedDeviceController.close(),
+      _pairingInviteController.close(),
+      _connectionStateController.close(),
+    ]);
+    _closed = true;
+  }
+
+  /// Flutter 同步生命周期入口；正式 owner 应等待 [close]。
+  void dispose() {
+    unawaited(close());
   }
 }

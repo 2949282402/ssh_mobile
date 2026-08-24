@@ -7,6 +7,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 import 'package:basic_utils/basic_utils.dart' hide Mac;
 
 import 'package:cryptography/cryptography.dart';
@@ -31,6 +32,14 @@ Map<String, String> _generateSelfSignedCertIsolate(String commonName) {
   return {'cert': certPem, 'key': keyPem};
 }
 
+/// 可替换的远程配对状态复查边界。
+typedef LanRemotePairVerifier =
+    Future<bool> Function({
+      required Uri endpoint,
+      required String accessToken,
+      required String expectedFingerprint,
+    });
+
 /// 为定向单元测试同步生成证书材料。
 @visibleForTesting
 Map<String, String> generateSelfSignedCertForTest(String commonName) =>
@@ -48,6 +57,7 @@ class LanSecurityService {
       'lan_share_peer_network_identity_keys_v1';
 
   final FlutterSecureStorage _secureStorage;
+  final LanRemotePairVerifier? remotePairVerifier;
   final Map<String, DateTime> _lastCheckTime = {};
   static const Duration _freshOutboundPinProofTtl = Duration(seconds: 60);
   final Map<String, DateTime> _freshOutboundPinProofExpiry = {};
@@ -56,10 +66,15 @@ class LanSecurityService {
   /// null 表示尚未从磁盘加载，首次读取时填充。
   /// key 为 deviceId，value 为时间戳（0 表示永久，>0 表示临时 epoch 毫秒）。
   Map<String, int>? _pairedCache;
+  Future<void>? _pairedCacheLoadFuture;
+  int _pairingStateGeneration = 0;
 
   String? _cachedCertPem;
   String? _cachedKeyPem;
   SecurityContext? _cachedSecurityContext;
+  String? _cachedSecurityContextDeviceId;
+  Future<SecurityContext>? _securityContextFuture;
+  String? _securityContextFutureDeviceId;
 
   String? _activePin;
   DateTime? _pinGeneratedTime;
@@ -69,12 +84,50 @@ class LanSecurityService {
   DateTime? _lockoutUntil;
 
   /// 创建使用平台安全存储的安全服务。
-  LanSecurityService({FlutterSecureStorage? secureStorage})
-    : _secureStorage =
-          secureStorage ??
-          const FlutterSecureStorage(
-            mOptions: MacOsOptions(usesDataProtectionKeychain: false),
-          );
+  LanSecurityService({
+    FlutterSecureStorage? secureStorage,
+    this.remotePairVerifier,
+  }) : _secureStorage =
+           secureStorage ??
+           const FlutterSecureStorage(
+             mOptions: MacOsOptions(usesDataProtectionKeychain: false),
+           );
+
+  /// 清除已配对设备缓存，使下一次读取重新加载安全存储。
+  void invalidatePairedCache() =>
+      LanSecurityPairingOperations(this)._invalidatePairedCache();
+
+  /// 持久化远端设备的临时配对。
+  Future<void> pairDevice(String deviceId) =>
+      LanSecurityPairingOperations(this)._pairDevice(deviceId);
+
+  /// 相互 PIN 校验成功后持久化永久配对。
+  Future<void> confirmDevicePairing(String deviceId) =>
+      LanSecurityPairingOperations(this)._confirmDevicePairing(deviceId);
+
+  /// 移除全部配对设备记录及其安全凭据。
+  Future<void> unpairAllDevices() =>
+      LanSecurityPairingOperations(this)._unpairAllDevices();
+
+  /// 检查远端设备是否已配对，并按需重新验证临时配对。
+  Future<bool> isDevicePaired(
+    String deviceId, {
+    String? ip,
+    int? port,
+    String? localDeviceId,
+  }) => LanSecurityPairingOperations(
+    this,
+  )._isDevicePaired(deviceId, ip: ip, port: port, localDeviceId: localDeviceId);
+
+  /// 移除一个远端设备及绑定到该设备的全部凭据。
+  Future<void> unpairDevice(String deviceId) =>
+      LanSecurityPairingOperations(this)._unpairDevice(deviceId);
+
+  /// 返回本设备用于 LAN v1 配对的证书指纹。
+  Future<String> getLocalCertificateFingerprint(String deviceId) =>
+      LanSecurityPairingOperations(
+        this,
+      )._getLocalCertificateFingerprint(deviceId);
 
   // ── E2E 应用层加密 ─────────────────────────────────────────────────────
 
@@ -374,11 +427,25 @@ class LanSecurityService {
 
   static const String _x25519PrivKeyStorageKey = 'lan_share_x25519_priv';
   SimpleKeyPair? _cachedX25519KeyPair;
+  Future<SimpleKeyPair>? _x25519KeyPairFuture;
 
   /// 加载或创建本设备持久化 X25519 密钥对。
-  Future<SimpleKeyPair> _getOrCreateStaticX25519KeyPair() async {
-    if (_cachedX25519KeyPair != null) return _cachedX25519KeyPair!;
+  Future<SimpleKeyPair> _getOrCreateStaticX25519KeyPair() {
+    final cached = _cachedX25519KeyPair;
+    if (cached != null) return Future<SimpleKeyPair>.value(cached);
+    final active = _x25519KeyPairFuture;
+    if (active != null) return active;
+    late final Future<SimpleKeyPair> load;
+    load = _loadOrCreateStaticX25519KeyPair().whenComplete(() {
+      if (identical(_x25519KeyPairFuture, load)) {
+        _x25519KeyPairFuture = null;
+      }
+    });
+    _x25519KeyPairFuture = load;
+    return load;
+  }
 
+  Future<SimpleKeyPair> _loadOrCreateStaticX25519KeyPair() async {
     final x25519 = X25519();
     final stored = await _secureStorage.read(key: _x25519PrivKeyStorageKey);
     if (stored != null) {
@@ -397,11 +464,38 @@ class LanSecurityService {
   }
 
   /// 生成或加载持久化 ECDSA 自签名 TLS 证书。
-  Future<SecurityContext> getOrCreateSecurityContext(String deviceId) async {
-    if (_cachedSecurityContext != null) {
-      return _cachedSecurityContext!;
+  Future<SecurityContext> getOrCreateSecurityContext(String deviceId) {
+    final cached = _cachedSecurityContext;
+    if (cached != null) {
+      if (_cachedSecurityContextDeviceId != deviceId) {
+        return Future<SecurityContext>.error(
+          StateError('LAN TLS context is bound to a different device ID.'),
+        );
+      }
+      return Future<SecurityContext>.value(cached);
     }
+    final active = _securityContextFuture;
+    if (active != null) {
+      if (_securityContextFutureDeviceId != deviceId) {
+        return Future<SecurityContext>.error(
+          StateError('LAN TLS context creation is bound to another device ID.'),
+        );
+      }
+      return active;
+    }
+    late final Future<SecurityContext> load;
+    _securityContextFutureDeviceId = deviceId;
+    load = _loadOrCreateSecurityContext(deviceId).whenComplete(() {
+      if (identical(_securityContextFuture, load)) {
+        _securityContextFuture = null;
+        _securityContextFutureDeviceId = null;
+      }
+    });
+    _securityContextFuture = load;
+    return load;
+  }
 
+  Future<SecurityContext> _loadOrCreateSecurityContext(String deviceId) async {
     final certKey = '$_certKeyPrefix$deviceId';
     final privateKeyKey = '$_privateKeyPrefix$deviceId';
 
@@ -430,6 +524,7 @@ class LanSecurityService {
     context.usePrivateKeyBytes(keyBytes);
 
     _cachedSecurityContext = context;
+    _cachedSecurityContextDeviceId = deviceId;
     return context;
   }
 
@@ -849,127 +944,5 @@ class LanSecurityService {
         value: jsonEncode(fingerprints),
       );
     }
-  }
-
-  /// 检查远端设备是否已配对，并按需重新验证。
-  Future<bool> isDevicePaired(
-    String deviceId, {
-    String? ip,
-    int? port,
-    String? localDeviceId,
-  }) async {
-    // 1. 缓存尚未加载时只从磁盘读取一次。
-    if (_pairedCache == null) {
-      await _loadPairedCacheFromDisk();
-    }
-
-    final cache = _pairedCache!;
-
-    if (!cache.containsKey(deviceId) ||
-        !await hasOutboundAccessToken(deviceId) ||
-        !await hasPeerCertificateFingerprint(deviceId)) {
-      return false;
-    }
-
-    final timestamp = cache[deviceId]!;
-    // timestamp == 0 表示永久配对（双向确认）。
-    if (timestamp == 0) {
-      return true;
-    }
-
-    // 临时配对：检查一分钟有效期。
-    final now = DateTime.now().millisecondsSinceEpoch;
-    if (now - timestamp > 60000) {
-      cache.remove(deviceId);
-      // 异步持久化移除结果，避免阻塞当前调用。
-      unawaited(
-        _secureStorage.write(
-          key: _pairedDevicesStorageKey,
-          value: jsonEncode(cache),
-        ),
-      );
-      return false;
-    }
-
-    // 启动后台远端验证，将临时配对升级为永久配对。
-    if (ip != null && port != null && localDeviceId != null) {
-      final lastCheck = _lastCheckTime[deviceId];
-      if (lastCheck == null ||
-          DateTime.now().difference(lastCheck).inSeconds > 5) {
-        _lastCheckTime[deviceId] = DateTime.now();
-
-        unawaited(() async {
-          try {
-            final expectedFingerprint = await getPeerCertificateFingerprint(
-              deviceId,
-            );
-            final client = HttpClient(context: SecurityContext())
-              ..findProxy = ((_) => 'DIRECT')
-              ..badCertificateCallback = (cert, host, port) {
-                if (expectedFingerprint == null) return false;
-                return _certificateFingerprintFromDer(cert.der) ==
-                    expectedFingerprint;
-              };
-            final url = Uri.parse(
-              'https://$ip:$port/api/lan/check_pair?deviceId=$localDeviceId',
-            );
-            final request = await client
-                .getUrl(url)
-                .timeout(const Duration(seconds: 2));
-            final token = await getOutboundAccessToken(deviceId);
-            if (token == null || token.isEmpty) {
-              client.close();
-              return;
-            }
-            request.headers.set('x-device-id', localDeviceId);
-            request.headers.set(
-              HttpHeaders.authorizationHeader,
-              'Bearer $token',
-            );
-            final response = await request.close().timeout(
-              const Duration(seconds: 2),
-            );
-            if (response.statusCode == HttpStatus.ok) {
-              final body = await utf8.decoder.bind(response).join();
-              final json = jsonDecode(body) as Map<String, dynamic>;
-              if (json['paired'] == true) {
-                // 在缓存和磁盘中都升级为永久配对。
-                cache[deviceId] = 0;
-                await _secureStorage.write(
-                  key: _pairedDevicesStorageKey,
-                  value: jsonEncode(cache),
-                );
-              }
-            }
-            client.close();
-          } catch (e) {
-            debugPrint('[LanSecurityService] Failed to check remote pair: $e');
-          }
-        }());
-      }
-    }
-
-    return true;
-  }
-
-  /// 移除远端设备及绑定到该设备的全部凭据。
-  Future<void> unpairDevice(String deviceId) async {
-    if (_pairedCache == null) await _loadPairedCacheFromDisk();
-    final cache = _pairedCache!;
-    cache.remove(deviceId);
-    _freshOutboundPinProofExpiry.remove(deviceId);
-    await _secureStorage.write(
-      key: _pairedDevicesStorageKey,
-      value: jsonEncode(cache),
-    );
-    await _removePairAccessTokens(deviceId);
-    await _removePeerX25519PublicKey(deviceId);
-    await _removePeerNetworkIdentityPublicKey(deviceId);
-  }
-
-  /// 计算 TLS 回调使用的同步证书指纹。
-  static String _certificateFingerprintFromDer(Uint8List der) {
-    // 保持回调同步；协议使用与 computeCertFingerprint() 相同的 SHA-256 表示。
-    return crypto.sha256.convert(der).toString();
   }
 }
