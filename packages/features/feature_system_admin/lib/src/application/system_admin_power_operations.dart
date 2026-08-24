@@ -7,7 +7,7 @@ part of 'system_admin_service.dart';
 
 /// 为管理 Service 提供带确认 Token 的重启和关机操作。
 extension SystemAdminPowerOperations on SystemAdminService {
-  void _validatePowerToken(
+  SystemAdminSessionTarget _consumePowerToken(
     SystemPowerConfirmationToken token,
     SystemPowerAction expectedAction,
   ) {
@@ -17,16 +17,38 @@ extension SystemAdminPowerOperations on SystemAdminService {
     if (!token.isFresh) {
       throw StateError('System power confirmation token expired');
     }
+    _requireActiveLease(token.target);
+    if (token.nonce.isEmpty || token.nonce.length > 128) {
+      throw StateError('System power confirmation token is invalid');
+    }
+    final now = DateTime.now();
+    _consumedPowerTokenNonces.removeWhere(
+      (_, expiresAt) => !expiresAt.isAfter(now),
+    );
+    if (_consumedPowerTokenNonces.containsKey(token.nonce)) {
+      throw StateError('System power confirmation token was already used');
+    }
+    if (_consumedPowerTokenNonces.length >=
+        SystemAdminService.powerTokenRegistryCapacity) {
+      throw StateError('System power confirmation registry is full');
+    }
+    _consumedPowerTokenNonces[token.nonce] = token.issuedAt.add(
+      SystemPowerConfirmationToken.validity,
+    );
+    return token.target;
   }
 
   /// 在确认 Token 通过校验后执行服务器重启。
-  Future<void> rebootServer(
-    String connectionId,
-    SystemPowerConfirmationToken token,
-  ) async {
-    _validatePowerToken(token, SystemPowerAction.reboot);
+  Future<void> rebootServer(SystemPowerConfirmationToken token) async {
+    final target = _consumePowerToken(token, SystemPowerAction.reboot);
     try {
-      await _runCommand('reboot');
+      final result = await _runCommand(
+        target,
+        SystemAdminCommand.argv('reboot'),
+      );
+      if (result.exitCode != 0) {
+        throw StateError('System reboot command failed.');
+      }
       _logger.warning('Reboot command sent to server');
     } catch (e, stack) {
       _logger.error('Failed to reboot server', error: e, stackTrace: stack);
@@ -35,13 +57,19 @@ extension SystemAdminPowerOperations on SystemAdminService {
   }
 
   /// 在确认 Token 通过校验后执行服务器关机。
-  Future<void> shutdownServer(
-    String connectionId,
-    SystemPowerConfirmationToken token,
-  ) async {
-    _validatePowerToken(token, SystemPowerAction.shutdown);
+  Future<void> shutdownServer(SystemPowerConfirmationToken token) async {
+    final target = _consumePowerToken(token, SystemPowerAction.shutdown);
     try {
-      await _runCommand('shutdown -h now');
+      final result = await _runCommand(
+        target,
+        SystemAdminCommand.argv(
+          'shutdown',
+          arguments: const <String>['-h', 'now'],
+        ),
+      );
+      if (result.exitCode != 0) {
+        throw StateError('System shutdown command failed.');
+      }
       _logger.warning('Shutdown command sent to server');
     } catch (e, stack) {
       _logger.error('Failed to shutdown server', error: e, stackTrace: stack);

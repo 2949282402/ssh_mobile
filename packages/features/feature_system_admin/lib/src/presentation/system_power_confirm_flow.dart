@@ -2,8 +2,13 @@
 //
 // 流程负责生成一次性确认 Token；实际命令仍由 Service 校验 Token 后执行。
 
+import 'dart:convert';
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:app_ui/app_ui.dart';
+
+import '../domain/system_admin_ports.dart';
 
 import 'widgets/countdown_confirm_dialog.dart';
 import 'widgets/typed_confirm_dialog.dart';
@@ -15,6 +20,7 @@ enum SystemPowerAction { reboot, shutdown }
 Future<SystemPowerConfirmationToken?> confirmSystemPowerAction(
   BuildContext context, {
   required SystemPowerAction action,
+  required SystemAdminSessionTarget target,
   required bool isEnglish,
 }) async {
   final requiredText = switch (action) {
@@ -84,9 +90,12 @@ Future<SystemPowerConfirmationToken?> confirmSystemPowerAction(
 
   if (!countdownConfirmed) return null;
 
-  final nonce = DateTime.now().microsecondsSinceEpoch.toString();
+  final random = Random.secure();
+  final nonceBytes = List<int>.generate(24, (_) => random.nextInt(256));
+  final nonce = base64Url.encode(nonceBytes).replaceAll('=', '');
   return SystemPowerConfirmationToken._(
     action: action,
+    target: target,
     issuedAt: DateTime.now(),
     nonce: nonce,
   );

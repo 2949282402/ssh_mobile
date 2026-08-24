@@ -5,10 +5,8 @@
 // Route Scope 只拥有 SystemAdminModule 创建的管理会话。
 
 import 'dart:async';
-
 import 'package:app_core/app_core.dart';
 import 'package:connection_core/connection_core.dart' as connection_core;
-import 'package:dartssh2/dartssh2.dart';
 import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:feature_system_admin/feature_system_admin.dart' as admin;
 import 'package:flutter/material.dart';
@@ -17,11 +15,14 @@ import 'package:ssh_core/ssh_core.dart' as ssh_core;
 
 import '../core/services/ssh_host_key_policy.dart' as legacy_ssh;
 import '../services/app_log_service.dart';
-import '../services/app_settings.dart';
-import '../services/remote_command_decoder.dart';
 import '../services/sftp_service.dart';
 import '../widgets/ssh_host_key_trust_dialog.dart';
 import 'app_runtime.dart';
+import 'system_admin_settings_adapter.dart';
+import 'system_admin_ssh_adapter.dart';
+
+export 'system_admin_settings_adapter.dart';
+export 'system_admin_ssh_adapter.dart';
 
 /// 将 Connection Core 的连接目录适配为 System Admin Port。
 final class AppSystemAdminConnectionCatalogAdapter extends ChangeNotifier
@@ -46,282 +47,6 @@ final class AppSystemAdminConnectionCatalogAdapter extends ChangeNotifier
   Future<void> reorderConnections(int oldIndex, int newIndex) async {
     await _repository.reorderConnections(oldIndex, newIndex);
     notifyListeners();
-  }
-
-  @override
-  void dispose() {
-    super.dispose();
-  }
-}
-
-/// 将旧 AppSettings/AppStrings 适配为 Feature 的最小设置 Port。
-final class AppSystemAdminSettingsAdapter extends ChangeNotifier
-    implements admin.SystemAdminSettingsPort {
-  /// 创建不拥有 AppSettings 的设置适配器。
-  AppSystemAdminSettingsAdapter(this._settings) {
-    _settings.addListener(notifyListeners);
-  }
-
-  final AppSettings _settings;
-
-  @override
-  admin.SystemAdminLanguage get language => _settings.language == AppLanguage.en
-      ? admin.SystemAdminLanguage.en
-      : admin.SystemAdminLanguage.zh;
-
-  @override
-  bool get isEnglish => language == admin.SystemAdminLanguage.en;
-
-  @override
-  admin.SystemAdminStrings get strings =>
-      AppSystemAdminStrings(AppStrings(_settings.language));
-
-  @override
-  void dispose() {
-    _settings.removeListener(notifyListeners);
-    super.dispose();
-  }
-}
-
-/// Feature 文案到全局 AppStrings 的只读映射。
-final class AppSystemAdminStrings implements admin.SystemAdminStrings {
-  /// 创建一份语言快照；不持有设置或其它资源。
-  const AppSystemAdminStrings(this._strings);
-
-  final AppStrings _strings;
-
-  @override
-  admin.SystemAdminLanguage get language => _strings.language == AppLanguage.en
-      ? admin.SystemAdminLanguage.en
-      : admin.SystemAdminLanguage.zh;
-
-  @override
-  String get activeProcesses => _strings.activeProcesses;
-  @override
-  String get activeSessions => _strings.activeSessions;
-  @override
-  String get actionConfirm => _strings.actionConfirm;
-  @override
-  String get addConnection => _strings.addConnection;
-  @override
-  String get adminConnectAsRoot => _strings.adminConnectAsRoot;
-  @override
-  String get adminConnectionFailed => _strings.adminConnectionFailed;
-  @override
-  String get adminLinuxManagementHint => _strings.adminLinuxManagementHint;
-  @override
-  String get adminRootAccess => _strings.adminRootAccess;
-  @override
-  String get adminSelectServer => _strings.adminSelectServer;
-  @override
-  String get administrator => _strings.administrator;
-  @override
-  String get applications => _strings.applications;
-  @override
-  String get backToHome => _strings.backToHome;
-  @override
-  String get cancel => _strings.cancel;
-  @override
-  String get changePassword => _strings.changePassword;
-  @override
-  String get changePasswordTitle => _strings.changePasswordTitle;
-  @override
-  String get close => _strings.close;
-  @override
-  String get collapseServerList => _strings.collapseServerList;
-  @override
-  String get connected => _strings.connected;
-  @override
-  String get connectingEllipsis => _strings.connectingEllipsis;
-  @override
-  String get createUser => _strings.createUser;
-  @override
-  String get enterNewPassword => _strings.enterNewPassword;
-  @override
-  String get expandServerList => _strings.expandServerList;
-  @override
-  String get grantSudo => _strings.grantSudo;
-  @override
-  String get killAction => _strings.killAction;
-  @override
-  String get killSession => _strings.killSession;
-  @override
-  String killSessionConfirm(String username, String tty) =>
-      _strings.killSessionConfirm(username, tty);
-  @override
-  String get listeningPorts => _strings.listeningPorts;
-  @override
-  String get lockUser => _strings.lockUser;
-  @override
-  String get loginShell => _strings.loginShell;
-  @override
-  String get memoryUsed => _strings.memoryUsed;
-  @override
-  String get monitor => _strings.monitor;
-  @override
-  String get noConnections => _strings.noConnections;
-  @override
-  String get normalUser => _strings.normalUser;
-  @override
-  String get notConnected => _strings.notConnected;
-  @override
-  String get nonLinuxMsg => _strings.nonLinuxMsg;
-  @override
-  String get omServers => _strings.omServers;
-  @override
-  String get passwordChangedSuccess => _strings.passwordChangedSuccess;
-  @override
-  String get refresh => _strings.refresh;
-  @override
-  String get reorderServer => _strings.reorderServer;
-  @override
-  String get reconnectAsRootMsg => _strings.reconnectAsRootMsg;
-  @override
-  String get rebootServer => _strings.rebootServer;
-  @override
-  String get revokeSudo => _strings.revokeSudo;
-  @override
-  String get rootRequiredMsg => _strings.rootRequiredMsg;
-  @override
-  String get save => _strings.save;
-  @override
-  String get searchService => _strings.searchService;
-  @override
-  String get selectServerToManage => _strings.selectServerToManage;
-  @override
-  String get serviceDisable => _strings.serviceDisable;
-  @override
-  String get serviceEnable => _strings.serviceEnable;
-  @override
-  String get serviceRestart => _strings.serviceRestart;
-  @override
-  String get serviceStart => _strings.serviceStart;
-  @override
-  String get serviceStop => _strings.serviceStop;
-  @override
-  String get shutdownServer => _strings.shutdownServer;
-  @override
-  String get statusLocked => _strings.statusLocked;
-  @override
-  String get storageUsed => _strings.storageUsed;
-  @override
-  String get sudoStatus => _strings.sudoStatus;
-  @override
-  String get systemOmAdmin => _strings.systemOmAdmin;
-  @override
-  String get systemPower => _strings.systemPower;
-  @override
-  String get systemPowerHint => _strings.systemPowerHint;
-  @override
-  String get systemServices => _strings.systemServices;
-  @override
-  String get unlockUser => _strings.unlockUser;
-  @override
-  String get usageStats => _strings.usageStats;
-  @override
-  String get userAccounts => _strings.userAccounts;
-  @override
-  String get userCreatedSuccess => _strings.userCreatedSuccess;
-  @override
-  String get username => _strings.username;
-  @override
-  String get verifyingPrivilege => _strings.verifyingPrivilege;
-  @override
-  String get viewHomeDir => _strings.viewHomeDir;
-}
-
-/// 将旧系统管理 SSH Client 转换为不暴露 dartssh2 的 Feature Port。
-final class AppSystemAdminSshAdapter implements admin.SystemAdminSshPort {
-  /// 创建不拥有 Connection、Credential、Host Key Repository 或 SSH Client
-  /// 的连接适配器。
-  AppSystemAdminSshAdapter({
-    required connection_core.ConnectionRepository connectionRepository,
-    required connection_core.CredentialRepository credentialRepository,
-    required connection_core.HostKeyRepository hostKeyRepository,
-    required AppLogService logger,
-    ssh_core.SshNativeStreamConnector? nativeStreamConnector,
-  }) : _connectionRepository = connectionRepository,
-       _clientFactory = ssh_core.SshClientFactory(
-         credentialRepository: credentialRepository,
-         hostKeyRepository: hostKeyRepository,
-         logger: logger,
-         nativeStreamConnector: nativeStreamConnector,
-       );
-
-  final connection_core.ConnectionRepository _connectionRepository;
-  final ssh_core.SshClientFactory _clientFactory;
-
-  @override
-  Future<admin.SystemAdminSshSessionPort> connect(
-    String connectionId, {
-    ssh_core.SshHostKeyConfirmation? onUnknownHostKey,
-  }) async {
-    final config = _connectionRepository.getConnection(connectionId);
-    if (config == null) throw StateError('Connection config not found');
-    final client = await _clientFactory.connectClient(
-      config,
-      onUnknownHostKey: onUnknownHostKey,
-    );
-    return _AppSystemAdminSshSession(client);
-  }
-}
-
-final class _AppSystemAdminSshSession
-    implements admin.SystemAdminSshSessionPort {
-  _AppSystemAdminSshSession(this._client);
-
-  final SSHClient _client;
-  final List<SSHSession> _activeSessions = [];
-  bool _closed = false;
-
-  @override
-  Future<ssh_core.RemoteCommandResult> run(
-    String command, {
-    required Duration timeout,
-  }) async {
-    if (_closed) throw StateError('System Admin SSH session is closed');
-    final session = await _client.execute(command);
-    _activeSessions.add(session);
-    try {
-      final stdoutBytes = <int>[];
-      final stderrBytes = <int>[];
-      await Future.wait([
-        session.stdout.forEach(stdoutBytes.addAll),
-        session.stderr.forEach(stderrBytes.addAll),
-      ]).timeout(timeout);
-      final decoded = await decodeRemoteCommandBytes(
-        stdout: stdoutBytes,
-        stderr: stderrBytes,
-      );
-      return ssh_core.RemoteCommandResult(
-        exitCode: session.exitCode ?? 0,
-        stdout: decoded.stdout,
-        stderr: decoded.stderr,
-      );
-    } finally {
-      _activeSessions.remove(session);
-      session.close();
-    }
-  }
-
-  @override
-  void cancelActiveCommands() {
-    for (final session in List<SSHSession>.from(_activeSessions)) {
-      try {
-        session.close();
-      } catch (_) {
-        // 取消阶段必须继续处理其它命令；底层 close 的异常不能阻断释放。
-      }
-    }
-    _activeSessions.clear();
-  }
-
-  @override
-  void close() {
-    if (_closed) return;
-    _closed = true;
-    cancelActiveCommands();
-    _client.close();
   }
 }
 
@@ -615,6 +340,7 @@ final class _AppSystemAdminModuleScopeState
   AppSystemAdminMonitoringAdapter? _monitoring;
   AppSystemAdminFileBrowserAdapter? _fileBrowser;
   Future<void>? _readyFuture;
+  Future<void>? _disposeFuture;
 
   @override
   void didChangeDependencies() {
@@ -640,7 +366,7 @@ final class _AppSystemAdminModuleScopeState
     await module.register(
       ModuleContext.fromMap({
         admin.SystemAdminSshPort: AppSystemAdminSshAdapter(
-          connectionRepository: runtime.connectionRepository,
+          runtime.connectionRepository,
           credentialRepository: runtime.credentialRepository,
           hostKeyRepository: runtime.hostKeyRepository,
           logger: runtime.appLogService,
@@ -657,12 +383,61 @@ final class _AppSystemAdminModuleScopeState
   @override
   void dispose() {
     final module = _module;
-    if (module != null) unawaited(module.dispose());
-    _catalog?.dispose();
-    _settings?.dispose();
-    _monitoring?.dispose();
+    final catalog = _catalog;
+    final settings = _settings;
+    final monitoringPort = _monitoring;
     _module = null;
+    _catalog = null;
+    _settings = null;
+    _monitoring = null;
+    _fileBrowser = null;
+    _readyFuture = null;
+    _disposeFuture = _disposeOwnedResources(
+      module: module,
+      catalog: catalog,
+      settings: settings,
+      monitoring: monitoringPort,
+    );
+    unawaited(
+      _disposeFuture!.catchError((Object error, StackTrace stackTrace) {
+        FlutterError.reportError(
+          FlutterErrorDetails(
+            exception: error,
+            stack: stackTrace,
+            library: 'ssh_mobile system admin route scope',
+            context: ErrorDescription('while disposing route resources'),
+          ),
+        );
+      }),
+    );
     super.dispose();
+  }
+
+  static Future<void> _disposeOwnedResources({
+    required admin.SystemAdminModule? module,
+    required AppSystemAdminConnectionCatalogAdapter? catalog,
+    required AppSystemAdminSettingsAdapter? settings,
+    required AppSystemAdminMonitoringAdapter? monitoring,
+  }) async {
+    Object? firstError;
+    StackTrace? firstStackTrace;
+
+    Future<void> attempt(FutureOr<void> Function() action) async {
+      try {
+        await action();
+      } catch (error, stackTrace) {
+        firstError ??= error;
+        firstStackTrace ??= stackTrace;
+      }
+    }
+
+    if (module != null) await attempt(module.dispose);
+    if (catalog != null) await attempt(catalog.dispose);
+    if (settings != null) await attempt(settings.dispose);
+    if (monitoring != null) await attempt(monitoring.dispose);
+    if (firstError != null) {
+      Error.throwWithStackTrace(firstError!, firstStackTrace!);
+    }
   }
 
   @override

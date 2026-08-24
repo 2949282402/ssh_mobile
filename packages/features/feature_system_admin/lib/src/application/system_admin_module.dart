@@ -31,6 +31,7 @@ final class SystemAdminModule implements AppModule {
   SystemAdminService? _service;
   Future<void>? _initializeFuture;
   Future<void>? _disposeFuture;
+  int _lifecycleGeneration = 0;
 
   @override
   String get id => 'feature_system_admin';
@@ -78,7 +79,11 @@ final class SystemAdminModule implements AppModule {
   @override
   Future<void> activate() async {
     if (_state == ModuleState.active) return;
+    final generation = _lifecycleGeneration;
     await initialize();
+    if (_state == ModuleState.disposed || generation != _lifecycleGeneration) {
+      return;
+    }
     _state = ModuleState.active;
   }
 
@@ -98,11 +103,17 @@ final class SystemAdminModule implements AppModule {
   }
 
   Future<void> _disposeResources() async {
-    await deactivate();
-    _service?.dispose();
+    ++_lifecycleGeneration;
+    final wasActive = _state == ModuleState.active;
+    _state = ModuleState.disposed;
+    final service = _service;
+    if (service != null) {
+      if (wasActive) service.cancelActiveCommands();
+      await service.close();
+      service.dispose();
+    }
     _service = null;
     _sshPort = null;
     _logger = null;
-    _state = ModuleState.disposed;
   }
 }

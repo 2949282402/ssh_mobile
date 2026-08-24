@@ -1,3 +1,4 @@
+import 'package:connection_core/connection_core.dart';
 import 'package:feature_system_admin/feature_system_admin.dart' as admin;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_core/ssh_core.dart';
@@ -8,23 +9,33 @@ void main() {
   late admin.SystemAdminService adminService;
   late FakeSystemAdminConnectionCatalog connectionCatalog;
   late FakeSystemAdminSshPort sshPort;
+  late FakeSystemAdminSshLease sshLease;
   late FakeSystemAdminLogger logger;
   String? lastCommand;
   int nextExitCode = 0;
   String nextStdout = '';
   String nextStderr = '';
 
+  String commandLabel(admin.SystemAdminCommand command) {
+    return command.shellScript ??
+        <String>[command.executable!, ...command.arguments].join(' ');
+  }
+
   setUp(() {
-    final session = FakeSystemAdminSshSession();
-    sshPort = FakeSystemAdminSshPort(session);
+    final connection = systemAdminTestConnection('conn_123');
+    sshLease = FakeSystemAdminSshLease(
+      targetBinding: SshTargetBinding.fromConfig(connection),
+    );
+    sshPort = FakeSystemAdminSshPort(sshLease);
     logger = FakeSystemAdminLogger();
-    connectionCatalog = FakeSystemAdminConnectionCatalog();
+    connectionCatalog = FakeSystemAdminConnectionCatalog()
+      ..connections = <ConnectionConfig>[connection];
     adminService = admin.SystemAdminService(sshPort: sshPort, logger: logger);
-    adminService.runCommandOverride = (command) async {
-      lastCommand = command;
+    sshLease.responder = (command) {
+      lastCommand = commandLabel(command);
       return RemoteCommandResult(
         exitCode: nextExitCode,
-        stdout: nextStdout,
+        stdout: command.executable == 'id' ? '0' : nextStdout,
         stderr: nextStderr,
       );
     };
@@ -34,7 +45,8 @@ void main() {
     nextStderr = '';
   });
 
-  tearDown(() {
+  tearDown(() async {
+    await adminService.close();
     adminService.dispose();
   });
 
@@ -90,25 +102,23 @@ void main() {
         expect(viewModel.managementConnectionId, equals('conn_123'));
         expect(viewModel.isConnected, isTrue);
         expect(notified, isTrue);
-        expect(sshPort.connectCount, 1);
+        expect(sshPort.acquireCount, 1);
       },
     );
 
     test('failed connectIfNeeded retains selected connection', () async {
       final viewModel = createViewModel();
       viewModel.selectConnection('conn_123');
-      adminService.connectOverride = (id) async {
+      sshPort.acquireOverride = (target) async {
         throw Exception('SSH connect timeout');
       };
 
-      await expectLater(
-        viewModel.connectIfNeeded('conn_123'),
-        throwsA(isA<Exception>()),
-      );
+      await viewModel.connectIfNeeded('conn_123');
 
       expect(viewModel.selectedConnectionId, equals('conn_123'));
       expect(viewModel.managementConnectionId, isNull);
       expect(viewModel.isConnected, isFalse);
+      expect(viewModel.errorMessage, contains('SSH connect timeout'));
     });
 
     test('management actions require an active selected connection', () async {
@@ -185,9 +195,10 @@ root     pts/0        2026-06-03 08:30 (192.168.1.10)
     test('refreshAllData awaits all forced management fetches', () async {
       final viewModel = await rootConnectedViewModel();
       final commands = <String>[];
-      adminService.runCommandOverride = (command) async {
-        commands.add(command);
-        final stdout = switch (command) {
+      sshLease.responder = (command) {
+        final label = commandLabel(command);
+        commands.add(label);
+        final stdout = switch (label) {
           final value when value.contains('cat /etc/passwd') =>
             'root:x:0:0:root:/root:/bin/bash\n===STATUS===\nroot P\n',
           'who' => 'root pts/0 2026-07-15 10:30 (192.168.1.10)',
@@ -233,13 +244,31 @@ root     pts/0        2026-06-03 08:30 (192.168.1.10)
       expect(viewModel.ports, isEmpty);
     });
 
+    test(
+      'editing the selected endpoint invalidates its active target',
+      () async {
+        final viewModel = await rootConnectedViewModel();
+        connectionCatalog.replaceConnections(<ConnectionConfig>[
+          systemAdminTestConnection('conn_123', host: 'changed.example.test'),
+        ]);
+        await Future<void>.delayed(Duration.zero);
+
+        expect(viewModel.activeManagementTarget, isNull);
+        expect(viewModel.isConnected, isFalse);
+        expect(sshLease.isReleased, isTrue);
+      },
+    );
+
     test('power operations validate action and token freshness', () async {
       final viewModel = await rootConnectedViewModel();
+      final target = viewModel.activeManagementTarget!;
       final rebootToken = admin.SystemPowerConfirmationToken.testing(
         action: admin.SystemPowerAction.reboot,
+        target: target,
       );
       final shutdownToken = admin.SystemPowerConfirmationToken.testing(
         action: admin.SystemPowerAction.shutdown,
+        target: target,
       );
 
       await viewModel.rebootServer(rebootToken);
@@ -251,6 +280,7 @@ root     pts/0        2026-06-03 08:30 (192.168.1.10)
 
       final expired = admin.SystemPowerConfirmationToken.testing(
         action: admin.SystemPowerAction.reboot,
+        target: target,
         issuedAt: DateTime.now().subtract(const Duration(minutes: 3)),
       );
       expect(() => viewModel.rebootServer(expired), throwsStateError);

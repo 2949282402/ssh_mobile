@@ -82,10 +82,13 @@ class _PowerTabState extends State<_PowerTab>
   }
 
   Future<void> _confirmPowerAction(SystemPowerAction action) async {
+    final target = widget.viewModel.activeManagementTarget;
+    if (target == null) return;
     final language = context.read<AppSettings>().language;
     final token = await confirmSystemPowerAction(
       context,
       action: action,
+      target: target,
       isEnglish: language == AppLanguage.en,
     );
 
@@ -101,7 +104,7 @@ class _PowerTabState extends State<_PowerTab>
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Command executed. Disconnecting...')),
       );
-      widget.viewModel.disconnect();
+      await widget.viewModel.disconnectTarget(token.target);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
