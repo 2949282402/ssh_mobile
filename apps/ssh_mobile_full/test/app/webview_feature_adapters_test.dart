@@ -22,95 +22,82 @@ void main() {
     );
   });
 
-  test('pinned transport connects selected IP and preserves Host', () async {
-    // The transport is exercised directly against a loopback fixture here;
-    // production addresses reach it only after SafeNetworkLoader validation.
+  test('pinned transport enforces authority and response boundaries', () async {
+    // Keep the server, its listener, and all clients in one test and async
+    // zone. Splitting them across Flutter test zones can suspend native I/O.
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     var requestCount = 0;
     String? observedHost;
     int? observedPort;
     String? observedPath;
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    addTearDown(() => server.close(force: true));
     server.listen((request) async {
       requestCount += 1;
       observedHost = request.headers.host;
       observedPort = request.headers.port;
       observedPath = request.uri.path;
-      request.response
-        ..statusCode = HttpStatus.ok
-        ..headers.contentType = ContentType.text
-        ..write('pinned response');
-      await request.response.close();
-    });
-
-    final uri = Uri.parse('http://public.example.com:${server.port}/status');
-    final response = await const AppWebViewPinnedTransport().get(
-      uri,
-      address: InternetAddress.loopbackIPv4.address,
-      maxBytes: 1024,
-    );
-
-    expect(response.statusCode, HttpStatus.ok);
-    expect(response.body, 'pinned response');
-    expect(requestCount, 1);
-    expect(observedHost, 'public.example.com');
-    expect(observedPort, server.port);
-    expect(observedPath, '/status');
-  });
-
-  test('pinned transport does not follow redirects in HttpClient', () async {
-    var requestCount = 0;
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    addTearDown(() => server.close(force: true));
-    server.listen((request) async {
-      requestCount += 1;
-      if (request.uri.path == '/redirect') {
-        request.response
-          ..statusCode = HttpStatus.found
-          ..headers.set(HttpHeaders.locationHeader, '/must-not-follow');
-      } else {
-        request.response
-          ..statusCode = HttpStatus.ok
-          ..write('followed');
+      switch (request.uri.path) {
+        case '/status':
+          request.response
+            ..statusCode = HttpStatus.ok
+            ..headers.contentType = ContentType.text
+            ..write('pinned response');
+        case '/redirect':
+          request.response
+            ..statusCode = HttpStatus.found
+            ..headers.set(HttpHeaders.locationHeader, '/must-not-follow');
+        case '/oversized':
+          request.response
+            ..statusCode = HttpStatus.ok
+            ..contentLength = 8
+            ..write('12345678');
+        default:
+          request.response
+            ..statusCode = HttpStatus.ok
+            ..write('followed');
       }
       await request.response.close();
     });
 
-    final response = await const AppWebViewPinnedTransport().get(
-      Uri.parse('http://public.example.com:${server.port}/redirect'),
-      address: InternetAddress.loopbackIPv4.address,
-      maxBytes: 1024,
-    );
-
-    expect(response.statusCode, HttpStatus.found);
-    expect(response.redirectLocation, '/must-not-follow');
-    expect(requestCount, 1);
-  });
-
-  test('pinned transport rejects declared oversized responses', () async {
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    addTearDown(() => server.close(force: true));
-    server.listen((request) async {
-      request.response
-        ..statusCode = HttpStatus.ok
-        ..contentLength = 8
-        ..write('12345678');
-      await request.response.close();
-    });
-
-    await expectLater(
-      const AppWebViewPinnedTransport().get(
-        Uri.parse('http://public.example.com:${server.port}/oversized'),
+    try {
+      // Production addresses first pass SafeNetworkLoader validation.
+      final response = await const AppWebViewPinnedTransport().get(
+        Uri.parse('http://public.example.com:${server.port}/status'),
         address: InternetAddress.loopbackIPv4.address,
-        maxBytes: 4,
-      ),
-      throwsA(
-        isA<ClientWebViewNetworkException>().having(
-          (error) => error.message,
-          'message',
-          contains('oversized'),
+        maxBytes: 1024,
+      );
+      expect(response.statusCode, HttpStatus.ok);
+      expect(response.body, 'pinned response');
+      expect(requestCount, 1);
+      expect(observedHost, 'public.example.com');
+      expect(observedPort, server.port);
+      expect(observedPath, '/status');
+
+      requestCount = 0;
+      final redirect = await const AppWebViewPinnedTransport().get(
+        Uri.parse('http://public.example.com:${server.port}/redirect'),
+        address: InternetAddress.loopbackIPv4.address,
+        maxBytes: 1024,
+      );
+      expect(redirect.statusCode, HttpStatus.found);
+      expect(redirect.redirectLocation, '/must-not-follow');
+      expect(requestCount, 1);
+
+      await expectLater(
+        const AppWebViewPinnedTransport().get(
+          Uri.parse('http://public.example.com:${server.port}/oversized'),
+          address: InternetAddress.loopbackIPv4.address,
+          maxBytes: 4,
         ),
-      ),
-    );
+        throwsA(
+          isA<ClientWebViewNetworkException>().having(
+            (error) => error.message,
+            'message',
+            contains('oversized'),
+          ),
+        ),
+      );
+    } finally {
+      await server.close(force: true);
+    }
   });
 }

@@ -172,7 +172,9 @@ git diff --check
   `3 refs / 0 baseline` 却通过的误导输出。
 - [x] **C-16 Client Domain 门禁**：通过所有受影响 package/app 的聚焦测试、
   format/analyze，架构/依赖/资源 owner/兼容性门禁，Client coverage 不低于
-  80%，新手写生产文件不低于 90%。
+  80%，新手写生产文件不低于 90%；最终 Network V2 聚合覆盖率为 92.6%
+  （766/827）。覆盖率门禁按测试文件隔离 Flutter 进程，再按源码行去重聚合，
+  避免跨文件 runner 生命周期泄漏改变验收结果。
 
 ## SDK
 
@@ -193,13 +195,21 @@ SDK 验收证据：`network_sdk` 81 项测试和 `feature_lan_share` 全量测�
 `network-relay` 46 项测试、all-target clippy 与 workspace rustfmt 通过；严格跨进程
 Client/Relay 验收返回 `CLIENT_BACKEND_STRICT_PASS`；Network v2 strict acceptance 通过。
 SDK coverage 为 Dart aggregate 90.88%（各 package 91.87% / 90.24% / 90.41%），
-Rust public SDK crates 95.73%，均高于 80% 门禁。文件规模复扫仍将
+Rust public SDK crates 95.68%，均高于 80% 门禁。文件规模复扫仍将
 `network_http_clients.dart` 视为两个独立请求客户端及共享纯函数的无状态组合，不以物理
 分文件替代逻辑解耦；冻结矩阵的事件 lane、path projection 与 same-role replacement
 证据已路由到当前真实 Owner。
 
 ## 最终跨域验收
 
-- [ ] 复核所有 TODO、架构边界、文件规模报告和未提交用户改动。
-- [ ] 运行 `scripts/full_test.sh` 与 Front/Backend/Client/SDK 四个覆盖率门禁。
-- [ ] 检查最终 `git diff --check`、状态、提交边界、生成物和文档日期标记。
+- [x] 复核所有 TODO、架构边界、文件规模报告和未提交用户改动；所有 Domain
+  TODO 均已关闭，逻辑解耦报告覆盖全部大文件，用户原有未跟踪
+  `packages/features/feature_webview/coverage/` 保持未修改、未纳入提交。
+- [x] 运行 `scripts/full_test.sh --serial --no-bootstrap`：13 个 WSL 可运行门禁全部
+  通过，总计 730 秒；平台专属 Windows/macOS/iOS 作业按脚本声明跳过。Front / Backend /
+  Client / SDK 覆盖率分别为 96.01% / 90.4% / 92.6% / Dart 90.88% + Rust
+  95.68%，全部通过 80% Domain 门禁。
+- [x] 最终 `git diff --check` 与脚本语法检查通过；提交范围仅包含 Relay proof
+  nonce 测试隔离、Flutter 测试 Owner/I/O 生命周期、Client coverage runner 隔离和本
+  TODO 证据。无生成物进入提交，文档日期为 2026-08-24，用户的未跟踪 coverage
+  目录继续保留在工作树中。

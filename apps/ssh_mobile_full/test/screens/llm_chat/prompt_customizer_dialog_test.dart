@@ -252,13 +252,13 @@ class _PromptHarness {
 
   Future<void> dispose() async {
     viewModel.dispose();
-    ragService.dispose();
     playbookService.dispose();
     performanceMonitor.dispose();
     sftpService.dispose();
     sshService.dispose();
     appSettings.dispose();
     await storage.shutdown();
+    ragService.dispose();
     storage.dispose();
   }
 }

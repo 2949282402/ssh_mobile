@@ -14,7 +14,6 @@ MINIMUM="${CLIENT_COVERAGE_MINIMUM:-80}"
 FLUTTER_TIMEOUT="${CLIENT_FLUTTER_COVERAGE_TIMEOUT:-30m}"
 FLUTTER_BIN="${CLIENT_FLUTTER_BIN:-flutter}"
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ssh-mobile-client-coverage.XXXXXX")"
-COVERAGE_FILE="$RUN_DIR/network-v2-lcov.info"
 FLUTTER_CONFIG_ROOT="$RUN_DIR/flutter-config"
 
 cleanup() {
@@ -64,34 +63,40 @@ test_files=(
 
 echo "Client Network V2 coverage threshold: ${MINIMUM}%"
 echo 'Client coverage scope: apps/ssh_mobile_full/lib/services/network/'
-echo "Coverage artifact: $COVERAGE_FILE"
+echo "Coverage artifacts: $RUN_DIR"
 echo "Flutter runner: $FLUTTER_BIN"
 echo "Tests: ${test_files[*]}"
 
-coverage_status=0
-if env \
-  XDG_CONFIG_HOME="$FLUTTER_CONFIG_ROOT" \
-  HTTP_PROXY= HTTPS_PROXY= http_proxy= https_proxy= \
-  ALL_PROXY= all_proxy= \
-  SSH_MOBILE_WINDOWS_PROXY= \
-  NO_PROXY=localhost,127.0.0.1,::1 \
-  no_proxy=localhost,127.0.0.1,::1 \
-  timeout "$FLUTTER_TIMEOUT" \
-  "$FLUTTER_BIN" test --no-pub --no-test-assets \
-    --coverage --coverage-path "$COVERAGE_FILE" \
-    --reporter expanded "${test_files[@]}"; then
-  :
-else
-  coverage_status=$?
-  if [[ "$coverage_status" == '124' || "$coverage_status" == '137' ]]; then
-    echo 'Flutter coverage timed out before the VM Service/test suite became available; run this gate on Windows or CI with a working Flutter VM Service.' >&2
+coverage_arguments=()
+for test_file in "${test_files[@]}"; do
+  coverage_name="$(basename "${test_file%.dart}")-lcov.info"
+  coverage_file="$RUN_DIR/$coverage_name"
+  echo "Running isolated coverage: $test_file"
+  coverage_status=0
+  if env \
+    XDG_CONFIG_HOME="$FLUTTER_CONFIG_ROOT" \
+    HTTP_PROXY= HTTPS_PROXY= http_proxy= https_proxy= \
+    ALL_PROXY= all_proxy= \
+    SSH_MOBILE_WINDOWS_PROXY= \
+    NO_PROXY=localhost,127.0.0.1,::1 \
+    no_proxy=localhost,127.0.0.1,::1 \
+    timeout "$FLUTTER_TIMEOUT" \
+    "$FLUTTER_BIN" test --no-pub --no-test-assets \
+      --coverage --coverage-path "$coverage_file" \
+      --reporter expanded "$test_file"; then
+    coverage_arguments+=("--file=$coverage_file")
+  else
+    coverage_status=$?
+    if [[ "$coverage_status" == '124' || "$coverage_status" == '137' ]]; then
+      echo "Flutter coverage timed out for $test_file; run this gate on Windows or CI with a working Flutter VM Service." >&2
+    fi
+    echo "Client Network V2 test failed: $test_file" >&2
+    exit 1
   fi
-  echo 'Client Network V2 tests failed; coverage was not accepted.' >&2
-  exit 1
-fi
+done
 
 dart run tool/check_coverage.dart \
   --minimum="$MINIMUM" \
   --details \
-  --file="$COVERAGE_FILE" \
+  "${coverage_arguments[@]}" \
   --include=lib/services/network/

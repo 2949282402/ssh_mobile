@@ -37,8 +37,10 @@ class _LoopbackHttpOverrides extends HttpOverrides {
 
 /// 管理 WebShare 安全测试所需的本地服务和临时目录。
 class _WebShareFixture {
+  _WebShareFixture(this.securityService);
+
   late final Directory sandbox;
-  late final LanSecurityService securityService;
+  final LanSecurityService securityService;
   late final LanStorageService storageService;
   late final LanTransferService transferService;
   late final LanDiscoveryService discoveryService;
@@ -48,13 +50,7 @@ class _WebShareFixture {
 
   /// 启动安全服务、传输服务和固定 HTTPS WebShare 端点。
   Future<void> start() async {
-    final certificate = generateSelfSignedCertForTest('device-local-device');
-    FlutterSecureStorage.setMockInitialValues({
-      'lan_share_cert_local-device': certificate['cert']!,
-      'lan_share_key_local-device': certificate['key']!,
-    });
     sandbox = await Directory.systemTemp.createTemp('lan_web_share_test_');
-    securityService = LanSecurityService();
     storageService = LanStorageService(
       sandboxDirectoryProvider: () async => sandbox,
       freeDiskSpaceMbProvider: () async => 1024,
@@ -170,6 +166,14 @@ class _WebShareFixture {
     await transferService.close();
     if (await sandbox.exists()) await sandbox.delete(recursive: true);
   }
+
+  /// 清除前一用例的文件，同时保留同一 App Scope HTTPS 服务与身份。
+  Future<void> resetSandbox() async {
+    if (!await sandbox.exists()) return;
+    await for (final entity in sandbox.list()) {
+      await entity.delete(recursive: true);
+    }
+  }
 }
 
 /// 执行 WebShare 有界请求体和安全响应测试。
@@ -179,12 +183,25 @@ void main() {
   group('WebShare Safety Tests', () {
     late _WebShareFixture fixture;
 
-    setUp(() async {
-      fixture = _WebShareFixture();
+    setUpAll(() async {
+      final certificate = generateSelfSignedCertForTest('device-local-device');
+      FlutterSecureStorage.setMockInitialValues({
+        'lan_share_cert_local-device': certificate['cert']!,
+        'lan_share_key_local-device': certificate['key']!,
+      });
+      // TLS identity is App Scope in production. Keep the same owner across
+      // the group; flutter_tester can stall when repeatedly creating and
+      // destroying native secure servers in one isolate.
+      final securityService = LanSecurityService();
+      fixture = _WebShareFixture(securityService);
       await fixture.start();
     });
 
-    tearDown(() async {
+    setUp(() async {
+      await fixture.resetSandbox();
+    });
+
+    tearDownAll(() async {
       await fixture.close();
     });
 

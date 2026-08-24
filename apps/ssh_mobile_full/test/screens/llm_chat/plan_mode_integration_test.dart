@@ -672,13 +672,13 @@ class _PlanScreenHarness {
   }
 
   Future<void> dispose() async {
-    ragService.dispose();
     playbookService.dispose();
     performanceMonitorService.dispose();
     sftpService.dispose();
     sshService.dispose();
     appSettings.dispose();
     await storageService.shutdown();
+    ragService.dispose();
     storageService.dispose();
   }
 }
