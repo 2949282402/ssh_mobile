@@ -158,6 +158,8 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+      - name: Install test prerequisites
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
       - name: Install workspace dependencies
         run: dart pub get
       - name: Install native Dart package dependencies

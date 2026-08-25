@@ -29,11 +29,11 @@ void main() {
       final sandboxA = Directory('${tempDir.path}/sandbox_a')..createSync();
       final sandboxB = Directory('${tempDir.path}/sandbox_b')..createSync();
 
-      final sharedSecureStorage = <String, String>{};
-      FlutterSecureStorage.setMockInitialValues(sharedSecureStorage);
+      final secureStorageA = _MemorySecureStorage();
+      final secureStorageB = _MemorySecureStorage();
 
-      final storeA = LanPeerTrustStore();
-      final storeB = LanPeerTrustStore();
+      final storeA = LanPeerTrustStore(secureStorage: secureStorageA);
+      final storeB = LanPeerTrustStore(secureStorage: secureStorageB);
       addTearDown(() async {
         await storeA.dispose();
         await storeB.dispose();
@@ -82,6 +82,15 @@ void main() {
 
       await storeA.save(trustOnA);
       await storeB.save(trustOnB);
+
+      // Verify that device A and device B secure storage backings are completely isolated
+      final recordsA = await storeA.loadAll();
+      expect(recordsA.map((r) => r.deviceId), contains('device-b'));
+      expect(recordsA.map((r) => r.deviceId), isNot(contains('device-a')));
+
+      final recordsB = await storeB.loadAll();
+      expect(recordsB.map((r) => r.deviceId), contains('device-a'));
+      expect(recordsB.map((r) => r.deviceId), isNot(contains('device-b')));
 
       int currentNativePortB = 43123;
       HttpOverrides.global = _CapabilitiesHttpOverrides(
@@ -554,4 +563,83 @@ final class _SimulatedTransferFacade extends Fake implements NetworkFacade {
   Future<void> dispose() async {
     await _events.close();
   }
+}
+
+final class _MemorySecureStorage extends Fake implements FlutterSecureStorage {
+  final Map<String, String> _storage = <String, String>{};
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async => _storage[key];
+
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (value == null) {
+      _storage.remove(key);
+    } else {
+      _storage[key] = value;
+    }
+  }
+
+  @override
+  Future<void> delete({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    _storage.remove(key);
+  }
+
+  @override
+  Future<Map<String, String>> readAll({
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async => Map<String, String>.unmodifiable(_storage);
+
+  @override
+  Future<void> deleteAll({
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    _storage.clear();
+  }
+
+  @override
+  Future<bool> containsKey({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async => _storage.containsKey(key);
 }
