@@ -11,6 +11,7 @@ import 'package:uuid/uuid.dart';
 import 'lan_peer_trust.dart';
 import 'lan_network_models.dart';
 import 'lan_share_models.dart';
+import 'lan_transfer_protocol.dart';
 import 'lan_transfer_service.dart';
 
 /// Owns the complete Network V2 binary-transfer orchestration for LAN Share.
@@ -32,13 +33,16 @@ final class LanNativeTransferCoordinator {
     required Future<NetworkResult<void>> Function(String deviceId)
     invalidateDirectEndpoint,
     Future<NetworkResult<void>> Function(String deviceId)? removeTrust,
+    Future<NetworkResult<void>> Function(String deviceId, bool enabled)?
+    setRelayAuthorization,
     this.offerTimeout = const Duration(seconds: 25),
   }) : _transferService = transferService,
        _networkFacade = networkFacade,
        _trustStore = trustStore,
        _updateDirectEndpoint = updateDirectEndpoint,
        _invalidateDirectEndpoint = invalidateDirectEndpoint,
-       _removeTrust = removeTrust {
+       _removeTrust = removeTrust,
+       _setRelayAuthorization = setRelayAuthorization {
     _networkSubscription = _networkFacade.events.listen(
       _handleNetworkEvent,
       onError: (Object error, StackTrace stackTrace) {
@@ -70,6 +74,10 @@ final class LanNativeTransferCoordinator {
   /// callers that do not use the registry still fail closed.
   final Future<NetworkResult<void>> Function(String deviceId)? _removeTrust;
 
+  /// Sets the persistent and native Relay authorization for a trusted peer.
+  final Future<NetworkResult<void>> Function(String deviceId, bool enabled)?
+  _setRelayAuthorization;
+
   /// Time after which an unanswered incoming offer is rejected.
   final Duration offerTimeout;
 
@@ -77,7 +85,8 @@ final class LanNativeTransferCoordinator {
   final _events = StreamController<SdkEvent>.broadcast();
   final Map<String, IncomingTransferOffer> _pendingOffers = {};
   final Map<String, Timer> _offerTimers = {};
-  final Map<String, bool> _decisions = {};
+  final Map<String, bool> _committedDecisions = {};
+  final Map<String, _IncomingDecisionOperation> _decisionOperations = {};
   StreamSubscription<SdkEvent>? _networkSubscription;
   bool _disposed = false;
 
@@ -264,6 +273,44 @@ final class LanNativeTransferCoordinator {
     }
   }
 
+  /// Sets the persistent and native Relay authorization for a trusted peer.
+  Future<NetworkResult<void>> setRelayAuthorization({
+    required String peerId,
+    required bool enabled,
+  }) async {
+    final setAuth = _setRelayAuthorization;
+    if (setAuth != null) {
+      return setAuth(peerId, enabled);
+    }
+    if (enabled) {
+      try {
+        await _trustStore.setRelayAuthorization(peerId, true);
+        return const NetworkSuccess<void>(null);
+      } catch (error) {
+        return NetworkFailure<void>(
+          lanNetworkError(
+            error,
+            operation: NetworkOperation.upsertPeer,
+            peerId: peerId,
+          ),
+        );
+      }
+    } else {
+      try {
+        await _trustStore.setRelayAuthorization(peerId, false);
+        return const NetworkSuccess<void>(null);
+      } catch (error) {
+        return NetworkFailure<void>(
+          lanNetworkError(
+            error,
+            operation: NetworkOperation.upsertPeer,
+            peerId: peerId,
+          ),
+        );
+      }
+    }
+  }
+
   /// Closes subscriptions and offer timers without disposing the App facade.
   Future<void> dispose() async {
     if (_disposed) return;
@@ -273,6 +320,8 @@ final class LanNativeTransferCoordinator {
     }
     _offerTimers.clear();
     _pendingOffers.clear();
+    _decisionOperations.clear();
+    _committedDecisions.clear();
     await _networkSubscription?.cancel();
     await _incomingOffers.close();
     await _events.close();
@@ -362,6 +411,15 @@ final class LanNativeTransferCoordinator {
           fallbackMessage: 'LAN capability query failed.',
         );
       }
+      final protocolVersion = body['protocolVersion'];
+      if (protocolVersion != LanControlProtocol.version) {
+        throw LanNetworkException(
+          'Unsupported LAN Control protocol version: $protocolVersion (expected ${LanControlProtocol.version})',
+          code: NetworkErrorCode.protocolMismatch,
+          operation: NetworkOperation.fetchCapabilities,
+          peerId: device.deviceId,
+        );
+      }
       if (body['e2eEncryption'] != true || body['quicFileTransfer'] != true) {
         throw const LanNetworkException(
           'Recipient native file transfer is unavailable.',
@@ -415,9 +473,9 @@ final class LanNativeTransferCoordinator {
         peerId: offer.peerId,
       );
     }
-    final previous = _decisions[offer.transferId];
-    if (previous != null) {
-      if (previous == accept) return const NetworkSuccess<void>(null);
+    final committed = _committedDecisions[offer.transferId];
+    if (committed != null) {
+      if (committed == accept) return const NetworkSuccess<void>(null);
       return _failure(
         code: NetworkErrorCode.invalidArgument,
         message: 'Incoming transfer already has a different decision.',
@@ -425,16 +483,65 @@ final class LanNativeTransferCoordinator {
         peerId: offer.peerId,
       );
     }
-    _decisions[offer.transferId] = accept;
-    _pendingOffers.remove(offer.transferId);
-    _offerTimers.remove(offer.transferId)?.cancel();
 
+    final inFlight = _decisionOperations[offer.transferId];
+    if (inFlight != null) {
+      if (inFlight.accept == accept) {
+        return inFlight.future;
+      }
+      return _failure(
+        code: NetworkErrorCode.invalidState,
+        message: 'A conflicting decision is currently in flight.',
+        operation: NetworkOperation.respondToIncoming,
+        peerId: offer.peerId,
+      );
+    }
+
+    final completer = Completer<NetworkResult<void>>();
+    _decisionOperations[offer.transferId] = _IncomingDecisionOperation(
+      accept: accept,
+      future: completer.future,
+    );
+
+    try {
+      final result = await _executeRespond(offer, accept: accept);
+      completer.complete(result);
+      return result;
+    } catch (error) {
+      final failure = NetworkFailure<void>(
+        lanNetworkError(
+          error,
+          operation: NetworkOperation.respondToIncoming,
+          peerId: offer.peerId,
+        ),
+      );
+      completer.complete(failure);
+      return failure;
+    } finally {
+      if (identical(
+        _decisionOperations[offer.transferId]?.future,
+        completer.future,
+      )) {
+        _decisionOperations.remove(offer.transferId);
+      }
+    }
+  }
+
+  Future<NetworkResult<void>> _executeRespond(
+    IncomingTransferOffer offer, {
+    required bool accept,
+  }) async {
     LanPeerTrustRecord? trust;
     try {
       trust = await _trustStore.read(offer.peerId);
     } catch (error) {
-      await _respondNative(offer, accept: false);
-      return NetworkFailure(
+      final nativeRes = await _respondNative(offer, accept: false);
+      if (nativeRes is NetworkSuccess<void>) {
+        _committedDecisions[offer.transferId] = false;
+        _pendingOffers.remove(offer.transferId);
+        _offerTimers.remove(offer.transferId)?.cancel();
+      }
+      return NetworkFailure<void>(
         lanNetworkError(
           error,
           operation: NetworkOperation.respondToIncoming,
@@ -442,8 +549,17 @@ final class LanNativeTransferCoordinator {
         ),
       );
     }
-    if (trust == null || !_isIncomingRouteAuthorized(trust, offer.routeType)) {
-      await _respondNative(offer, accept: false);
+
+    final isAuthorized =
+        trust != null && _isIncomingRouteAuthorized(trust, offer.routeType);
+
+    if (!isAuthorized) {
+      final nativeRes = await _respondNative(offer, accept: false);
+      if (nativeRes is NetworkSuccess<void>) {
+        _committedDecisions[offer.transferId] = false;
+        _pendingOffers.remove(offer.transferId);
+        _offerTimers.remove(offer.transferId)?.cancel();
+      }
       return _failure(
         code: NetworkErrorCode.authenticationFailed,
         message: 'Incoming transfer peer is not trusted.',
@@ -451,7 +567,14 @@ final class LanNativeTransferCoordinator {
         peerId: offer.peerId,
       );
     }
-    return _respondNative(offer, accept: accept);
+
+    final nativeResult = await _respondNative(offer, accept: accept);
+    if (nativeResult is NetworkSuccess<void>) {
+      _committedDecisions[offer.transferId] = accept;
+      _pendingOffers.remove(offer.transferId);
+      _offerTimers.remove(offer.transferId)?.cancel();
+    }
+    return nativeResult;
   }
 
   Future<NetworkResult<void>> _respondNative(
@@ -474,18 +597,32 @@ final class LanNativeTransferCoordinator {
     }
   }
 
+  Future<void> _expireOffer(IncomingTransferOffer offer) async {
+    if (_disposed) return;
+    final inFlight = _decisionOperations[offer.transferId];
+    if (inFlight != null) {
+      try {
+        await inFlight.future;
+      } catch (_) {}
+    }
+    if (!_disposed &&
+        !_committedDecisions.containsKey(offer.transferId) &&
+        _pendingOffers.containsKey(offer.transferId)) {
+      await reject(offer);
+    }
+  }
+
   void _handleNetworkEvent(SdkEvent event) {
     if (_disposed) return;
     if (event case final IncomingTransferOffer offer) {
       if (_pendingOffers.containsKey(offer.transferId) ||
-          _decisions.containsKey(offer.transferId)) {
+          _committedDecisions.containsKey(offer.transferId) ||
+          _decisionOperations.containsKey(offer.transferId)) {
         return;
       }
       _pendingOffers[offer.transferId] = offer;
       _offerTimers[offer.transferId] = Timer(offerTimeout, () {
-        if (!_disposed && _pendingOffers.containsKey(offer.transferId)) {
-          unawaited(reject(offer));
-        }
+        unawaited(_expireOffer(offer));
       });
       if (!_incomingOffers.isClosed) _incomingOffers.add(offer);
     }
@@ -578,4 +715,14 @@ final class _NativeCapability {
   const _NativeCapability(this.nativePort);
 
   final int nativePort;
+}
+
+final class _IncomingDecisionOperation {
+  const _IncomingDecisionOperation({
+    required this.accept,
+    required this.future,
+  });
+
+  final bool accept;
+  final Future<NetworkResult<void>> future;
 }

@@ -122,6 +122,125 @@ void main() {
       expect(fixture.facade.responses, <(String, bool)>[('transfer-a', true)]);
     },
   );
+
+  test(
+    'native accept failure keeps offer pending and allows subsequent retry',
+    () async {
+      final fixture = await _Fixture.create(trusted: true);
+      addTearDown(fixture.dispose);
+      final offer = _offer('transfer-a', 'peer-a');
+      fixture.facade.emit(offer);
+
+      fixture.facade.failRespond = true;
+      final failedAccept = await fixture.coordinator.accept(offer);
+      expect(failedAccept, isA<SdkFailure<void>>());
+      expect(fixture.facade.responses, <(String, bool)>[('transfer-a', true)]);
+
+      // Second accept must invoke native again since previous failed
+      fixture.facade.failRespond = false;
+      final secondAccept = await fixture.coordinator.accept(offer);
+      expect(secondAccept, isA<SdkSuccess<void>>());
+      expect(fixture.facade.responses, <(String, bool)>[
+        ('transfer-a', true),
+        ('transfer-a', true),
+      ]);
+    },
+  );
+
+  test('native reject failure keeps offer pending and allows retry', () async {
+    final fixture = await _Fixture.create(trusted: true);
+    addTearDown(fixture.dispose);
+    final offer = _offer('transfer-a', 'peer-a');
+    fixture.facade.emit(offer);
+
+    fixture.facade.failRespond = true;
+    final failedReject = await fixture.coordinator.reject(offer);
+    expect(failedReject, isA<SdkFailure<void>>());
+
+    fixture.facade.failRespond = false;
+    final secondReject = await fixture.coordinator.reject(offer);
+    expect(secondReject, isA<SdkSuccess<void>>());
+    expect(fixture.facade.responses, <(String, bool)>[
+      ('transfer-a', false),
+      ('transfer-a', false),
+    ]);
+  });
+
+  test(
+    'two concurrent accepts reuse the same in-flight operation and call native once',
+    () async {
+      final fixture = await _Fixture.create(trusted: true);
+      addTearDown(fixture.dispose);
+      final offer = _offer('transfer-a', 'peer-a');
+      fixture.facade.emit(offer);
+
+      final completer = Completer<void>();
+      fixture.facade.respondCompleter = completer;
+
+      final future1 = fixture.coordinator.accept(offer);
+      final future2 = fixture.coordinator.accept(offer);
+
+      completer.complete();
+      final results = await Future.wait([future1, future2]);
+
+      expect(results[0], isA<SdkSuccess<void>>());
+      expect(results[1], isA<SdkSuccess<void>>());
+      expect(fixture.facade.responses, <(String, bool)>[('transfer-a', true)]);
+    },
+  );
+
+  test(
+    'conflicting decision while accept is in flight returns invalidState error',
+    () async {
+      final fixture = await _Fixture.create(trusted: true);
+      addTearDown(fixture.dispose);
+      final offer = _offer('transfer-a', 'peer-a');
+      fixture.facade.emit(offer);
+
+      final completer = Completer<void>();
+      fixture.facade.respondCompleter = completer;
+
+      final acceptFuture = fixture.coordinator.accept(offer);
+      final rejectResult = await fixture.coordinator.reject(offer);
+
+      expect(rejectResult, isA<SdkFailure<void>>());
+      expect(
+        (rejectResult as SdkFailure<void>).error.code,
+        NetworkErrorCode.invalidState,
+      );
+
+      completer.complete();
+      expect(await acceptFuture, isA<SdkSuccess<void>>());
+      expect(fixture.facade.responses, <(String, bool)>[('transfer-a', true)]);
+    },
+  );
+
+  test(
+    'unauthorized relay accept natively rejects and returns authenticationFailed',
+    () async {
+      final fixture = await _Fixture.create(trusted: true);
+      addTearDown(fixture.dispose);
+      // Relay offer for peer with relay=false (default trust)
+      final offer = IncomingTransferOffer(
+        eventId: 'event-transfer-r',
+        timestamp: DateTime.utc(2026),
+        transferId: 'transfer-r',
+        peerId: 'peer-a',
+        fileName: 'payload.bin',
+        fileSize: 1,
+        routeType: NetworkRouteType.relay,
+      );
+      fixture.facade.emit(offer);
+
+      final result = await fixture.coordinator.accept(offer);
+      expect(result, isA<SdkFailure<void>>());
+      expect(
+        (result as SdkFailure<void>).error.code,
+        NetworkErrorCode.authenticationFailed,
+      );
+      expect(fixture.facade.responses, <(String, bool)>[('transfer-r', false)]);
+    },
+  );
 }
 
 final class _Fixture {
@@ -193,6 +312,8 @@ final class _RecordingFacade extends Fake implements NetworkFacade {
   final List<(String, bool)> responses = <(String, bool)>[];
   int connectCalls = 0;
   int transferCalls = 0;
+  bool failRespond = false;
+  Completer<void>? respondCompleter;
 
   @override
   Stream<SdkEvent> get events => _events.stream;
@@ -231,7 +352,19 @@ final class _RecordingFacade extends Fake implements NetworkFacade {
     required String transferId,
     required bool accept,
   }) async {
+    if (respondCompleter != null) {
+      await respondCompleter!.future;
+    }
     responses.add((transferId, accept));
+    if (failRespond) {
+      return NetworkFailure<void>(
+        NetworkError(
+          code: NetworkErrorCode.ioError,
+          message: 'Simulated respondToIncomingTransfer failure.',
+          operation: NetworkOperation.respondToIncoming,
+        ),
+      );
+    }
     return const SdkSuccess<void>(null);
   }
 
