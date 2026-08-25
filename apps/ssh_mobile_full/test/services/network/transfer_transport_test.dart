@@ -156,8 +156,6 @@ void main() {
       );
       final receiveA = Directory('${root.path}/receive-a');
       final receiveB = Directory('${root.path}/receive-b');
-      final source = File('${root.path}/native-payload.txt');
-      await source.writeAsString('native verified payload');
       addTearDown(() => root.delete(recursive: true));
       final identitySeedA = Uint8List.fromList(List.filled(32, 11));
       final identitySeedB = Uint8List.fromList(List.filled(32, 22));
@@ -204,7 +202,6 @@ void main() {
       final boundPortB = runtimeB.boundLocalPort;
       expect(boundPortA, isNotNull);
       expect(boundPortB, isNotNull);
-      final portA = boundPortA!;
       final portB = boundPortB!;
 
       final upsertA = await serviceA.upsertPeer(
@@ -218,7 +215,9 @@ void main() {
       final upsertB = await serviceB.upsertPeer(
         PeerConfig(
           peerId: 'device-a',
-          endpointAddress: '127.0.0.1:$portA',
+          // Receiver restore only needs identity/E2E trust for passive inbound;
+          // it does not need the sender's current endpoint.
+          endpointAddress: '',
           identityPublicKey: publicA,
           e2ePublicKey: Uint8List.fromList(List.filled(32, 41)),
         ),
@@ -236,34 +235,71 @@ void main() {
       _expectNetworkSuccess(connectResult, 'connect runtime A to runtime B');
       await connectedFuture.timeout(const Duration(seconds: 10));
 
-      final offerFuture = _firstOffer(serviceB);
-      final completedFuture = _firstCompleted(serviceB);
-      final sendResult = await serviceA.send(
-        transferId: 'native-transfer-1',
+      final fixtures = <(String, int)>[
+        ('image.jpg', 1),
+        ('archive.zip', 512 * 1024 - 1),
+        ('exact-chunk.bin', 512 * 1024),
+        ('video.mp4', 512 * 1024 + 1),
+        ('large.bin', 2 * 1024 * 1024),
+      ];
+      for (var index = 0; index < fixtures.length; index++) {
+        final (fileName, size) = fixtures[index];
+        final source = File('${root.path}/$fileName');
+        final payload = Uint8List.fromList(
+          List<int>.generate(size, (offset) => (offset + index) % 251),
+        );
+        await source.writeAsBytes(payload, flush: true);
+        final transferId = 'native-transfer-$index';
+        final offerFuture = _firstOffer(serviceB);
+        final completedFuture = _firstCompleted(serviceB);
+        final sendResult = await serviceA.send(
+          transferId: transferId,
+          peerId: 'device-b',
+          filePath: source.path,
+        );
+        _expectNetworkSuccess(sendResult, 'send $fileName');
+        final session = (sendResult as NetworkSuccess<TransferSession>).data;
+        expect(session.transferId, transferId);
+        expect(session.routeType, NetworkRouteType.quicDirect);
+
+        final offer = await offerFuture.timeout(const Duration(seconds: 5));
+        expect(offer.fileName, fileName);
+        expect(offer.fileSize, size);
+        final approve = await serviceB.respondToIncoming(
+          transferId: offer.transferId,
+          accept: true,
+        );
+        _expectNetworkSuccess(approve, 'approve $fileName');
+
+        final completed = await completedFuture.timeout(
+          const Duration(seconds: 15),
+        );
+        expect(await File(completed.localPath).readAsBytes(), payload);
+      }
+
+      final rejectedSource = File('${root.path}/rejected.bin');
+      await rejectedSource.writeAsBytes(<int>[1, 2, 3]);
+      final rejectedOfferFuture = _firstOffer(serviceB);
+      final rejectedFailureFuture = _firstFailed(serviceA);
+      final rejectedSend = await serviceA.send(
+        transferId: 'native-rejected',
         peerId: 'device-b',
-        filePath: source.path,
+        filePath: rejectedSource.path,
       );
-      _expectNetworkSuccess(sendResult, 'send native file');
-      final session = (sendResult as NetworkSuccess<TransferSession>).data;
-      expect(session.transferId, 'native-transfer-1');
-      expect(session.routeType, NetworkRouteType.quicDirect);
-
-      final offer = await offerFuture.timeout(const Duration(seconds: 5));
-      expect(offer.fileName, 'native-payload.txt');
-      final approve = await serviceB.respondToIncoming(
-        transferId: offer.transferId,
-        accept: true,
+      _expectNetworkSuccess(rejectedSend, 'offer rejected file');
+      final rejectedOffer = await rejectedOfferFuture.timeout(
+        const Duration(seconds: 5),
       );
-      _expectNetworkSuccess(approve, 'approve incoming native file');
-
-      final completed = await completedFuture.timeout(
+      final reject = await serviceB.respondToIncoming(
+        transferId: rejectedOffer.transferId,
+        accept: false,
+      );
+      _expectNetworkSuccess(reject, 'reject incoming native file');
+      final rejectedFailure = await rejectedFailureFuture.timeout(
         const Duration(seconds: 10),
       );
-      expect(completed.localPath, isNotEmpty);
-      expect(
-        await File(completed.localPath).readAsString(),
-        'native verified payload',
-      );
+      expect(rejectedFailure.error.code, NetworkErrorCode.cancelled);
+      expect(await File('${receiveB.path}/rejected.bin').exists(), isFalse);
     });
 
     test(
@@ -522,6 +558,11 @@ Future<TransferCompleted> _firstCompleted(NetworkService service) => service
     .events
     .where((event) => event is TransferCompleted)
     .cast<TransferCompleted>()
+    .first;
+
+Future<TransferFailed> _firstFailed(NetworkService service) => service.events
+    .where((event) => event is TransferFailed)
+    .cast<TransferFailed>()
     .first;
 
 void _expectNetworkSuccess<T>(NetworkResult<T> result, String operation) {

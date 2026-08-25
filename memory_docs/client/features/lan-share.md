@@ -53,6 +53,15 @@ explicit and configuration-controlled, not an import or app-start side effect.
   Receiver configuration binds native transport ephemerally and advertises the
   confirmed port through discovery and authenticated capabilities; senders do
   not reuse the HTTPS port as a native endpoint.
+- Every Receiver native-runtime generation restores all valid paired peers with
+  pinned 32-byte Network Identity and X25519 keys before advertising its native
+  endpoint. Missing or malformed legacy keys fail closed until an authenticated
+  capability refresh. Pairing success synchronizes the live registry at the
+  Coordinator boundary, independent of whether the LAN page is open.
+- Incoming native transfer offers use a Coordinator-owned stable broadcast
+  stream whose internal Facade subscription is replaced across deactivate and
+  reactivate. Paired text, clipboard, and file sends have no plaintext toggle:
+  missing E2E capability fails the send.
 - Final Receiver release awaits Discovery/WebShare first and Transfer second.
   Each service serializes in-flight starts/stops, closes sockets/servers before
   event streams, and rejects late publication after shutdown begins. The

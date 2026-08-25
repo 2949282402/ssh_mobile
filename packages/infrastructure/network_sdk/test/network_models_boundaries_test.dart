@@ -271,6 +271,7 @@ void main() {
     expect(facade.events, same(sessions.events));
     expect(await facade.start(config), isA<SdkSuccess<void>>());
     expect(await facade.stop(), isA<SdkSuccess<void>>());
+    expect(await facade.registerPeer(peer), isA<SdkSuccess<void>>());
     expect(
       await facade.connectPeer('peer-a', peer: peer),
       isA<SdkSuccess<void>>(),

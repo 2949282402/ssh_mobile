@@ -108,7 +108,8 @@ if($InternalJob){try{Dispatch $InternalJob;exit 0}catch{[Console]::Error.WriteLi
 if(-not$RunId){$RunId="$(Get-Date -Format yyyyMMdd-HHmmss)-$PID"}
 if(-not$LogDir){$LogDir=Join-Path $(if($env:FULL_TEST_LOG_DIR){$env:FULL_TEST_LOG_DIR}else{$temp}) "ssh-mobile-full-test-$RunId"}
 New-Item -ItemType Directory $LogDir -Force|Out-Null
-$requested=if($Only){@($Only.Split(','))}else{@()}
+$requested=[string[]]@()
+if($Only){$requested=[string[]]@($Only.Split(',')|Where-Object{$_})}
 function Wanted([string]$Name){$requested.Count-eq0-or$Name-in$requested}
 $results=@{};$durations=@{};$selected=[Collections.Generic.List[string]]::new();$start=Get-Date
 function StartJob([string]$Name){

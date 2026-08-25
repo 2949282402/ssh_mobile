@@ -1,4 +1,4 @@
-最新更新时间：2026-08-21
+最新更新时间：2026-08-25
 
 # network_sdk
 
@@ -14,6 +14,8 @@ TCP 或 WebSocket 暴露传输客户端。底层 `BootstrapClient`、`Authentica
 - `NetworkFacade` 是业务唯一门面，隐藏 Candidate/Resolve/PathManager/RelayClient
   状态机；`CommunicationClass` 固定五种业务类别（ReliableStream/ReliableMessage/
   BulkTransfer/UnreliableDatagram/RealtimeMedia），映射到现有 native tag；
+- `NetworkFacade.registerPeer` 只更新 native 对端身份、E2E 密钥和可选 endpoint，
+  不发起连接；`connectPeer` 只表达实际连接意图，也可为兼容调用方先注册再连接；
 - 提供不持有 HTTP 资源的 `JsonBootstrapClient` 与
   `JsonAuthenticatedApiClient`，统一 JSON 编解码、Bearer 注入、刷新重试和错误映射；
 - `SessionClient` 只提交业务意图，作为 `NetworkFacade` 的低层内部实现，

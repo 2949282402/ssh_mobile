@@ -31,7 +31,6 @@ class _LanChatScreenState extends State<LanChatScreen> {
 
   bool _isPaired = false;
   bool _isCheckingPairing = true;
-  bool _isEncrypted = false;
 
   @override
   void initState() {
@@ -95,13 +94,8 @@ class _LanChatScreenState extends State<LanChatScreen> {
                 Navigator.pop(ctx);
                 final file = await FilePicker.pickFile(type: FileType.image);
                 if (file != null && file.path != null) {
-                  final result = await vm.sendFile(
-                    device,
-                    file.path!,
-                    encrypted: _isEncrypted,
-                  );
-                  if (_isEncrypted &&
-                      result is NetworkFailure<TransferSession> &&
+                  final result = await vm.sendFile(device, file.path!);
+                  if (result is NetworkFailure<TransferSession> &&
                       result.error.code ==
                           NetworkErrorCode.authenticationFailed &&
                       context.mounted) {
@@ -118,13 +112,8 @@ class _LanChatScreenState extends State<LanChatScreen> {
                 Navigator.pop(ctx);
                 final file = await FilePicker.pickFile(type: FileType.video);
                 if (file != null && file.path != null) {
-                  final result = await vm.sendFile(
-                    device,
-                    file.path!,
-                    encrypted: _isEncrypted,
-                  );
-                  if (_isEncrypted &&
-                      result is NetworkFailure<TransferSession> &&
+                  final result = await vm.sendFile(device, file.path!);
+                  if (result is NetworkFailure<TransferSession> &&
                       result.error.code ==
                           NetworkErrorCode.authenticationFailed &&
                       context.mounted) {
@@ -141,13 +130,8 @@ class _LanChatScreenState extends State<LanChatScreen> {
                 Navigator.pop(ctx);
                 final file = await FilePicker.pickFile();
                 if (file != null && file.path != null) {
-                  final result = await vm.sendFile(
-                    device,
-                    file.path!,
-                    encrypted: _isEncrypted,
-                  );
-                  if (_isEncrypted &&
-                      result is NetworkFailure<TransferSession> &&
+                  final result = await vm.sendFile(device, file.path!);
+                  if (result is NetworkFailure<TransferSession> &&
                       result.error.code ==
                           NetworkErrorCode.authenticationFailed &&
                       context.mounted) {
@@ -166,13 +150,8 @@ class _LanChatScreenState extends State<LanChatScreen> {
                 if (data != null &&
                     data.text != null &&
                     data.text!.isNotEmpty) {
-                  final result = await vm.sendClipboard(
-                    device,
-                    data.text!,
-                    encrypted: _isEncrypted,
-                  );
-                  if (_isEncrypted &&
-                      result is NetworkFailure<void> &&
+                  final result = await vm.sendClipboard(device, data.text!);
+                  if (result is NetworkFailure<void> &&
                       result.error.code ==
                           NetworkErrorCode.authenticationFailed &&
                       context.mounted) {
@@ -276,14 +255,12 @@ class _LanChatScreenState extends State<LanChatScreen> {
                                 const SizedBox(height: 2),
                                 Row(
                                   children: [
-                                    if (_isEncrypted) ...[
-                                      const Icon(
-                                        Icons.shield_rounded,
-                                        size: 12,
-                                        color: Color(0xFF29B6F6),
-                                      ),
-                                      const SizedBox(width: 3),
-                                    ],
+                                    const Icon(
+                                      Icons.shield_rounded,
+                                      size: 12,
+                                      color: Color(0xFF29B6F6),
+                                    ),
+                                    const SizedBox(width: 3),
                                     Flexible(
                                       child: Text(
                                         deviceSub,
@@ -534,39 +511,6 @@ class _LanChatScreenState extends State<LanChatScreen> {
                                   onlineDevice!,
                                 ),
                               ),
-                              // E2E encryption toggle
-                              Tooltip(
-                                message: _isEncrypted ? '关闭端对端加密' : '开启端对端加密',
-                                child: IconButton(
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(
-                                    minWidth: 36,
-                                    minHeight: 36,
-                                  ),
-                                  icon: Icon(
-                                    _isEncrypted
-                                        ? Icons.shield_rounded
-                                        : Icons.lock_open_rounded,
-                                    size: 20,
-                                    color: _isEncrypted
-                                        ? const Color(0xFF29B6F6)
-                                        : Theme.of(
-                                            context,
-                                          ).colorScheme.onSurfaceVariant,
-                                  ),
-                                  onPressed: () {
-                                    setState(
-                                      () => _isEncrypted = !_isEncrypted,
-                                    );
-                                    if (_isEncrypted && onlineDevice != null) {
-                                      // Pre-fetch capabilities to detect support early
-                                      vm.fetchRecipientE2ECapabilities(
-                                        onlineDevice,
-                                      );
-                                    }
-                                  },
-                                ),
-                              ),
                               Expanded(
                                 child: Container(
                                   decoration: BoxDecoration(
@@ -611,10 +555,8 @@ class _LanChatScreenState extends State<LanChatScreen> {
                                     final result = await vm.sendText(
                                       onlineDevice!,
                                       val,
-                                      encrypted: _isEncrypted,
                                     );
-                                    if (_isEncrypted &&
-                                        result is NetworkFailure<void> &&
+                                    if (result is NetworkFailure<void> &&
                                         result.error.code ==
                                             NetworkErrorCode
                                                 .authenticationFailed &&

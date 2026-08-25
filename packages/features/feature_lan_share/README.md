@@ -30,6 +30,13 @@ LAN Quick Share 的独立 Feature Package，负责设备发现、配对、HTTPS/
 - LAN HTTPS 控制端点与 native QUIC/TCP 文件端点使用独立端口。Receiver 让 native
   绑定系统分配端口，再通过 mDNS/UDP、受认证 capabilities 和新二维码字段发布；
   发送端不得把 `LanDevice.port`（HTTPS）复用为 native 文件传输端口。
+- 每一代 Receiver native runtime 在发布 native 端点前，必须从安全存储恢复所有
+  仍有效且同时具备 32 字节 Network Identity/X25519 公钥的配对对端；缺失或畸形
+  密钥的旧配对保持未注册并等待受认证 capabilities 刷新。配对成功由 Coordinator
+  主动刷新并注册，不依赖 LAN 页面是否已创建。
+- Coordinator 持有稳定的传入文件 offer 广播流，并在 Facade 重建时替换其内部
+  订阅；UI 不绑定某一代 native runtime。已配对的文字、剪贴板和附件始终走安全
+  发送契约，不提供明文或逐消息加密开关。
 - Relay 设置页只接收当前会话的 enrollment Token；Token 不进入偏好设置、数据库、
   日志或导出。Relay origin 可持久化，但更换 origin 会先断开旧 socket 并清除旧
   enrollment。原生层只保持一个 Relay socket，直连优先、Relay 兜底；断线按

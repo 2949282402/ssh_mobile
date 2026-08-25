@@ -40,6 +40,19 @@ typedef LanRemotePairVerifier =
       required String expectedFingerprint,
     });
 
+/// 已持久化且足以恢复 native 入站信任的配对快照。
+final class LanPairedNativePeer {
+  const LanPairedNativePeer({
+    required this.deviceId,
+    required this.identityPublicKey,
+    required this.e2ePublicKey,
+  });
+
+  final String deviceId;
+  final Uint8List identityPublicKey;
+  final Uint8List e2ePublicKey;
+}
+
 /// 为定向单元测试同步生成证书材料。
 @visibleForTesting
 Map<String, String> generateSelfSignedCertForTest(String commonName) =>
@@ -393,6 +406,45 @@ class LanSecurityService {
     if (value == null) return null;
     try {
       final bytes = base64Url.decode(base64Url.normalize(value));
+      return bytes.length == 32 ? Uint8List.fromList(bytes) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 加载当前仍有效且同时具备两类 32 字节公钥的配对设备。
+  ///
+  /// 缺失或损坏的旧凭据会被忽略，等待下次受认证 capabilities 刷新；这里绝不
+  /// 伪造密钥或降低 native 入站认证要求。
+  Future<List<LanPairedNativePeer>> loadPairedNativePeers() async {
+    await LanSecurityPairingOperations(this)._ensurePairedCacheLoaded();
+    final deviceIds = List<String>.from(_pairedCache!.keys)..sort();
+    final e2eKeys = await _readPeerX25519Keys();
+    final identityKeys = await _readPeerNetworkIdentityKeys();
+    final peers = <LanPairedNativePeer>[];
+    for (final deviceId in deviceIds) {
+      if (!await isDevicePaired(deviceId)) continue;
+      final identity = _decodeStoredPeerKey(identityKeys[deviceId]);
+      final e2e = _decodeStoredPeerKey(e2eKeys[deviceId]);
+      if (identity == null || e2e == null) continue;
+      // Secure-storage reads may overlap an unpair. Recheck before exposing a
+      // positive trust snapshot to a newly-created native runtime.
+      if (!await isDevicePaired(deviceId)) continue;
+      peers.add(
+        LanPairedNativePeer(
+          deviceId: deviceId,
+          identityPublicKey: identity,
+          e2ePublicKey: e2e,
+        ),
+      );
+    }
+    return List.unmodifiable(peers);
+  }
+
+  Uint8List? _decodeStoredPeerKey(String? encoded) {
+    if (encoded == null) return null;
+    try {
+      final bytes = base64Url.decode(base64Url.normalize(encoded));
       return bytes.length == 32 ? Uint8List.fromList(bytes) : null;
     } catch (_) {
       return null;

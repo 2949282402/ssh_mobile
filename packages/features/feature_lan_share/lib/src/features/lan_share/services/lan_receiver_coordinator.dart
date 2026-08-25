@@ -92,6 +92,10 @@ final class LanReceiverCoordinator extends ChangeNotifier {
   StreamSubscription<LanPairingRequest>? _pairingInviteSubscription;
   StreamSubscription<LanDevice>? _announcedDeviceSubscription;
   StreamSubscription<LanDevice>? _handshakePendingSubscription;
+  StreamSubscription<LanDevice>? _handshakeSuccessSubscription;
+  StreamSubscription<IncomingTransferOffer>? _nativeOfferSubscription;
+  final StreamController<IncomingTransferOffer> _incomingTransferController =
+      StreamController<IncomingTransferOffer>.broadcast();
 
   bool _initialized = false;
   bool _disposed = false;
@@ -141,14 +145,8 @@ final class LanReceiverCoordinator extends ChangeNotifier {
   NetworkFacade? get networkFacade => _networkFacade;
 
   /// 接收器初始化后发布原生传入传输申请。
-  Stream<IncomingTransferOffer> get nativeIncomingTransferOffers async* {
-    await ensureInitialized();
-    final facade = _networkFacade;
-    if (facade == null || !_receiverActive) return;
-    yield* facade.events
-        .where((event) => event is IncomingTransferOffer)
-        .cast<IncomingTransferOffer>();
-  }
+  Stream<IncomingTransferOffer> get nativeIncomingTransferOffers =>
+      _incomingTransferController.stream;
 
   /// 校验设备配对后接受一个原生传入传输。
   Future<NetworkResult<void>> acceptNativeIncomingTransfer(
@@ -466,6 +464,43 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     _handshakePendingSubscription = transfer.handshakePendingStream.listen(
       _publishIncomingDevice,
     );
+    _handshakeSuccessSubscription = transfer.handshakeSuccessStream.listen(
+      (device) => unawaited(_registerNewlyPairedPeer(device)),
+    );
+  }
+
+  /// 配对完成后立即刷新受认证能力，并同步当前 native runtime 的信任表。
+  Future<void> _registerNewlyPairedPeer(LanDevice device) async {
+    final facade = _networkFacade;
+    if (facade == null || _disposed) return;
+    try {
+      final viewModel = await ensureViewModel();
+      if (_disposed || !identical(_networkFacade, facade)) return;
+      viewModel.registerManualDevice(device);
+      final peerResult = await viewModel.prepareNativePeerRegistration(device);
+      if (peerResult is NetworkFailure<PeerConfig>) {
+        logger.warning(
+          'Native paired peer capability refresh failed',
+          details: peerResult.error.toString(),
+        );
+        return;
+      }
+      if (_disposed || !identical(_networkFacade, facade)) return;
+      final registerResult = await facade.registerPeer(
+        (peerResult as NetworkSuccess<PeerConfig>).data,
+      );
+      if (registerResult is NetworkFailure<void>) {
+        logger.warning(
+          'Native paired peer registration failed',
+          details: registerResult.error.toString(),
+        );
+      }
+    } on Object catch (error, stackTrace) {
+      logger.warning(
+        'Native paired peer synchronization failed',
+        details: '$error\n$stackTrace',
+      );
+    }
   }
 
   /// 启动 HTTPS/mDNS 和按需原生网络能力。
@@ -541,6 +576,9 @@ final class LanReceiverCoordinator extends ChangeNotifier {
         return;
       }
       _networkFacade = facade;
+      await _bindNativeOfferStream(facade);
+      await _restorePairedNativePeers(facade, security);
+      _viewModel?.attachNetworkFacade(facade);
       final nativeAdvertisingResult = await discovery.startAdvertising(
         port: boundPort,
         nativePort: nativePort,
@@ -558,7 +596,53 @@ final class LanReceiverCoordinator extends ChangeNotifier {
         'Native network runtime initialization failed',
         details: '$error\n$stackTrace',
       );
+      await _disposeNetworkFacade();
     }
+  }
+
+  /// 将安全存储中的有效配对快照恢复到当前 native runtime。
+  Future<void> _restorePairedNativePeers(
+    NetworkFacade facade,
+    LanSecurityService security,
+  ) async {
+    final peers = await security.loadPairedNativePeers();
+    for (final peer in peers) {
+      final result = await facade.registerPeer(
+        PeerConfig(
+          peerId: peer.deviceId,
+          endpointAddress: '',
+          identityPublicKey: peer.identityPublicKey,
+          e2ePublicKey: peer.e2ePublicKey,
+        ),
+      );
+      if (result is NetworkFailure<void>) {
+        throw StateError(
+          'Failed to restore paired native peer ${peer.deviceId}: '
+          '${result.error.code.name}',
+        );
+      }
+    }
+  }
+
+  /// 把每一代 Facade 的 offer 事件桥接到 Coordinator 稳定生命周期流。
+  Future<void> _bindNativeOfferStream(NetworkFacade facade) async {
+    await _nativeOfferSubscription?.cancel();
+    _nativeOfferSubscription = facade.events
+        .where((event) => event is IncomingTransferOffer)
+        .cast<IncomingTransferOffer>()
+        .listen(
+          (offer) {
+            if (!_disposed && !_incomingTransferController.isClosed) {
+              _incomingTransferController.add(offer);
+            }
+          },
+          onError: (Object error, StackTrace stackTrace) {
+            logger.warning(
+              'Native incoming transfer stream failed',
+              details: '$error\n$stackTrace',
+            );
+          },
+        );
   }
 
   /// 取消接收器持有的 LAN 事件订阅。
@@ -569,12 +653,17 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     _announcedDeviceSubscription = null;
     await _handshakePendingSubscription?.cancel();
     _handshakePendingSubscription = null;
+    await _handshakeSuccessSubscription?.cancel();
+    _handshakeSuccessSubscription = null;
   }
 
   /// 停止并释放 App Shell 创建的网络 Facade。
   Future<void> _disposeNetworkFacade() async {
     final facade = _networkFacade;
     _networkFacade = null;
+    _viewModel?.attachNetworkFacade(null);
+    await _nativeOfferSubscription?.cancel();
+    _nativeOfferSubscription = null;
     await _relayCoordinator?.detachFacade();
     if (facade == null) return;
     try {
@@ -638,6 +727,9 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     _receiverActive = false;
     if (!_pairingRequestController.isClosed) {
       await attempt(_pairingRequestController.close);
+    }
+    if (!_incomingTransferController.isClosed) {
+      await attempt(_incomingTransferController.close);
     }
     if (!_notifierDisposed) {
       _notifierDisposed = true;

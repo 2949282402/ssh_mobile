@@ -27,6 +27,12 @@ abstract interface class NetworkFacade implements EventStreamClient {
   /// 停止底层 native runtime 数据面。
   Future<SdkResult<void>> stop();
 
+  /// 注册对端传输身份和可选 endpoint，但不发起连接。
+  ///
+  /// Receiver 在每一代 native runtime 启动后用此方法恢复可信对端；入站信任恢复
+  /// 允许 [SdkPeerConfig.endpointAddress] 为空。
+  Future<SdkResult<void>> registerPeer(SdkPeerConfig peer);
+
   /// 连接对端。
   ///
   /// [peer] 可选：提供时内部先注册对端传输身份（endpoint + 身份密钥）再连接，
@@ -120,6 +126,12 @@ final class NetworkFacadeImpl implements NetworkFacade {
   }
 
   @override
+  Future<SdkResult<void>> registerPeer(SdkPeerConfig peer) {
+    _ensureUsable();
+    return _sessions.upsertPeer(peer);
+  }
+
+  @override
   Future<SdkResult<void>> stop() {
     _ensureUsable();
     return _sessions.stop();
@@ -140,7 +152,7 @@ final class NetworkFacadeImpl implements NetworkFacade {
       );
     }
     if (peer != null) {
-      final upsert = await _sessions.upsertPeer(peer);
+      final upsert = await registerPeer(peer);
       if (upsert is SdkFailure<void>) return upsert;
     }
     return _sessions.connect(peerId, communicationClass: communicationClass);

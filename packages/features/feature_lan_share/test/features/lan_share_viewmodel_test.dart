@@ -51,7 +51,7 @@ void main() {
   });
 
   test(
-    'sendFile routes through the NetworkFacade connect + transfer path',
+    'sendFile routes through explicit register + connect + transfer',
     () async {
       final directory = await Directory.systemTemp.createTemp(
         'lan-share-facade-test-',
@@ -113,13 +113,238 @@ void main() {
       expect(results.$1, isA<SdkSuccess<SdkTransferSession>>());
       expect(results.$2, isA<SdkSuccess<SdkTransferSession>>());
       expect(httpOverrides.capabilityRequests, 2);
+      expect(facade.registerPeerCalls, 2);
       expect(facade.connectPeerCalls, 2);
-      expect(facade.lastPeerConfig?.endpointAddress, '192.168.1.5:6544');
+      expect(
+        facade.lastRegisteredPeerConfig?.endpointAddress,
+        '192.168.1.5:6544',
+      );
       expect(facade.transferFileCalls, 2);
       viewModel.dispose();
       await transfer.close();
     },
   );
+
+  test(
+    'text and clipboard fail closed when E2E capability is absent',
+    () async {
+      final security = _MissingKeySecurityService();
+      final transfer = LanTransferService(
+        currentDeviceId: 'sender-1',
+        securityService: security,
+        storageService: FakeLanStorageService(),
+      );
+      final settings = FakeLanShareSettings();
+      final viewModel = LanShareViewModel(
+        discoveryService: FakeLanDiscoveryService(),
+        securityService: security,
+        storageService: FakeLanStorageService(),
+        transferService: transfer,
+        historyDao: _StubHistoryDao(),
+        appSettings: settings,
+        dataProtection: FakeLanShareDataProtection(),
+        logger: FakeLanShareLogger(),
+        ownsRuntime: false,
+      );
+      final device = LanDevice(
+        id: 'peer-1',
+        alias: 'Peer 1',
+        ip: '192.168.1.5',
+        port: 5432,
+        deviceType: LanDeviceType.mobile,
+        osName: 'android',
+        lastSeen: DateTime.now(),
+      );
+
+      final results = await HttpOverrides.runWithHttpOverrides(
+        () async => (
+          await viewModel.sendText(device, 'hello'),
+          await viewModel.sendClipboard(device, 'clipboard'),
+        ),
+        _StaticJsonHttpOverrides(<String, dynamic>{'e2eEncryption': false}),
+      );
+      expect(results.$1, isA<NetworkFailure<void>>());
+      expect(
+        (results.$1 as NetworkFailure<void>).error.code,
+        NetworkErrorCode.authenticationFailed,
+      );
+      expect(results.$2, isA<NetworkFailure<void>>());
+
+      viewModel.dispose();
+      settings.dispose();
+      await transfer.close();
+    },
+  );
+
+  test('invalid native capability ports never register or connect', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'lan-share-invalid-capability-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}/payload.bin');
+    await file.writeAsBytes(<int>[1]);
+    final facade = FakeLanShareNetworkService();
+    final security = _PinnedKeySecurityService();
+    final transfer = LanTransferService(
+      currentDeviceId: 'sender-1',
+      securityService: security,
+      storageService: FakeLanStorageService(),
+    );
+    final settings = FakeLanShareSettings();
+    final viewModel = LanShareViewModel(
+      discoveryService: FakeLanDiscoveryService(),
+      securityService: security,
+      storageService: FakeLanStorageService(),
+      transferService: transfer,
+      networkFacade: facade,
+      historyDao: _StubHistoryDao(),
+      appSettings: settings,
+      dataProtection: FakeLanShareDataProtection(),
+      logger: FakeLanShareLogger(),
+      ownsRuntime: false,
+    );
+    final encodedKey = base64.encode(_PinnedKeySecurityService._key);
+    final bodies = <Map<String, dynamic>>[
+      {
+        'e2eEncryption': true,
+        'x25519PubKey': encodedKey,
+        'networkIdentityPubKey': encodedKey,
+        'quicFileTransfer': false,
+        'quicPort': 43123,
+      },
+      for (final port in <int?>[0, 65536, null])
+        {
+          'e2eEncryption': true,
+          'x25519PubKey': encodedKey,
+          'networkIdentityPubKey': encodedKey,
+          'quicFileTransfer': true,
+          'quicPort': port,
+        },
+    ];
+
+    final results = await HttpOverrides.runWithHttpOverrides(() async {
+      final values = <NetworkResult<TransferSession>>[];
+      for (var index = 0; index < bodies.length; index++) {
+        values.add(
+          await viewModel.sendFile(
+            LanDevice(
+              id: 'peer-$index',
+              alias: 'Peer $index',
+              ip: '192.168.1.${index + 2}',
+              port: 5432,
+              deviceType: LanDeviceType.mobile,
+              osName: 'android',
+              lastSeen: DateTime.now(),
+            ),
+            file.path,
+          ),
+        );
+      }
+      return values;
+    }, _CapabilityBodiesHttpOverrides(bodies));
+
+    expect(results, everyElement(isA<NetworkFailure<TransferSession>>()));
+    expect(
+      results.map((result) => (result as NetworkFailure).error.code),
+      everyElement(NetworkErrorCode.noRoute),
+    );
+    expect(facade.registerPeerCalls, 0);
+    expect(facade.connectPeerCalls, 0);
+
+    viewModel.dispose();
+    settings.dispose();
+    await transfer.close();
+  });
+
+  test(
+    'changed paired identity fails closed without native registration',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'lan-share-identity-conflict-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final file = File('${directory.path}/payload.bin');
+      await file.writeAsBytes(<int>[1]);
+      final facade = FakeLanShareNetworkService();
+      final security = _PinnedKeySecurityService();
+      final transfer = LanTransferService(
+        currentDeviceId: 'sender-1',
+        securityService: security,
+        storageService: FakeLanStorageService(),
+      );
+      final settings = FakeLanShareSettings();
+      final viewModel = LanShareViewModel(
+        discoveryService: FakeLanDiscoveryService(),
+        securityService: security,
+        storageService: FakeLanStorageService(),
+        transferService: transfer,
+        networkFacade: facade,
+        historyDao: _StubHistoryDao(),
+        appSettings: settings,
+        dataProtection: FakeLanShareDataProtection(),
+        logger: FakeLanShareLogger(),
+        ownsRuntime: false,
+      );
+      final changedKey = base64.encode(List<int>.filled(32, 9));
+      final result = await HttpOverrides.runWithHttpOverrides(
+        () => viewModel.sendFile(
+          LanDevice(
+            id: 'peer-1',
+            alias: 'Peer 1',
+            ip: '192.168.1.2',
+            port: 5432,
+            deviceType: LanDeviceType.mobile,
+            osName: 'android',
+            lastSeen: DateTime.now(),
+          ),
+          file.path,
+        ),
+        _StaticJsonHttpOverrides(<String, dynamic>{
+          'e2eEncryption': true,
+          'x25519PubKey': changedKey,
+          'networkIdentityPubKey': changedKey,
+          'quicFileTransfer': true,
+          'quicPort': 43123,
+        }),
+      );
+
+      expect(result, isA<NetworkFailure<TransferSession>>());
+      expect(
+        (result as NetworkFailure<TransferSession>).error.code,
+        NetworkErrorCode.identityConflict,
+      );
+      expect(facade.registerPeerCalls, 0);
+      expect(facade.connectPeerCalls, 0);
+
+      viewModel.dispose();
+      settings.dispose();
+      await transfer.close();
+    },
+  );
+}
+
+final class _MissingKeySecurityService extends Fake
+    implements LanSecurityService {
+  @override
+  Future<Uint8List?> getPeerX25519PublicKey(String deviceId) async => null;
+
+  @override
+  Future<Uint8List?> getPeerNetworkIdentityPublicKey(String deviceId) async =>
+      null;
+
+  @override
+  Future<String?> getPeerCertificateFingerprint(String deviceId) async => null;
+
+  @override
+  Future<String?> getOutboundAccessToken(String deviceId) async => 'token';
+
+  @override
+  Future<bool> isDevicePaired(
+    String deviceId, {
+    String? ip,
+    int? port,
+    String? localDeviceId,
+  }) async => true;
 }
 
 /// 返回 32 字节固定身份密钥的安全服务，让 sendFile 直接命中已配对路径，
@@ -174,6 +399,27 @@ final class _CapabilityHttpOverrides extends HttpOverrides {
       'maxEncryptedFileBytes': 1024 * 1024,
     });
   }
+}
+
+final class _StaticJsonHttpOverrides extends HttpOverrides {
+  _StaticJsonHttpOverrides(this.body);
+
+  final Map<String, dynamic> body;
+
+  @override
+  HttpClient createHttpClient(SecurityContext? context) =>
+      _JsonHttpClient(body);
+}
+
+final class _CapabilityBodiesHttpOverrides extends HttpOverrides {
+  _CapabilityBodiesHttpOverrides(this.bodies);
+
+  final List<Map<String, dynamic>> bodies;
+  int requestCount = 0;
+
+  @override
+  HttpClient createHttpClient(SecurityContext? context) =>
+      _JsonHttpClient(bodies[requestCount++]);
 }
 
 final class _JsonHttpClient extends Fake implements HttpClient {

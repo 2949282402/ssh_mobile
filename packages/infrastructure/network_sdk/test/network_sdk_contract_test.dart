@@ -558,6 +558,26 @@ void main() {
   });
 
   test(
+    'facade registerPeer registers identity without initiating connection',
+    () async {
+      final sessions = _RecordingSessionClient();
+      final facade = NetworkFacadeImpl(sessions: sessions);
+      final peer = SdkPeerConfig(
+        peerId: 'peer-1',
+        endpointAddress: '',
+        identityPublicKey: _identityKey,
+        e2ePublicKey: _identityKey,
+      );
+
+      final result = await facade.registerPeer(peer);
+
+      expect(result, isA<SdkSuccess<void>>());
+      expect(sessions.upsertedPeer, same(peer));
+      expect(sessions.connectedPeers, isEmpty);
+    },
+  );
+
+  test(
     'facade connectPeer registers peer transport identity before connect',
     () async {
       final sessions = _RecordingSessionClient();

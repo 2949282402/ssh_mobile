@@ -1,4 +1,4 @@
-最新更新时间：2026-08-24
+最新更新时间：2026-08-25
 
 # 资源 Owner 审计
 
@@ -34,6 +34,7 @@
 | WebViewService | `AppRuntime` → `ClientWebViewService` | App | `dispose` chat sessions and controllers |
 | MCP HTTP Server | `McpModule` → `McpServerController` | App Module | `stop` server and pending approvals |
 | LAN Receiver | `LanShareModule` → `LanReceiverCoordinator` | App Module | deactivate receiver, close HTTP/WS/native resources |
+| LAN incoming transfer offer stream | `LanReceiverCoordinator` | App Module | cancel the current Facade subscription on every runtime replacement; close the stable broadcast controller during final Receiver release |
 | RAG cache | `RagModule` → `RagService` | App Module | `dispose` cache store and service |
 | AI chat runtime | Route Provider → `AiChatRuntimeFactory` | Route | cancel streams and `dispose` controllers |
 | ViewModel | owning Route Provider/Scope | Route | Provider/Scope `dispose` |

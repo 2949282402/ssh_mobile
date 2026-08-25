@@ -114,13 +114,18 @@ final class FakeLanShareIdentity implements LanShareNetworkIdentityPort {
 }
 
 final class FakeLanShareNetworkFactory implements LanShareNetworkFactory {
-  FakeLanShareNetworkFactory({this.networkFacade, this.boundLocalPort = 43123});
+  FakeLanShareNetworkFactory({
+    this.networkFacade,
+    this.networkFacades = const <NetworkFacade>[],
+    this.boundLocalPort = 43123,
+  });
 
   int createCalls = 0;
   String? lastListenAddress;
 
   /// 返回给协调器的 NetworkFacade；null 模拟 App Shell 未创建原生门面。
   final NetworkFacade? networkFacade;
+  final List<NetworkFacade> networkFacades;
 
   @override
   final int? boundLocalPort;
@@ -135,6 +140,9 @@ final class FakeLanShareNetworkFactory implements LanShareNetworkFactory {
   }) async {
     createCalls++;
     lastListenAddress = listenAddress;
+    if (createCalls <= networkFacades.length) {
+      return networkFacades[createCalls - 1];
+    }
     return networkFacade;
   }
 }
@@ -201,10 +209,14 @@ final class FakeLanShareNetworkService implements NetworkFacade {
   int configureRelayCalls = 0;
   int disconnectRelayCalls = 0;
   int connectPeerCalls = 0;
+  int registerPeerCalls = 0;
   int transferFileCalls = 0;
   SdkPeerConfig? lastPeerConfig;
+  SdkPeerConfig? lastRegisteredPeerConfig;
   int _eventSequence = 0;
   bool disposed = false;
+
+  void emitEvent(NetworkEvent event) => _events.add(event);
 
   @override
   Stream<NetworkEvent> get events => _events.stream;
@@ -253,6 +265,14 @@ final class FakeLanShareNetworkService implements NetworkFacade {
   }) async {
     connectPeerCalls++;
     lastPeerConfig = peer;
+    return const SdkSuccess<void>(null);
+  }
+
+  @override
+  Future<SdkResult<void>> registerPeer(SdkPeerConfig peer) async {
+    registerPeerCalls++;
+    lastPeerConfig = peer;
+    lastRegisteredPeerConfig = peer;
     return const SdkSuccess<void>(null);
   }
 
@@ -453,6 +473,8 @@ final class FakeLanTransferService extends Fake implements LanTransferService {
       StreamController<LanDevice>.broadcast();
   final StreamController<LanDevice> _handshakePendingController =
       StreamController<LanDevice>.broadcast();
+  final StreamController<LanDevice> _handshakeSuccessController =
+      StreamController<LanDevice>.broadcast();
   int _port = LanTransferService.defaultHttpPort;
   bool _listening = false;
   int stopListeningCalls = 0;
@@ -469,6 +491,13 @@ final class FakeLanTransferService extends Fake implements LanTransferService {
   @override
   Stream<LanDevice> get handshakePendingStream =>
       _handshakePendingController.stream;
+
+  @override
+  Stream<LanDevice> get handshakeSuccessStream =>
+      _handshakeSuccessController.stream;
+
+  void emitHandshakeSuccess(LanDevice device) =>
+      _handshakeSuccessController.add(device);
 
   @override
   bool get isListening => _listening;
@@ -502,6 +531,8 @@ final class FakeLanTransferService extends Fake implements LanTransferService {
         _announcedDeviceController.close(),
       if (!_handshakePendingController.isClosed)
         _handshakePendingController.close(),
+      if (!_handshakeSuccessController.isClosed)
+        _handshakeSuccessController.close(),
     ]);
   }
 
