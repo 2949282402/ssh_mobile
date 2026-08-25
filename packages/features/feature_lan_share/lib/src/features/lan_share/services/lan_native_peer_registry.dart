@@ -68,7 +68,17 @@ final class LanNativePeerRegistry {
     return _serializePeerMutation(record.deviceId, () async {
       _revokedPeerIds.remove(record.deviceId);
       _blockedPeerIds.remove(record.deviceId);
-      await trustStore.save(record);
+      try {
+        await trustStore.save(record);
+      } catch (error) {
+        return NetworkFailure<void>(
+          lanNetworkError(
+            error,
+            operation: NetworkOperation.upsertPeer,
+            peerId: record.deviceId,
+          ),
+        );
+      }
       return _register(record);
     });
   }
@@ -80,7 +90,18 @@ final class LanNativePeerRegistry {
     return _serializePeerMutation(deviceId, () async {
       if (_revokedPeerIds.contains(deviceId)) return _missingTrust(deviceId);
       if (_blockedPeerIds.contains(deviceId)) return _peerBlocked(deviceId);
-      final record = await trustStore.read(deviceId);
+      final LanPeerTrustRecord? record;
+      try {
+        record = await trustStore.read(deviceId);
+      } catch (error) {
+        return NetworkFailure<void>(
+          lanNetworkError(
+            error,
+            operation: NetworkOperation.upsertPeer,
+            peerId: deviceId,
+          ),
+        );
+      }
       if (record == null) return _missingTrust(deviceId);
       if (_networkFacade == null) return _facadeUnavailable(deviceId);
       final normalized = endpoint.trim();
@@ -112,7 +133,18 @@ final class LanNativePeerRegistry {
     return _serializePeerMutation(deviceId, () async {
       if (_revokedPeerIds.contains(deviceId)) return _missingTrust(deviceId);
       if (_blockedPeerIds.contains(deviceId)) return _peerBlocked(deviceId);
-      final record = await trustStore.read(deviceId);
+      final LanPeerTrustRecord? record;
+      try {
+        record = await trustStore.read(deviceId);
+      } catch (error) {
+        return NetworkFailure<void>(
+          lanNetworkError(
+            error,
+            operation: NetworkOperation.upsertPeer,
+            peerId: deviceId,
+          ),
+        );
+      }
       if (record == null) return _missingTrust(deviceId);
       final previous = _directEndpoints[deviceId];
       _directEndpoints.remove(deviceId);
@@ -128,7 +160,18 @@ final class LanNativePeerRegistry {
     return _serializePeerMutation(deviceId, () async {
       if (_revokedPeerIds.contains(deviceId)) return _missingTrust(deviceId);
       if (_blockedPeerIds.contains(deviceId)) return _peerBlocked(deviceId);
-      final current = await trustStore.read(deviceId);
+      final LanPeerTrustRecord? current;
+      try {
+        current = await trustStore.read(deviceId);
+      } catch (error) {
+        return NetworkFailure<void>(
+          lanNetworkError(
+            error,
+            operation: NetworkOperation.upsertPeer,
+            peerId: deviceId,
+          ),
+        );
+      }
       if (current == null) return _missingTrust(deviceId);
       if (current.authorization.relay) return const NetworkSuccess<void>(null);
 
@@ -166,14 +209,35 @@ final class LanNativePeerRegistry {
     return _serializePeerMutation(deviceId, () async {
       if (_revokedPeerIds.contains(deviceId)) return _missingTrust(deviceId);
       if (_blockedPeerIds.contains(deviceId)) return _peerBlocked(deviceId);
-      final current = await trustStore.read(deviceId);
+      final LanPeerTrustRecord? current;
+      try {
+        current = await trustStore.read(deviceId);
+      } catch (error) {
+        return NetworkFailure<void>(
+          lanNetworkError(
+            error,
+            operation: NetworkOperation.upsertPeer,
+            peerId: deviceId,
+          ),
+        );
+      }
       if (current == null) return _missingTrust(deviceId);
       if (!current.authorization.relay) return const NetworkSuccess<void>(null);
 
       final updated = current.copyWith(
         authorization: current.authorization.copyWith(relay: false),
       );
-      await trustStore.save(updated);
+      try {
+        await trustStore.save(updated);
+      } catch (error) {
+        return NetworkFailure<void>(
+          lanNetworkError(
+            error,
+            operation: NetworkOperation.upsertPeer,
+            peerId: deviceId,
+          ),
+        );
+      }
 
       final nativeResult = await _register(updated);
       if (nativeResult is NetworkFailure<void>) {
@@ -191,7 +255,17 @@ final class LanNativePeerRegistry {
     return _serializePeerMutation(deviceId, () async {
       _revokedPeerIds.add(deviceId);
       _blockedPeerIds.remove(deviceId);
-      await trustStore.delete(deviceId);
+      try {
+        await trustStore.delete(deviceId);
+      } catch (error) {
+        return NetworkFailure<void>(
+          lanNetworkError(
+            error,
+            operation: NetworkOperation.removePeer,
+            peerId: deviceId,
+          ),
+        );
+      }
       _directEndpoints.remove(deviceId);
       final facade = _networkFacade;
       if (facade == null) return const NetworkSuccess<void>(null);
@@ -274,21 +348,31 @@ final class LanNativePeerRegistry {
     }
   }
 
-  Future<NetworkResult<void>> _register(LanPeerTrustRecord record) {
+  Future<NetworkResult<void>> _register(LanPeerTrustRecord record) async {
     final facade = _networkFacade;
     if (facade == null) {
-      return Future.value(_facadeUnavailable(record.deviceId));
+      return _facadeUnavailable(record.deviceId);
     }
-    return facade.registerPeer(
-      PeerConfig(
-        peerId: record.deviceId,
-        endpointAddress: _directEndpoints[record.deviceId] ?? '',
-        identityPublicKey: record.networkIdentityPublicKey,
-        e2ePublicKey: record.x25519PublicKey,
-        allowDirect: record.authorization.localDirect,
-        allowRelay: record.authorization.relay,
-      ),
-    );
+    try {
+      return await facade.registerPeer(
+        PeerConfig(
+          peerId: record.deviceId,
+          endpointAddress: _directEndpoints[record.deviceId] ?? '',
+          identityPublicKey: record.networkIdentityPublicKey,
+          e2ePublicKey: record.x25519PublicKey,
+          allowDirect: record.authorization.localDirect,
+          allowRelay: record.authorization.relay,
+        ),
+      );
+    } catch (error) {
+      return NetworkFailure<void>(
+        lanNetworkError(
+          error,
+          operation: NetworkOperation.upsertPeer,
+          peerId: record.deviceId,
+        ),
+      );
+    }
   }
 
   Future<bool> _forceRemoveNativePeer(String peerId) async {

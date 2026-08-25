@@ -394,6 +394,163 @@ void main() {
       expect(facade.registrations.single.endpointAddress, isEmpty);
     },
   );
+
+  test(
+    'revoke relay persistence failure returns NetworkFailure and keeps persistent true without native change',
+    () async {
+      final storage = _FailingSecureStorage();
+      final store = LanPeerTrustStore(secureStorage: storage);
+      final facade = _RecordingFacade();
+      final registry = LanNativePeerRegistry(
+        trustStore: store,
+        networkFacade: facade,
+      );
+      addTearDown(store.dispose);
+      await store.save(
+        _record('peer-a').copyWith(
+          authorization: const PeerRouteAuthorization(
+            localDirect: true,
+            relay: true,
+          ),
+        ),
+      );
+      facade.registrations.clear();
+
+      storage.failWrite = true;
+      final result = await registry.revokeRelayForPeer('peer-a');
+
+      expect(result, isA<SdkFailure<void>>());
+      final failure = result as SdkFailure<void>;
+      expect(failure.error.operation, NetworkOperation.upsertPeer);
+      expect(failure.error.peerId, 'peer-a');
+
+      storage.failWrite = false;
+      expect((await store.read('peer-a'))?.authorization.relay, isTrue);
+      expect(facade.registrations, isEmpty);
+      expect(facade.removedPeerIds, isEmpty);
+      expect(registry.isPeerBlocked('peer-a'), isFalse);
+    },
+  );
+
+  test(
+    'grant persistence failure with rollback success returns NetworkFailure and restores native allowRelay=false',
+    () async {
+      final storage = _FailingSecureStorage();
+      final store = LanPeerTrustStore(secureStorage: storage);
+      final facade = _RecordingFacade();
+      final registry = LanNativePeerRegistry(
+        trustStore: store,
+        networkFacade: facade,
+      );
+      addTearDown(store.dispose);
+      await store.save(_record('peer-a'));
+      facade.registrations.clear();
+
+      storage.failWrite = true;
+      final result = await registry.authorizeRelayForPeer('peer-a');
+
+      expect(result, isA<SdkFailure<void>>());
+      final failure = result as SdkFailure<void>;
+      expect(failure.error.operation, NetworkOperation.upsertPeer);
+      expect(failure.error.peerId, 'peer-a');
+
+      storage.failWrite = false;
+      expect((await store.read('peer-a'))?.authorization.relay, isFalse);
+
+      expect(facade.registrations, hasLength(2));
+      expect(facade.registrations[0].allowRelay, isTrue);
+      expect(facade.registrations[1].allowRelay, isFalse);
+      expect(facade.removedPeerIds, isEmpty);
+      expect(registry.isPeerBlocked('peer-a'), isFalse);
+    },
+  );
+
+  test(
+    'grant persistence failure with rollback and remove failure keeps persistent false and runtime-blocks peer',
+    () async {
+      final storage = _FailingSecureStorage();
+      final store = LanPeerTrustStore(secureStorage: storage);
+      final facade = _RecordingFacade();
+      final registry = LanNativePeerRegistry(
+        trustStore: store,
+        networkFacade: facade,
+      );
+      addTearDown(store.dispose);
+      await store.save(_record('peer-a'));
+      facade.registrations.clear();
+
+      storage.failWrite = true;
+      facade.failRegisterPeerOnCall =
+          2; // Initial grant (call 1) succeeds; rollback _register (call 2) fails
+      facade.failRemovePeer = true; // _forceRemoveNativePeer will fail
+      final result = await registry.authorizeRelayForPeer('peer-a');
+
+      expect(result, isA<SdkFailure<void>>());
+      storage.failWrite = false;
+      expect((await store.read('peer-a'))?.authorization.relay, isFalse);
+      expect(registry.isPeerBlocked('peer-a'), isTrue);
+
+      final updateResult = await registry.updateDirectEndpoint(
+        'peer-a',
+        '10.0.0.2:9',
+      );
+      expect(updateResult, isA<SdkFailure<void>>());
+      expect(
+        (updateResult as SdkFailure<void>).error.code,
+        NetworkErrorCode.securityPolicyMismatch,
+      );
+    },
+  );
+}
+
+final class _FailingSecureStorage extends Fake implements FlutterSecureStorage {
+  bool failWrite = false;
+  final Map<String, String> data = <String, String>{};
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async => data[key];
+
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (failWrite) {
+      throw Exception('Simulated secure storage write failure');
+    }
+    if (value == null) {
+      data.remove(key);
+    } else {
+      data[key] = value;
+    }
+  }
+
+  @override
+  Future<void> delete({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    data.remove(key);
+  }
 }
 
 final class _RecordingFacade extends Fake implements NetworkFacade {
@@ -401,13 +558,18 @@ final class _RecordingFacade extends Fake implements NetworkFacade {
   final List<String> removedPeerIds = <String>[];
   final List<String> disconnectedPeerIds = <String>[];
   int connectCalls = 0;
+  int registerPeerCalls = 0;
   bool failRegisterPeer = false;
+  int? failRegisterPeerOnCall;
   bool failRemovePeer = false;
   bool failDisconnectPeer = false;
 
   @override
   Future<SdkResult<void>> registerPeer(SdkPeerConfig peer) async {
-    if (failRegisterPeer) {
+    registerPeerCalls++;
+    if (failRegisterPeer ||
+        (failRegisterPeerOnCall != null &&
+            registerPeerCalls == failRegisterPeerOnCall)) {
       return NetworkFailure<void>(
         NetworkError(
           code: NetworkErrorCode.ioError,

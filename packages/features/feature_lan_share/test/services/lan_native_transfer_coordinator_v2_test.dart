@@ -311,6 +311,90 @@ void main() {
       ]);
     },
   );
+
+  test(
+    'setRelayAuthorization callback throws returns NetworkFailure',
+    () async {
+      final store = LanPeerTrustStore();
+      await store.save(_trust('peer-a'));
+      final facade = _RecordingFacade();
+      final transferService = LanTransferService(
+        currentDeviceId: 'device-a',
+        securityService: LanSecurityService(
+          appOwnedX25519PrivateSeed: Uint8List(32),
+          peerTrustStore: store,
+        ),
+        storageService: LanStorageService(),
+      );
+      final coordinator = LanNativeTransferCoordinator(
+        transferService: transferService,
+        networkFacade: facade,
+        trustStore: store,
+        updateDirectEndpoint: (deviceId, endpoint) async =>
+            const SdkSuccess<void>(null),
+        invalidateDirectEndpoint: (deviceId) async =>
+            const SdkSuccess<void>(null),
+        setRelayAuthorization: (peerId, enabled) async {
+          throw Exception('Simulated setRelayAuthorization callback throw');
+        },
+      );
+      addTearDown(() async {
+        await coordinator.dispose();
+        transferService.dispose();
+        await store.dispose();
+        await facade.close();
+      });
+
+      final result = await coordinator.setRelayAuthorization(
+        peerId: 'peer-a',
+        enabled: true,
+      );
+
+      expect(result, isA<SdkFailure<void>>());
+      final failure = result as SdkFailure<void>;
+      expect(failure.error.operation, NetworkOperation.upsertPeer);
+      expect(failure.error.peerId, 'peer-a');
+    },
+  );
+
+  test('removeTrustedPeer callback throws returns NetworkFailure', () async {
+    final store = LanPeerTrustStore();
+    await store.save(_trust('peer-a'));
+    final facade = _RecordingFacade();
+    final transferService = LanTransferService(
+      currentDeviceId: 'device-a',
+      securityService: LanSecurityService(
+        appOwnedX25519PrivateSeed: Uint8List(32),
+        peerTrustStore: store,
+      ),
+      storageService: LanStorageService(),
+    );
+    final coordinator = LanNativeTransferCoordinator(
+      transferService: transferService,
+      networkFacade: facade,
+      trustStore: store,
+      updateDirectEndpoint: (deviceId, endpoint) async =>
+          const SdkSuccess<void>(null),
+      invalidateDirectEndpoint: (deviceId) async =>
+          const SdkSuccess<void>(null),
+      removeTrust: (deviceId) async {
+        throw Exception('Simulated removeTrust callback throw');
+      },
+    );
+    addTearDown(() async {
+      await coordinator.dispose();
+      transferService.dispose();
+      await store.dispose();
+      await facade.close();
+    });
+
+    final result = await coordinator.removeTrustedPeer('peer-a');
+
+    expect(result, isA<SdkFailure<void>>());
+    final failure = result as SdkFailure<void>;
+    expect(failure.error.operation, NetworkOperation.removePeer);
+    expect(failure.error.peerId, 'peer-a');
+  });
 }
 
 final class _Fixture {

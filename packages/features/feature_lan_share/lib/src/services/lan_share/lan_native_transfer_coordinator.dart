@@ -280,7 +280,17 @@ final class LanNativeTransferCoordinator {
   }) async {
     final setAuth = _setRelayAuthorization;
     if (setAuth != null) {
-      return setAuth(peerId, enabled);
+      try {
+        return await setAuth(peerId, enabled);
+      } catch (error) {
+        return NetworkFailure<void>(
+          lanNetworkError(
+            error,
+            operation: NetworkOperation.upsertPeer,
+            peerId: peerId,
+          ),
+        );
+      }
     }
     if (enabled) {
       try {
