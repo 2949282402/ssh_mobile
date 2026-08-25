@@ -1,7 +1,10 @@
 // ignore_for_file: prefer_initializing_formals
 
+import 'dart:async';
+
 import 'package:network_sdk/network_sdk.dart';
 
+import '../../../services/lan_share/lan_network_models.dart';
 import '../../../services/lan_share/lan_share_models.dart';
 import '../../../services/lan_share/lan_peer_trust.dart';
 
@@ -14,6 +17,9 @@ final class LanNativePeerRegistry {
   final LanPeerTrustStore trustStore;
   NetworkFacade? _networkFacade;
   final Map<String, String> _directEndpoints = <String, String>{};
+  final Map<String, Future<void>> _peerMutationSerial =
+      <String, Future<void>>{};
+  final Set<String> _revokedPeerIds = <String>{};
 
   /// The registry borrows the App-owned facade for the current runtime
   /// generation. It never starts, stops, or disposes that facade.
@@ -40,6 +46,7 @@ final class LanNativePeerRegistry {
     // ephemeral and must never leak into the trust-only restore snapshot.
     _directEndpoints.clear();
     for (final record in await trustStore.loadAll()) {
+      if (_revokedPeerIds.contains(record.deviceId)) continue;
       final result = await _register(record);
       if (result is NetworkFailure<void>) {
         throw StateError(
@@ -50,76 +57,156 @@ final class LanNativePeerRegistry {
     }
   }
 
-  Future<NetworkResult<void>> registerTrust(LanPeerTrustRecord record) async {
-    await trustStore.save(record);
-    return _register(record);
+  Future<NetworkResult<void>> registerTrust(LanPeerTrustRecord record) {
+    return _serializePeerMutation(record.deviceId, () async {
+      _revokedPeerIds.remove(record.deviceId);
+      await trustStore.save(record);
+      return _register(record);
+    });
   }
 
   Future<NetworkResult<void>> updateDirectEndpoint(
     String deviceId,
     String endpoint,
-  ) async {
-    final record = await trustStore.read(deviceId);
-    if (record == null) return _missingTrust(deviceId);
-    if (_networkFacade == null) return _facadeUnavailable(deviceId);
-    final normalized = endpoint.trim();
-    if (normalized.isEmpty) {
-      return NetworkFailure<void>(
-        NetworkError(
-          code: NetworkErrorCode.invalidArgument,
-          message: 'Direct peer endpoint is empty.',
-          operation: NetworkOperation.upsertPeer,
-          peerId: deviceId,
-        ),
-      );
-    }
-    final previous = _directEndpoints[deviceId];
-    _directEndpoints[deviceId] = normalized;
-    final result = await _register(record);
-    if (result is NetworkFailure<void>) {
-      if (previous == null) {
-        _directEndpoints.remove(deviceId);
-      } else {
+  ) {
+    return _serializePeerMutation(deviceId, () async {
+      if (_revokedPeerIds.contains(deviceId)) return _missingTrust(deviceId);
+      final record = await trustStore.read(deviceId);
+      if (record == null) return _missingTrust(deviceId);
+      if (_networkFacade == null) return _facadeUnavailable(deviceId);
+      final normalized = endpoint.trim();
+      if (normalized.isEmpty) {
+        return NetworkFailure<void>(
+          NetworkError(
+            code: NetworkErrorCode.invalidArgument,
+            message: 'Direct peer endpoint is empty.',
+            operation: NetworkOperation.upsertPeer,
+            peerId: deviceId,
+          ),
+        );
+      }
+      final previous = _directEndpoints[deviceId];
+      _directEndpoints[deviceId] = normalized;
+      final result = await _register(record);
+      if (result is NetworkFailure<void>) {
+        if (previous == null) {
+          _directEndpoints.remove(deviceId);
+        } else {
+          _directEndpoints[deviceId] = previous;
+        }
+      }
+      return result;
+    });
+  }
+
+  Future<NetworkResult<void>> invalidateDirectEndpoint(String deviceId) {
+    return _serializePeerMutation(deviceId, () async {
+      if (_revokedPeerIds.contains(deviceId)) return _missingTrust(deviceId);
+      final record = await trustStore.read(deviceId);
+      if (record == null) return _missingTrust(deviceId);
+      final previous = _directEndpoints[deviceId];
+      _directEndpoints.remove(deviceId);
+      final result = await _register(record);
+      if (result is NetworkFailure<void> && previous != null) {
         _directEndpoints[deviceId] = previous;
       }
-    }
-    return result;
+      return result;
+    });
   }
 
-  Future<NetworkResult<void>> invalidateDirectEndpoint(String deviceId) async {
-    final record = await trustStore.read(deviceId);
-    if (record == null) return _missingTrust(deviceId);
-    final previous = _directEndpoints[deviceId];
-    _directEndpoints.remove(deviceId);
-    final result = await _register(record);
-    if (result is NetworkFailure<void> && previous != null) {
-      _directEndpoints[deviceId] = previous;
-    }
-    return result;
+  Future<NetworkResult<void>> authorizeRelayForPeer(String deviceId) {
+    return _serializePeerMutation(deviceId, () async {
+      if (_revokedPeerIds.contains(deviceId)) return _missingTrust(deviceId);
+      final current = await trustStore.read(deviceId);
+      if (current == null) return _missingTrust(deviceId);
+      if (current.authorization.relay) return const NetworkSuccess<void>(null);
+
+      final proposed = current.copyWith(
+        authorization: current.authorization.copyWith(relay: true),
+      );
+      final nativeResult = await _register(proposed);
+      if (nativeResult is NetworkFailure<void>) {
+        return nativeResult;
+      }
+
+      try {
+        await trustStore.save(proposed);
+        return const NetworkSuccess<void>(null);
+      } catch (error) {
+        final rollbackResult = await _register(current);
+        if (rollbackResult is NetworkFailure<void>) {
+          final facade = _networkFacade;
+          if (facade != null) {
+            try {
+              await facade.disconnectPeer(deviceId);
+            } catch (_) {}
+            try {
+              await facade.removePeer(deviceId);
+            } catch (_) {}
+          }
+        }
+        return NetworkFailure<void>(
+          lanNetworkError(
+            error,
+            operation: NetworkOperation.upsertPeer,
+            peerId: deviceId,
+          ),
+        );
+      }
+    });
   }
 
-  Future<NetworkResult<void>> authorizeRelayForPeer(String deviceId) async {
-    if (await trustStore.read(deviceId) == null) return _missingTrust(deviceId);
-    await trustStore.setRelayAuthorization(deviceId, true);
-    final record = await trustStore.read(deviceId);
-    if (record == null) return _missingTrust(deviceId);
-    return _register(record);
+  Future<NetworkResult<void>> revokeRelayForPeer(String deviceId) {
+    return _serializePeerMutation(deviceId, () async {
+      if (_revokedPeerIds.contains(deviceId)) return _missingTrust(deviceId);
+      final current = await trustStore.read(deviceId);
+      if (current == null) return _missingTrust(deviceId);
+      if (!current.authorization.relay) return const NetworkSuccess<void>(null);
+
+      final updated = current.copyWith(
+        authorization: current.authorization.copyWith(relay: false),
+      );
+      await trustStore.save(updated);
+
+      final nativeResult = await _register(updated);
+      if (nativeResult is NetworkFailure<void>) {
+        final facade = _networkFacade;
+        if (facade != null) {
+          try {
+            await facade.disconnectPeer(deviceId);
+          } catch (_) {}
+          try {
+            await facade.removePeer(deviceId);
+          } catch (_) {}
+        }
+        return nativeResult;
+      }
+      return const NetworkSuccess<void>(null);
+    });
   }
 
-  Future<NetworkResult<void>> revokeRelayForPeer(String deviceId) async {
-    if (await trustStore.read(deviceId) == null) return _missingTrust(deviceId);
-    await trustStore.setRelayAuthorization(deviceId, false);
-    final record = await trustStore.read(deviceId);
-    if (record == null) return _missingTrust(deviceId);
-    return _register(record);
-  }
-
-  Future<NetworkResult<void>> removeTrust(String deviceId) async {
-    await trustStore.delete(deviceId);
-    _directEndpoints.remove(deviceId);
-    final facade = _networkFacade;
-    if (facade == null) return const NetworkSuccess<void>(null);
-    return facade.removePeer(deviceId);
+  Future<NetworkResult<void>> removeTrust(String deviceId) {
+    return _serializePeerMutation(deviceId, () async {
+      _revokedPeerIds.add(deviceId);
+      await trustStore.delete(deviceId);
+      _directEndpoints.remove(deviceId);
+      final facade = _networkFacade;
+      if (facade == null) return const NetworkSuccess<void>(null);
+      try {
+        await facade.disconnectPeer(deviceId);
+      } catch (_) {}
+      try {
+        return await facade.removePeer(deviceId);
+      } catch (error) {
+        return NetworkFailure<void>(
+          lanNetworkError(
+            error,
+            operation: NetworkOperation.removePeer,
+            peerId: deviceId,
+          ),
+        );
+      }
+    });
   }
 
   /// Reconcile discovery's ephemeral native endpoints with trusted peers.
@@ -131,7 +218,10 @@ final class LanNativePeerRegistry {
     Iterable<LanDiscoveredPeer> peers,
   ) async {
     final records = await trustStore.loadAll();
-    final trustedIds = records.map((record) => record.deviceId).toSet();
+    final trustedIds = records
+        .map((record) => record.deviceId)
+        .where((id) => !_revokedPeerIds.contains(id))
+        .toSet();
     final discovered = <String, String>{};
     for (final peer in peers) {
       if (!trustedIds.contains(peer.deviceId)) continue;
@@ -146,6 +236,7 @@ final class LanNativePeerRegistry {
     }
 
     for (final record in records) {
+      if (_revokedPeerIds.contains(record.deviceId)) continue;
       final endpoint = discovered[record.deviceId];
       if (endpoint == null) {
         if (_directEndpoints.containsKey(record.deviceId)) {
@@ -155,6 +246,24 @@ final class LanNativePeerRegistry {
       }
       if (_directEndpoints[record.deviceId] != endpoint) {
         await updateDirectEndpoint(record.deviceId, endpoint);
+      }
+    }
+  }
+
+  Future<T> _serializePeerMutation<T>(
+    String peerId,
+    Future<T> Function() operation,
+  ) async {
+    final previous = _peerMutationSerial[peerId] ?? Future<void>.value();
+    final completer = Completer<void>();
+    _peerMutationSerial[peerId] = completer.future;
+    try {
+      await previous;
+      return await operation();
+    } finally {
+      completer.complete();
+      if (identical(_peerMutationSerial[peerId], completer.future)) {
+        _peerMutationSerial.remove(peerId);
       }
     }
   }

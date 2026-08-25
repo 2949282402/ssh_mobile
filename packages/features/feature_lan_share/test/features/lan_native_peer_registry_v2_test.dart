@@ -195,6 +195,125 @@ void main() {
   });
 
   test(
+    'relay grant native registration failure keeps persistent relay false',
+    () async {
+      final store = LanPeerTrustStore();
+      final facade = _RecordingFacade();
+      final registry = LanNativePeerRegistry(
+        trustStore: store,
+        networkFacade: facade,
+      );
+      addTearDown(store.dispose);
+      await store.save(_record('peer-a'));
+
+      facade.failRegisterPeer = true;
+      final result = await registry.authorizeRelayForPeer('peer-a');
+
+      expect(result, isA<SdkFailure<void>>());
+      expect((await store.read('peer-a'))?.authorization.relay, isFalse);
+    },
+  );
+
+  test(
+    'relay revoke native failure keeps persistent false and disconnects/removes peer',
+    () async {
+      final store = LanPeerTrustStore();
+      final facade = _RecordingFacade();
+      final registry = LanNativePeerRegistry(
+        trustStore: store,
+        networkFacade: facade,
+      );
+      addTearDown(store.dispose);
+      await store.save(
+        _record('peer-a').copyWith(
+          authorization: const PeerRouteAuthorization(
+            localDirect: true,
+            relay: true,
+          ),
+        ),
+      );
+
+      facade.failRegisterPeer = true;
+      final result = await registry.revokeRelayForPeer('peer-a');
+
+      expect(result, isA<SdkFailure<void>>());
+      expect((await store.read('peer-a'))?.authorization.relay, isFalse);
+      expect(facade.disconnectedPeerIds, contains('peer-a'));
+      expect(facade.removedPeerIds, contains('peer-a'));
+    },
+  );
+
+  test(
+    'unpair removePeer failure keeps persistent trust deleted and tombstones peer',
+    () async {
+      final store = LanPeerTrustStore();
+      final facade = _RecordingFacade();
+      final registry = LanNativePeerRegistry(
+        trustStore: store,
+        networkFacade: facade,
+      );
+      addTearDown(store.dispose);
+      await store.save(_record('peer-a'));
+
+      facade.failRemovePeer = true;
+      final result = await registry.removeTrust('peer-a');
+
+      expect(result, isA<SdkFailure<void>>());
+      expect(await store.read('peer-a'), isNull);
+
+      // Discovery after unpair must not resurrect or re-register the unpinned peer
+      await registry.syncDiscoveredEndpoints(<LanDiscoveredPeer>[
+        LanDiscoveredPeer(
+          deviceId: 'peer-a',
+          alias: 'Peer A',
+          ip: '192.0.2.5',
+          controlPort: 53317,
+          advertisedNativePort: 43123,
+          deviceType: LanDeviceType.desktop,
+          os: 'linux',
+          lastSeen: DateTime.utc(2026),
+        ),
+      ]);
+      expect(facade.registrations, isEmpty);
+
+      final updateRes = await registry.updateDirectEndpoint(
+        'peer-a',
+        '192.0.2.5:43123',
+      );
+      expect(updateRes, isA<SdkFailure<void>>());
+      expect(
+        (updateRes as SdkFailure<void>).error.code,
+        NetworkErrorCode.authenticationFailed,
+      );
+    },
+  );
+
+  test(
+    'concurrent grant and revoke operations resolve deterministically',
+    () async {
+      final store = LanPeerTrustStore();
+      final facade = _RecordingFacade();
+      final registry = LanNativePeerRegistry(
+        trustStore: store,
+        networkFacade: facade,
+      );
+      addTearDown(store.dispose);
+      await store.save(_record('peer-a'));
+
+      final futures = await Future.wait([
+        registry.authorizeRelayForPeer('peer-a'),
+        registry.revokeRelayForPeer('peer-a'),
+      ]);
+
+      expect(futures[0], isA<SdkSuccess<void>>());
+      expect(futures[1], isA<SdkSuccess<void>>());
+      final record = await store.read('peer-a');
+      expect(record?.authorization.relay, isFalse);
+      expect(facade.registrations.last.allowRelay, isFalse);
+    },
+  );
+
+  test(
     'registry does not retain discovery endpoint without a facade',
     () async {
       final store = LanPeerTrustStore();
@@ -219,17 +338,57 @@ void main() {
 final class _RecordingFacade extends Fake implements NetworkFacade {
   final List<SdkPeerConfig> registrations = <SdkPeerConfig>[];
   final List<String> removedPeerIds = <String>[];
+  final List<String> disconnectedPeerIds = <String>[];
   int connectCalls = 0;
+  bool failRegisterPeer = false;
+  bool failRemovePeer = false;
+  bool failDisconnectPeer = false;
 
   @override
   Future<SdkResult<void>> registerPeer(SdkPeerConfig peer) async {
+    if (failRegisterPeer) {
+      return NetworkFailure<void>(
+        NetworkError(
+          code: NetworkErrorCode.ioError,
+          message: 'Simulated native registerPeer failure.',
+          operation: NetworkOperation.upsertPeer,
+          peerId: peer.peerId,
+        ),
+      );
+    }
     registrations.add(peer);
     return const SdkSuccess<void>(null);
   }
 
   @override
   Future<SdkResult<void>> removePeer(String peerId) async {
+    if (failRemovePeer) {
+      return NetworkFailure<void>(
+        NetworkError(
+          code: NetworkErrorCode.ioError,
+          message: 'Simulated native removePeer failure.',
+          operation: NetworkOperation.removePeer,
+          peerId: peerId,
+        ),
+      );
+    }
     removedPeerIds.add(peerId);
+    return const SdkSuccess<void>(null);
+  }
+
+  @override
+  Future<SdkResult<void>> disconnectPeer(String peerId) async {
+    if (failDisconnectPeer) {
+      return NetworkFailure<void>(
+        NetworkError(
+          code: NetworkErrorCode.ioError,
+          message: 'Simulated native disconnectPeer failure.',
+          operation: NetworkOperation.disconnect,
+          peerId: peerId,
+        ),
+      );
+    }
+    disconnectedPeerIds.add(peerId);
     return const SdkSuccess<void>(null);
   }
 
