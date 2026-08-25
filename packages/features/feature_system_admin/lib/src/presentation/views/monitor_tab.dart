@@ -410,6 +410,7 @@ class _MonitorOverviewSkeleton extends StatelessWidget {
         ),
         for (var i = 0; i < 4; i++)
           Container(
+            key: ValueKey('monitor-skeleton-chart-$i'),
             height: 180,
             margin: const EdgeInsets.only(bottom: 8),
             padding: const EdgeInsets.all(12),

@@ -17,3 +17,8 @@ semantics, and validation scope together.
 and `powershell/common/` contains the shared native-process runtime. Their Bash
 directories are intentionally documentation-only until Linux-specific
 counterparts are needed.
+
+The native network quality pair runs the common Rust format, workspace-test,
+and Clippy gates on both platforms. Its coturn host-network fallback test is a
+Linux-only capability: the PowerShell aggregate reports that step as an explicit
+environment GAP after completing the common checks.

@@ -113,7 +113,7 @@ void main() {
   testWidgets(
     'Monitor displays 4 metric charts skeleton when running before first sample arrives',
     (WidgetTester tester) async {
-      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.physicalSize = const Size(1280, 1600);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
@@ -131,6 +131,12 @@ void main() {
       await tester.pump();
 
       expect(find.byType(AppSkeletonizer), findsOneWidget);
+      for (var i = 0; i < 4; i++) {
+        expect(
+          find.byKey(ValueKey('monitor-skeleton-chart-$i')),
+          findsOneWidget,
+        );
+      }
     },
   );
 

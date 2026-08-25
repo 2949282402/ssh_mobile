@@ -33,7 +33,7 @@ function Initialize-NativeEnvironment([string]$TempRoot) {
   return $resolved
 }
 
-function Assert-Commands([string[]]$Names, [int]$ExitCode = 69) {
+function Assert-Commands([string[]]$Names, [int]$ExitCode = 125) {
   foreach ($name in $Names) {
     if ($null -eq (Get-Command $name -ErrorAction SilentlyContinue)) {
       [Console]::Error.WriteLine("Required command is unavailable: $name")

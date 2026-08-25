@@ -4,7 +4,7 @@ param([ValidateSet('smoke','strict')][string]$Mode='smoke',[string]$TempRoot=$en
 Assert-NativeWindowsPowerShell
 $root=Get-RepositoryRoot
 $temp=Initialize-NativeEnvironment $TempRoot
-Assert-Commands @('docker','curl.exe','cargo','flutter') 2
+Assert-Commands @('docker','curl.exe','cargo','flutter') 125
 $run=Join-Path $temp ("client-backend-e2e-{0}"-f[Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory $run|Out-Null
 $project="ssh-mobile-client-backend-$PID"
@@ -41,7 +41,7 @@ function AssertRoutes{
 }
 function StartDeployment{
   & docker info *> $null
-  if($LASTEXITCODE-ne0){[Console]::Error.WriteLine('ENVIRONMENT GAP: Docker daemon unavailable');exit 2}
+  if($LASTEXITCODE-ne0){[Console]::Error.WriteLine('ENVIRONMENT GAP: Docker daemon unavailable');exit 125}
   $http=Port;$https=Port;$script:token=Hex 24;$key=B64 32;$script:adminUser='e2e-admin';$script:adminPassword=Hex 24
   $mysqlRoot=Hex 24;$mysqlPassword=Hex 24;$redisPassword=Hex 24;$script:base="http://127.0.0.1:$http"
   $octet=Get-Random -Minimum 18 -Maximum 30;$subnet="172.$octet.0.0/24";$caddy="172.$octet.0.10"

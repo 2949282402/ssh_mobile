@@ -72,7 +72,7 @@ need_command() {
   for command_name in "$@"; do
     command -v "$command_name" >/dev/null 2>&1 || {
       echo "ENVIRONMENT GAP: required command is unavailable: $command_name" >&2
-      exit 2
+      exit 125
     }
   done
 }
@@ -142,7 +142,7 @@ start_compose() {
   need_command docker curl python3 openssl od tr awk tail
   docker info >/dev/null 2>&1 || {
     echo "ENVIRONMENT GAP: Docker daemon is unavailable" >&2
-    exit 2
+    exit 125
   }
   TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/client-backend-e2e.XXXXXX")"
   chmod 700 "$TMP_ROOT"

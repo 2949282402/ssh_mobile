@@ -31,25 +31,45 @@ if($Jobs-lt1-or$FlutterConcurrency-lt1-or$MelosConcurrency-lt1-or$MelosTestConcu
 try{ConvertTo-TimeoutSeconds $AppTimeout|Out-Null;ConvertTo-TimeoutSeconds $WorkspaceTestTimeout|Out-Null}catch{[Console]::Error.WriteLine($_);exit 64}
 function Need([string[]]$Names){foreach($name in $Names){if(-not(Get-Command $name -ErrorAction SilentlyContinue)){Write-Host "ENVIRONMENT GAP: required command unavailable: $name";return$false}};$true}
 function Cmd([string]$Command,[string[]]$Arguments,[string]$Directory=$root,[hashtable]$Environment=@{}){Invoke-CommandChecked $Command $Arguments $Directory $Environment}
+function Script([string]$Path,[hashtable]$Parameters=@{}){
+  $global:LASTEXITCODE=0
+  & $Path @Parameters
+  $status=$LASTEXITCODE
+  if($status-eq$gap){exit$gap}
+  if($status-ne0){throw "$Path exited with code $status."}
+}
 function Melos([string]$Command,[string[]]$Scopes){$arguments=@('run','melos','exec','--concurrency',"$MelosConcurrency",'--fail-fast');foreach($scope in $Scopes){$arguments+="--scope=$scope"};$arguments+=@('--',$Command);Cmd dart $arguments}
 function JobBootstrap{if(-not(Need @('dart','flutter','npm','cargo','go','python'))){exit$gap};Cmd dart @('pub','get');Cmd flutter @('pub','get') (Join-Path $root 'packages\infrastructure\ssh_mobile_network_native');Cmd flutter @('pub','get') (Join-Path $root 'apps\ssh_mobile_full');Cmd npm @('ci') (Join-Path $root 'front');Cmd cargo @('fetch','--locked') (Join-Path $root 'native\network_core');Cmd go @('mod','download') (Join-Path $root 'relay')}
 function JobFront{if(-not(Need @('npm'))){exit$gap};$directory=Join-Path $root 'front';foreach($task in @('typecheck','lint','test:run','build')){Cmd npm @('run',$task) $directory};if($NoDocker-or-not(Need @('docker'))){exit$gap};&docker info*>$null;if($LASTEXITCODE-ne0){exit$gap};Cmd docker @('build','-t',"ssh-mobile-relay-front:$RunId",$directory)}
-function JobAdmin{& (Join-Path $PSScriptRoot '..\contracts\admin_api_contract.ps1') -TempRoot $temp}
-function JobNative{if(-not(Need @('cargo'))){exit$gap};$directory=Join-Path $root 'native\network_core';Cmd cargo @('fmt','--all','--','--check') $directory;Cmd cargo @('test','--workspace','--locked','--','--test-threads=1') $directory;Cmd cargo @('clippy','--workspace','--all-targets','--locked','--','-D','warnings') $directory}
+function JobAdmin{Script (Join-Path $PSScriptRoot '..\contracts\admin_api_contract.ps1') @{TempRoot=$temp}}
+function JobNative{
+  if(-not(Need @('cargo'))){exit$gap}
+  $directory=Join-Path $root 'native\network_core'
+  Cmd cargo @('fmt','--all','--','--check') $directory
+  Cmd cargo @('test','--workspace','--locked','--','--test-threads=1') $directory
+  Cmd cargo @('clippy','--workspace','--all-targets','--locked','--','-D','warnings') $directory
+  Write-Host 'ENVIRONMENT GAP: Linux host-network coturn is unavailable on the native Windows gate; TURN fallback was not run.'
+  exit$gap
+}
 function JobSdk{if(-not(Need @('dart','flutter'))){exit$gap};$scopes=@('network_sdk','network_transport','ssh_mobile_network_native');Melos 'dart format --output=none --set-exit-if-changed lib test' $scopes;Melos 'flutter analyze --no-fatal-infos --no-pub' $scopes;Melos "flutter test --no-pub --concurrency $MelosTestConcurrency" $scopes}
 function StartStorage{
   $script:mysql="ssh-mobile-full-mysql-$RunId";$script:redis="ssh-mobile-full-redis-$RunId"
   Cmd docker @('run','-d','--rm','--name',$mysql,'-p','127.0.0.1::3306','-e','MYSQL_ROOT_PASSWORD=root','-e','MYSQL_DATABASE=relay','-e','MYSQL_USER=relay','-e','MYSQL_PASSWORD=relay','mysql:8.4')
   Cmd docker @('run','-d','--rm','--name',$redis,'-p','127.0.0.1::6379','redis:7-alpine')
   $mysqlPort=((&docker port $mysql '3306/tcp'|Select-Object -First 1)-replace'^.*:','');$redisPort=((&docker port $redis '6379/tcp'|Select-Object -First 1)-replace'^.*:','')
-  foreach($i in 1..60){&docker exec $mysql mysqladmin ping -h 127.0.0.1 -urelay -prelay*>$null;if($LASTEXITCODE-eq0){break};Start-Sleep 2}
+  $mysqlReady=$false
+  foreach($i in 1..60){&docker exec $mysql mysqladmin ping -h 127.0.0.1 -urelay -prelay*>$null;if($LASTEXITCODE-eq0){$mysqlReady=$true;break};Start-Sleep 2}
+  if(-not$mysqlReady){throw 'MySQL test container did not become ready.'}
+  $redisReady=$false
+  foreach($i in 1..30){$pong=&docker exec $redis redis-cli ping 2>$null;if($LASTEXITCODE-eq0-and$pong-eq'PONG'){$redisReady=$true;break};Start-Sleep 2}
+  if(-not$redisReady){throw 'Redis test container did not become ready.'}
   $env:RELAY_TEST_MYSQL_DSN="relay:relay@tcp(127.0.0.1:$mysqlPort)/relay?parseTime=true&loc=UTC";$env:RELAY_TEST_REDIS_URL="redis://127.0.0.1:$redisPort/0"
 }
 function JobRelay{
   if(-not(Need @('go','gofmt'))){exit$gap};$directory=Join-Path $root 'relay';$script:mysql='';$script:redis='';$ready=$env:RELAY_TEST_MYSQL_DSN-and$env:RELAY_TEST_REDIS_URL
-  try{if(-not$ready-and-not$NoDocker-and(Need @('docker'))){&docker info*>$null;if($LASTEXITCODE-eq0){StartStorage;$ready=$true}};$bad=@(&gofmt -l $directory);if($bad.Count){$bad|Write-Host;throw'Go formatting failed.'};Cmd go @('test','./...') $directory;Cmd go @('test','-race','./...') $directory;Cmd go @('vet','./...') $directory;Cmd go @('run','golang.org/x/vuln/cmd/govulncheck@v1.6.0','./...') $directory;if(-not$ready){exit$gap}}finally{if($mysql){&docker rm -f $mysql $redis*>$null}}
+  try{if(-not$ready-and-not$NoDocker-and(Need @('docker'))){&docker info*>$null;if($LASTEXITCODE-eq0){try{StartStorage;$ready=$true}catch{Write-Host "ENVIRONMENT GAP: MySQL/Redis test containers were not ready: $_"}}};$bad=@(&gofmt -l $directory);if($bad.Count){$bad|Write-Host;throw'Go formatting failed.'};Cmd go @('test','./...') $directory;Cmd go @('test','-race','./...') $directory;Cmd go @('vet','./...') $directory;Cmd go @('run','golang.org/x/vuln/cmd/govulncheck@v1.6.0','./...') $directory;if(-not$ready){exit$gap}}finally{if($mysql){&docker rm -f $mysql $redis*>$null}}
 }
-function JobProtocol{if(-not(Need @('cargo','go','python','protoc','buf','dart','flutter'))){exit$gap};Cmd protoc @('--proto_path=protocol',"--descriptor_set_out=$(Join-Path $LogDir 'network-v2.desc')",'protocol/proto/relay/v2/relay_v2.proto','protocol/proto/network/v2/network.proto');& (Join-Path $PSScriptRoot '..\contracts\relay_v2_contract.ps1') -TempRoot $temp;& (Join-Path $PSScriptRoot '..\contracts\network_v2_acceptance.ps1') -Mode strict -TempRoot $temp;Cmd buf @('lint') (Join-Path $root 'protocol');Cmd buf @('breaking','.','--against','../.git#ref=6ec194bb3a66a748215d3abc11d6da84bd329619,subdir=protocol','--path','proto/relay/v2/relay_v2.proto') (Join-Path $root 'protocol')}
+function JobProtocol{if(-not(Need @('cargo','go','python','protoc','buf','dart','flutter'))){exit$gap};Cmd protoc @('--proto_path=protocol',"--descriptor_set_out=$(Join-Path $LogDir 'network-v2.desc')",'protocol/proto/relay/v2/relay_v2.proto','protocol/proto/network/v2/network.proto');Script (Join-Path $PSScriptRoot '..\contracts\relay_v2_contract.ps1') @{TempRoot=$temp};Script (Join-Path $PSScriptRoot '..\contracts\network_v2_acceptance.ps1') @{Mode='strict';TempRoot=$temp};Cmd buf @('lint') (Join-Path $root 'protocol');Cmd buf @('breaking','.','--against','../.git#ref=6ec194bb3a66a748215d3abc11d6da84bd329619,subdir=protocol','--path','proto/relay/v2/relay_v2.proto') (Join-Path $root 'protocol')}
 function JobArchitecture{if(-not(Need @('dart'))){exit$gap};foreach($file in @('tool/check_agent_docs.dart','test/tool/agent_docs_check_test.dart','test/tool/ci_workflow_test.dart','tool/architecture_check.dart','tool/check_module_dependencies.dart','tool/check_resource_owners.dart','tool/compatibility_check.dart','tool/duplicate_implementation_check.dart')){Cmd dart @('run',$file)}}
 function JobAppStatic{if(-not(Need @('dart','flutter','git'))){exit$gap};$directory=Join-Path $root 'apps\ssh_mobile_full';Cmd dart @('run','tool/generate_app_icons.dart') $directory;Cmd git @('diff','--exit-code','--','assets','android','ios','macos','web','windows/runner/resources/app_icon.ico') $directory;Cmd dart @('format','--output=none','--set-exit-if-changed','lib','test','tool') $directory;Cmd dart @('run','build_runner','build') $directory;Cmd git @('diff','--exit-code','--','lib/data/database/app_database.g.dart') $directory;Cmd flutter @('analyze','--no-fatal-infos') $directory}
 function JobCore{$scopes=@('app_core','app_ui','connection_core','ssh_core');Melos 'dart format --output=none --set-exit-if-changed lib test' $scopes;Melos 'flutter analyze --no-fatal-infos --no-pub' $scopes;Melos "flutter test --no-pub --concurrency $MelosTestConcurrency" $scopes}
@@ -67,13 +87,22 @@ function JobApp([int]$Shard){
   $coverageDir=Join-Path $LogDir "coverage\shard-$Shard";New-Item -ItemType Directory $coverageDir -Force|Out-Null
   if($coverage){$arguments=@('test','--no-pub','--no-test-assets','--coverage','--coverage-path',(Join-Path $coverageDir 'lcov.info'))+$arguments[3..($arguments.Count-1)]}
   Invoke-CommandWithTimeout flutter $arguments $AppTimeout $directory @{HTTP_PROXY='';HTTPS_PROXY='';ALL_PROXY='';NO_PROXY='localhost,127.0.0.1,::1'}
-  foreach($file in @('test/features/startup/views/startup_screen_test.dart','test/screens/system_admin/system_admin_snapshot_tabs_test.dart','test/services/network/transfer_transport_test.dart')){Invoke-CommandWithTimeout flutter @('test','--no-pub','--no-test-assets','--reporter','compact',$file) $AppTimeout $directory}
+  foreach($isolated in @(
+    @{Name='startup';File='test/features/startup/views/startup_screen_test.dart';Coverage=$true},
+    @{Name='system-admin';File='test/screens/system_admin/system_admin_snapshot_tabs_test.dart';Coverage=$true},
+    @{Name='native-transfer';File='test/services/network/transfer_transport_test.dart';Coverage=$false}
+  )){
+    $isolatedArguments=@('test','--no-pub','--no-test-assets','--reporter','compact','--fail-fast','--timeout','60s','--concurrency',"$FlutterConcurrency",'--total-shards',"$AppShards",'--shard-index',"$Shard")
+    if($coverage-and$isolated.Coverage){$isolatedArguments+=@('--coverage','--coverage-path',(Join-Path $coverageDir "isolated-$($isolated.Name)-lcov.info"))}
+    $isolatedArguments+=$isolated.File
+    Invoke-CommandWithTimeout flutter $isolatedArguments $AppTimeout $directory @{HTTP_PROXY='';HTTPS_PROXY='';ALL_PROXY='';NO_PROXY='localhost,127.0.0.1,::1'}
+  }
 }
-function JobCoverage{$arguments=@('run','tool/check_coverage.dart','--minimum=35');foreach($shard in 0..($AppShards-1)){$arguments+="--file=$(Join-Path $LogDir "coverage\shard-$shard\lcov.info")"};Cmd dart $arguments (Join-Path $root 'apps\ssh_mobile_full')}
+function JobCoverage{$arguments=@('run','tool/check_coverage.dart','--minimum=35');foreach($shard in 0..($AppShards-1)){$coverageDir=Join-Path $LogDir "coverage\shard-$shard";$arguments+="--file=$(Join-Path $coverageDir 'lcov.info')";foreach($name in @('startup','system-admin')){$arguments+="--file=$(Join-Path $coverageDir "isolated-$name-lcov.info")"}};Cmd dart $arguments (Join-Path $root 'apps\ssh_mobile_full')}
 function JobAndroid{Cmd flutter @('build','apk','--debug','--no-pub') (Join-Path $root 'apps\ssh_mobile_full')}
 function JobWindows{Cmd flutter @('build','windows','--no-pub') (Join-Path $root 'apps\ssh_mobile_full')}
 function JobTerminal{Cmd flutter @('build','windows','--debug','--no-pub') (Join-Path $root 'apps\ssh_mobile_terminal')}
-function JobE2E{& (Join-Path $PSScriptRoot '..\e2e\client_backend_e2e.ps1') -Mode smoke -TempRoot $temp}
+function JobE2E{Script (Join-Path $PSScriptRoot '..\e2e\client_backend_e2e.ps1') @{Mode='smoke';TempRoot=$temp}}
 function Dispatch([string]$Name){switch -Regex ($Name){'^bootstrap$'{JobBootstrap};'^front-quality$'{JobFront};'^admin-api-contract$'{JobAdmin};'^native-network-quality$'{JobNative};'^sdk-dart-quality$'{JobSdk};'^relay-quality$'{JobRelay};'^protocol-v2-contract$'{JobProtocol};'^architecture-check$'{JobArchitecture};'^app-static-quality$'{JobAppStatic};'^workspace-core-quality$'{JobCore};'^workspace-features-quality$'{JobFeatures};'^app-unit-shard-([0-3])$'{JobApp ([int]$Matches[1])};'^app-coverage$'{JobCoverage};'^android-build$'{JobAndroid};'^windows-build$'{JobWindows};'^terminal-smoke-build$'{JobTerminal};'^client-backend-smoke$'{JobE2E};default{throw"Unknown job $Name"}}}
 if($InternalJob){try{Dispatch $InternalJob;exit 0}catch{[Console]::Error.WriteLine($_);exit 1}}
 if(-not$RunId){$RunId="$(Get-Date -Format yyyyMMdd-HHmmss)-$PID"}

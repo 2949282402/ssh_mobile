@@ -712,7 +712,10 @@ jobs:
         working-directory: apps/ssh_mobile_full
         run: flutter pub get
       - name: Build Windows
-        run: flutter build windows
+        working-directory: .
+        run: >-
+          pwsh .\scripts\powershell\ci\full_test.ps1
+          -NoBootstrap -NoCoverage -Only windows-build
 
   macos-build:
     runs-on: macos-latest

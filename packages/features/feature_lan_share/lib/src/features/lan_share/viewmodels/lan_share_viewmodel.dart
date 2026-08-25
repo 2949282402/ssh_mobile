@@ -669,15 +669,22 @@ class LanShareViewModel extends ChangeNotifier {
     LanDevice device, {
     bool requireNativeTransfer = false,
   }) async {
+    if (requireNativeTransfer) {
+      // The receiver binds its native endpoint ephemerally, so a process
+      // restart can invalidate an otherwise healthy device-level cache.
+      // File sends therefore revalidate the authenticated capability snapshot.
+      _recipientNativePortCache.remove(device.id);
+      _recipientEncryptedFileLimit.remove(device.id);
+    }
     final advertisedNativePort = device.nativePort;
-    if (advertisedNativePort != null &&
+    if (!requireNativeTransfer &&
+        advertisedNativePort != null &&
         advertisedNativePort >= 1 &&
         advertisedNativePort <= 65535) {
       _recipientNativePortCache[device.id] = advertisedNativePort;
     }
-    if (_recipientPubKeyCache.containsKey(device.id) &&
-        (!requireNativeTransfer ||
-            _recipientNativePortCache.containsKey(device.id))) {
+    if (!requireNativeTransfer &&
+        _recipientPubKeyCache.containsKey(device.id)) {
       return NetworkSuccess(_recipientPubKeyCache[device.id]!);
     }
     final pinnedE2eKey = await securityService.getPeerX25519PublicKey(
@@ -688,8 +695,7 @@ class LanShareViewModel extends ChangeNotifier {
     if (pinnedE2eKey != null && pinnedIdentityKey != null) {
       _recipientPubKeyCache[device.id] = pinnedE2eKey;
       _recipientNetworkIdentityKeyCache[device.id] = pinnedIdentityKey;
-      if (!requireNativeTransfer ||
-          _recipientNativePortCache.containsKey(device.id)) {
+      if (!requireNativeTransfer) {
         return NetworkSuccess(pinnedE2eKey);
       }
     }

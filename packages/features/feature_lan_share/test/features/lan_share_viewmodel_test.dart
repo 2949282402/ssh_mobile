@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -60,11 +62,17 @@ void main() {
 
       final facade = FakeLanShareNetworkService();
       final security = _PinnedKeySecurityService();
+      final transfer = LanTransferService(
+        currentDeviceId: 'sender-1',
+        securityService: security,
+        storageService: FakeLanStorageService(),
+      );
+      final httpOverrides = _CapabilityHttpOverrides([6543, 6544]);
       final viewModel = LanShareViewModel(
         discoveryService: FakeLanDiscoveryService(),
         securityService: security,
         storageService: FakeLanStorageService(),
-        transferService: FakeLanTransferService(),
+        transferService: transfer,
         networkFacade: facade,
         historyDao: _StubHistoryDao(),
         appSettings: FakeLanShareSettings(),
@@ -73,25 +81,43 @@ void main() {
         ownsRuntime: false,
       );
 
-      final result = await viewModel.sendFile(
-        LanDevice(
-          id: 'peer-1',
-          alias: 'Peer 1',
-          ip: '192.168.1.5',
-          port: 5432,
-          nativePort: 6543,
-          deviceType: LanDeviceType.mobile,
-          osName: 'android',
-          lastSeen: DateTime.now(),
-        ),
-        file.path,
-      );
+      final results = await HttpOverrides.runWithHttpOverrides(() async {
+        final firstResult = await viewModel.sendFile(
+          LanDevice(
+            id: 'peer-1',
+            alias: 'Peer 1',
+            ip: '192.168.1.5',
+            port: 5432,
+            nativePort: 6543,
+            deviceType: LanDeviceType.mobile,
+            osName: 'android',
+            lastSeen: DateTime.now(),
+          ),
+          file.path,
+        );
+        final secondResult = await viewModel.sendFile(
+          LanDevice(
+            id: 'peer-1',
+            alias: 'Peer 1',
+            ip: '192.168.1.5',
+            port: 5432,
+            deviceType: LanDeviceType.mobile,
+            osName: 'android',
+            lastSeen: DateTime.now(),
+          ),
+          file.path,
+        );
+        return (firstResult, secondResult);
+      }, httpOverrides);
 
-      expect(result, isA<SdkSuccess<SdkTransferSession>>());
-      expect(facade.connectPeerCalls, 1);
-      expect(facade.lastPeerConfig?.endpointAddress, '192.168.1.5:6543');
-      expect(facade.transferFileCalls, 1);
+      expect(results.$1, isA<SdkSuccess<SdkTransferSession>>());
+      expect(results.$2, isA<SdkSuccess<SdkTransferSession>>());
+      expect(httpOverrides.capabilityRequests, 2);
+      expect(facade.connectPeerCalls, 2);
+      expect(facade.lastPeerConfig?.endpointAddress, '192.168.1.5:6544');
+      expect(facade.transferFileCalls, 2);
       viewModel.dispose();
+      await transfer.close();
     },
   );
 }
@@ -110,6 +136,118 @@ final class _PinnedKeySecurityService extends Fake
   @override
   Future<Uint8List?> getPeerNetworkIdentityPublicKey(String deviceId) async =>
       _key;
+
+  @override
+  Future<bool> isDevicePaired(
+    String deviceId, {
+    String? ip,
+    int? port,
+    String? localDeviceId,
+  }) async => false;
+
+  @override
+  Future<String?> getOutboundAccessToken(String deviceId) async => 'token';
+
+  @override
+  Future<String?> getPeerCertificateFingerprint(String deviceId) async => null;
+}
+
+final class _CapabilityHttpOverrides extends HttpOverrides {
+  _CapabilityHttpOverrides(this._ports);
+
+  static final String _encodedKey = base64.encode(
+    List<int>.generate(32, (index) => index + 1),
+  );
+
+  final List<int> _ports;
+  int capabilityRequests = 0;
+
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    final port = _ports[capabilityRequests++];
+    return _JsonHttpClient(<String, dynamic>{
+      'e2eEncryption': true,
+      'x25519PubKey': _encodedKey,
+      'networkIdentityPubKey': _encodedKey,
+      'quicFileTransfer': true,
+      'quicPort': port,
+      'maxEncryptedFileBytes': 1024 * 1024,
+    });
+  }
+}
+
+final class _JsonHttpClient extends Fake implements HttpClient {
+  _JsonHttpClient(this.body);
+
+  final Map<String, dynamic> body;
+
+  @override
+  Duration? connectionTimeout;
+
+  @override
+  Duration idleTimeout = const Duration(seconds: 15);
+
+  @override
+  String Function(Uri)? findProxy;
+
+  @override
+  bool Function(X509Certificate cert, String host, int port)?
+  badCertificateCallback;
+
+  @override
+  Future<HttpClientRequest> getUrl(Uri url) async =>
+      _JsonHttpClientRequest(body);
+
+  @override
+  void close({bool force = false}) {}
+}
+
+final class _JsonHttpClientRequest extends Fake implements HttpClientRequest {
+  _JsonHttpClientRequest(this.body);
+
+  final Map<String, dynamic> body;
+  final HttpHeaders _headers = _FakeHttpHeaders();
+
+  @override
+  HttpHeaders get headers => _headers;
+
+  @override
+  bool followRedirects = true;
+
+  @override
+  Future<HttpClientResponse> close() async => _JsonHttpClientResponse(body);
+}
+
+final class _FakeHttpHeaders extends Fake implements HttpHeaders {
+  @override
+  void set(String name, Object value, {bool preserveHeaderCase = false}) {}
+}
+
+final class _JsonHttpClientResponse extends Fake implements HttpClientResponse {
+  _JsonHttpClientResponse(Map<String, dynamic> body)
+    : _bytes = utf8.encode(jsonEncode(body));
+
+  final List<int> _bytes;
+
+  @override
+  int get statusCode => HttpStatus.ok;
+
+  @override
+  Future<void> forEach(void Function(List<int> element) action) =>
+      Stream<List<int>>.value(_bytes).forEach(action);
+
+  @override
+  StreamSubscription<List<int>> listen(
+    void Function(List<int>)? onData, {
+    Function? onError,
+    void Function()? onDone,
+    bool? cancelOnError,
+  }) => Stream<List<int>>.value(_bytes).listen(
+    onData,
+    onError: onError,
+    onDone: onDone,
+    cancelOnError: cancelOnError,
+  );
 }
 
 /// 记录 sendFile 写入路径的最小历史 DAO 替身；`Fake` 对非空 Future 返回类型

@@ -183,7 +183,8 @@ void main() {
 
   final expectedBuildCommands = <String>[
     'flutter build apk --debug --no-pub',
-    'flutter build windows',
+    r'pwsh .\scripts\powershell\ci\full_test.ps1',
+    '-NoBootstrap -NoCoverage -Only windows-build',
     'flutter build macos',
     'flutter build ios --release --no-codesign --no-pub',
     'flutter build windows --debug --no-pub',
@@ -328,7 +329,8 @@ const _requiredWorkflowMarkers = <String>[
   'dart run melos run test',
   'flutter build apk --debug --no-pub',
   'flutter build windows --debug --no-pub',
-  'flutter build windows',
+  r'pwsh .\scripts\powershell\ci\full_test.ps1',
+  '-NoBootstrap -NoCoverage -Only windows-build',
   'flutter build macos',
   'flutter build ios --release --no-codesign --no-pub',
   'apps/ssh_mobile_full',
