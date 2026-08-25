@@ -201,6 +201,103 @@ void main() {
       settings.dispose();
     },
   );
+
+  test(
+    'toggling relay authorization repeatedly does not leak trustStore subscriptions',
+    () async {
+      final store = LanPeerTrustStore();
+      final security = LanSecurityService(
+        appOwnedX25519PrivateSeed: Uint8List(32),
+        peerTrustStore: store,
+      );
+      final settings = FakeLanShareSettings();
+      final facade = _RecordingFacade();
+      final registry = LanNativePeerRegistry(
+        trustStore: store,
+        networkFacade: facade,
+      );
+
+      final record = LanPeerTrustRecord(
+        deviceId: 'peer-1',
+        certificateFingerprint:
+            '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        inboundAccessToken: 'inbound',
+        outboundAccessToken: 'outbound',
+        x25519PublicKey: Uint8List(32),
+        networkIdentityPublicKey: Uint8List(32),
+        origin: PeerTrustOrigin.localPin,
+        authorization: const PeerRouteAuthorization(
+          localDirect: true,
+          relay: false,
+        ),
+        createdAt: DateTime.utc(2026),
+      );
+      await registry.registerTrust(record);
+
+      final transfer = LanTransferService(
+        currentDeviceId: 'sender-1',
+        securityService: security,
+        storageService: FakeLanStorageService(),
+      );
+
+      final coordinator = LanNativeTransferCoordinator(
+        transferService: transfer,
+        networkFacade: facade,
+        trustStore: store,
+        updateDirectEndpoint: registry.updateDirectEndpoint,
+        invalidateDirectEndpoint: registry.invalidateDirectEndpoint,
+        removeTrust: registry.removeTrust,
+        setRelayAuthorization: (deviceId, enabled) => enabled
+            ? registry.authorizeRelayForPeer(deviceId)
+            : registry.revokeRelayForPeer(deviceId),
+      );
+
+      final viewModel = LanShareViewModel(
+        discoveryService: FakeLanDiscoveryService(),
+        securityService: security,
+        storageService: FakeLanStorageService(),
+        transferService: transfer,
+        nativeTransferCoordinator: coordinator,
+        historyDao: FakeLanHistoryDao(),
+        appSettings: settings,
+        dataProtection: FakeLanShareDataProtection(),
+        logger: FakeLanShareLogger(),
+        ownsRuntime: false,
+      );
+
+      await viewModel.initialize();
+
+      // Toggle relay 10 times
+      for (var i = 0; i < 10; i++) {
+        await viewModel.setRelayAuthorization('peer-1', i.isEven);
+      }
+
+      int notifyCount = 0;
+      viewModel.addListener(() {
+        notifyCount++;
+      });
+
+      // Saving one update to trustStore directly should trigger stream change
+      // and cause exactly ONE notifyListeners call, rather than 10+ duplicate callbacks.
+      await store.save(
+        record.copyWith(
+          authorization: const PeerRouteAuthorization(
+            localDirect: true,
+            relay: true,
+          ),
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(notifyCount, 1);
+
+      viewModel.dispose();
+      await coordinator.dispose();
+      await transfer.close();
+      await store.dispose();
+      settings.dispose();
+    },
+  );
 }
 
 final class _MissingKeySecurityService extends Fake

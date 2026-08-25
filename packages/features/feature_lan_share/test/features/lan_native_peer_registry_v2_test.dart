@@ -314,6 +314,67 @@ void main() {
   );
 
   test(
+    'relay revoke native failure and removePeer failure keeps peer runtime-blocked',
+    () async {
+      final store = LanPeerTrustStore();
+      final facade = _RecordingFacade();
+      final registry = LanNativePeerRegistry(
+        trustStore: store,
+        networkFacade: facade,
+      );
+      addTearDown(store.dispose);
+      await store.save(
+        _record('peer-a').copyWith(
+          authorization: const PeerRouteAuthorization(
+            localDirect: true,
+            relay: true,
+          ),
+        ),
+      );
+
+      facade.failRegisterPeer = true;
+      facade.failRemovePeer = true;
+      final result = await registry.revokeRelayForPeer('peer-a');
+
+      expect(result, isA<SdkFailure<void>>());
+      expect((await store.read('peer-a'))?.authorization.relay, isFalse);
+      expect(registry.isPeerBlocked('peer-a'), isTrue);
+
+      // Blocked peer must reject endpoint updates
+      final updateResult = await registry.updateDirectEndpoint(
+        'peer-a',
+        '10.0.0.2:9',
+      );
+      expect(updateResult, isA<SdkFailure<void>>());
+      expect(
+        (updateResult as SdkFailure<void>).error.code,
+        NetworkErrorCode.securityPolicyMismatch,
+      );
+
+      // Blocked peer is ignored during discovery sync
+      facade.registrations.clear();
+      await registry.syncDiscoveredEndpoints(<LanDiscoveredPeer>[
+        LanDiscoveredPeer(
+          deviceId: 'peer-a',
+          alias: 'Peer A',
+          ip: '10.0.0.2',
+          controlPort: 53317,
+          advertisedNativePort: 43123,
+          deviceType: LanDeviceType.desktop,
+          os: 'linux',
+          lastSeen: DateTime.utc(2026),
+        ),
+      ]);
+      expect(facade.registrations, isEmpty);
+
+      // Successful restoreAll clears blocked status
+      facade.failRegisterPeer = false;
+      await registry.restoreAll();
+      expect(registry.isPeerBlocked('peer-a'), isFalse);
+    },
+  );
+
+  test(
     'registry does not retain discovery endpoint without a facade',
     () async {
       final store = LanPeerTrustStore();

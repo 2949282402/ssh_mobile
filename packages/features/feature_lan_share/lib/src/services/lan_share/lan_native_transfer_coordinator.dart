@@ -473,6 +473,7 @@ final class LanNativeTransferCoordinator {
         peerId: offer.peerId,
       );
     }
+    _pendingOffers[offer.transferId] ??= offer;
     final committed = _committedDecisions[offer.transferId];
     if (committed != null) {
       if (committed == accept) return const NetworkSuccess<void>(null);
@@ -505,6 +506,12 @@ final class LanNativeTransferCoordinator {
 
     try {
       final result = await _executeRespond(offer, accept: accept);
+      if (identical(
+        _decisionOperations[offer.transferId]?.future,
+        completer.future,
+      )) {
+        _decisionOperations.remove(offer.transferId);
+      }
       completer.complete(result);
       return result;
     } catch (error) {
@@ -515,6 +522,12 @@ final class LanNativeTransferCoordinator {
           peerId: offer.peerId,
         ),
       );
+      if (identical(
+        _decisionOperations[offer.transferId]?.future,
+        completer.future,
+      )) {
+        _decisionOperations.remove(offer.transferId);
+      }
       completer.complete(failure);
       return failure;
     } finally {
@@ -615,16 +628,17 @@ final class LanNativeTransferCoordinator {
   void _handleNetworkEvent(SdkEvent event) {
     if (_disposed) return;
     if (event case final IncomingTransferOffer offer) {
-      if (_pendingOffers.containsKey(offer.transferId) ||
-          _committedDecisions.containsKey(offer.transferId) ||
-          _decisionOperations.containsKey(offer.transferId)) {
+      if (_committedDecisions.containsKey(offer.transferId)) {
         return;
       }
+      final isNewOffer = !_pendingOffers.containsKey(offer.transferId);
       _pendingOffers[offer.transferId] = offer;
-      _offerTimers[offer.transferId] = Timer(offerTimeout, () {
+      _offerTimers[offer.transferId] ??= Timer(offerTimeout, () {
         unawaited(_expireOffer(offer));
       });
-      if (!_incomingOffers.isClosed) _incomingOffers.add(offer);
+      if (isNewOffer && !_incomingOffers.isClosed) {
+        _incomingOffers.add(offer);
+      }
     }
     if (!_events.isClosed) _events.add(event);
   }

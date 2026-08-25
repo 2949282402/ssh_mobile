@@ -241,6 +241,76 @@ void main() {
       expect(fixture.facade.responses, <(String, bool)>[('transfer-r', false)]);
     },
   );
+
+  test(
+    'when accept is in flight and timeout timer fires, successful accept does not trigger duplicate reject',
+    () async {
+      final fixture = await _Fixture.create(
+        trusted: true,
+        offerTimeout: const Duration(milliseconds: 30),
+      );
+      addTearDown(fixture.dispose);
+      final offer = _offer('transfer-timeout-success', 'peer-a');
+      fixture.facade.emit(offer);
+
+      final completer = Completer<void>();
+      fixture.facade.respondCompleter = completer;
+
+      final acceptFuture = fixture.coordinator.accept(offer);
+
+      // Wait until the 30ms offerTimeout timer fires and enters _expireOffer,
+      // which will await the in-flight acceptFuture
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+
+      // Complete native response successfully
+      completer.complete();
+      final acceptResult = await acceptFuture;
+      expect(acceptResult, isA<SdkSuccess<void>>());
+
+      // Give event loop time to run _expireOffer completion
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      // Assert coordinator committed the accept and did not send a reject
+      expect(fixture.facade.responses, <(String, bool)>[
+        ('transfer-timeout-success', true),
+      ]);
+    },
+  );
+
+  test(
+    'when accept is in flight and timeout timer fires, failed accept causes timeout handler to send reject',
+    () async {
+      final fixture = await _Fixture.create(
+        trusted: true,
+        offerTimeout: const Duration(milliseconds: 30),
+      );
+      addTearDown(fixture.dispose);
+      final offer = _offer('transfer-timeout-fail', 'peer-a');
+      fixture.facade.emit(offer);
+
+      final completer = Completer<void>();
+      fixture.facade.respondCompleter = completer;
+      fixture.facade.failRespondCount =
+          1; // Fail first response (in-flight accept), allow subsequent fallback reject
+
+      final acceptFuture = fixture.coordinator.accept(offer);
+
+      // Wait until timer fires and waits on in-flight accept
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+
+      completer.complete();
+      final acceptResult = await acceptFuture;
+      expect(acceptResult, isA<SdkFailure<void>>());
+
+      // Give event loop time to run _expireOffer fallback reject
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(fixture.facade.responses, <(String, bool)>[
+        ('transfer-timeout-fail', true),
+        ('transfer-timeout-fail', false),
+      ]);
+    },
+  );
 }
 
 final class _Fixture {
@@ -260,7 +330,10 @@ final class _Fixture {
   final List<String> updatedEndpoints;
   final List<String> invalidatedPeerIds;
 
-  static Future<_Fixture> create({bool trusted = false}) async {
+  static Future<_Fixture> create({
+    bool trusted = false,
+    Duration offerTimeout = const Duration(seconds: 25),
+  }) async {
     final store = LanPeerTrustStore();
     if (trusted) await store.save(_trust('peer-a'));
     final facade = _RecordingFacade();
@@ -286,6 +359,7 @@ final class _Fixture {
         invalidatedPeerIds.add(deviceId);
         return const SdkSuccess<void>(null);
       },
+      offerTimeout: offerTimeout,
     );
     final fixture = _Fixture._(
       store: store,
@@ -313,6 +387,7 @@ final class _RecordingFacade extends Fake implements NetworkFacade {
   int connectCalls = 0;
   int transferCalls = 0;
   bool failRespond = false;
+  int? failRespondCount;
   Completer<void>? respondCompleter;
 
   @override
@@ -356,7 +431,11 @@ final class _RecordingFacade extends Fake implements NetworkFacade {
       await respondCompleter!.future;
     }
     responses.add((transferId, accept));
-    if (failRespond) {
+    final count = failRespondCount;
+    if (failRespond || (count != null && count > 0)) {
+      if (count != null && count > 0) {
+        failRespondCount = count - 1;
+      }
       return NetworkFailure<void>(
         NetworkError(
           code: NetworkErrorCode.ioError,

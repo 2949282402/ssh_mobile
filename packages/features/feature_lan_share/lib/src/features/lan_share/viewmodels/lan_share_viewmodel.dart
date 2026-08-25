@@ -329,10 +329,8 @@ class LanShareViewModel extends ChangeNotifier {
     }
   }
 
-  /// Loads trust independently of discovery so offline trusted peers remain
-  /// available to the presentation layer. Test doubles that do not provide
-  /// the concrete trust store are intentionally treated as an empty store.
-  Future<void> _loadTrustProjection() async {
+  /// Loads trust records into local view projection without creating a stream subscription.
+  Future<void> _refreshTrustProjection() async {
     try {
       final trustStore = securityService.peerTrustStore;
       final records = await trustStore.loadAll();
@@ -342,6 +340,20 @@ class LanShareViewModel extends ChangeNotifier {
         ..addEntries(
           records.map((record) => MapEntry(record.deviceId, record)),
         );
+    } catch (_) {
+      _trustRecords.clear();
+    }
+  }
+
+  /// Loads trust independently of discovery so offline trusted peers remain
+  /// available to the presentation layer. Test doubles that do not provide
+  /// the concrete trust store are intentionally treated as an empty store.
+  Future<void> _loadTrustProjection() async {
+    await _trustSubscription?.cancel();
+    _trustSubscription = null;
+    await _refreshTrustProjection();
+    try {
+      final trustStore = securityService.peerTrustStore;
       _trustSubscription = trustStore.changes.listen((records) {
         if (_disposed) return;
         _trustRecords
@@ -351,9 +363,7 @@ class LanShareViewModel extends ChangeNotifier {
           );
         notifyListeners();
       });
-    } catch (_) {
-      _trustRecords.clear();
-    }
+    } catch (_) {}
   }
 
   /// 取消 ViewModel 持有的全部订阅和保活定时器。
@@ -672,7 +682,7 @@ class LanShareViewModel extends ChangeNotifier {
       enabled: enabled,
     );
     if (result is NetworkSuccess<void>) {
-      await _loadTrustProjection();
+      await _refreshTrustProjection();
       if (!_disposed) notifyListeners();
     }
     return result;

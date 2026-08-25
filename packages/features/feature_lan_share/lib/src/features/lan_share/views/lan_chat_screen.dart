@@ -295,7 +295,8 @@ class _LanChatScreenState extends State<LanChatScreen> {
                                   widget.targetDeviceId,
                                   !isRelayAllowed,
                                 );
-                                if (mounted && result is NetworkFailure<void>) {
+                                if (context.mounted &&
+                                    result is NetworkFailure<void>) {
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
                                       content: Text(
