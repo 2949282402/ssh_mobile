@@ -590,6 +590,9 @@ final class LanReceiverCoordinator extends ChangeNotifier {
               updateDirectEndpoint: peerRegistry.updateDirectEndpoint,
               invalidateDirectEndpoint: peerRegistry.invalidateDirectEndpoint,
               removeTrust: peerRegistry.removeTrust,
+              setRelayAuthorization: (deviceId, enabled) => enabled
+                  ? peerRegistry.authorizeRelayForPeer(deviceId)
+                  : peerRegistry.revokeRelayForPeer(deviceId),
             );
             await _bindNativeOfferStream(_nativeTransferCoordinator!);
             final discoveredPeers = discovery.currentDiscoveredPeers;

@@ -653,6 +653,31 @@ class LanShareViewModel extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
+  /// 设置对端设备的 Relay 传输授权策略。
+  Future<NetworkResult<void>> setRelayAuthorization(
+    String deviceId,
+    bool enabled,
+  ) async {
+    final coordinator = nativeTransferCoordinator;
+    if (coordinator == null) {
+      return _networkFailure(
+        code: NetworkErrorCode.noRoute,
+        message: 'Native transfer coordinator is unavailable.',
+        operation: NetworkOperation.upsertPeer,
+        peerId: deviceId,
+      );
+    }
+    final result = await coordinator.setRelayAuthorization(
+      peerId: deviceId,
+      enabled: enabled,
+    );
+    if (result is NetworkSuccess<void>) {
+      await _loadTrustProjection();
+      if (!_disposed) notifyListeners();
+    }
+    return result;
+  }
+
   /// 删除一个对端关联的全部历史和文件。
   Future<void> clearChatHistory(String targetDeviceId) async {
     final records = await historyDao.getAllRecords();

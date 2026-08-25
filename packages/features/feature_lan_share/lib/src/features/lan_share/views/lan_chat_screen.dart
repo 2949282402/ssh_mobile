@@ -284,7 +284,29 @@ class _LanChatScreenState extends State<LanChatScreen> {
                           PopupMenuButton<String>(
                             icon: const Icon(Icons.more_vert_rounded),
                             onSelected: (action) async {
-                              if (action == 'forget') {
+                              if (action == 'toggle_relay') {
+                                final peerState = vm.peerStateFor(
+                                  widget.targetDeviceId,
+                                );
+                                final isRelayAllowed =
+                                    peerState?.trust?.authorization.relay ??
+                                    false;
+                                final result = await vm.setRelayAuthorization(
+                                  widget.targetDeviceId,
+                                  !isRelayAllowed,
+                                );
+                                if (mounted && result is NetworkFailure<void>) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        strings.isEnglish
+                                            ? 'Failed to update Relay authorization: ${result.error.message}'
+                                            : '更新中继授权失败：${result.error.message}',
+                                      ),
+                                    ),
+                                  );
+                                }
+                              } else if (action == 'forget') {
                                 final confirm = await showDialog<bool>(
                                   context: context,
                                   builder: (ctx) => AlertDialog(
@@ -345,16 +367,34 @@ class _LanChatScreenState extends State<LanChatScreen> {
                                 }
                               }
                             },
-                            itemBuilder: (context) => [
-                              PopupMenuItem(
-                                value: 'forget',
-                                child: Text(strings.lanShareForgetDevice),
-                              ),
-                              PopupMenuItem(
-                                value: 'clear',
-                                child: Text(strings.lanShareClearChatHistory),
-                              ),
-                            ],
+                            itemBuilder: (context) {
+                              final peerState = vm.peerStateFor(
+                                widget.targetDeviceId,
+                              );
+                              final isRelayAllowed =
+                                  peerState?.trust?.authorization.relay ??
+                                  false;
+                              return [
+                                if (peerState?.isTrusted == true)
+                                  CheckedPopupMenuItem<String>(
+                                    value: 'toggle_relay',
+                                    checked: isRelayAllowed,
+                                    child: Text(
+                                      strings.isEnglish
+                                          ? 'Allow Relay for this device'
+                                          : '允许中继传输',
+                                    ),
+                                  ),
+                                PopupMenuItem(
+                                  value: 'forget',
+                                  child: Text(strings.lanShareForgetDevice),
+                                ),
+                                PopupMenuItem(
+                                  value: 'clear',
+                                  child: Text(strings.lanShareClearChatHistory),
+                                ),
+                              ];
+                            },
                           ),
                         ],
                       ),

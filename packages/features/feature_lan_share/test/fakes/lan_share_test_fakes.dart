@@ -565,9 +565,20 @@ final class FakeLanTransferService extends Fake implements LanTransferService {
   }
 }
 
-final class FakeLanStorageService extends Fake implements LanStorageService {}
+final class FakeLanStorageService extends Fake implements LanStorageService {
+  @override
+  Future<int> perform7DayGarbageCollection({
+    Duration ttl = const Duration(days: 7),
+  }) async => 0;
+}
 
 final class FakeLanHistoryDao extends Fake implements LanHistoryDao {
+  @override
+  Stream<List<LanTransferRecord>> watchAllRecords() => const Stream.empty();
+
+  @override
+  Future<List<LanTransferRecord>> getAllRecords() async => const [];
+
   @override
   Future<int> insertRecord(LanTransferRecordsCompanion record) async => 1;
 
