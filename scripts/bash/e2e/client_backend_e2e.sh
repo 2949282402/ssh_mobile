@@ -10,12 +10,12 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 MODE="${1:-smoke}"
 case "$MODE" in
   smoke|strict) ;;
   *)
-    echo "Usage: bash scripts/client_backend_e2e.sh [smoke|strict]" >&2
+    echo "Usage: bash scripts/bash/e2e/client_backend_e2e.sh [smoke|strict]" >&2
     exit 64
     ;;
 esac

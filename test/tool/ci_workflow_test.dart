@@ -14,6 +14,8 @@ void main() {
     '${root.path}/native/network_core/rust-toolchain.toml',
   ).readAsStringSync();
 
+  _verifyScriptTrees(root);
+
   _expect(pubspec.contains('\nmelos:\n'), '根 pubspec 必须声明 Melos 配置');
   _expect(pubspec.contains('    format:'), 'Melos 必须提供 format 脚本');
   _expect(pubspec.contains('    analyze:'), 'Melos 必须提供 analyze 脚本');
@@ -82,7 +84,9 @@ void main() {
     'admin-api-contract 必须安装 Front dependencies',
   );
   _expect(
-    adminApiContract.contains('bash scripts/admin_api_contract.sh'),
+    adminApiContract.contains(
+      'bash scripts/bash/contracts/admin_api_contract.sh',
+    ),
     'admin-api-contract 必须运行真实 Go handler → Front schema 门禁',
   );
 
@@ -201,6 +205,54 @@ void main() {
   }
 
   stdout.writeln('CI workflow contract tests passed.');
+}
+
+void _verifyScriptTrees(Directory root) {
+  final bashRoot = Directory('${root.path}/scripts/bash');
+  final powerShellRoot = Directory('${root.path}/scripts/powershell');
+  final bashDirectories = bashRoot
+      .listSync(recursive: true)
+      .whereType<Directory>()
+      .map((directory) => directory.path.substring(bashRoot.path.length + 1))
+      .toSet();
+  final powerShellDirectories = powerShellRoot
+      .listSync(recursive: true)
+      .whereType<Directory>()
+      .map(
+        (directory) => directory.path.substring(powerShellRoot.path.length + 1),
+      )
+      .toSet();
+  _expect(
+    bashDirectories.length == powerShellDirectories.length &&
+        bashDirectories.containsAll(powerShellDirectories),
+    'Bash 与 PowerShell 的功能子目录结构必须一致',
+  );
+  for (final shellScript
+      in bashRoot
+          .listSync(recursive: true)
+          .whereType<File>()
+          .where((file) => file.path.endsWith('.sh'))) {
+    final relative = shellScript.path.substring(bashRoot.path.length + 1);
+    final pair =
+        '${powerShellRoot.path}/${relative.replaceFirst(RegExp(r'\.sh$'), '.ps1')}';
+    _expect(File(pair).existsSync(), 'Shell 脚本缺少 PowerShell 配对：$relative');
+  }
+  const powerShellOnly = <String>{
+    'common/powershell_common.ps1',
+    'platform/build_windows_msi.ps1',
+    'platform/configure_windows_toolchain.ps1',
+  };
+  for (final script
+      in powerShellRoot
+          .listSync(recursive: true)
+          .whereType<File>()
+          .where((file) => file.path.endsWith('.ps1'))) {
+    final relative = script.path.substring(powerShellRoot.path.length + 1);
+    if (powerShellOnly.contains(relative)) continue;
+    final pair =
+        '${bashRoot.path}/${relative.replaceFirst(RegExp(r'\.ps1$'), '.sh')}';
+    _expect(File(pair).existsSync(), 'PowerShell 脚本缺少 Shell 配对：$relative');
+  }
 }
 
 /// 查找仓库根目录，支持从测试文件目录或仓库根目录启动。

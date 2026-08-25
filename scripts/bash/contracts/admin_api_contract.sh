@@ -6,7 +6,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ssh-mobile-admin-contract.XXXXXX")"
 FIXTURE_FILE="$RUN_DIR/admin-api.json"
 CONTRACT_GOCACHE="${SSH_MOBILE_CONTRACT_GOCACHE:-${TMPDIR:-/tmp}/ssh-mobile-admin-contract-go-cache}"

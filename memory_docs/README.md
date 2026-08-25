@@ -1,4 +1,4 @@
-> Last updated: 2026-08-23
+> Last updated: 2026-08-25
 
 # Project Memory
 
@@ -19,32 +19,35 @@ and current behavior remains authoritative in code and tests.
 
 ## Repository-wide validation
 
-[`scripts/full_test.sh`](../scripts/full_test.sh) is the maintained WSL entry
-point for the Linux-runnable CI gates across the repository. It is an
-integration surface, not a disposable convenience script. When tests are
-added, removed, or renamed, package membership or project structure changes,
-CI jobs change, generated checks change, or test exclusions, timeouts, and
-Linux toolchain assumptions change, update `scripts/full_test.sh` in the same
-change. Keep its job scopes, filters, environment-gap handling, and help text
-aligned with the current CI and repository layout, then run the affected jobs
-and the documentation checks.
+`scripts/bash/` and `scripts/powershell/` are mirrored by functional category.
+Agents run the aggregate matching their host and maintain same-relative-path
+`.sh`/`.ps1` pairs together. CI scope, arguments, environment, timeouts,
+cleanup, and exit semantics cannot drift between the pair. Platform-only and
+common PowerShell files live in their mirrored categories without fabricated
+Bash implementations.
 
-Before creating or updating a PR, run the script from WSL after dependencies
-are current. `--no-bootstrap` is appropriate only for a repeat run with
-unchanged dependency inputs. A documented platform or toolchain gap must stay
-visible in the result and must never be reported as a passed check; it does not
-authorize a PR write without explicit user acceptance.
+Before creating or updating a PR, run the environment-native aggregate after
+dependencies are current. A documented platform or toolchain gap stays visible
+and is never reported as a pass.
 
 Recommended repeat-run parameters from the repository root are:
 
 ```bash
-bash scripts/full_test.sh \
+bash scripts/bash/ci/full_test.sh \
   --jobs 4 \
   --flutter-concurrency 2 \
   --melos-concurrency 1 \
   --melos-test-concurrency 1 \
   --app-timeout 20m \
   --no-bootstrap
+```
+
+The native Windows PowerShell 7 equivalent is:
+
+```powershell
+& .\scripts\powershell\ci\full_test.ps1 `
+  -Jobs 4 -FlutterConcurrency 2 -MelosConcurrency 1 `
+  -MelosTestConcurrency 1 -AppTimeout 20m -NoBootstrap
 ```
 
 ## Periodic coverage review
@@ -54,14 +57,17 @@ coverage by default. For a large refactor, a new feature, or release review,
 run the independent owner gates from the repository root:
 
 ```bash
-bash scripts/front_coverage.sh
-bash scripts/backend_coverage.sh
-bash scripts/client_coverage.sh
-bash scripts/sdk_coverage.sh
+bash scripts/bash/coverage/front_coverage.sh
+bash scripts/bash/coverage/backend_coverage.sh
+bash scripts/bash/coverage/client_coverage.sh
+bash scripts/bash/coverage/sdk_coverage.sh
 ```
 
+Native Windows uses the same filenames under
+`scripts\powershell\coverage\`; update and review both sides together.
+
 Each gate enforces an 80% threshold on its documented scope. The former
-`scripts/coverage_test.sh` name remains a compatibility alias for the client
+`scripts/bash/coverage/coverage_test.sh` name remains a compatibility alias for the client
 gate. Scope, failure interpretation, Docker-backed services, and the WSL
 Flutter runner workaround are maintained in
 [`docs/COVERAGE_POLICY.md`](../docs/COVERAGE_POLICY.md).

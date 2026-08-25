@@ -40,7 +40,7 @@ type adminAPIContractFixture struct {
 // TestExportAdminAPIContractFixture exercises the real registered handlers and
 // optionally exports their raw JSON shapes for the Front Zod contract gate.
 // Sensitive runtime values are replaced before the temporary fixture is
-// written; the fixture path is supplied only by scripts/admin_api_contract.sh.
+// written; the fixture path is supplied only by scripts/bash/contracts/admin_api_contract.sh.
 func TestExportAdminAPIContractFixture(t *testing.T) {
 	adminPassword := hex.EncodeToString(randomBytes(16))
 	server := NewServer(Config{

@@ -1,4 +1,4 @@
-> Last updated: 2026-08-24
+> Last updated: 2026-08-25
 
 <p align="center">
   <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile icon" width="112" />
@@ -147,9 +147,9 @@ flutter build ios --release --no-codesign
 ```powershell
 # Windows: run from a native checkout in PowerShell 7 (pwsh.exe).
 Set-Location '<native-repo>'
-. .\scripts\configure_windows_toolchain.ps1 -FlutterRoot '<flutter-root>'
+. .\scripts\powershell\platform\configure_windows_toolchain.ps1 -FlutterRoot '<flutter-root>'
 & '<flutter-root>\bin\flutter.bat' build windows --no-pub
-& .\scripts\build_windows_msi.ps1 `
+& .\scripts\powershell\platform\build_windows_msi.ps1 `
   -Flutter '<flutter-root>\bin\flutter.bat' `
   -Version '1.0.0'
 ```
@@ -314,7 +314,15 @@ For the normal post-change local regression gate, use the repository wrapper
 from the root directory:
 
 ```bash
-bash scripts/full_test.sh --no-bootstrap
+bash scripts/bash/ci/full_test.sh --no-bootstrap
+```
+
+Run the script family for the actual host: Linux and WSL use `scripts/bash/`,
+while native Windows PowerShell 7 uses `scripts/powershell/`. Same-relative-path
+`.sh`/`.ps1` scripts are maintained together. The Windows daily gate is:
+
+```powershell
+& .\scripts\powershell\ci\full_test.ps1 -NoBootstrap
 ```
 
 This daily gate checks the runnable formatting, analysis, contract, workspace,
@@ -323,18 +331,18 @@ periodic review because Flutter instrumentation substantially increases WSL
 runtime. Run the four owner-specific gates:
 
 ```bash
-bash scripts/front_coverage.sh
-bash scripts/backend_coverage.sh
-bash scripts/client_coverage.sh
-bash scripts/sdk_coverage.sh
+bash scripts/bash/coverage/front_coverage.sh
+bash scripts/bash/coverage/backend_coverage.sh
+bash scripts/bash/coverage/client_coverage.sh
+bash scripts/bash/coverage/sdk_coverage.sh
 ```
 
 Each gate enforces an 80% threshold on its documented owner scope. The client
 gate covers the App-owned Network V2 service boundary; it does not represent
 coverage for unrelated Full App UI features. See
 [Coverage policy](docs/COVERAGE_POLICY.md) for the exact scopes and the
-meaningful-boundary-test rule. `scripts/coverage_test.sh --no-bootstrap`
-remains as a compatibility alias for `scripts/client_coverage.sh`.
+meaningful-boundary-test rule. `scripts/bash/coverage/coverage_test.sh --no-bootstrap`
+remains as a compatibility alias for `scripts/bash/coverage/client_coverage.sh`.
 
 ### Workspace module gate
 
@@ -358,11 +366,11 @@ existing `info`-level lints non-fatal while errors and warnings remain fatal.
 ### Full quality gate
 
 ```bash
-bash scripts/full_test.sh
-bash scripts/front_coverage.sh
-bash scripts/backend_coverage.sh
-bash scripts/client_coverage.sh
-bash scripts/sdk_coverage.sh
+bash scripts/bash/ci/full_test.sh
+bash scripts/bash/coverage/front_coverage.sh
+bash scripts/bash/coverage/backend_coverage.sh
+bash scripts/bash/coverage/client_coverage.sh
+bash scripts/bash/coverage/sdk_coverage.sh
 ```
 
 Regenerate and diff generated files only when their source inputs changed:
@@ -384,7 +392,7 @@ flutter build ios --release --no-codesign --no-pub
 ```powershell
 # Run only from a native checkout in PowerShell 7 after configuring the pinned SDK.
 Set-Location '<native-repo>'
-. .\scripts\configure_windows_toolchain.ps1 -FlutterRoot '<flutter-root>'
+. .\scripts\powershell\platform\configure_windows_toolchain.ps1 -FlutterRoot '<flutter-root>'
 & '<flutter-root>\bin\flutter.bat' test --no-pub --reporter expanded
 & '<flutter-root>\bin\flutter.bat' build windows --no-pub
 ```

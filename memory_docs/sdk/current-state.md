@@ -1,4 +1,4 @@
-> Last updated: 2026-08-24
+> Last updated: 2026-08-25
 
 # SDK Current State
 
@@ -117,7 +117,7 @@ Run the package-local checks required by each SDK contract:
 The public SDK coverage gate is independent from the daily regression gate:
 
 ```bash
-bash scripts/sdk_coverage.sh
+bash scripts/bash/coverage/sdk_coverage.sh
 ```
 
 It measures the public Dart facades and public Rust SDK crates; internal
@@ -125,7 +125,7 @@ It measures the public Dart facades and public Rust SDK crates; internal
 Rust workspace checks. Cross-owner protocol and ABI acceptance is checked with:
 
 ```bash
-bash scripts/network_v2_acceptance.sh strict
+bash scripts/bash/contracts/network_v2_acceptance.sh strict
 ```
 
 Do not copy test-run results here. Automated and device-dependent coverage is

@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-24
+> 最新更新时间：2026-08-25
 
 # SSH Mobile 控制与中继服务器
 
@@ -300,7 +300,7 @@ v2 transport 与 Bootstrap HTTP v1 路由明确分离：
   只有本地持久 revoke/delete 成功，或事件/对账读取确认持久 enrollment 已不存在时，
   才释放其有界 map slot。迟到的旧 generation 事件不能重置当前 enrollment 的预算。
 
-运行 `bash scripts/relay_v2_contract.sh` 会在不修改工作树的情况下校验 22 个 frozen
+运行 `bash scripts/bash/contracts/relay_v2_contract.sh` 会在不修改工作树的情况下校验 22 个 frozen
 fixture。若环境缺少 `protoc`，脚本会为 descriptor equality 明确输出 `NOT RUN`；这不代表本地
 完整 descriptor gate 已通过。
 
@@ -314,7 +314,7 @@ go vet ./...
 go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 ```
 
-在仓库根目录运行 `bash scripts/admin_api_contract.sh`，可将真实 Go 管理接口生成的
+在仓库根目录运行 `bash scripts/bash/contracts/admin_api_contract.sh`，可将真实 Go 管理接口生成的
 响应交给 Front 生产请求客户端和 Zod schema 校验。运行时 fixture 只写入私有临时目录，
 凭据会被脱敏且不会提交到仓库。
 
@@ -323,14 +323,14 @@ go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 在仓库根目录运行提交的 Relay v2 fixture 与跨 owner 证据清单的非修改性基线检查：
 
 ```sh
-bash scripts/network_v2_acceptance.sh baseline
+bash scripts/bash/contracts/network_v2_acceptance.sh baseline
 ```
 
 strict 入口还会调用所属 Rust/Go 测试选择器，并在矩阵仍有 `characterized` 或
 `gap` 时失败：
 
 ```sh
-bash scripts/network_v2_acceptance.sh strict
+bash scripts/bash/contracts/network_v2_acceptance.sh strict
 ```
 
 基线通过不表示最终验收已完成；未关闭项保留在
@@ -346,9 +346,9 @@ bash scripts/network_v2_acceptance.sh strict
 在仓库根目录使用 WSL/Linux 入口：
 
 ```sh
-bash scripts/client_backend_e2e.sh smoke
-bash scripts/client_backend_e2e.sh strict
-bash scripts/full_test.sh --with-client-backend-smoke --no-bootstrap
+bash scripts/bash/e2e/client_backend_e2e.sh smoke
+bash scripts/bash/e2e/client_backend_e2e.sh strict
+bash scripts/bash/ci/full_test.sh --with-client-backend-smoke --no-bootstrap
 ```
 
 `smoke` 覆盖注册与刷新、两个认证控制客户端、discovery/resolve/offer/answer、实时信令、

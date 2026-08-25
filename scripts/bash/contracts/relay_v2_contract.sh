@@ -14,7 +14,7 @@
 # Exit code 0 = contract intact; non-zero = drift or gate failure.
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 TESTDATA="$REPO_ROOT/protocol/relay_v2_testdata"
 PROTO="$REPO_ROOT/protocol/proto/relay/v2/relay_v2.proto"
 GENERATOR="$TESTDATA/generate_fixtures.py"

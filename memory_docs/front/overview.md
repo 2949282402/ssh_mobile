@@ -1,4 +1,4 @@
-> Last updated: 2026-08-22
+> Last updated: 2026-08-25
 
 # Front Overview
 
@@ -35,7 +35,7 @@ The periodic Front coverage gate is independent from the daily full regression
 gate and runs from the repository root:
 
 ```bash
-bash scripts/front_coverage.sh
+bash scripts/bash/coverage/front_coverage.sh
 ```
 
 It enforces the documented statements, lines, functions, and branches

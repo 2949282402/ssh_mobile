@@ -8,7 +8,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 cd "$ROOT_DIR"
 
 SKIP_STATUS=125
@@ -29,7 +29,7 @@ DEFAULT_MELOS_CONCURRENCY="${FULL_TEST_MELOS_CONCURRENCY:-1}"
 DEFAULT_MELOS_TEST_CONCURRENCY="${FULL_TEST_MELOS_TEST_CONCURRENCY:-1}"
 DEFAULT_APP_SHARD_COUNT="${FULL_TEST_APP_SHARDS:-2}"
 # CI keeps coverage as a separate job. Local full_test.sh is the daily basic
-# regression gate; scripts/client_coverage.sh is the focused client review.
+# regression gate; scripts/bash/coverage/client_coverage.sh is the focused client review.
 # --with-coverage remains available for the historical full-App aggregate.
 DEFAULT_APP_COVERAGE="${FULL_TEST_COVERAGE:-0}"
 DEFAULT_WORKSPACE_TEST_TIMEOUT="${FULL_TEST_WORKSPACE_TEST_TIMEOUT:-5m}"
@@ -77,7 +77,7 @@ FLUTTER_LOCAL_TEST_ENV=(
 
 usage() {
   cat <<'EOF'
-Usage: bash scripts/full_test.sh [options]
+Usage: bash scripts/bash/ci/full_test.sh [options]
 
 Run the CI gates that are available in a WSL/Linux environment. Normal passing
 output is kept in a log directory; failures and environment gaps are printed.
@@ -105,16 +105,16 @@ Options:
   -h, --help                Show this help.
 
 Examples:
-  bash scripts/full_test.sh
-  bash scripts/full_test.sh --jobs 4 --flutter-concurrency 4
-  bash scripts/full_test.sh --no-bootstrap --jobs 4
-  bash scripts/client_coverage.sh --no-bootstrap
-  bash scripts/full_test.sh --only protocol-v2-contract,architecture-check
-  FULL_TEST_APP_TIMEOUT=8m bash scripts/full_test.sh --serial
-  FULL_TEST_APP_SHARDS_PARALLEL=1 bash scripts/full_test.sh --with-coverage --no-bootstrap
-  FULL_TEST_APP_SHARDS_PARALLEL=0 bash scripts/full_test.sh --with-coverage --no-bootstrap
-  FULL_TEST_APP_SHARDS=4 FULL_TEST_APP_SHARDS_PARALLEL=1 bash scripts/full_test.sh --with-coverage --no-bootstrap
-  bash scripts/full_test.sh --with-client-backend-smoke --no-bootstrap
+  bash scripts/bash/ci/full_test.sh
+  bash scripts/bash/ci/full_test.sh --jobs 4 --flutter-concurrency 4
+  bash scripts/bash/ci/full_test.sh --no-bootstrap --jobs 4
+  bash scripts/bash/coverage/client_coverage.sh --no-bootstrap
+  bash scripts/bash/ci/full_test.sh --only protocol-v2-contract,architecture-check
+  FULL_TEST_APP_TIMEOUT=8m bash scripts/bash/ci/full_test.sh --serial
+  FULL_TEST_APP_SHARDS_PARALLEL=1 bash scripts/bash/ci/full_test.sh --with-coverage --no-bootstrap
+  FULL_TEST_APP_SHARDS_PARALLEL=0 bash scripts/bash/ci/full_test.sh --with-coverage --no-bootstrap
+  FULL_TEST_APP_SHARDS=4 FULL_TEST_APP_SHARDS_PARALLEL=1 bash scripts/bash/ci/full_test.sh --with-coverage --no-bootstrap
+  bash scripts/bash/ci/full_test.sh --with-client-backend-smoke --no-bootstrap
 
 Exit status:
   0  All selected checks passed.
@@ -809,7 +809,7 @@ job_bootstrap() {
 
 job_client_backend_smoke() {
   need bash curl || return "$SKIP_STATUS"
-  step 'Run client → Caddy → Go Relay smoke E2E' bash "$ROOT_DIR/scripts/client_backend_e2e.sh" smoke
+  step 'Run client → Caddy → Go Relay smoke E2E' bash "$ROOT_DIR/scripts/bash/e2e/client_backend_e2e.sh" smoke
 }
 
 job_front() {
@@ -828,7 +828,7 @@ job_front() {
 
 job_admin_api_contract() {
   need go npm || return "$SKIP_STATUS"
-  step 'Check Front ↔ Relay administrator API contract' bash "$ROOT_DIR/scripts/admin_api_contract.sh"
+  step 'Check Front ↔ Relay administrator API contract' bash "$ROOT_DIR/scripts/bash/contracts/admin_api_contract.sh"
 }
 
 job_native() {
@@ -946,8 +946,8 @@ job_protocol() {
     --descriptor_set_out="$LOG_DIR/network-v2-$RUN_ID.desc" \
     protocol/proto/relay/v2/relay_v2.proto \
     protocol/proto/network/v2/network.proto
-  step 'Run Relay V2 contract check' bash scripts/relay_v2_contract.sh
-  step 'Run strict Network V2 acceptance gate' bash scripts/network_v2_acceptance.sh strict
+  step 'Run Relay V2 contract check' bash scripts/bash/contracts/relay_v2_contract.sh
+  step 'Run strict Network V2 acceptance gate' bash scripts/bash/contracts/network_v2_acceptance.sh strict
   step 'buf lint' run_in protocol buf lint
   step 'buf breaking against frozen Relay V2' run_in protocol buf breaking . \
     --against '../.git#ref=6ec194bb3a66a748215d3abc11d6da84bd329619,subdir=protocol' \
@@ -1121,9 +1121,9 @@ run_batch 'android-build:job_android'
 if should_run app-coverage; then
   if ((APP_COVERAGE_ENABLED == 0)); then
     if [[ -n "$ONLY_JOBS" ]]; then
-      record_skip app-coverage 'Flutter coverage was not enabled for this explicit app-coverage selection. Use scripts/client_coverage.sh or --with-coverage.'
+      record_skip app-coverage 'Flutter coverage was not enabled for this explicit app-coverage selection. Use scripts/bash/coverage/client_coverage.sh or --with-coverage.'
     else
-      printf '[SKIP] app-coverage (daily gate; run scripts/client_coverage.sh for the periodic client review)\n\n'
+      printf '[SKIP] app-coverage (daily gate; run scripts/bash/coverage/client_coverage.sh for the periodic client review)\n\n'
     fi
   else
     all_app_shards_passed=1

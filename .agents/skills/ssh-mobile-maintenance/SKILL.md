@@ -3,7 +3,7 @@ name: ssh-mobile-maintenance
 description: Maintain and debug the SSH Mobile repository, including Flutter, Dart packages, the Rust network SDK, Relay, Admin UI, tests, documentation, and shared Agent guidance. Use for any non-trivial implementation, diagnosis, validation, or documentation change in this repository.
 ---
 
-> Last updated: 2026-08-20
+> Last updated: 2026-08-25
 
 # SSH Mobile Maintenance
 
@@ -42,10 +42,12 @@ Treat a request to create, update, submit, or publish a pull request (创建、�
 or invoking a GitHub PR write action:
 
 1. Inspect the complete worktree and identify every affected owner.
-2. Run the repository's WSL local CI entry point,
-   [`scripts/full_test.sh`](../../../scripts/full_test.sh). Use
-   `--no-bootstrap` only when dependency manifests and lockfiles are already
-   current; otherwise let the script bootstrap the Linux dependencies.
+2. Run the environment-native CI entry point:
+   [`scripts/bash/ci/full_test.sh`](../../../scripts/bash/ci/full_test.sh) on
+   Linux/WSL or
+   [`scripts/powershell/ci/full_test.ps1`](../../../scripts/powershell/ci/full_test.ps1)
+   on native Windows. Use `--no-bootstrap` or `-NoBootstrap` only when
+   dependencies are current.
 3. Run the focused and owner-specific checks selected by the Validation Matrix
    in addition to the local CI entry point when the change requires them.
 4. Do not submit while any check is failing or incomplete. A documented
@@ -127,11 +129,9 @@ the write mechanics; this Skill owns the repository validation gate.
 - Follow local format and naming conventions. Do not split cohesive code merely
   to satisfy a line-count report. The format gate runs at commit time via the
   `git-commit` Skill.
-- Develop and validate inside the WSL Linux environment: run every build, test,
-  analyze, and validation command with the Linux toolchain inside WSL; never
-  invoke Windows-hosted toolchains (Windows `dart`/`flutter`/`go`/`cargo`/`node`,
-  `.bat`/`.cmd` launchers, `powershell.exe`, `cmd.exe`). See the Environment
-  note in `references/validation.md`.
+- Select scripts by the actual host: Linux/WSL runs `scripts/bash/**/*.sh`;
+  native Windows runs `scripts/powershell/**/*.ps1` in PowerShell 7. Never
+  cross-call Windows tools from WSL or require Bash from Windows.
 
 ## Documentation ownership
 
@@ -166,11 +166,11 @@ Code loads Skills directly from `.agents/skills/`; do not create a second
   explicitly rather than deferred to the commit step.
 - Run `git diff --check` for every change. Review the final diff for unrelated
   files, generated noise, secrets, stale paths, and unintended API/ownership changes.
-- [`scripts/full_test.sh`](../../../scripts/full_test.sh) is a maintained
-  cross-domain CI mirror. When tests, package membership, project structure,
-  CI jobs, generated checks, test exclusions, timeouts, or Linux toolchain
-  assumptions change, update the script in the same change and validate the
-  affected `--only` jobs.
+- The `scripts/bash/` and `scripts/powershell/` trees have identical functional
+  subdirectory structures. Same-relative-path `.sh`/`.ps1` files are one
+  maintenance unit; synchronize arguments, environment, steps, timeouts,
+  cleanup, exit semantics, and scope in the same change. Keep both aggregate
+  CI scripts aligned when CI behavior changes.
 - If a required check cannot run, report the exact command and environmental or
   scope reason; distinguish that from a product failure.
 - A task is complete only when requested behavior/documentation is implemented,

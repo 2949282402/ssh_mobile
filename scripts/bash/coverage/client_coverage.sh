@@ -8,7 +8,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 APP_DIR="$ROOT_DIR/apps/ssh_mobile_full"
 MINIMUM="${CLIENT_COVERAGE_MINIMUM:-80}"
 FLUTTER_TIMEOUT="${CLIENT_FLUTTER_COVERAGE_TIMEOUT:-30m}"

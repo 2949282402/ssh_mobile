@@ -1,4 +1,4 @@
-> Last updated: 2026-08-23
+> Last updated: 2026-08-25
 
 # Repository Bootstrap
 
@@ -92,15 +92,18 @@ proportional to the touched owner and risk. Package-local commands remain in the
 owning README/AGENTS. Always run `git diff --check`, inspect the final status and
 diff, report checks actually run, and state exact environmental or scope gaps.
 
-Before creating or updating a PR, run `scripts/full_test.sh` and the applicable
-focused checks from WSL. `full_test.sh` is the daily basic regression gate and
+Before creating or updating a PR, run the environment-native aggregate:
+`scripts/bash/ci/full_test.sh` on Linux/WSL or
+`scripts/powershell/ci/full_test.ps1` on native Windows, plus applicable focused
+checks. The aggregate is the daily basic regression gate and
 does not collect Flutter coverage by default. For coverage-affecting changes,
 large refactors, new feature review, or release acceptance, run the four
-domain-specific gates: `scripts/front_coverage.sh`,
-`scripts/backend_coverage.sh`, `scripts/client_coverage.sh`, and
-`scripts/sdk_coverage.sh`. Each gate enforces an 80% line/metric threshold on
+domain-specific gates under `scripts/bash/coverage/` or their same-named native
+Windows counterparts under `scripts/powershell/coverage/`. Each gate enforces
+an 80% line/metric threshold on
 its documented owner scope and prints uncovered locations when it fails.
-`scripts/coverage_test.sh` remains a compatibility alias for the client gate.
+`coverage_test.sh`/`coverage_test.ps1` remain compatibility aliases for the
+client gate.
 A stricter new-source rule also applies: every newly added hand-written
 production source file must have corresponding independent tests and at least
 90% file-level line coverage. Generated output, documentation, configuration,
@@ -108,11 +111,13 @@ test-only files, and platform boilerplate without coverable business logic are
 excluded only when the owning validation report records the reason.
 A failing or incomplete check blocks submission unless the user explicitly
 accepts the documented environment gap. When tests, package membership,
-project structure, CI scope, or test-selection rules change, update
-`scripts/full_test.sh` in the same change. The canonical Skill and Project
-Memory define the detailed PR gate and script-maintenance rules. Explicit
-Windows platform checks use native PowerShell 7 (`pwsh.exe`) and a native
-working directory; they never replace the WSL Linux gate.
+project structure, CI scope, or test-selection rules change, update both
+aggregate scripts in the same change. The `scripts/bash/` and
+`scripts/powershell/` trees keep identical functional subdirectory structures.
+Same-relative-path `.sh`/`.ps1` pairs are maintained together, including
+arguments, environment, steps, timeouts, cleanup, exit semantics, and scope.
+Agents choose from the actual host: Linux/WSL runs Bash and native Windows runs
+PowerShell 7; never cross-call the other host toolchain.
 
 `CLAUDE.md` is the Claude-specific thin bootstrap entry. It delegates repository
 entry and memory routing to this `AGENTS.md` and the canonical `.agents` Skill,

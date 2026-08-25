@@ -20,7 +20,7 @@ if ($currentLocation -match '^(\\\\wsl|/mnt/)') {
   throw 'Run the MSI builder from a native Windows path; do not inherit a WSL UNC working directory.'
 }
 
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot ".." -ErrorAction Stop)).ProviderPath
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..\.." -ErrorAction Stop)).ProviderPath
 
 # WSL-launched PowerShell can inherit a Linux temporary directory and a
 # truncated PATHEXT.  Both make MSBuild's manifest step fail even when the

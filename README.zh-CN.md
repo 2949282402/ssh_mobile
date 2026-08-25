@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-24
+> 最新更新时间：2026-08-25
 
 <p align="center">
   <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile 图标" width="112" />
@@ -134,9 +134,9 @@ flutter build ios --release --no-codesign
 ```powershell
 # Windows：必须在原生 checkout 的 PowerShell 7（pwsh.exe）中运行。
 Set-Location '<native-repo>'
-. .\scripts\configure_windows_toolchain.ps1 -FlutterRoot '<flutter-root>'
+. .\scripts\powershell\platform\configure_windows_toolchain.ps1 -FlutterRoot '<flutter-root>'
 & '<flutter-root>\bin\flutter.bat' build windows --no-pub
-& .\scripts\build_windows_msi.ps1 `
+& .\scripts\powershell\platform\build_windows_msi.ps1 `
   -Flutter '<flutter-root>\bin\flutter.bat' `
   -Version '1.0.0'
 ```
@@ -289,17 +289,25 @@ flutter test
 正常修改后的 WSL 回归入口是：
 
 ```bash
-bash scripts/full_test.sh --no-bootstrap
+bash scripts/bash/ci/full_test.sh --no-bootstrap
+```
+
+Agent 必须根据实际宿主选择脚本：Linux/WSL 使用 `scripts/bash/`，原生
+Windows PowerShell 7 使用 `scripts/powershell/`。同相对路径的 `.sh`/`.ps1`
+必须同步维护。Windows 日常入口为：
+
+```powershell
+& .\scripts\powershell\ci\full_test.ps1 -NoBootstrap
 ```
 
 日常回归不收集 Flutter 覆盖率。大型重构、新功能或发布审查需独立运行四个
 Owner 覆盖率门禁，每个门禁对其文档化范围执行 80% 阈值：
 
 ```bash
-bash scripts/front_coverage.sh
-bash scripts/backend_coverage.sh
-bash scripts/client_coverage.sh
-bash scripts/sdk_coverage.sh
+bash scripts/bash/coverage/front_coverage.sh
+bash scripts/bash/coverage/backend_coverage.sh
+bash scripts/bash/coverage/client_coverage.sh
+bash scripts/bash/coverage/sdk_coverage.sh
 ```
 
 ### Workspace 模块门禁
@@ -323,11 +331,11 @@ dart run tool/check_resource_owners.dart
 ### 完整质量门禁
 
 ```bash
-bash scripts/full_test.sh
-bash scripts/front_coverage.sh
-bash scripts/backend_coverage.sh
-bash scripts/client_coverage.sh
-bash scripts/sdk_coverage.sh
+bash scripts/bash/ci/full_test.sh
+bash scripts/bash/coverage/front_coverage.sh
+bash scripts/bash/coverage/backend_coverage.sh
+bash scripts/bash/coverage/client_coverage.sh
+bash scripts/bash/coverage/sdk_coverage.sh
 ```
 
 只有生成器输入发生变化时才重新生成并检查对应产物：
@@ -349,7 +357,7 @@ flutter build ios --release --no-codesign --no-pub
 ```powershell
 # 只能在原生 checkout 的 PowerShell 7 中配置并使用仓库固定 SDK。
 Set-Location '<native-repo>'
-. .\scripts\configure_windows_toolchain.ps1 -FlutterRoot '<flutter-root>'
+. .\scripts\powershell\platform\configure_windows_toolchain.ps1 -FlutterRoot '<flutter-root>'
 & '<flutter-root>\bin\flutter.bat' test --no-pub --reporter expanded
 & '<flutter-root>\bin\flutter.bat' build windows --no-pub
 ```

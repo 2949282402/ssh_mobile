@@ -8,7 +8,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 MINIMUM="${SDK_COVERAGE_MINIMUM:-80}"
 DART_TIMEOUT="${SDK_DART_COVERAGE_TIMEOUT:-10m}"
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ssh-mobile-sdk-coverage.XXXXXX")"

@@ -1,4 +1,4 @@
-> Last updated: 2026-08-24
+> Last updated: 2026-08-25
 
 # Backend Current State
 
@@ -187,7 +187,7 @@ go vet ./...
 The periodic backend coverage gate is run from the repository root:
 
 ```bash
-bash scripts/backend_coverage.sh
+bash scripts/bash/coverage/backend_coverage.sh
 ```
 
 When test DSNs are not supplied, the script provisions temporary
@@ -195,5 +195,5 @@ When test DSNs are not supplied, the script provisions temporary
 cross-owner Network V2 contract gate is:
 
 ```bash
-bash scripts/network_v2_acceptance.sh strict
+bash scripts/bash/contracts/network_v2_acceptance.sh strict
 ```

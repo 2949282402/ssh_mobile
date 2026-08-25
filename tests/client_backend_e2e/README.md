@@ -1,9 +1,9 @@
-最新更新时间：2026-08-23
+最新更新时间：2026-08-25
 
 # 客户端—Relay 后端 E2E
 
 该目录是客户端真实访问 Go Relay 的测试资产入口。测试由
-`scripts/client_backend_e2e.sh` 编排：默认在 WSL/Linux 中创建临时 Compose
+`scripts/bash/e2e/client_backend_e2e.sh` 编排：默认在 WSL/Linux 中创建临时 Compose
 项目、临时环境文件和临时凭据，运行结束后通过 `trap` 删除容器、卷和临时目录。
 
 测试不会写入 `relay/.env`，不会把设备私钥、enrollment token 或 credential
@@ -24,7 +24,7 @@
 存储 profile 示例：
 
 ```sh
-CLIENT_BACKEND_E2E_STORAGE=mysql bash scripts/client_backend_e2e.sh strict
+CLIENT_BACKEND_E2E_STORAGE=mysql bash scripts/bash/e2e/client_backend_e2e.sh strict
 ```
 
 复用外部部署时，strict 吊销场景还需要同时设置

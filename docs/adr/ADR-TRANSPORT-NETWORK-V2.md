@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-22
+> 最新更新时间：2026-08-25
 
 # ADR-TRANSPORT-NETWORK-V2：传输网络 v2 架构（Breaking Refactor 总纲）
 
@@ -152,6 +152,6 @@ Delivery/Transfer 自行恢复、SSH/WebRTC 新建 Session、Relay→Direct 无�
 升级移除（环境变化触发的 bounded Direct recovery 除外），以及 Rust / Go / Dart /
 Flutter 测试全部通过。当前提交的
 `protocol/contract_tests/acceptance_matrix.json` 已将 60 个案例标记为
-`covered`；本地 `scripts/network_v2_acceptance.sh strict`、Go/Dart owner
+`covered`；本地 `scripts/bash/contracts/network_v2_acceptance.sh strict`、Go/Dart owner
 套件、buf 和 descriptor 门禁，以及选定的 architecture/protocol/SDK CI jobs
 均已通过；完整 App/feature/设备与服务集成门禁仍由 CI 执行。

@@ -8,7 +8,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 RELAY_DIR="$ROOT_DIR/relay"
 MINIMUM="${BACKEND_COVERAGE_MINIMUM:-80}"
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ssh-mobile-backend-coverage.XXXXXX")"

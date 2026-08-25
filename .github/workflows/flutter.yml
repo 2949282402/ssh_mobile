@@ -65,7 +65,7 @@ jobs:
         working-directory: front
         run: npm ci
       - name: Check Front ↔ Relay administrator API contract
-        run: bash scripts/admin_api_contract.sh
+        run: bash scripts/bash/contracts/admin_api_contract.sh
 
   native-network-quality:
     runs-on: ubuntu-latest
@@ -241,9 +241,9 @@ jobs:
             protocol/proto/relay/v2/relay_v2.proto \
             protocol/proto/network/v2/network.proto
       - name: Run relay v2 contract check
-        run: bash scripts/relay_v2_contract.sh
+        run: bash scripts/bash/contracts/relay_v2_contract.sh
       - name: Run strict network v2 acceptance gate
-        run: bash scripts/network_v2_acceptance.sh strict
+        run: bash scripts/bash/contracts/network_v2_acceptance.sh strict
       - name: buf lint
         working-directory: protocol
         run: buf lint
@@ -290,7 +290,7 @@ jobs:
       - name: Run strict client → Caddy → Go Relay E2E
         env:
           CLIENT_BACKEND_E2E_STORAGE: ${{ matrix.storage }}
-        run: bash scripts/client_backend_e2e.sh strict
+        run: bash scripts/bash/e2e/client_backend_e2e.sh strict
 
   architecture-check:
     runs-on: ubuntu-latest

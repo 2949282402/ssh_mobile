@@ -348,12 +348,12 @@ class FrozenNetworkContractTest(unittest.TestCase):
 
     def test_ci_runs_the_final_strict_acceptance_gate(self) -> None:
         workflow = _read(".github/workflows/flutter.yml")
-        self.assertIn("bash scripts/network_v2_acceptance.sh strict", workflow)
-        self.assertNotIn("bash scripts/network_v2_acceptance.sh baseline", workflow)
+        self.assertIn("bash scripts/bash/contracts/network_v2_acceptance.sh strict", workflow)
+        self.assertNotIn("bash scripts/bash/contracts/network_v2_acceptance.sh baseline", workflow)
 
     def test_strict_selectors_cover_matrix_behavior_tests(self) -> None:
         """Keep the committed owner-test inventory executable by the strict gate."""
-        script = _read("scripts/network_v2_acceptance.sh")
+        script = _read("scripts/bash/contracts/network_v2_acceptance.sh")
         matrix = _load_matrix()
         for case in matrix["cases"]:
             assert isinstance(case, dict)
@@ -430,7 +430,7 @@ class FrozenNetworkContractTest(unittest.TestCase):
                     )
 
     def test_acceptance_flutter_preflight_and_no_pub_selectors(self) -> None:
-        script = _read("scripts/network_v2_acceptance.sh")
+        script = _read("scripts/bash/contracts/network_v2_acceptance.sh")
         self.assertIn("require_tools dart flutter", script)
         self.assertIn('command -v "$command_name"', script)
         for selector in (
@@ -442,9 +442,9 @@ class FrozenNetworkContractTest(unittest.TestCase):
             self.assertIn(f"flutter test --no-pub {selector}", script)
 
     def test_protocol_job_preflights_flutter_and_coverage_gate_is_opt_in(self) -> None:
-        full_test = _read("scripts/full_test.sh")
-        coverage_test = _read("scripts/coverage_test.sh")
-        client_coverage = _read("scripts/client_coverage.sh")
+        full_test = _read("scripts/bash/ci/full_test.sh")
+        coverage_test = _read("scripts/bash/coverage/coverage_test.sh")
+        client_coverage = _read("scripts/bash/coverage/client_coverage.sh")
         protocol_job = re.search(
             r"job_protocol\(\) \{(.*?)\n\}", full_test, flags=re.DOTALL
         )
@@ -452,16 +452,16 @@ class FrozenNetworkContractTest(unittest.TestCase):
         assert protocol_job is not None
         self.assertIn("need bash cargo go python3 protoc buf dart flutter", protocol_job.group(1))
         self.assertIn('DEFAULT_APP_COVERAGE="${FULL_TEST_COVERAGE:-0}"', full_test)
-        self.assertIn("scripts/client_coverage.sh", full_test)
+        self.assertIn("scripts/bash/coverage/client_coverage.sh", full_test)
         self.assertIn("client_coverage.sh", coverage_test)
         self.assertIn('MINIMUM="${CLIENT_COVERAGE_MINIMUM:-80}"', client_coverage)
         self.assertIn("--include=lib/services/network/", client_coverage)
         self.assertIn("record_skip app-coverage", full_test)
 
-        self.assertIn("@vitest/coverage-v8", _read("scripts/front_coverage.sh") + _read("front/package.json"))
-        self.assertIn('MINIMUM="${BACKEND_COVERAGE_MINIMUM:-80}"', _read("scripts/backend_coverage.sh"))
+        self.assertIn("@vitest/coverage-v8", _read("scripts/bash/coverage/front_coverage.sh") + _read("front/package.json"))
+        self.assertIn('MINIMUM="${BACKEND_COVERAGE_MINIMUM:-80}"', _read("scripts/bash/coverage/backend_coverage.sh"))
         self.assertIn('MINIMUM="${CLIENT_COVERAGE_MINIMUM:-80}"', client_coverage)
-        self.assertIn('MINIMUM="${SDK_COVERAGE_MINIMUM:-80}"', _read("scripts/sdk_coverage.sh"))
+        self.assertIn('MINIMUM="${SDK_COVERAGE_MINIMUM:-80}"', _read("scripts/bash/coverage/sdk_coverage.sh"))
 
     def test_relay_readme_documents_v2_transport_routes_only(self) -> None:
         readme = _read("relay/README.md")

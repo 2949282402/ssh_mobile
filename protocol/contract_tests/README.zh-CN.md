@@ -1,4 +1,4 @@
-最新更新时间：2026-08-19
+最新更新时间：2026-08-25
 
 # Network v2 合同测试
 
@@ -9,14 +9,14 @@ Relay、Dart 或生成的 protocol ownership 文件。
 在仓库根目录运行不修改工作树的基线检查：
 
 ```sh
-bash scripts/network_v2_acceptance.sh baseline
+bash scripts/bash/contracts/network_v2_acceptance.sh baseline
 ```
 
 严格入口还会调用所属 Rust/Go 测试选择器，并在矩阵仍有 `characterized` 或
 `gap` 时失败：
 
 ```sh
-bash scripts/network_v2_acceptance.sh strict
+bash scripts/bash/contracts/network_v2_acceptance.sh strict
 ```
 
 提交的矩阵是最终验收清单。基线只检查 fixture 与证据拓扑；只有所有 case 都为

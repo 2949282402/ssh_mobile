@@ -1,4 +1,4 @@
-> Last updated: 2026-08-20
+> Last updated: 2026-08-25
 
 # Maintenance Workflow
 
@@ -69,9 +69,10 @@ mirror to regenerate — Claude Code loads Skills directly from `.agents/skills/
 When the user asks to create, update, submit, or publish a PR, perform this
 gate after implementation and before any commit/push or GitHub write:
 
-1. Run `bash scripts/full_test.sh` from WSL. For a repeat run with unchanged
-   dependencies, use `--no-bootstrap`; if manifests, lockfiles, or toolchain
-   inputs changed, run without that option.
+1. Run `bash scripts/bash/ci/full_test.sh` from Linux/WSL, or
+   `& .\scripts\powershell\ci\full_test.ps1` from native Windows PowerShell 7.
+   For a repeat run with unchanged dependencies, use `--no-bootstrap` or
+   `-NoBootstrap`; otherwise allow dependency bootstrap.
 2. Run the focused owner checks required by `validation.md`. A full local CI
    run does not replace a package-specific or changed-behavior regression test
    when that check is narrower or stricter.
@@ -85,7 +86,7 @@ gate after implementation and before any commit/push or GitHub write:
    create the commit, push the branch, or create/update the PR.
 
 The repository-wide local CI orchestration rules and synchronization triggers
-for `scripts/full_test.sh` are recorded in the
+for the paired aggregate scripts are recorded in the
 [Project Memory index](../../../../memory_docs/README.md).
 
 ## 7. Handoff or commit
