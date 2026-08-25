@@ -1,7 +1,8 @@
-// v1 LAN WebSocket 生命周期和类型化连接事件测试。
+// LAN Control V2 WebSocket 生命周期和类型化连接事件测试。
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:feature_lan_share/feature_lan_share.dart';
@@ -49,7 +50,8 @@ class _ControllableWebSocket extends Fake implements WebSocket {
 }
 
 class _BlockingCredentialSecurityService extends LanSecurityService {
-  _BlockingCredentialSecurityService(this.credentialGate);
+  _BlockingCredentialSecurityService(this.credentialGate)
+    : super(appOwnedX25519PrivateSeed: Uint8List(32));
 
   final Completer<String?> credentialGate;
 
@@ -65,7 +67,9 @@ void main() {
   test('a replaced socket cannot disconnect the current socket', () async {
     final service = LanTransferService(
       currentDeviceId: 'local-device',
-      securityService: LanSecurityService(),
+      securityService: LanSecurityService(
+        appOwnedX25519PrivateSeed: Uint8List(32),
+      ),
       storageService: LanStorageService(),
     );
     final states = <LanConnectionStateChanged>[];
@@ -104,7 +108,9 @@ void main() {
     final closeGate = Completer<void>();
     final service = LanTransferService(
       currentDeviceId: 'local-device',
-      securityService: LanSecurityService(),
+      securityService: LanSecurityService(
+        appOwnedX25519PrivateSeed: Uint8List(32),
+      ),
       storageService: LanStorageService(),
     );
     final socket = _ControllableWebSocket(closeGate: closeGate);
@@ -137,13 +143,14 @@ void main() {
       securityService: _BlockingCredentialSecurityService(credentialGate),
       storageService: LanStorageService(),
     );
-    final device = LanDevice(
-      id: 'peer-device',
+    final device = LanDiscoveredPeer(
+      deviceId: 'peer-device',
       alias: 'Peer',
       ip: '192.0.2.10',
-      port: 53317,
+      controlPort: 53317,
+      advertisedNativePort: null,
       deviceType: LanDeviceType.desktop,
-      osName: 'linux',
+      os: 'linux',
       lastSeen: DateTime.now(),
     );
 

@@ -1,4 +1,4 @@
-// v1 LAN 配对密码学：PIN 证明、SRP 材料与凭据校验辅助逻辑。
+// LAN Control Protocol V2 配对密码学：PIN 证明、SRP 材料与凭据校验辅助逻辑。
 // 本文件不承载传输或 UI 策略。
 
 import 'dart:convert';
@@ -54,8 +54,7 @@ class LanPairingSessionSecrets {
 /// 本地固定使用 3072 位群组。每个轮换 PIN 槽位使用不同 salt 和独立 SRP 指数，
 /// 因此捕获的交换数据不会暴露离线 PIN 校验器，也不能跨槽位反射。
 class LanPairingCrypto {
-  // 开发阶段的配对保持当前 v1 线协议契约。
-  static const int protocolVersion = 1;
+  static const int protocolVersion = 2;
   static const int publicValueBytes = 384;
   static const int maxServerOffers = 2;
   static const int credentialTtlMillis = 15000;
@@ -273,7 +272,18 @@ class LanPairingCrypto {
     required int port,
     required bool isInitiator,
     required String senderCertFingerprint,
+    required Uint8List senderX25519PublicKey,
+    required Uint8List senderNetworkIdentityPublicKey,
+    required String senderInboundAccessTokenHash,
   }) {
+    _validatePublicKey(senderX25519PublicKey, 'sender X25519 public key');
+    _validatePublicKey(
+      senderNetworkIdentityPublicKey,
+      'sender network identity public key',
+    );
+    if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(senderInboundAccessTokenHash)) {
+      throw const FormatException('Invalid sender access-token binding.');
+    }
     return _canonical([
       _domainLabel,
       protocolVersion,
@@ -287,6 +297,9 @@ class LanPairingCrypto {
       port,
       isInitiator,
       senderCertFingerprint.toLowerCase(),
+      base64UrlEncode(senderX25519PublicKey),
+      base64UrlEncode(senderNetworkIdentityPublicKey),
+      senderInboundAccessTokenHash,
     ]);
   }
 
@@ -299,7 +312,14 @@ class LanPairingCrypto {
     required Uint8List clientPublicValue,
     required Uint8List serverPublicValue,
     required String serverCertFingerprint,
+    required Uint8List serverX25519PublicKey,
+    required Uint8List serverNetworkIdentityPublicKey,
   }) {
+    _validatePublicKey(serverX25519PublicKey, 'server X25519 public key');
+    _validatePublicKey(
+      serverNetworkIdentityPublicKey,
+      'server network identity public key',
+    );
     return _canonical([
       _domainLabel,
       protocolVersion,
@@ -312,6 +332,8 @@ class LanPairingCrypto {
       base64.encode(clientPublicValue),
       base64.encode(serverPublicValue),
       serverCertFingerprint.toLowerCase(),
+      base64UrlEncode(serverX25519PublicKey),
+      base64UrlEncode(serverNetworkIdentityPublicKey),
     ]);
   }
 
@@ -336,6 +358,46 @@ class LanPairingCrypto {
   /// 对客户端上下文做哈希，用于请求绑定。
   static String requestHash(String clientContext) =>
       crypto.sha256.convert(utf8.encode(clientContext)).toString();
+
+  /// Hash a one-time inbound bearer token without exposing the token in the
+  /// unauthenticated begin request.  The hash is part of the SRP transcript;
+  /// the clear token is only accepted inside the authenticated confirm.
+  static String accessTokenHash(String token) {
+    if (token.isEmpty || token.length > 256) {
+      throw const FormatException('Invalid LAN access token.');
+    }
+    return crypto.sha256.convert(utf8.encode(token)).toString();
+  }
+
+  /// Constant-time comparison for an access-token hash.
+  static bool verifyAccessTokenHash(String token, String expectedHash) {
+    try {
+      final actual = accessTokenHash(token);
+      if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(expectedHash)) return false;
+      var difference = 0;
+      for (var index = 0; index < actual.length; index++) {
+        difference |= actual.codeUnitAt(index) ^ expectedHash.codeUnitAt(index);
+      }
+      return difference == 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Decode and validate one of the fixed-size static peer public keys.
+  static Uint8List decodePublicKey(String encoded, String label) {
+    try {
+      final bytes = base64Url.decode(base64Url.normalize(encoded));
+      _validatePublicKey(bytes, label);
+      return Uint8List.fromList(bytes);
+    } catch (_) {
+      throw FormatException('Invalid $label.');
+    }
+  }
+
+  static void _validatePublicKey(List<int> bytes, String label) {
+    if (bytes.length != 32) throw FormatException('Invalid $label.');
+  }
 
   /// 为定向测试和协议边界校验公共 SRP 值。
   static bool isValidPublicValueForTesting(Uint8List value) {

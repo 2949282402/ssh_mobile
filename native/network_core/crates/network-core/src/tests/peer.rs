@@ -1128,6 +1128,22 @@ async fn inbound_admission_requires_configured_peer_and_marks_supervisor_online(
             .state(),
         crate::connect::PeerState::Online
     );
+
+    state.peer_route_authorizations.write().await.insert(
+        peer_id.into(),
+        crate::runtime::PeerRouteAuthorization {
+            direct: false,
+            relay: true,
+        },
+    );
+    let revoked = InboundConnectionAcceptor::admit_authenticated_inbound(
+        &state,
+        peer_id,
+        CAPABILITY_RELIABLE_MESSAGE,
+    )
+    .await
+    .expect_err("inbound Direct admission must honor a revoked route");
+    assert!(revoked.to_string().contains("not authorized"));
 }
 
 #[test]

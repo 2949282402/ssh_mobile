@@ -352,7 +352,7 @@ changed-package check when it gives faster feedback:
 ```bash
 dart run melos exec --diff=origin/main...HEAD --include-dependents --fail-fast -- "dart format --output=none --set-exit-if-changed lib test"
 dart run melos exec --diff=origin/main...HEAD --include-dependents --fail-fast -- "flutter analyze --no-pub"
-dart run melos exec --diff=origin/main...HEAD --include-dependents --fail-fast -- "flutter test --no-pub"
+dart run melos exec --diff=origin/main...HEAD --include-dependents --fail-fast -- "flutter test --no-pub --exclude-tags=client-backend,native-loopback"
 dart run tool/architecture_check.dart
 dart run tool/check_module_dependencies.dart
 dart run tool/check_resource_owners.dart
@@ -362,6 +362,12 @@ On `main`, the CI workflow runs `dart run melos run format`,
 `dart run melos run analyze`, and `dart run melos run test`, followed by Full App
 Android and Terminal-only Windows smoke builds. The Workspace analyze script keeps
 existing `info`-level lints non-fatal while errors and warnings remain fatal.
+The standard Workspace test selector excludes the explicitly tagged live
+`client-backend` and `native-loopback` integrations. The optional backend smoke
+gate runs the former with
+`bash scripts/bash/ci/full_test.sh --with-client-backend-smoke` (or the native PowerShell equivalent
+`-WithClientBackendSmoke`); the native Linux MCP loopback gate is selected by
+`--with-feature-loopback` (or `-WithFeatureLoopback`).
 
 ### Full quality gate
 

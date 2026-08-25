@@ -62,6 +62,8 @@ abstract interface class SessionClient implements EventStreamClient {
 
   Future<SdkResult<void>> upsertPeer(SdkPeerConfig peer);
 
+  Future<SdkResult<void>> removePeer(String peerId);
+
   Future<SdkResult<void>> connect(
     String peerId, {
     CommunicationClass communicationClass = CommunicationClass.reliableStream,

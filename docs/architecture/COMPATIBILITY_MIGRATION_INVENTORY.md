@@ -1,4 +1,4 @@
-最新更新时间：2026-08-24
+最新更新时间：2026-08-25
 
 # 兼容层迁移引用清单
 
@@ -13,6 +13,12 @@ Port 适配边界，不属于删除目标。App Scope 的基础设施和仍被�
 只有清单明确列出的 App Shell adapter 才允许被 `apps/*/test`
 直接导入以验证边界行为；这些引用不计入旧入口基线，命令行报告会
 将其作为 `approved adapter-test refs` 单独显示。
+
+本清单只统计旧 App import/path compatibility 引用，不表示 LAN Control 或 Native
+Network V2 的 wire/pairing/storage 重构已经完成。LAN Share 当前遵循
+`ADR-032-lan-control-v2-breaking-refactor.md` 的 breaking-only 约束：旧 pairing
+schema、`pending_remote` 和 `/api/lan/upload` 的删除由该 ADR 的专项验收负责，不能
+以本表的“旧 App 路径已关闭”代替。
 
 | 模块 | 唯一 Package Owner | 旧引用基线 | 状态 | 保留的 App Shell 边界 | 删除条件 |
 | --- | --- | ---: | --- | --- | --- |

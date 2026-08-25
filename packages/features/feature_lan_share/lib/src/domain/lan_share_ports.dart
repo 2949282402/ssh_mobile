@@ -200,6 +200,8 @@ final class LanShareNetworkIdentityMaterial {
   const LanShareNetworkIdentityMaterial({
     required this.privateSeed,
     required this.publicKey,
+    required this.x25519PrivateSeed,
+    required this.x25519PublicKey,
   });
 
   /// Ed25519 私钥种子。
@@ -207,6 +209,8 @@ final class LanShareNetworkIdentityMaterial {
 
   /// Ed25519 公钥。
   final Uint8List publicKey;
+  final Uint8List x25519PrivateSeed;
+  final Uint8List x25519PublicKey;
 }
 
 /// App Scope 网络身份加载端口。

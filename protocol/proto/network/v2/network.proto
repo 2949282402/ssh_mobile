@@ -188,6 +188,8 @@ message PeerConfig {
   bytes identity_public_key = 3;
   bytes e2e_public_key = 4;
   E2eePolicy e2ee_policy = 5;
+  bool allow_direct = 6;
+  bool allow_relay = 7;
 }
 
 message UpsertPeerV2Command {

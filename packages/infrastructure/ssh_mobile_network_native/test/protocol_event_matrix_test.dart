@@ -147,6 +147,23 @@ void main() {
     }
   });
 
+  test('peer registration carries explicit route authorization flags', () {
+    final encoded = NativeNetworkProtocol.upsertPeerV2Command(
+      commandId: 'upsert-routes',
+      config: NativePeerConfig(
+        peerId: 'peer-a',
+        endpointAddress: '',
+        identityPublicKey: Uint8List(32),
+        e2ePublicKey: Uint8List(32),
+        allowDirect: true,
+        allowRelay: true,
+      ),
+    );
+
+    expect(_containsSubsequence(encoded, <int>[0x30, 0x01]), isTrue);
+    expect(_containsSubsequence(encoded, <int>[0x38, 0x01]), isTrue);
+  });
+
   test('all V2 event families decode their bounded fields and errors', () {
     final error = _message(<List<int>>[
       _varintField(1, 7),
@@ -563,6 +580,21 @@ List<int> _varintField(int number, int value) => <int>[
 ];
 
 int _wireTag(int number, int wireType) => (number << 3) | wireType;
+
+bool _containsSubsequence(List<int> bytes, List<int> needle) {
+  if (needle.isEmpty) return true;
+  for (var start = 0; start <= bytes.length - needle.length; start++) {
+    var matches = true;
+    for (var offset = 0; offset < needle.length; offset++) {
+      if (bytes[start + offset] != needle[offset]) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) return true;
+  }
+  return false;
+}
 
 List<int> _varint(int value) {
   final bytes = <int>[];

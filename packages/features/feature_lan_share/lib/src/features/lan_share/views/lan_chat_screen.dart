@@ -79,7 +79,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
     BuildContext context,
     AppStrings strings,
     LanShareViewModel vm,
-    LanDevice device,
+    LanDiscoveredPeer device,
   ) {
     showModalBottomSheet(
       context: context,
@@ -199,19 +199,14 @@ class _LanChatScreenState extends State<LanChatScreen> {
         )
         .toList(); // sorted DESC from vm.history, perfect for ListView reverse: true
 
-    LanDevice? onlineDevice;
-    for (final d in vm.devices) {
-      if (d.id == widget.targetDeviceId) {
-        onlineDevice = d;
-        break;
-      }
-    }
-    final isOnline = onlineDevice != null;
+    final peerState = vm.peerStateFor(widget.targetDeviceId);
+    final onlineDevice = peerState?.discovery;
+    final isOnline = peerState?.isOnline == true;
     final isConnected = vm.isDeviceConnected(widget.targetDeviceId);
-    final deviceAlias = onlineDevice?.alias ?? widget.initialAlias;
+    final deviceAlias = peerState?.displayAlias ?? widget.initialAlias;
     final deviceSub = onlineDevice != null
         ? (isConnected
-              ? '${strings.lanShareOnline} · ${onlineDevice.osName}'
+              ? '${strings.lanShareOnline} · ${onlineDevice.os}'
               : (strings.isEnglish ? 'Connecting…' : '连接中…'))
         : strings.lanShareOffline;
 
@@ -586,7 +581,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
     LanShareViewModel vm,
     LanMessage msg,
     bool isMe,
-    LanDevice? device,
+    LanDiscoveredPeer? device,
   ) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
@@ -739,7 +734,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
     LanShareViewModel vm,
     LanMessage msg,
     bool isMe,
-    LanDevice? device,
+    LanDiscoveredPeer? device,
   ) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
@@ -867,7 +862,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
     LanShareViewModel vm,
     LanMessage msg,
     bool isMe,
-    LanDevice? device,
+    LanDiscoveredPeer? device,
   ) {
     showModalBottomSheet(
       context: context,

@@ -12,6 +12,7 @@ import '../data/database/lan_share_database.dart';
 import '../data/repositories/lan_share_history_repository.dart';
 import '../domain/lan_share_ports.dart';
 import '../features/lan_share/services/lan_receiver_coordinator.dart';
+import '../services/lan_share/lan_peer_trust.dart';
 
 /// 供测试替换独立 LAN 数据库创建过程。
 typedef LanShareDatabaseFactory = LanShareDatabase Function();
@@ -41,6 +42,7 @@ final class LanShareModule implements AppModule {
   bool? _receiverEnabled;
   LanShareDatabase? _database;
   LanShareHistoryRepository? _historyRepository;
+  LanPeerTrustStore? _peerTrustStore;
   LanReceiverCoordinator? _coordinator;
   Future<void>? _initializeFuture;
   Future<void>? _disposeFuture;
@@ -66,6 +68,11 @@ final class LanShareModule implements AppModule {
   /// 当前 Module 独占的历史 Repository。
   LanShareHistoryRepository get historyRepository =>
       _historyRepository ??
+      (throw StateError('LanShareModule is not initialized.'));
+
+  /// 当前 Module 独占的原子 LAN peer trust store。
+  LanPeerTrustStore get peerTrustStore =>
+      _peerTrustStore ??
       (throw StateError('LanShareModule is not initialized.'));
 
   /// 注册 App Shell Port 和 App Scope 网络 Runtime。
@@ -112,12 +119,15 @@ final class LanShareModule implements AppModule {
     }
 
     LanShareDatabase? database;
+    LanPeerTrustStore? peerTrustStore;
     try {
       database = _databaseFactory();
       await database.customSelect('SELECT 1').get();
       final repository = LanShareHistoryRepository(database);
+      peerTrustStore = LanPeerTrustStore();
       _database = database;
       _historyRepository = repository;
+      _peerTrustStore = peerTrustStore;
       _coordinator = LanReceiverCoordinator(
         appSettings: settings,
         logger: logger,
@@ -127,13 +137,16 @@ final class LanShareModule implements AppModule {
         bootstrapClient: bootstrapClient,
         historyRepository: repository,
         networkRuntime: networkRuntime,
+        peerTrustStore: peerTrustStore,
         initializeNetwork: receiverEnabled,
       );
       _state = ModuleState.initialized;
     } catch (_) {
       await database?.dispose();
+      await peerTrustStore?.dispose();
       _database = null;
       _historyRepository = null;
+      _peerTrustStore = null;
       _coordinator = null;
       _initializeFuture = null;
       rethrow;
@@ -187,8 +200,12 @@ final class LanShareModule implements AppModule {
     await attempt(() async {
       await _database?.dispose();
     });
+    await attempt(() async {
+      await _peerTrustStore?.dispose();
+    });
     _coordinator = null;
     _historyRepository = null;
+    _peerTrustStore = null;
     _database = null;
     _settings = null;
     _logger = null;

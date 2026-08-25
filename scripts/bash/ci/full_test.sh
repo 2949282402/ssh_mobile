@@ -110,6 +110,7 @@ Examples:
   bash scripts/bash/ci/full_test.sh --no-bootstrap --jobs 4
   bash scripts/bash/coverage/client_coverage.sh --no-bootstrap
   bash scripts/bash/ci/full_test.sh --only protocol-v2-contract,architecture-check
+  bash scripts/bash/ci/full_test.sh --only lan-network-v2-targeted
   FULL_TEST_APP_TIMEOUT=8m bash scripts/bash/ci/full_test.sh --serial
   FULL_TEST_APP_SHARDS_PARALLEL=1 bash scripts/bash/ci/full_test.sh --with-coverage --no-bootstrap
   FULL_TEST_APP_SHARDS_PARALLEL=0 bash scripts/bash/ci/full_test.sh --with-coverage --no-bootstrap
@@ -606,7 +607,7 @@ job_app_static() {
   need dart flutter || return "$SKIP_STATUS"
   step 'Check generated app icons' bash -c 'cd apps/ssh_mobile_full && dart run tool/generate_app_icons.dart && git diff --exit-code -- assets android ios macos web windows/runner/resources/app_icon.ico'
   step 'Check Full App formatting' run_in apps/ssh_mobile_full dart format --output=none --set-exit-if-changed lib test tool
-  step 'Check generated database code' bash -c 'cd apps/ssh_mobile_full && dart run build_runner build && git diff --exit-code -- lib/data/database/app_database.g.dart'
+  step 'Check generated database code' bash -c 'cd apps/ssh_mobile_full && dart run build_runner clean && dart run build_runner build && git diff --exit-code -- lib/data/database/app_database.g.dart'
   step 'Security regression grep' bash -c 'cd apps/ssh_mobile_full && ! grep -R "SshIdentityCache" lib && ! grep -R "reconnectCredentials" lib && ! grep -R "privateKeyDigest" lib'
   step 'Analyze Full App' run_in apps/ssh_mobile_full flutter analyze --no-fatal-infos
 }
@@ -671,13 +672,9 @@ flutter_test_config_root() {
 }
 
 prepare_flutter_test_config() {
-  local shard="$1"
-  local config_root
+  local shard="$1" config_root
   config_root="$(flutter_test_config_root "$shard")"
   mkdir -p "$config_root"
-  # Flutter reads its Linux config from XDG_CONFIG_HOME. A distinct build-dir
-  # per App shard prevents concurrent frontend/test-cache writes while keeping
-  # the shared Flutter artifact and pub caches warm.
   XDG_CONFIG_HOME="$config_root" env "${FLUTTER_LOCAL_TEST_ENV[@]}" \
     flutter config --build-dir "build/full-test-shard-$shard" >/dev/null
 }
@@ -686,8 +683,9 @@ run_app_test_with_retry() {
   local shard="$1"
   local coverage_path="$2"
   shift 2
-  local attempt status flutter_config_root
+  local attempt status timeout_pid
   local -a coverage_args=()
+  local flutter_config_root
   flutter_config_root="$(flutter_test_config_root "$shard")"
   prepare_flutter_test_config "$shard"
   if ((APP_COVERAGE_ENABLED)); then
@@ -698,14 +696,23 @@ run_app_test_with_retry() {
       rm -f "$coverage_path"
     fi
     printf 'Running App shard %s (attempt %s) with Flutter concurrency %s.\n' "$shard" "$attempt" "$FLUTTER_CONCURRENCY"
-    if timeout --signal=TERM --kill-after=30s "$APP_TIMEOUT" \
+    timeout --signal=TERM --kill-after=30s "$APP_TIMEOUT" \
       env "XDG_CONFIG_HOME=$flutter_config_root" "${FLUTTER_LOCAL_TEST_ENV[@]}" flutter test --no-pub --no-test-assets "${coverage_args[@]}" \
+      --exclude-tags client-backend,native-loopback \
       --reporter compact --fail-fast --timeout 60s \
       --concurrency "$FLUTTER_CONCURRENCY" \
-      "$@"; then
+      "$@" &
+    timeout_pid=$!
+    if wait "$timeout_pid"; then
       return 0
     else
       status=$?
+      # GNU timeout normally kills its process group, but Flutter can leave a
+      # tester descendant re-parented after shutdown. Reap that whole group
+      # before retrying, otherwise the retry can deadlock on inherited sockets.
+      kill -- -"$timeout_pid" 2>/dev/null || true
+      pkill -TERM -P "$timeout_pid" 2>/dev/null || true
+      sleep 1
     fi
     if ((attempt == 2)); then
       return "$status"
@@ -721,15 +728,7 @@ job_app_unit() {
   local -a app_test_files=()
   local -a app_shard_args=()
   collect_app_tests coverage_test_files
-  if ((APP_COVERAGE_ENABLED)); then
-    # Keep the established Flutter runtime sharding for coverage. It avoids
-    # changing coverage semantics while the no-coverage path uses pre-split
-    # file lists for a faster local feedback loop.
-    app_test_files=("${coverage_test_files[@]}")
-    app_shard_args=(--total-shards "$APP_SHARD_COUNT" --shard-index "$shard")
-  else
-    partition_app_tests coverage_test_files "$shard" app_test_files
-  fi
+  partition_app_tests coverage_test_files "$shard" app_test_files
   if ((${#app_test_files[@]} == 0)); then
     echo 'No Full App test files were discovered.'
     return 1
@@ -739,11 +738,23 @@ job_app_unit() {
   mkdir -p "$coverage_dir"
   local flutter_config_root
   flutter_config_root="$(flutter_test_config_root "$shard")"
-  run_in apps/ssh_mobile_full run_app_test_with_retry "$shard" "$coverage_dir/lcov.info" \
-    "${app_shard_args[@]}" "${app_test_files[@]}"
-  local test_status=$?
-  if ((test_status != 0)); then
-    return "$test_status"
+  local batch_size=10 batch=0 test_status=0 batch_coverage batch_end
+  while ((batch * batch_size < ${#app_test_files[@]})); do
+    batch_end=$(((batch + 1) * batch_size))
+    batch_coverage="$coverage_dir/lcov-batch-$batch.info"
+    if ((batch_end > ${#app_test_files[@]})); then batch_end=${#app_test_files[@]}; fi
+    run_in apps/ssh_mobile_full run_app_test_with_retry "$shard-batch-$batch" "$batch_coverage" \
+      "${app_test_files[@]:batch * batch_size:batch_end - batch * batch_size}"
+    test_status=$?
+    if ((test_status != 0)); then return "$test_status"; fi
+    batch=$((batch + 1))
+  done
+  if ((APP_COVERAGE_ENABLED)); then
+    : > "$coverage_dir/lcov.info"
+    for batch_coverage in "$coverage_dir"/lcov-batch-*.info; do
+      [[ -f "$batch_coverage" ]] || continue
+      if [[ ! -s "$coverage_dir/lcov.info" ]]; then cp "$batch_coverage" "$coverage_dir/lcov.info"; else sed '/^TN:/d' "$batch_coverage" >> "$coverage_dir/lcov.info"; fi
+    done
   fi
 
   local isolated_startup="$coverage_dir/isolated-startup-lcov.info"
@@ -1001,6 +1012,89 @@ job_sdk() {
     --scope=ssh_mobile_network_native
 }
 
+job_lan_network_v2() {
+  need dart flutter cargo || return "$SKIP_STATUS"
+
+  # Keep this manifest explicit: a missing acceptance test is an implementation
+  # failure, not a reason to silently fall back to the broad package suite.
+  local -a feature_tests=(
+    test/services/lan_peer_trust_v2_test.dart
+    test/features/lan_native_peer_registry_v2_test.dart
+    test/services/lan_pairing_protocol_v2_test.dart
+    test/services/lan_peer_trust_identity_v2_test.dart
+    test/services/lan_peer_presentation_models_test.dart
+    test/services/lan_native_transfer_coordinator_v2_test.dart
+    test/services/lan_http_v2_route_test.dart
+    test/services/lan_web_share_request_handler_test.dart
+  )
+  local -a sdk_tests=(
+    test/network_facade_v2_refactor_test.dart
+    test/network_sdk_contract_test.dart
+    test/network_v2_contract_test.dart
+    test/network_v2_facade_test.dart
+  )
+  local -a app_tests=(
+    test/app/network_runtime_ownership_v2_test.dart
+    test/services/network/network_identity_service_test.dart
+    test/services/network/network_protocol_v2_codec_test.dart
+    test/features/lan_share/lan_e2e_encryption_test.dart
+    test/features/lan_share/lan_pairing_v2_contract_test.dart
+    test/features/lan_share/lan_storage_safety_v2_test.dart
+    test/services/lan_web_share_safety_test.dart
+  )
+  local web_share_tls_worker='tool/lan_web_share_tls_process.dart'
+  local feature_test sdk_test app_test
+  local missing=0
+  for feature_test in "${feature_tests[@]}"; do
+    if [[ ! -f "$ROOT_DIR/packages/features/feature_lan_share/$feature_test" ]]; then
+      echo "MISSING LAN V2 acceptance test: packages/features/feature_lan_share/$feature_test"
+      missing=1
+    fi
+  done
+  for sdk_test in "${sdk_tests[@]}"; do
+    if [[ ! -f "$ROOT_DIR/packages/infrastructure/network_sdk/$sdk_test" ]]; then
+      echo "MISSING LAN V2 acceptance test: packages/infrastructure/network_sdk/$sdk_test"
+      missing=1
+    fi
+  done
+  for app_test in "${app_tests[@]}"; do
+    if [[ ! -f "$ROOT_DIR/apps/ssh_mobile_full/$app_test" ]]; then
+      echo "MISSING LAN V2 acceptance test: apps/ssh_mobile_full/$app_test"
+      missing=1
+    fi
+  done
+  if [[ ! -f "$ROOT_DIR/packages/features/feature_lan_share/$web_share_tls_worker" ]]; then
+    echo "MISSING WebShare TLS process worker: packages/features/feature_lan_share/$web_share_tls_worker"
+    missing=1
+  fi
+  if ((missing)); then
+    return 1
+  fi
+
+  step 'Test LAN Share V2 trust/registry/pairing/route ownership' \
+    run_in packages/features/feature_lan_share flutter test --no-pub --no-test-assets "${feature_tests[@]}"
+  step 'Test Network SDK V2 explicit peer lifecycle' \
+    run_in packages/infrastructure/network_sdk flutter test --no-pub --no-test-assets "${sdk_tests[@]}"
+  step 'Test Full App Network V2 adapter' \
+    run_in apps/ssh_mobile_full flutter test --no-pub --no-test-assets "${app_tests[@]}"
+  # Keep the real TLS listener in an ordinary Dart VM process. The boundary
+  # suite above uses in-memory requests; this worker owns bindSecure and has no
+  # retry/skip path that could hide a native bind stall in flutter_tester.
+  step 'Test WebShare TLS and production route handler in ordinary Dart VM' \
+    run_in packages/features/feature_lan_share timeout --signal=TERM --kill-after=30s "$APP_TIMEOUT" \
+      dart run "$web_share_tls_worker"
+  step 'Test Native Network V2 restart and route authorization' \
+    run_in native/network_core cargo test -p network-core --locked --lib two_runtimes -- --test-threads=1
+  step 'Test Native Network V2 receiver restart transfer' \
+    run_in native/network_core cargo test -p network-core --locked --lib \
+      receiver_runtime_restart_restores_direct_trust_without_repairing -- --test-threads=1
+  step 'Test Native Network V2 peer restart delivery' \
+    run_in native/network_core cargo test -p network-core --locked --lib \
+      peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery -- --test-threads=1
+  step 'Test Native Network V2 route authorization boundary' \
+    run_in native/network_core cargo test -p network-core --locked --lib network_v2_route_auth -- --test-threads=1
+}
+
 job_core() {
   need dart || return "$SKIP_STATUS"
   step 'Format core packages' melos_exec 'dart format --output=none --set-exit-if-changed lib test' \
@@ -1068,6 +1162,7 @@ PRE_JOBS=(
   'admin-api-contract:job_admin_api_contract'
   'native-network-quality:job_native'
   'sdk-dart-quality:job_sdk'
+  'lan-network-v2-targeted:job_lan_network_v2'
   'relay-quality:job_relay'
   'protocol-v2-contract:job_protocol'
   'architecture-check:job_architecture'

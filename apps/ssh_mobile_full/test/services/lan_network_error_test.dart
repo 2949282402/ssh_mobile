@@ -1,4 +1,4 @@
-// v1 LAN HTTP 错误响应解码测试，锁定稳定 code、operation 和 peer_id 语义。
+// V2 LAN HTTP 错误响应解码测试，锁定稳定 code、operation 和 peer_id 语义。
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:network_sdk/network_sdk.dart';
@@ -7,7 +7,7 @@ import 'package:feature_lan_share/feature_lan_share.dart';
 /// 执行 LAN HTTP 错误模型测试。
 void main() {
   /// 验证合法服务端错误会保留稳定上下文。
-  test('decodes a v1 LAN HTTP error response', () {
+  test('decodes a V2 LAN HTTP error response', () {
     final exception = lanHttpException(
       statusCode: 403,
       body: const <String, dynamic>{

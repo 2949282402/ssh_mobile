@@ -1,4 +1,4 @@
-// 消费类型化握手与配对结果的 v1 LAN 配对页面。
+// 消费类型化握手与配对结果的 V2 LAN 配对页面。
 
 import 'dart:async';
 
@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../services/app_settings.dart';
-import '../../../services/lan_share/lan_network_models.dart';
 import '../../../services/lan_share/lan_share_models.dart';
 import 'package:network_sdk/network_sdk.dart';
 import 'package:app_ui/app_ui.dart';
@@ -14,7 +13,7 @@ import '../lan_share_feature_scope.dart';
 import '../viewmodels/lan_share_viewmodel.dart';
 import 'lan_chat_screen.dart';
 
-/// 展示 v1 LAN 配对 PIN 流程。
+/// 展示 V2 LAN 配对 PIN 流程。
 class LanPairingScreen extends StatefulWidget {
   final String targetDeviceId;
   final String initialAlias;
@@ -45,7 +44,6 @@ class _LanPairingScreenState extends State<LanPairingScreen>
   String _localPin = '------';
   int _pinCountdown = 60;
   Timer? _countdownTimer;
-  bool _waitingForRemoteVerification = false;
   bool _hasOpenedChat = false;
   late bool _isIncomingRequest;
   late String _targetDeviceId;
@@ -69,13 +67,12 @@ class _LanPairingScreenState extends State<LanPairingScreen>
       _refreshLocalPin();
 
       final vm = context.read<LanShareViewModel>();
-      _handshakeSubscription = vm.transferService.handshakeSuccessStream.listen(
-        (device) {
-          if (device.id == _targetDeviceId && mounted) {
-            _openChat();
-          }
-        },
-      );
+      _handshakeSubscription = vm.transferService.handshakeSuccessPeerStream
+          .listen((peer) {
+            if (peer.deviceId == _targetDeviceId && mounted) {
+              _openChat();
+            }
+          });
       _pairingRequestSubscription = vm.pairingRequestStream.listen(
         _handlePairingRequest,
       );
@@ -99,12 +96,12 @@ class _LanPairingScreenState extends State<LanPairingScreen>
   void _handlePairingRequest(LanPairingRequest request) {
     if (!mounted || request.isExpired) return;
     final matchesSession = request.sessionId == widget.sessionId;
-    final matchesDevice = request.device.id == _targetDeviceId;
+    final matchesDevice = request.peer.peerId == _targetDeviceId;
     if (!matchesSession && !matchesDevice) return;
 
     setState(() {
-      _targetDeviceId = request.device.id;
-      _targetAlias = request.device.alias;
+      _targetDeviceId = request.peer.peerId;
+      _targetAlias = request.peer.displayAlias;
       if (request.isIncoming) {
         _isIncomingRequest = true;
       }
@@ -147,15 +144,7 @@ class _LanPairingScreenState extends State<LanPairingScreen>
       setState(() => _pinCountdown = remaining);
       if (remaining <= 0) {
         _countdownTimer?.cancel();
-        if (_waitingForRemoteVerification) {
-          setState(() {
-            _waitingForRemoteVerification = false;
-            _errorMessage = '配对超时：您的PIN码已过期，请重新确认并发起连接。';
-          });
-          _refreshLocalPin();
-        } else {
-          _refreshLocalPin();
-        }
+        _refreshLocalPin();
       }
     });
   }
@@ -187,13 +176,7 @@ class _LanPairingScreenState extends State<LanPairingScreen>
     });
 
     // Find the device in viewmodel
-    LanDevice? targetDevice;
-    for (final d in vm.devices) {
-      if (d.id == _targetDeviceId) {
-        targetDevice = d;
-        break;
-      }
-    }
+    final targetDevice = vm.peerStateFor(_targetDeviceId)?.discovery;
 
     if (targetDevice == null) {
       setState(() {
@@ -210,17 +193,8 @@ class _LanPairingScreenState extends State<LanPairingScreen>
         isInitiator: !_isIncomingRequest,
       );
       if (!mounted) return;
-      if (result is NetworkSuccess<LanHandshakeData>) {
-        if (mounted) {
-          if (result.data.pendingRemote) {
-            setState(() {
-              _waitingForRemoteVerification = true;
-              _isLoading = false;
-            });
-          } else {
-            _openChat();
-          }
-        }
+      if (result is NetworkSuccess<void>) {
+        _openChat();
       } else {
         setState(() {
           _isLoading = false;
@@ -313,11 +287,7 @@ class _LanPairingScreenState extends State<LanPairingScreen>
                 const SizedBox(height: 48),
 
                 Text(
-                  _isIncomingRequest
-                      ? '安全配对请求'
-                      : (_waitingForRemoteVerification
-                            ? '等待安全确认'
-                            : '准备连接至$_targetAlias'),
+                  _isIncomingRequest ? '安全配对请求' : '准备连接至$_targetAlias',
                   style: theme.textTheme.headlineSmall?.copyWith(
                     fontWeight: FontWeight.bold,
                     letterSpacing: 1.0,
@@ -327,9 +297,7 @@ class _LanPairingScreenState extends State<LanPairingScreen>
                 Text(
                   _isIncomingRequest
                       ? '设备$_targetAlias请求与您配对连接…'
-                      : (_waitingForRemoteVerification
-                            ? '已成功验证对方PIN码。请在对方设备上输入您的PIN码以完成连接。'
-                            : '正在建立安全连接，请输入对方设备上显示的PIN码…'),
+                      : '正在建立安全连接，请输入对方设备上显示的PIN码…',
                   textAlign: TextAlign.center,
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: colors.onSurface.withValues(alpha: 0.6),
@@ -432,116 +400,91 @@ class _LanPairingScreenState extends State<LanPairingScreen>
                       color: colors.outlineVariant.withValues(alpha: 0.4),
                     ),
                   ),
-                  child: _waitingForRemoteVerification
-                      ? const Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              SizedBox(
-                                width: 32,
-                                height: 32,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 3,
-                                ),
-                              ),
-                              SizedBox(height: 16),
-                              Text(
-                                '等待对方输入您的本机PIN码进行确认...',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                        )
-                      : Column(
-                          children: [
-                            Text(
-                              strings.lanSharePinPrompt,
-                              textAlign: TextAlign.center,
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            const SizedBox(height: 20),
-
-                            // Custom 6-Digit PIN Field
-                            TextField(
-                              controller: _pinController,
-                              keyboardType: TextInputType.number,
-                              maxLength: 6,
-                              textAlign: TextAlign.center,
-                              style: theme.textTheme.headlineMedium?.copyWith(
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: 8.0,
-                              ),
-                              decoration: InputDecoration(
-                                hintText: '••••••',
-                                hintStyle: TextStyle(
-                                  color: colors.onSurfaceVariant.withValues(
-                                    alpha: 0.3,
-                                  ),
-                                  letterSpacing: 4.0,
-                                ),
-                                counterText: '',
-                                errorText: _errorMessage,
-                                errorMaxLines: 2,
-                                filled: true,
-                                fillColor: colors.surfaceContainer,
-                                contentPadding: const EdgeInsets.symmetric(
-                                  vertical: 16.0,
-                                  horizontal: 8.0,
-                                ),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(16),
-                                  borderSide: BorderSide.none,
-                                ),
-                              ),
-                              enabled: !_isLoading,
-                            ),
-                            const SizedBox(height: 24),
-
-                            // Submit Button
-                            SizedBox(
-                              width: double.infinity,
-                              height: 52,
-                              child: ElevatedButton(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: colors.primary,
-                                  foregroundColor: colors.onPrimary,
-                                  elevation: 0,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                ),
-                                onPressed: _isLoading
-                                    ? null
-                                    : () => _submitPin(vm, strings),
-                                child: _isLoading
-                                    ? const SizedBox(
-                                        width: 24,
-                                        height: 24,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2.5,
-                                          valueColor:
-                                              AlwaysStoppedAnimation<Color>(
-                                                Colors.white,
-                                              ),
-                                        ),
-                                      )
-                                    : const Text(
-                                        '确认配对',
-                                        style: TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                              ),
-                            ),
-                          ],
+                  child: Column(
+                    children: [
+                      Text(
+                        strings.lanSharePinPrompt,
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w500,
                         ),
+                      ),
+                      const SizedBox(height: 20),
+
+                      // Custom 6-Digit PIN Field
+                      TextField(
+                        controller: _pinController,
+                        keyboardType: TextInputType.number,
+                        maxLength: 6,
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.headlineMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 8.0,
+                        ),
+                        decoration: InputDecoration(
+                          hintText: '••••••',
+                          hintStyle: TextStyle(
+                            color: colors.onSurfaceVariant.withValues(
+                              alpha: 0.3,
+                            ),
+                            letterSpacing: 4.0,
+                          ),
+                          counterText: '',
+                          errorText: _errorMessage,
+                          errorMaxLines: 2,
+                          filled: true,
+                          fillColor: colors.surfaceContainer,
+                          contentPadding: const EdgeInsets.symmetric(
+                            vertical: 16.0,
+                            horizontal: 8.0,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                        enabled: !_isLoading,
+                      ),
+                      const SizedBox(height: 24),
+
+                      // Submit Button
+                      SizedBox(
+                        width: double.infinity,
+                        height: 52,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: colors.primary,
+                            foregroundColor: colors.onPrimary,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                          ),
+                          onPressed: _isLoading
+                              ? null
+                              : () => _submitPin(vm, strings),
+                          child: _isLoading
+                              ? const SizedBox(
+                                  width: 24,
+                                  height: 24,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.5,
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                      Colors.white,
+                                    ),
+                                  ),
+                                )
+                              : const Text(
+                                  '确认配对',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 24),
 

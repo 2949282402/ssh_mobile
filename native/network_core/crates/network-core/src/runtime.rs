@@ -95,6 +95,12 @@ pub(crate) struct PeerConfig {
     pub(crate) e2ee_policy: network_protocol::E2eePolicy,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PeerRouteAuthorization {
+    pub(crate) direct: bool,
+    pub(crate) relay: bool,
+}
+
 /// Typed bridge owned by the Runtime boundary for Relay-backed transfer work.
 ///
 /// Transfer dispatch must not import the Relay implementation directly: the
@@ -141,6 +147,7 @@ pub(crate) struct RuntimeState {
     pub(crate) lifecycle: RuntimeLifecycleState,
     pub(crate) local_path_manager: RwLock<Option<Arc<PathManager>>>,
     pub(crate) peers: RwLock<HashMap<String, PeerConfig>>,
+    pub(crate) peer_route_authorizations: RwLock<HashMap<String, PeerRouteAuthorization>>,
     pub(crate) trusted_peer_keys: RwLock<HashMap<String, [u8; 32]>>,
     /// ConnectionSession storage only; logical Peer lifecycle is owned by
     /// `PeerSupervisorRegistry` and never by this connection store.
@@ -198,6 +205,7 @@ impl RuntimeState {
             lifecycle: RuntimeLifecycleState::new(bound_port),
             local_path_manager: RwLock::new(None),
             peers: RwLock::new(HashMap::new()),
+            peer_route_authorizations: RwLock::new(HashMap::new()),
             trusted_peer_keys: RwLock::new(HashMap::new()),
             connection_sessions: ConnectionSessionStore::new(),
             crypto: SessionCryptoManager::new(),
@@ -371,6 +379,35 @@ impl RuntimeState {
             .clone())
     }
 
+    /// Return the command-registered route policy. Native-owned test seams
+    /// may construct a path manager directly and therefore have no policy
+    /// record; those seams retain the historical unrestricted behavior while
+    /// every V2 command registration gets an explicit fail-closed policy.
+    pub(crate) async fn peer_route_authorization(
+        &self,
+        peer_id: &str,
+    ) -> Option<PeerRouteAuthorization> {
+        self.peer_route_authorizations
+            .read()
+            .await
+            .get(peer_id)
+            .copied()
+    }
+
+    pub(crate) async fn route_is_authorized(
+        &self,
+        peer_id: &str,
+        topology: crate::connection::RouteTopology,
+    ) -> bool {
+        self.peer_route_authorization(peer_id)
+            .await
+            .map(|authorization| match topology {
+                crate::connection::RouteTopology::Direct => authorization.direct,
+                crate::connection::RouteTopology::Relay => authorization.relay,
+            })
+            .unwrap_or(true)
+    }
+
     /// Acquire one explicit business lease from the sole peer path owner.
     /// RuntimeState exposes the lookup boundary; it never stores or returns a
     /// second strong carrier owner.
@@ -387,11 +424,16 @@ impl RuntimeState {
             .get(peer_id)
             .cloned()
             .ok_or(CoreNetworkError::NoRoute)?;
+        let authorization = self.peer_route_authorization(peer_id).await;
+        let (allow_direct, allow_relay) = authorization
+            .map(|authorization| (authorization.direct, authorization.relay))
+            .unwrap_or((true, true));
         let manager = manager.lock().expect("peer path manager lock");
         let selected = manager
-            .select(required_capabilities)
+            .select_with_authorization(required_capabilities, allow_direct, allow_relay)
             .ok_or(CoreNetworkError::NoRoute)?;
-        let (acquired, lease) = manager.acquire(required_capabilities)?;
+        let (acquired, lease) =
+            manager.acquire_with_authorization(required_capabilities, allow_direct, allow_relay)?;
         if acquired != selected {
             lease.release();
             return Err(CoreNetworkError::StaleAttempt);
@@ -408,6 +450,12 @@ impl RuntimeState {
         required_capabilities: u8,
     ) -> Result<crate::connect::PathLease, CoreNetworkError> {
         let _peer_id = PeerId::new(peer_id)?;
+        if !self
+            .route_is_authorized(peer_id, crate::connection::RouteTopology::Relay)
+            .await
+        {
+            return Err(CoreNetworkError::NoRoute);
+        }
         let manager = self
             .peer_path_managers
             .read()
@@ -431,6 +479,12 @@ impl RuntimeState {
         connection: &quinn::Connection,
         required_capabilities: u8,
     ) -> Result<crate::connect::PathLease, CoreNetworkError> {
+        if !self
+            .route_is_authorized(peer_id, crate::connection::RouteTopology::Direct)
+            .await
+        {
+            return Err(CoreNetworkError::NoRoute);
+        }
         self.acquire_matching_path_lease(peer_id, required_capabilities, |lease| {
             lease
                 .connection()
@@ -448,6 +502,12 @@ impl RuntimeState {
         route_id: u64,
         required_capabilities: u8,
     ) -> Result<crate::connect::PathLease, CoreNetworkError> {
+        if !self
+            .route_is_authorized(peer_id, crate::connection::RouteTopology::Direct)
+            .await
+        {
+            return Err(CoreNetworkError::NoRoute);
+        }
         self.acquire_matching_path_lease(peer_id, required_capabilities, |lease| {
             match lease.stream_carrier() {
                 Some(crate::connect::StreamCarrier::Generic(handle)) => handle.id() == route_id,
@@ -468,6 +528,12 @@ impl RuntimeState {
         data: &Arc<RelayDataClient>,
         required_capabilities: u8,
     ) -> Result<crate::connect::PathLease, CoreNetworkError> {
+        if !self
+            .route_is_authorized(peer_id, crate::connection::RouteTopology::Relay)
+            .await
+        {
+            return Err(CoreNetworkError::NoRoute);
+        }
         self.acquire_matching_path_lease(peer_id, required_capabilities, |lease| {
             lease
                 .relay_data()
@@ -580,6 +646,10 @@ impl RuntimeState {
         route: crate::connect::ActiveRoute,
     ) -> Result<Option<PathHandle>, CoreNetworkError> {
         let profile = route.profile();
+        if !self.route_is_authorized(peer_id, profile.topology()).await {
+            route.close().await;
+            return Err(CoreNetworkError::NoRoute);
+        }
         let manager = self.peer_path_manager(peer_id).await?;
         let (old_handle, projection) = {
             let mut manager = manager.lock().expect("peer path manager lock");
@@ -606,6 +676,12 @@ impl RuntimeState {
     }
 
     pub(crate) async fn has_ready_direct_path(&self, peer_id: &str) -> bool {
+        if !self
+            .route_is_authorized(peer_id, crate::connection::RouteTopology::Direct)
+            .await
+        {
+            return false;
+        }
         self.peer_path_managers
             .read()
             .await
@@ -627,6 +703,12 @@ impl RuntimeState {
         peer_id: &str,
         required_capabilities: u8,
     ) -> bool {
+        if !self
+            .route_is_authorized(peer_id, crate::connection::RouteTopology::Direct)
+            .await
+        {
+            return false;
+        }
         self.peer_path_managers
             .read()
             .await
@@ -644,6 +726,12 @@ impl RuntimeState {
     }
 
     pub(crate) async fn has_ready_relay_path(&self, peer_id: &str) -> bool {
+        if !self
+            .route_is_authorized(peer_id, crate::connection::RouteTopology::Relay)
+            .await
+        {
+            return false;
+        }
         self.peer_path_managers
             .read()
             .await
@@ -680,6 +768,12 @@ impl RuntimeState {
         budget: Duration,
         required_capabilities: u8,
     ) -> bool {
+        if !self
+            .route_is_authorized(peer_id, crate::connection::RouteTopology::Direct)
+            .await
+        {
+            return false;
+        }
         let Some(manager) = self.peer_path_managers.read().await.get(peer_id).cloned() else {
             return false;
         };
@@ -712,6 +806,13 @@ impl RuntimeState {
         connection: quinn::Connection,
         route: network_protocol::RouteType,
     ) -> Result<Option<PathHandle>, ()> {
+        let topology = crate::connection::ConnectionProfile::for_route(route)
+            .map(|profile| profile.topology())
+            .ok_or(())?;
+        if !self.route_is_authorized(peer_id, topology).await {
+            connection.close(quinn::VarInt::from_u32(0), b"route unauthorized");
+            return Err(());
+        }
         let session_id = match self.connection_sessions.current_session_id(peer_id).await {
             Some(session_id) => {
                 if expected_session_id.is_some_and(|expected| expected != session_id) {
@@ -757,6 +858,9 @@ impl RuntimeState {
             return Err(());
         }
         let profile = scope.profile().ok_or(())?;
+        if !self.route_is_authorized(peer_id, profile.topology()).await {
+            return Err(());
+        }
         if self.path_profile(peer_id).await == Some(profile) {
             return Err(());
         }
@@ -779,6 +883,12 @@ impl RuntimeState {
         if self.connection_sessions.current_session_id(peer_id).await != Some(expected_session_id) {
             return false;
         }
+        if !self
+            .route_is_authorized(peer_id, crate::connection::RouteTopology::Relay)
+            .await
+        {
+            return false;
+        }
         self.publish_transport_path(
             peer_id,
             expected_session_id,
@@ -792,13 +902,18 @@ impl RuntimeState {
         &self,
         peer_id: &str,
     ) -> Option<crate::connection::ConnectionProfile> {
+        let authorization = self.peer_route_authorization(peer_id).await;
+        let (allow_direct, allow_relay) = authorization
+            .map(|authorization| (authorization.direct, authorization.relay))
+            .unwrap_or((true, true));
         let manager = self.peer_path_managers.read().await.get(peer_id).cloned()?;
         let manager = manager.lock().expect("peer path manager lock");
-        manager
-            .direct_ready()
-            .first()
-            .or_else(|| manager.relay_ready())
-            .map(PathHandle::profile)
+        match manager.select_with_authorization(0, allow_direct, allow_relay)? {
+            crate::connect::PathSelection::Direct => {
+                manager.direct_ready().first().map(PathHandle::profile)
+            }
+            crate::connect::PathSelection::Relay => manager.relay_ready().map(PathHandle::profile),
+        }
     }
 
     /// Check the currently ready physical paths against a business capability
@@ -809,13 +924,17 @@ impl RuntimeState {
         peer_id: &str,
         required_capabilities: u8,
     ) -> bool {
+        let authorization = self.peer_route_authorization(peer_id).await;
+        let (allow_direct, allow_relay) = authorization
+            .map(|authorization| (authorization.direct, authorization.relay))
+            .unwrap_or((true, true));
         let Some(manager) = self.peer_path_managers.read().await.get(peer_id).cloned() else {
             return false;
         };
         let supports = manager
             .lock()
             .expect("peer path manager lock")
-            .select(required_capabilities)
+            .select_with_authorization(required_capabilities, allow_direct, allow_relay)
             .is_some();
         supports
     }
@@ -852,6 +971,12 @@ impl RuntimeState {
     }
 
     pub(crate) async fn path_relay_data(&self, peer_id: &str) -> Option<Arc<RelayDataClient>> {
+        if !self
+            .route_is_authorized(peer_id, crate::connection::RouteTopology::Relay)
+            .await
+        {
+            return None;
+        }
         let manager = self.peer_path_managers.read().await.get(peer_id).cloned()?;
         let projection = {
             let manager = manager.lock().expect("peer path manager lock");

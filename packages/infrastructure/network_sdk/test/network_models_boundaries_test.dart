@@ -272,10 +272,8 @@ void main() {
     expect(await facade.start(config), isA<SdkSuccess<void>>());
     expect(await facade.stop(), isA<SdkSuccess<void>>());
     expect(await facade.registerPeer(peer), isA<SdkSuccess<void>>());
-    expect(
-      await facade.connectPeer('peer-a', peer: peer),
-      isA<SdkSuccess<void>>(),
-    );
+    expect(await facade.connectPeer('peer-a'), isA<SdkSuccess<void>>());
+    expect(await facade.removePeer('peer-a'), isA<SdkSuccess<void>>());
     expect(await facade.disconnectPeer('peer-a'), isA<SdkSuccess<void>>());
     expect(await facade.configureRelay(relay), isA<SdkSuccess<void>>());
     expect(await facade.disconnectRelay(), isA<SdkSuccess<void>>());
@@ -335,6 +333,10 @@ final class _FacadeSessionStub implements SessionClient {
 
   @override
   Future<SdkResult<void>> upsertPeer(SdkPeerConfig peer) async =>
+      const SdkSuccess<void>(null);
+
+  @override
+  Future<SdkResult<void>> removePeer(String peerId) async =>
       const SdkSuccess<void>(null);
 
   @override

@@ -1,4 +1,4 @@
-最新更新时间：2026-08-24
+最新更新时间：2026-08-25
 
 # ssh_mobile_full
 
@@ -6,6 +6,12 @@
 
 Full App 是 SSH Mobile 的完整 App Shell 和组合根，负责启动协调、`AppRuntime`
 生命周期、路由聚合、App Port 适配器以及兼容清单中明确保留的 App Scope 后端。
+
+Network V2 的组合根约束：`AppRuntimeFactory` 先加载/创建 App-owned
+`NetworkIdentityBundle`，再创建并 exactly-once 配置 `NetworkRuntime`，随后创建共享
+`NetworkFacade`。LAN、SSH、SFTP、Realtime 和 Relay 只借用这些 App Scope 资源；Feature
+或 Route Scope 不得创建第二个 runtime/facade，也不得在 deactivate/reactivate 时
+停止、销毁或重新配置它们。
 
 ## 不负责什么
 
@@ -35,7 +41,14 @@ Playbook、RAG、MCP 和 LAN Share 数据库分别由对应 Core/Feature Module 
 → SFTP → SSH → Network → Database → Logger（适配器与 Route Scope 资源先于 Module
 解除）；Route Scope 负责 ViewModel、Controller、Timer 与 Subscription。控制面由
 `network_sdk` 的 typed client 使用 App Shell 注入的 `SdkRequestExecutor`，LAN 数据面
-仍由 Runtime-owned native gateway 负责。
+仍由 AppRuntime-owned native gateway/共享 `NetworkFacade` 负责。LAN Receiver 只关闭
+自己的 HTTP/Discovery/Transfer 资源与订阅，不释放 NetworkRuntime/native handle。
+
+LAN Control Protocol V2 和 Native Network Protocol V2 是独立版本域；LAN Control
+breaking refactor 不保留旧 pairing schema、`/api/lan/upload` binary fallback 或旧
+API compatibility wrapper。按本 ADR 的控制面决定，Feature-facing
+`NetworkFacade.sendMessage` 保持 unavailable 边界，text/clipboard 由 Feature 走
+authenticated HTTPS + application E2E。
 
 后台 SSH 的平台前台服务与 isolate runtime 分属不同 Owner：
 `BackgroundServiceManager` 只负责通知/权限/power lock/服务启停，后台入口点创建的

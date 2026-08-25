@@ -1,4 +1,4 @@
-// 将类型化原生传入传输申请呈现给 Flutter UI 的 v1 宿主。
+// 将类型化原生传入传输申请呈现给 Flutter UI 的 V2 宿主。
 
 import 'dart:async';
 

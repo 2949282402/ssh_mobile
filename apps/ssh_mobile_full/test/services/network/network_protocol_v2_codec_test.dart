@@ -346,6 +346,7 @@ void main() {
           e2ePublicKey: Uint8List.fromList(List.filled(32, 4)),
         ),
       ),
+      codec.removePeerCommand(commandId: 'remove', peerId: 'peer-a'),
       codec.disconnectPeerCommand(commandId: 'disconnect', peerId: 'peer-a'),
       codec.sendFileCommand(
         commandId: 'send',
@@ -391,6 +392,27 @@ void main() {
         'relay',
       ]),
     );
+  });
+
+  test('peer registration carries explicit Direct and Relay authorization', () {
+    final encoded = codec.upsertPeerCommand(
+      commandId: 'u',
+      peer: PeerConfig(
+        peerId: 'peer-a',
+        endpointAddress: '',
+        identityPublicKey: Uint8List(32),
+        e2ePublicKey: Uint8List(32),
+        allowDirect: true,
+        allowRelay: true,
+      ),
+    );
+
+    // PeerConfig fields 6 and 7 are bool route authorizations.  They are
+    // intentionally carried on the V2 command rather than inferred from
+    // endpoint discovery or local Relay enrollment.
+    expect(_containsSubsequence(encoded, <int>[0x28, 0x00]), isTrue);
+    expect(_containsSubsequence(encoded, <int>[0x30, 0x01]), isTrue);
+    expect(_containsSubsequence(encoded, <int>[0x38, 0x01]), isTrue);
   });
 
   test(
@@ -621,6 +643,21 @@ void main() {
       throwsA(isA<FormatException>()),
     );
   });
+}
+
+bool _containsSubsequence(List<int> bytes, List<int> needle) {
+  if (needle.isEmpty) return true;
+  for (var start = 0; start <= bytes.length - needle.length; start++) {
+    var matches = true;
+    for (var offset = 0; offset < needle.length; offset++) {
+      if (bytes[start + offset] != needle[offset]) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) return true;
+  }
+  return false;
 }
 
 List<int> _frame(int eventField, List<int> payload) => <int>[

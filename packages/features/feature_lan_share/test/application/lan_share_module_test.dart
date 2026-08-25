@@ -183,6 +183,8 @@ final class _FakeIdentity implements LanShareNetworkIdentityPort {
       LanShareNetworkIdentityMaterial(
         privateSeed: Uint8List(32),
         publicKey: Uint8List(32),
+        x25519PrivateSeed: Uint8List(32),
+        x25519PublicKey: Uint8List(32),
       );
 }
 

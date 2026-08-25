@@ -99,6 +99,12 @@ final class NetworkProtocolV2Codec {
     required PeerConfig peer,
   }) => _commands.upsertPeer(commandId: commandId, peer: peer);
 
+  /// 编码显式删除对端 trust/configuration 命令。
+  Uint8List removePeerCommand({
+    required String commandId,
+    required String peerId,
+  }) => _commands.removePeer(commandId: commandId, peerId: peerId);
+
   /// 编码异步对端连接命令。
   ///
   /// 载荷镜像 network_protocol ConnectPeerCommand：peer_id(1)、intent(2)、
@@ -866,13 +872,22 @@ final class _NetworkCommandEncoder {
   }
 
   Uint8List upsertPeer({required String commandId, required PeerConfig peer}) {
-    final payload = _ProtoWriter()
+    final config = _ProtoWriter()
       ..string(1, peer.peerId)
       ..string(2, peer.endpointAddress)
       ..bytesField(3, peer.identityPublicKey)
-      ..bytesField(4, peer.e2ePublicKey);
-    return _command(commandId, 14, payload.takeBytes());
+      ..bytesField(4, peer.e2ePublicKey)
+      // SdkPeerConfig exposes only the required application E2EE contract;
+      // E2EE_POLICY_REQUIRED is the zero-valued wire enum.
+      ..varint(5, 0)
+      ..varint(6, peer.allowDirect ? 1 : 0)
+      ..varint(7, peer.allowRelay ? 1 : 0);
+    final payload = _ProtoWriter()..message(1, config.takeBytes());
+    return _command(commandId, 28, payload.takeBytes());
   }
+
+  Uint8List removePeer({required String commandId, required String peerId}) =>
+      _command(commandId, 29, (_ProtoWriter()..string(1, peerId)).takeBytes());
 
   Uint8List connectPeer({
     required String commandId,

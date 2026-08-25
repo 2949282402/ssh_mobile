@@ -52,6 +52,56 @@ function JobNative{
   exit$gap
 }
 function JobSdk{if(-not(Need @('dart','flutter'))){exit$gap};$scopes=@('network_sdk','network_transport','ssh_mobile_network_native');Melos 'dart format --output=none --set-exit-if-changed lib test' $scopes;Melos 'flutter analyze --no-fatal-infos --no-pub' $scopes;Melos "flutter test --no-pub --concurrency $MelosTestConcurrency" $scopes}
+function JobLanNetworkV2{
+  if(-not(Need @('dart','flutter','cargo'))){exit$gap}
+  $featureDirectory=Join-Path $root 'packages\features\feature_lan_share'
+  $featureTests=@(
+    'test/services/lan_peer_trust_v2_test.dart',
+    'test/features/lan_native_peer_registry_v2_test.dart',
+    'test/services/lan_pairing_protocol_v2_test.dart',
+    'test/services/lan_peer_trust_identity_v2_test.dart',
+    'test/services/lan_peer_presentation_models_test.dart',
+    'test/services/lan_native_transfer_coordinator_v2_test.dart',
+    'test/services/lan_http_v2_route_test.dart',
+    'test/services/lan_web_share_request_handler_test.dart'
+  )
+  $sdkDirectory=Join-Path $root 'packages\infrastructure\network_sdk'
+  $sdkTests=@(
+    'test/network_facade_v2_refactor_test.dart',
+    'test/network_sdk_contract_test.dart',
+    'test/network_v2_contract_test.dart',
+    'test/network_v2_facade_test.dart'
+  )
+  $appDirectory=Join-Path $root 'apps\ssh_mobile_full'
+  $appTests=@(
+    'test/app/network_runtime_ownership_v2_test.dart',
+    'test/services/network/network_identity_service_test.dart',
+    'test/services/network/network_protocol_v2_codec_test.dart',
+    'test/features/lan_share/lan_e2e_encryption_test.dart',
+    'test/features/lan_share/lan_pairing_v2_contract_test.dart',
+    'test/features/lan_share/lan_storage_safety_v2_test.dart',
+    'test/services/lan_web_share_safety_test.dart'
+  )
+  $webShareTlsWorker='tool/lan_web_share_tls_process.dart'
+  $missing=@($featureTests|Where-Object{-not(Test-Path (Join-Path $featureDirectory $_))}|ForEach-Object{"packages/features/feature_lan_share/$_"})
+  $missing+=@($sdkTests|Where-Object{-not(Test-Path (Join-Path $sdkDirectory $_))}|ForEach-Object{"packages/infrastructure/network_sdk/$_"})
+  $missing+=@($appTests|Where-Object{-not(Test-Path (Join-Path $appDirectory $_))}|ForEach-Object{"apps/ssh_mobile_full/$_"})
+  $webShareWorkerDirectory=Join-Path $root 'packages\features\feature_lan_share'
+  if(-not(Test-Path (Join-Path $webShareWorkerDirectory $webShareTlsWorker))){$missing+="packages/features/feature_lan_share/$webShareTlsWorker"}
+  if($missing.Count){$missing|ForEach-Object{Write-Error "MISSING LAN V2 acceptance test: $_"};throw'LAN V2 acceptance manifest is incomplete.'}
+  Cmd flutter (@('test','--no-pub','--no-test-assets')+$featureTests) $featureDirectory
+  Cmd flutter (@('test','--no-pub','--no-test-assets')+$sdkTests) $sdkDirectory
+  Cmd flutter (@('test','--no-pub','--no-test-assets')+$appTests) $appDirectory
+  # Keep the real TLS listener in an ordinary Dart VM process. The boundary
+  # suite above uses in-memory requests; this worker owns bindSecure and has no
+  # retry/skip path that could hide a native bind stall in flutter_tester.
+  Invoke-CommandWithTimeout dart @('run',$webShareTlsWorker) $AppTimeout $webShareWorkerDirectory @{HTTP_PROXY='';HTTPS_PROXY='';ALL_PROXY='';NO_PROXY='localhost,127.0.0.1,::1'}
+  $nativeDirectory=Join-Path $root 'native\network_core'
+  Cmd cargo @('test','-p','network-core','--locked','--lib','two_runtimes','--','--test-threads=1') $nativeDirectory
+  Cmd cargo @('test','-p','network-core','--locked','--lib','receiver_runtime_restart_restores_direct_trust_without_repairing','--','--test-threads=1') $nativeDirectory
+  Cmd cargo @('test','-p','network-core','--locked','--lib','peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery','--','--test-threads=1') $nativeDirectory
+  Cmd cargo @('test','-p','network-core','--locked','--lib','network_v2_route_auth','--','--test-threads=1') $nativeDirectory
+}
 function StartStorage{
   $script:mysql="ssh-mobile-full-mysql-$RunId";$script:redis="ssh-mobile-full-redis-$RunId"
   Cmd docker @('run','-d','--rm','--name',$mysql,'-p','127.0.0.1::3306','-e','MYSQL_ROOT_PASSWORD=root','-e','MYSQL_DATABASE=relay','-e','MYSQL_USER=relay','-e','MYSQL_PASSWORD=relay','mysql:8.4')
@@ -71,7 +121,7 @@ function JobRelay{
 }
 function JobProtocol{if(-not(Need @('cargo','go','python','protoc','buf','dart','flutter'))){exit$gap};Cmd protoc @('--proto_path=protocol',"--descriptor_set_out=$(Join-Path $LogDir 'network-v2.desc')",'protocol/proto/relay/v2/relay_v2.proto','protocol/proto/network/v2/network.proto');Script (Join-Path $PSScriptRoot '..\contracts\relay_v2_contract.ps1') @{TempRoot=$temp};Script (Join-Path $PSScriptRoot '..\contracts\network_v2_acceptance.ps1') @{Mode='strict';TempRoot=$temp};Cmd buf @('lint') (Join-Path $root 'protocol');Cmd buf @('breaking','.','--against','../.git#ref=6ec194bb3a66a748215d3abc11d6da84bd329619,subdir=protocol','--path','proto/relay/v2/relay_v2.proto') (Join-Path $root 'protocol')}
 function JobArchitecture{if(-not(Need @('dart'))){exit$gap};foreach($file in @('tool/check_agent_docs.dart','test/tool/agent_docs_check_test.dart','test/tool/ci_workflow_test.dart','tool/architecture_check.dart','tool/check_module_dependencies.dart','tool/check_resource_owners.dart','tool/compatibility_check.dart','tool/duplicate_implementation_check.dart')){Cmd dart @('run',$file)}}
-function JobAppStatic{if(-not(Need @('dart','flutter','git'))){exit$gap};$directory=Join-Path $root 'apps\ssh_mobile_full';Cmd dart @('run','tool/generate_app_icons.dart') $directory;Cmd git @('diff','--exit-code','--','assets','android','ios','macos','web','windows/runner/resources/app_icon.ico') $directory;Cmd dart @('format','--output=none','--set-exit-if-changed','lib','test','tool') $directory;Cmd dart @('run','build_runner','build') $directory;Cmd git @('diff','--exit-code','--','lib/data/database/app_database.g.dart') $directory;Cmd flutter @('analyze','--no-fatal-infos') $directory}
+function JobAppStatic{if(-not(Need @('dart','flutter','git'))){exit$gap};$directory=Join-Path $root 'apps\ssh_mobile_full';Cmd dart @('run','tool/generate_app_icons.dart') $directory;Cmd git @('diff','--exit-code','--','assets','android','ios','macos','web','windows/runner/resources/app_icon.ico') $directory;Cmd dart @('format','--output=none','--set-exit-if-changed','lib','test','tool') $directory;Cmd dart @('run','build_runner','clean') $directory;Cmd dart @('run','build_runner','build') $directory;Cmd git @('diff','--exit-code','--','lib/data/database/app_database.g.dart') $directory;Cmd flutter @('analyze','--no-fatal-infos') $directory}
 function JobCore{$scopes=@('app_core','app_ui','connection_core','ssh_core');Melos 'dart format --output=none --set-exit-if-changed lib test' $scopes;Melos 'flutter analyze --no-fatal-infos --no-pub' $scopes;Melos "flutter test --no-pub --concurrency $MelosTestConcurrency" $scopes}
 function JobFeatures{
   $scopes=@('feature_ai','feature_connection','feature_developer','feature_lan_share','feature_mcp','feature_monitoring','feature_playbook','feature_rag','feature_sftp','feature_system_admin','feature_terminal','feature_webview')
@@ -83,10 +133,22 @@ function JobFeatures{
 function AppFiles{$directory=Join-Path $root 'apps\ssh_mobile_full';@(Get-ChildItem (Join-Path $directory 'test') -Recurse -Filter '*_test.dart'|ForEach-Object{[IO.Path]::GetRelativePath($directory,$_.FullName).Replace('\','/')}|Where-Object{$_-notin@('test/features/startup/views/startup_screen_test.dart','test/screens/system_admin/system_admin_snapshot_tabs_test.dart','test/services/network/transfer_transport_test.dart')-and$_-notlike'test/integration/client_backend/*'}|Sort-Object)}
 function JobApp([int]$Shard){
   if(-not(Need @('flutter'))){exit$gap};$directory=Join-Path $root 'apps\ssh_mobile_full';$files=AppFiles
-  $arguments=@('test','--no-pub','--no-test-assets','--reporter','compact','--fail-fast','--timeout','60s','--concurrency',"$FlutterConcurrency",'--total-shards',"$AppShards",'--shard-index',"$Shard")+$files
   $coverageDir=Join-Path $LogDir "coverage\shard-$Shard";New-Item -ItemType Directory $coverageDir -Force|Out-Null
-  if($coverage){$arguments=@('test','--no-pub','--no-test-assets','--coverage','--coverage-path',(Join-Path $coverageDir 'lcov.info'))+$arguments[3..($arguments.Count-1)]}
-  Invoke-CommandWithTimeout flutter $arguments $AppTimeout $directory @{HTTP_PROXY='';HTTPS_PROXY='';ALL_PROXY='';NO_PROXY='localhost,127.0.0.1,::1'}
+  $batchSize=10
+  for($offset=0;$offset -lt $files.Count;$offset+=$batchSize){
+    $batch=@($files|Select-Object -Skip $offset -First $batchSize)
+    $batchIndex=[int]($offset/$batchSize);$batchCoverage=Join-Path $coverageDir "lcov-batch-$batchIndex.info"
+    $arguments=@('test','--no-pub','--no-test-assets','--exclude-tags','client-backend,native-loopback','--reporter','compact','--fail-fast','--timeout','60s','--concurrency',"$FlutterConcurrency")
+    if($coverage){$arguments+=@('--coverage','--coverage-path',$batchCoverage)}
+    $arguments+=$batch
+    Invoke-CommandWithTimeout flutter $arguments $AppTimeout $directory @{HTTP_PROXY='';HTTPS_PROXY='';ALL_PROXY='';NO_PROXY='localhost,127.0.0.1,::1'}
+  }
+  if($coverage){
+    $merged=Join-Path $coverageDir 'lcov.info';Remove-Item $merged -Force -ErrorAction SilentlyContinue
+    foreach($part in (Get-ChildItem $coverageDir -Filter 'lcov-batch-*.info'|Sort-Object Name)){
+      if(-not(Test-Path $merged)){Copy-Item $part.FullName $merged}else{Get-Content $part.FullName|Where-Object{$_ -ne 'TN:'}|Add-Content $merged}
+    }
+  }
   foreach($isolated in @(
     @{Name='startup';File='test/features/startup/views/startup_screen_test.dart';Coverage=$true},
     @{Name='system-admin';File='test/screens/system_admin/system_admin_snapshot_tabs_test.dart';Coverage=$true},
@@ -103,7 +165,7 @@ function JobAndroid{Cmd flutter @('build','apk','--debug','--no-pub') (Join-Path
 function JobWindows{Cmd flutter @('build','windows','--no-pub') (Join-Path $root 'apps\ssh_mobile_full')}
 function JobTerminal{Cmd flutter @('build','windows','--debug','--no-pub') (Join-Path $root 'apps\ssh_mobile_terminal')}
 function JobE2E{Script (Join-Path $PSScriptRoot '..\e2e\client_backend_e2e.ps1') @{Mode='smoke';TempRoot=$temp}}
-function Dispatch([string]$Name){switch -Regex ($Name){'^bootstrap$'{JobBootstrap};'^front-quality$'{JobFront};'^admin-api-contract$'{JobAdmin};'^native-network-quality$'{JobNative};'^sdk-dart-quality$'{JobSdk};'^relay-quality$'{JobRelay};'^protocol-v2-contract$'{JobProtocol};'^architecture-check$'{JobArchitecture};'^app-static-quality$'{JobAppStatic};'^workspace-core-quality$'{JobCore};'^workspace-features-quality$'{JobFeatures};'^app-unit-shard-([0-3])$'{JobApp ([int]$Matches[1])};'^app-coverage$'{JobCoverage};'^android-build$'{JobAndroid};'^windows-build$'{JobWindows};'^terminal-smoke-build$'{JobTerminal};'^client-backend-smoke$'{JobE2E};default{throw"Unknown job $Name"}}}
+function Dispatch([string]$Name){switch -Regex ($Name){'^bootstrap$'{JobBootstrap};'^front-quality$'{JobFront};'^admin-api-contract$'{JobAdmin};'^native-network-quality$'{JobNative};'^sdk-dart-quality$'{JobSdk};'^lan-network-v2-targeted$'{JobLanNetworkV2};'^relay-quality$'{JobRelay};'^protocol-v2-contract$'{JobProtocol};'^architecture-check$'{JobArchitecture};'^app-static-quality$'{JobAppStatic};'^workspace-core-quality$'{JobCore};'^workspace-features-quality$'{JobFeatures};'^app-unit-shard-([0-3])$'{JobApp ([int]$Matches[1])};'^app-coverage$'{JobCoverage};'^android-build$'{JobAndroid};'^windows-build$'{JobWindows};'^terminal-smoke-build$'{JobTerminal};'^client-backend-smoke$'{JobE2E};default{throw"Unknown job $Name"}}}
 if($InternalJob){try{Dispatch $InternalJob;exit 0}catch{[Console]::Error.WriteLine($_);exit 1}}
 if(-not$RunId){$RunId="$(Get-Date -Format yyyyMMdd-HHmmss)-$PID"}
 if(-not$LogDir){$LogDir=Join-Path $(if($env:FULL_TEST_LOG_DIR){$env:FULL_TEST_LOG_DIR}else{$temp}) "ssh-mobile-full-test-$RunId"}
@@ -123,7 +185,7 @@ function Complete($Job){$Job.Process.WaitForExit();$output=$Job.Out.Result+$Job.
 function Batch([string[]]$Names,[int]$Limit=$Jobs){$queue=[Collections.Generic.Queue[string]]::new();foreach($name in $Names){if(Wanted $name){$queue.Enqueue($name)}};$active=[Collections.Generic.List[object]]::new();while($queue.Count-or$active.Count){while($queue.Count-and$active.Count-lt$Limit){$active.Add((StartJob $queue.Dequeue()))};$done=$active|Where-Object{$_.Process.HasExited}|Select-Object -First 1;if($null-eq$done){Start-Sleep -Milliseconds 200}else{Complete $done;$active.Remove($done)}}}
 Write-Host "SSH Mobile native Windows CI`nroot: $root`nlogs: $LogDir"
 if(-not$NoBootstrap){Batch @('bootstrap') 1}
-Batch @('front-quality','admin-api-contract','native-network-quality','sdk-dart-quality','relay-quality','protocol-v2-contract','architecture-check','app-static-quality')
+Batch @('front-quality','admin-api-contract','native-network-quality','sdk-dart-quality','lan-network-v2-targeted','relay-quality','protocol-v2-contract','architecture-check','app-static-quality')
 if($WithClientBackendSmoke){Batch @('client-backend-smoke') 1}
 Batch @('workspace-core-quality') 1;Batch @('workspace-features-quality') 1
 $appJobs=@(0..($AppShards-1)|ForEach-Object{"app-unit-shard-$_"});Batch $appJobs $(if($parallelShards){$Jobs}else{1})

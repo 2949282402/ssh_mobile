@@ -1,11 +1,12 @@
-// v1 LAN HTTP 边界校验、配对限流与待处理上传会话管理。
-// 本文件只负责验证不可信请求和维护内存状态；公开网络结果由上层服务统一转换。
+// LAN HTTPS 控制边界校验与配对限流。
+// Binary payloads are deliberately not handled here: files use Network V2.
 
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'lan_security_service.dart';
+import 'lan_web_share_request_handler.dart';
 
 /// LAN HTTP 边界异常，供服务端将安全诊断转换为统一 JSON 响应。
 class LanHttpException implements Exception {
@@ -16,44 +17,21 @@ class LanHttpException implements Exception {
   final String message;
 }
 
-/// 记录一个已经通过元数据审批的上传会话。
-class LanPendingUpload {
-  final String messageId;
-  final String senderDeviceId;
-  final String fileName;
-  final int expectedBytes;
-  final bool encrypted;
-  final DateTime expiresAt;
-
-  /// 创建待处理上传记录。
-  const LanPendingUpload({
-    required this.messageId,
-    required this.senderDeviceId,
-    required this.fileName,
-    required this.expectedBytes,
-    required this.encrypted,
-    required this.expiresAt,
-  });
-
-  /// 返回上传会话是否已经过期。
-  bool get isExpired => DateTime.now().isAfter(expiresAt);
-}
-
-/// 校验有界 LAN 控制请求，并管理已认证的传输会话。
+/// 校验有界 LAN 控制请求。
 class LanTransferProtocolGuard {
-  static const int maxControlBodyBytes = 64 * 1024;
+  static const int maxControlBodyBytes = LanWebShareLimits.maxControlBodyBytes;
   static const int maxMetadataBodyBytes = 1024 * 1024;
-  static const int maxEncryptedUploadBytes = 64 * 1024 * 1024;
-  static const int maxAdvertisedFileBytes = 20 * 1024 * 1024 * 1024;
-  static const int maxPendingUploadSessions = 64;
+  static const int maxEncryptedUploadBytes =
+      LanWebShareLimits.maxEncryptedUploadBytes;
+  static const int maxAdvertisedFileBytes =
+      LanWebShareLimits.maxAdvertisedFileBytes;
   static const int maxPendingPairingHandshakes = 64;
   static const int maxRememberedPairingNonces = 256;
-  static const Duration requestBodyIdleTimeout = Duration(seconds: 30);
+  static const Duration requestBodyIdleTimeout =
+      LanWebShareLimits.requestBodyIdleTimeout;
 
   final String currentDeviceId;
   final LanSecurityService securityService;
-  final Map<String, LanPendingUpload> _pendingUploads = {};
-  final Map<String, LanPendingUpload> _activeUploads = {};
   final Map<String, DateTime> _lastInviteByAddress = {};
   final List<DateTime> _recentInvites = [];
   final Map<String, List<DateTime>> _pairingAttemptsByAddress = {};
@@ -229,90 +207,5 @@ class LanTransferProtocolGuard {
       );
     }
     _pairingNonces[key] = now;
-  }
-
-  /// 注册一个等待上传的元数据会话。
-  void registerPendingUpload(LanPendingUpload upload) {
-    _prunePendingUploads();
-    if (upload.messageId.isEmpty || upload.messageId.length > 128) {
-      throw const LanHttpException(
-        HttpStatus.badRequest,
-        'Invalid upload message ID.',
-      );
-    }
-    if (upload.expectedBytes < 0 ||
-        upload.expectedBytes > maxAdvertisedFileBytes ||
-        (upload.encrypted && upload.expectedBytes > maxEncryptedUploadBytes)) {
-      throw const LanHttpException(
-        HttpStatus.requestEntityTooLarge,
-        'Advertised file is too large.',
-      );
-    }
-    final key = _uploadKey(upload.senderDeviceId, upload.messageId);
-    if (_pendingUploads.containsKey(key) || _activeUploads.containsKey(key)) {
-      throw const LanHttpException(
-        HttpStatus.conflict,
-        'An upload with this ID is already pending or active.',
-      );
-    }
-    if (_pendingUploads.length + _activeUploads.length >=
-        maxPendingUploadSessions) {
-      throw const LanHttpException(
-        HttpStatus.tooManyRequests,
-        'Too many uploads are pending or active.',
-      );
-    }
-    _pendingUploads[key] = upload;
-  }
-
-  /// 原子消费与上传请求完全匹配的待处理会话。
-  ///
-  /// 消费后会话进入 active registry，因此并发重放与重复元数据
-  /// 都会 fail closed，且 pending+active 共用同一全局上限。
-  LanPendingUpload consumePendingUpload({
-    required String messageId,
-    required String senderDeviceId,
-    required String fileName,
-    required bool encrypted,
-  }) {
-    _prunePendingUploads();
-    final key = _uploadKey(senderDeviceId, messageId);
-    final pending = _pendingUploads[key];
-    if (pending == null ||
-        pending.isExpired ||
-        pending.senderDeviceId != senderDeviceId ||
-        pending.fileName != fileName ||
-        pending.encrypted != encrypted) {
-      throw const LanHttpException(
-        HttpStatus.forbidden,
-        'No matching accepted upload was found.',
-      );
-    }
-    _pendingUploads.remove(key);
-    _activeUploads[key] = pending;
-    return pending;
-  }
-
-  /// 仅完成与 [upload] 身份相同的 active 上传租约。
-  void completeUpload(LanPendingUpload upload) {
-    final key = _uploadKey(upload.senderDeviceId, upload.messageId);
-    if (identical(_activeUploads[key], upload)) {
-      _activeUploads.remove(key);
-    }
-  }
-
-  /// 监听器停止时释放全部尚未完成的上传租约。
-  void clearUploadSessions() {
-    _pendingUploads.clear();
-    _activeUploads.clear();
-  }
-
-  /// 生成发送方与消息标识组合的内存 key。
-  String _uploadKey(String senderDeviceId, String messageId) =>
-      '$senderDeviceId\u0000$messageId';
-
-  /// 清理已经过期的待处理上传会话。
-  void _prunePendingUploads() {
-    _pendingUploads.removeWhere((_, upload) => upload.isExpired);
   }
 }

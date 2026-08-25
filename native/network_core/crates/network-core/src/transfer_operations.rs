@@ -873,6 +873,19 @@ pub(crate) async fn dispatch_transfer_command(
                 .cancel_transfer(&cancel.transfer_id)
                 .await
             {
+                // A direct receiver may still be waiting for the UI decision.
+                // Wake that exact waiter so CancelTransfer is observable on
+                // the wire instead of leaving the sender blocked until the
+                // approval timeout.
+                if let Some(decision) = state
+                    .transfer
+                    .incoming_decisions
+                    .write()
+                    .await
+                    .remove(&cancel.transfer_id)
+                {
+                    let _ = decision.send(false);
+                }
                 state.cancel_relay_transfer(&cancel.transfer_id).await;
                 Ok(())
             } else {

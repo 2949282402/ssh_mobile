@@ -62,7 +62,7 @@ class LanPairingNavigationQueue {
 
   static bool _matches(LanPairingRequest current, LanPairingRequest incoming) {
     return current.sessionId == incoming.sessionId ||
-        current.device.id == incoming.device.id;
+        current.peer.peerId == incoming.peer.peerId;
   }
 
   static LanPairingRequest _merge(
@@ -70,7 +70,7 @@ class LanPairingNavigationQueue {
     LanPairingRequest incoming,
   ) {
     return LanPairingRequest(
-      device: incoming.device,
+      peer: incoming.peer,
       // Keep one route identity while allowing a different-session request
       // from the same peer to change the active protocol role.
       sessionId: current.sessionId,
@@ -194,8 +194,8 @@ class _LanPairingNavigationHostState extends State<LanPairingNavigationHost> {
                   // Keep the State (and any PIN already typed) when a reciprocal
                   // invitation upgrades the active request's role or endpoint.
                   key: ValueKey(currentRequest.sessionId),
-                  targetDeviceId: currentRequest.device.id,
-                  initialAlias: currentRequest.device.alias,
+                  targetDeviceId: currentRequest.peer.peerId,
+                  initialAlias: currentRequest.peer.displayAlias,
                   sessionId: currentRequest.sessionId,
                   isIncomingRequest: currentRequest.isIncoming,
                 ),

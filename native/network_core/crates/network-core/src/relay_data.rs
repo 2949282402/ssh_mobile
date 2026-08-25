@@ -107,6 +107,20 @@ pub(super) async fn connect_incoming_relay_data(
     state: &Arc<RuntimeState>,
     reservation: network_relay::v2::IncomingRelayReservation,
 ) {
+    if state
+        .peer_route_authorizations
+        .read()
+        .await
+        .get(&reservation.initiator_device_id)
+        .is_some_and(|authorization| !authorization.relay)
+    {
+        tracing::debug!(
+            peer_id = %reservation.initiator_device_id,
+            reservation_id = %reservation.reservation_id,
+            "ignored inbound Relay reservation without peer authorization"
+        );
+        return;
+    }
     let Some(config) = state.relay.config.read().await.clone() else {
         tracing::warn!("incoming relay reservation arrived without a Relay config");
         return;
@@ -381,6 +395,12 @@ pub(super) async fn handle_relay_crypto_handshake(
             .all(|value| value.is_ascii_hexdigit() && !value.is_ascii_uppercase())
         || peer_id.is_empty()
         || !state.peers.read().await.contains_key(peer_id)
+        || state
+            .peer_route_authorizations
+            .read()
+            .await
+            .get(peer_id)
+            .is_some_and(|authorization| !authorization.relay)
     {
         return Err(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,

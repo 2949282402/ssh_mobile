@@ -136,31 +136,33 @@ void main() {
   test('stale devices expire while recently seen devices remain', () {
     final discovery = _RecordingLanDiscoveryService();
     final now = DateTime(2026, 7, 18, 12);
-    discovery.registerManualDevice(
-      LanDevice(
-        id: 'stale-peer',
+    discovery.registerDiscoveredPeer(
+      LanDiscoveredPeer(
+        deviceId: 'stale-peer',
         alias: 'Stale',
         ip: '192.168.1.10',
-        port: 53317,
+        controlPort: 53317,
+        advertisedNativePort: null,
         deviceType: LanDeviceType.desktop,
-        osName: 'windows',
+        os: 'windows',
         lastSeen: now.subtract(const Duration(seconds: 91)),
       ),
     );
-    discovery.registerManualDevice(
-      LanDevice(
-        id: 'fresh-peer',
+    discovery.registerDiscoveredPeer(
+      LanDiscoveredPeer(
+        deviceId: 'fresh-peer',
         alias: 'Fresh',
         ip: '192.168.1.11',
-        port: 53317,
+        controlPort: 53317,
+        advertisedNativePort: null,
         deviceType: LanDeviceType.mobile,
-        osName: 'android',
+        os: 'android',
         lastSeen: now.subtract(const Duration(seconds: 5)),
       ),
     );
 
     expect(discovery.removeStaleDevices(now: now), 1);
-    expect(discovery.currentDiscoveredDevices.map((device) => device.id), [
+    expect(discovery.currentDiscoveredPeers.map((device) => device.deviceId), [
       'fresh-peer',
     ]);
 

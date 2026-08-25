@@ -258,6 +258,21 @@ impl ConnectivityAttemptCoordinator {
                     peer_id,
                 )
             })?;
+        if self
+            .state
+            .peer_route_authorizations
+            .read()
+            .await
+            .get(peer_id)
+            .is_some_and(|authorization| !authorization.direct)
+        {
+            return Err(protocol_error_with_peer(
+                NetworkErrorCode::NoRoute,
+                "direct route is not authorized",
+                "direct_probe",
+                peer_id,
+            ));
+        }
         let capability = communication_class_capability(default_communication_class(class));
         if self
             .try_stage_a_direct(peer_id, &peer, endpoint, identity, capability)
@@ -360,6 +375,26 @@ impl ConnectivityAttemptCoordinator {
                     peer_id,
                 )
             })?;
+        // Commands register a route authorization together with the peer
+        // configuration.  Keep the lower-level coordinator usable for the
+        // native-owned test/integration seams that construct a PeerConfig
+        // directly; those seams predate the command boundary and have no
+        // persisted authorization record.  Once a record exists, it is the
+        // sole source of route eligibility and must be enforced fail-closed.
+        let authorization = state
+            .peer_route_authorizations
+            .read()
+            .await
+            .get(peer_id)
+            .copied();
+        if authorization.is_some_and(|authorization| !authorization.direct) {
+            return Err(protocol_error_with_peer(
+                NetworkErrorCode::NoRoute,
+                "direct route is not authorized",
+                "connect",
+                peer_id,
+            ));
+        }
 
         // Stage A is deliberately independent of the Relay control plane.  A
         // fresh monotonic remote cache/configured endpoint is enough to start
@@ -745,6 +780,15 @@ impl ConnectivityAttemptCoordinator {
                     .await
                     .set_state(network_nat::ConnectivityAttemptState::Expired);
                 self.set_stage(ConnectivityAttemptState::DirectFailed);
+                if authorization.is_some_and(|authorization| !authorization.relay) {
+                    state.fail_session(peer_id, session_id).await;
+                    return Err(protocol_error_with_peer(
+                        NetworkErrorCode::NoRoute,
+                        "relay route is not authorized",
+                        "connect",
+                        peer_id,
+                    ));
+                }
                 if !ConnectivityStageEligibility::relay_fallback_is_eligible(
                     &resolved,
                     capability,
@@ -873,6 +917,16 @@ impl ConnectivityAttemptCoordinator {
         identity: Arc<network_identity::DeviceIdentity>,
         capability: u8,
     ) -> Result<bool, ProtocolError> {
+        if self
+            .state
+            .peer_route_authorizations
+            .read()
+            .await
+            .get(peer_id)
+            .is_some_and(|authorization| !authorization.direct)
+        {
+            return Ok(false);
+        }
         if self
             .state
             .has_ready_direct_path_for_capability(peer_id, capability)

@@ -317,7 +317,7 @@ bash scripts/bash/coverage/sdk_coverage.sh
 ```bash
 dart run melos exec --diff=origin/main...HEAD --include-dependents --fail-fast -- "dart format --output=none --set-exit-if-changed lib test"
 dart run melos exec --diff=origin/main...HEAD --include-dependents --fail-fast -- "flutter analyze --no-pub"
-dart run melos exec --diff=origin/main...HEAD --include-dependents --fail-fast -- "flutter test --no-pub"
+dart run melos exec --diff=origin/main...HEAD --include-dependents --fail-fast -- "flutter test --no-pub --exclude-tags=client-backend,native-loopback"
 dart run tool/architecture_check.dart
 dart run tool/check_module_dependencies.dart
 dart run tool/check_resource_owners.dart
@@ -327,6 +327,11 @@ dart run tool/check_resource_owners.dart
 `dart run melos run analyze`、`dart run melos run test`，再执行 Full App Android
 和 Terminal-only Windows 冒烟构建。Workspace analyze 脚本将既有 `info` 级 lint
 视为非阻断项，但 error 和 warning 仍会使门禁失败。
+标准 Workspace 测试选择器会排除明确标记的实时 `client-backend` 和
+`native-loopback` 集成测试。可选 Backend 冒烟门禁通过
+`bash scripts/bash/ci/full_test.sh --with-client-backend-smoke`（原生 PowerShell
+使用等价的 `-WithClientBackendSmoke`）运行前者；原生 Linux MCP 回环门禁通过
+`--with-feature-loopback`（原生 PowerShell 使用 `-WithFeatureLoopback`）选择。
 
 ### 完整质量门禁
 

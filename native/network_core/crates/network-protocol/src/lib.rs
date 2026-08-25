@@ -272,6 +272,10 @@ pub struct PeerConfig {
     pub e2e_public_key: Vec<u8>,
     #[prost(enumeration = "E2eePolicy", tag = "5")]
     pub e2ee_policy: i32,
+    #[prost(bool, tag = "6")]
+    pub allow_direct: bool,
+    #[prost(bool, tag = "7")]
+    pub allow_relay: bool,
 }
 
 #[derive(Clone, PartialEq, Message)]

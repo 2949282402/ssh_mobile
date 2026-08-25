@@ -17,6 +17,16 @@ Ownership rules:
 
 - `network_sdk` exposes business-facing typed contracts and owns no socket,
   native handle, HTTP client, database, isolate, or App lifecycle.
+- LAN Control Protocol V2 is a separate control/pairing version domain from
+  Native Network Protocol V2. LAN Control owns discovery, pairing, capabilities
+  and authenticated text/clipboard HTTPS; Native Network V2 owns peer registry,
+  sessions, route selection, E2EE, binary transfer and Realtime. The LAN
+  breaking refactor must not turn the native wire contract into V3.
+- The App composition root owns one `NetworkIdentityBundle`, one configured
+  `NetworkRuntime`, and one shared `NetworkFacade` per App process. Features
+  borrow typed contracts and release subscriptions/leases only. Peer
+  registration is separate from connect; `removePeer` is an explicit trust
+  revoke/unpair operation, not a response to discovery or route loss.
 - App Shell adapters correlate public operations with native results and map
   native events without exposing SDP, ICE, sockets, or FFI handles to Features.
 - `network_transport` owns the single App-scoped native-runtime facade and
@@ -64,6 +74,10 @@ Ownership rules:
 - New transport connections always create a fresh SessionId and application
   root. Required E2EE is the normal business path; Disabled is Direct
   identity-only and cannot fall through to Relay.
+- Route eligibility is authorization-filtered before path selection: Direct
+  requires peer `localDirect`, Relay requires peer `relay` plus local/remote
+  enrollment and capability checks. Relay enrollment/disconnection never
+  mutates peer trust or silently grants Relay authorization.
 - `PeerPathManager` may hold one Direct and one Relay ready path concurrently;
   `PathHandle`/projection entries are weak, while a `PathLease` is the only
   business lifetime reservation. Delivery releases a per-send lease before ACK

@@ -564,9 +564,12 @@ final class _FakeFacade implements NetworkFacade {
       const NetworkSuccess<void>(null);
 
   @override
+  Future<NetworkResult<void>> removePeer(String peerId) async =>
+      const NetworkSuccess<void>(null);
+
+  @override
   Future<NetworkResult<void>> connectPeer(
     String peerId, {
-    PeerConfig? peer,
     CommunicationClass communicationClass = CommunicationClass.reliableStream,
   }) async => const NetworkSuccess<void>(null);
 

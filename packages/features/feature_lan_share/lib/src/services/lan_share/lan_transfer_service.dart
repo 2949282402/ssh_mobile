@@ -1,4 +1,4 @@
-// v1 LAN HTTPS、WebSocket、配对与消息传输服务。
+// LAN HTTPS control, WebSocket, pairing and text-message service.
 //
 // 服务向调用方暴露类型化网络结果，同时将端点专属 HTTP 实现限制在本库内。
 
@@ -20,7 +20,10 @@ import 'package:network_sdk/network_sdk.dart';
 part 'lan_transfer_client.dart';
 part 'lan_pairing_server.dart';
 
-/// 管理 v1 HTTPS 上传、元数据、WebSocket 与 RECALL 信号的服务。
+/// Manages LAN HTTPS control metadata, WebSocket and RECALL signals.
+///
+/// Binary files are intentionally excluded; [LanNativeTransferCoordinator]
+/// owns their Network V2 data plane.
 class LanTransferService {
   static const int defaultHttpPort = 53317;
 
@@ -68,9 +71,10 @@ class LanTransferService {
   final _messageProgressController = StreamController<LanMessage>.broadcast();
   final _recalledMessageIdController =
       StreamController<LanRecallRequest>.broadcast();
-  final _handshakeSuccessController = StreamController<LanDevice>.broadcast();
-  final _handshakePendingController = StreamController<LanDevice>.broadcast();
-  final _announcedDeviceController = StreamController<LanDevice>.broadcast();
+  final _handshakeSuccessController =
+      StreamController<LanDiscoveredPeer>.broadcast();
+  final _announcedPeerController =
+      StreamController<LanDiscoveredPeer>.broadcast();
   final _pairingInviteController =
       StreamController<LanPairingRequest>.broadcast();
 
@@ -101,16 +105,12 @@ class LanTransferService {
       _recalledMessageIdController.stream;
 
   /// 发布握手成功的传入设备。
-  Stream<LanDevice> get handshakeSuccessStream =>
+  Stream<LanDiscoveredPeer> get handshakeSuccessPeerStream =>
       _handshakeSuccessController.stream;
 
-  /// 发布仍需完成相互配对的传入握手。
-  Stream<LanDevice> get handshakePendingStream =>
-      _handshakePendingController.stream;
-
   /// 发布在 LAN 上广播的设备。
-  Stream<LanDevice> get announcedDeviceStream =>
-      _announcedDeviceController.stream;
+  Stream<LanDiscoveredPeer> get announcedPeerStream =>
+      _announcedPeerController.stream;
 
   /// 发布收到的配对邀请。
   Stream<LanPairingRequest> get pairingInviteStream =>
@@ -220,7 +220,7 @@ class LanTransferService {
     return _server!.port;
   }
 
-  /// 停止 HTTPS 监听器并返回类型化 v1 结果。
+  /// 停止 HTTPS 监听器并返回类型化结果。
   Future<NetworkResult<void>> stopListening() {
     final activeStop = _stopListeningFuture;
     if (activeStop != null) return activeStop;
@@ -246,7 +246,6 @@ class LanTransferService {
       }
       _isListening = false;
       _pendingPairingHandshakes.clear();
-      _protocolGuard.clearUploadSessions();
       return const NetworkSuccess<void>(null);
     } catch (error) {
       return NetworkFailure(
@@ -309,8 +308,6 @@ class LanTransferService {
         await _handleCapabilitiesRequest(request);
       } else if (request.method == 'POST' && path == '/api/lan/meta') {
         await _handleMetaRequest(request);
-      } else if (request.method == 'POST' && path == '/api/lan/upload') {
-        await _handleUploadRequest(request);
       } else if (request.method == 'POST' && path == '/api/lan/recall') {
         await _handleRecallRequest(request);
       } else {
@@ -358,7 +355,7 @@ class LanTransferService {
     }
   }
 
-  /// 将 HTTP 状态映射为稳定的 v1 LAN 错误码。
+  /// 将 HTTP 状态映射为稳定的 LAN 错误码。
   NetworkErrorCode _httpErrorCode(int statusCode) {
     if (statusCode == HttpStatus.badRequest ||
         statusCode == HttpStatus.requestEntityTooLarge) {
@@ -389,7 +386,6 @@ class LanTransferService {
       '/api/lan/pairing_invite' => NetworkOperation.sendPairingInvite,
       '/api/lan/capabilities' => NetworkOperation.readCapabilities,
       '/api/lan/meta' => NetworkOperation.sendMeta,
-      '/api/lan/upload' => NetworkOperation.sendFile,
       '/api/lan/recall' => NetworkOperation.sendRecall,
       _ => NetworkOperation.lanRequest,
     };
@@ -416,8 +412,6 @@ class LanTransferService {
           'networkIdentityPubKey': base64.encode(networkIdentityKey),
         'quicFileTransfer': nativeTransferReady,
         if (nativeTransferReady) 'quicPort': nativeTransferPort,
-        'maxEncryptedFileBytes':
-            LanTransferProtocolGuard.maxEncryptedUploadBytes,
       }),
     );
     await request.response.close();
@@ -478,55 +472,55 @@ class LanTransferService {
   }
 
   /// 连接一个已配对 LAN 对端，只返回命令层状态。
-  Future<NetworkResult<void>> connectWebSocket(LanDevice device) {
+  Future<NetworkResult<void>> connectWebSocket(LanDiscoveredPeer peer) {
     if (_closing || _closed) {
       return Future.value(
         NetworkFailure(
           lanNetworkError(
             StateError('LAN transfer service is closed.'),
             operation: NetworkOperation.connectWebSocket,
-            peerId: device.id,
+            peerId: peer.deviceId,
           ),
         ),
       );
     }
-    if (_activeWebSockets.containsKey(device.id)) {
+    if (_activeWebSockets.containsKey(peer.deviceId)) {
       return Future.value(const NetworkSuccess<void>(null));
     }
-    final activeAttempt = _webSocketConnectAttempts[device.id];
+    final activeAttempt = _webSocketConnectAttempts[peer.deviceId];
     if (activeAttempt != null) return activeAttempt;
     late final Future<NetworkResult<void>> attempt;
-    attempt = _connectWebSocket(device).whenComplete(() {
-      if (identical(_webSocketConnectAttempts[device.id], attempt)) {
-        _webSocketConnectAttempts.remove(device.id);
+    attempt = _connectWebSocket(peer).whenComplete(() {
+      if (identical(_webSocketConnectAttempts[peer.deviceId], attempt)) {
+        _webSocketConnectAttempts.remove(peer.deviceId);
       }
     });
-    _webSocketConnectAttempts[device.id] = attempt;
+    _webSocketConnectAttempts[peer.deviceId] = attempt;
     return attempt;
   }
 
-  Future<NetworkResult<void>> _connectWebSocket(LanDevice device) async {
+  Future<NetworkResult<void>> _connectWebSocket(LanDiscoveredPeer peer) async {
     final url = Uri(
       scheme: 'wss',
-      host: device.ip,
-      port: device.port,
+      host: peer.ip,
+      port: peer.controlPort,
       path: '/api/lan/ws',
       queryParameters: {'deviceId': currentDeviceId},
     );
 
     try {
-      final token = await securityService.getOutboundAccessToken(device.id);
+      final token = await securityService.getOutboundAccessToken(peer.deviceId);
       if (token == null || token.isEmpty) {
         return NetworkFailure(
           NetworkError(
             code: NetworkErrorCode.authenticationFailed,
             message: 'LAN pairing credentials are unavailable.',
             operation: NetworkOperation.connectWebSocket,
-            peerId: device.id,
+            peerId: peer.deviceId,
           ),
         );
       }
-      final client = await _createHttpClient(peerDeviceId: device.id);
+      final client = await _createHttpClient(peerDeviceId: peer.deviceId);
       WebSocket? openedSocket;
       try {
         openedSocket = await WebSocket.connect(
@@ -547,18 +541,18 @@ class LanTransferService {
           lanNetworkError(
             StateError('LAN transfer service is closed.'),
             operation: NetworkOperation.connectWebSocket,
-            peerId: device.id,
+            peerId: peer.deviceId,
           ),
         );
       }
-      _registerActiveWebSocket(device.id, socket);
+      _registerActiveWebSocket(peer.deviceId, socket);
       return const NetworkSuccess<void>(null);
     } catch (error) {
       return NetworkFailure(
         lanNetworkError(
           error,
           operation: NetworkOperation.connectWebSocket,
-          peerId: device.id,
+          peerId: peer.deviceId,
         ),
       );
     }
@@ -665,16 +659,16 @@ class LanTransferService {
     }
     _protocolGuard.checkPairingInviteRate(hostIp);
     {
-      final device = LanDevice(
-        id: senderId,
+      final peer = LanDiscoveredPeer(
+        deviceId: senderId,
         alias: alias,
         ip: hostIp,
-        port: port,
+        controlPort: port,
         deviceType: _guessDeviceType(os),
-        osName: os,
+        os: os,
         lastSeen: DateTime.now(),
       );
-      _emit(_announcedDeviceController, device);
+      _emit(_announcedPeerController, peer);
     }
 
     request.response.statusCode = HttpStatus.ok;
@@ -730,19 +724,19 @@ class LanTransferService {
       );
     }
     _protocolGuard.checkPairingInviteRate(hostIp);
-    final device = LanDevice(
-      id: senderId,
+    final peer = LanDiscoveredPeer(
+      deviceId: senderId,
       alias: alias,
       ip: hostIp,
-      port: port,
+      controlPort: port,
       deviceType: _guessDeviceType(os),
-      osName: os,
+      os: os,
       lastSeen: DateTime.now(),
     );
     _emit(
       _pairingInviteController,
       LanPairingRequest(
-        device: device,
+        peer: LanPeerViewState(discovery: peer),
         sessionId: sessionId,
         isIncoming: true,
         expiresAt: expiresAt,
@@ -768,53 +762,55 @@ class LanTransferService {
     return LanDeviceType.desktop;
   }
 
-  /// 校验元数据，按需执行 E2E 解密，并注册文件。
+  /// 校验并接收文本/剪贴板元数据。
+  ///
+  /// Binary metadata is intentionally rejected. Files are transferred through
+  /// Network V2 and never through this HTTPS control plane.
   Future<void> _handleMetaRequest(HttpRequest request) async {
     final senderDeviceId = await _protocolGuard.authorize(request);
     final e2ePubKeyHeader = request.headers.value('x-e2e-pubkey');
     final isEncrypted = e2ePubKeyHeader == '1';
-    Map<String, dynamic> json;
-    if (isEncrypted) {
-      final blob = await _protocolGuard.readBytes(
-        request,
-        maxBytes: LanTransferProtocolGuard.maxMetadataBodyBytes + 60,
+    if (!isEncrypted) {
+      throw const LanHttpException(
+        HttpStatus.upgradeRequired,
+        'LAN metadata requires application E2E encryption.',
       );
-      try {
-        final plainBytes = await securityService.decryptE2E(blob);
-        if (plainBytes.length > LanTransferProtocolGuard.maxMetadataBodyBytes) {
-          throw const LanHttpException(
-            HttpStatus.requestEntityTooLarge,
-            'Metadata is too large.',
-          );
-        }
-        final decoded = jsonDecode(utf8.decode(plainBytes));
-        if (decoded is! Map<String, dynamic>) {
-          throw const FormatException('Expected a JSON object.');
-        }
-        json = decoded;
-      } on LanHttpException {
-        rethrow;
-      } catch (_) {
+    }
+    Map<String, dynamic> json;
+    final blob = await _protocolGuard.readBytes(
+      request,
+      maxBytes: LanTransferProtocolGuard.maxMetadataBodyBytes + 60,
+    );
+    try {
+      final plainBytes = await securityService.decryptE2E(blob);
+      if (plainBytes.length > LanTransferProtocolGuard.maxMetadataBodyBytes) {
         throw const LanHttpException(
-          HttpStatus.badRequest,
-          'Encrypted metadata is invalid.',
+          HttpStatus.requestEntityTooLarge,
+          'Metadata is too large.',
         );
       }
-    } else {
-      json = await _protocolGuard.readJson(
-        request,
-        maxBytes: LanTransferProtocolGuard.maxMetadataBodyBytes,
+      final decoded = jsonDecode(utf8.decode(plainBytes));
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('Expected a JSON object.');
+      }
+      json = decoded;
+    } on LanHttpException {
+      rethrow;
+    } catch (_) {
+      throw const LanHttpException(
+        HttpStatus.badRequest,
+        'Encrypted metadata is invalid.',
       );
     }
 
     final payloadName = json['payloadType'];
     final validPayload =
-        payloadName is String &&
-        LanPayloadType.values.any((value) => value.name == payloadName);
+        payloadName == LanPayloadType.text.name ||
+        payloadName == LanPayloadType.clipboard.name;
     if (!validPayload) {
       throw const LanHttpException(
-        HttpStatus.badRequest,
-        'Unsupported LAN payload type.',
+        HttpStatus.upgradeRequired,
+        'Binary LAN payloads require Network V2 transfer.',
       );
     }
 
@@ -832,27 +828,14 @@ class LanTransferService {
         'Invalid LAN message metadata.',
       );
     }
-    final isFilePayload =
-        decodedMessage.payloadType != LanPayloadType.text &&
-        decodedMessage.payloadType != LanPayloadType.clipboard;
-    final fileName = decodedMessage.fileName?.trim() ?? '';
     if (decodedMessage.id.isEmpty ||
         decodedMessage.id.length > 128 ||
         decodedMessage.senderId != senderDeviceId ||
         decodedMessage.receiverId != currentDeviceId ||
         decodedMessage.senderAlias.isEmpty ||
         decodedMessage.senderAlias.length > 128 ||
-        decodedMessage.fileSize < 0 ||
-        decodedMessage.fileSize >
-            LanTransferProtocolGuard.maxAdvertisedFileBytes ||
-        (decodedMessage.textContent?.length ?? 0) > 512 * 1024 ||
-        (isFilePayload &&
-            (fileName.isEmpty ||
-                fileName == '.' ||
-                fileName == '..' ||
-                fileName.length > 255 ||
-                fileName.contains('/') ||
-                fileName.contains('\\')))) {
+        decodedMessage.fileSize != 0 ||
+        (decodedMessage.textContent?.length ?? 0) > 512 * 1024) {
       throw const LanHttpException(
         HttpStatus.badRequest,
         'Invalid LAN message metadata.',
@@ -866,44 +849,18 @@ class LanTransferService {
       receiverId: currentDeviceId,
       payloadType: decodedMessage.payloadType,
       textContent: decodedMessage.textContent,
-      fileName: isFilePayload ? fileName : null,
-      fileSize: isFilePayload ? decodedMessage.fileSize : 0,
-      manifest: decodedMessage.manifest,
-      status: isFilePayload
-          ? LanTransferStatus.pending
-          : LanTransferStatus.completed,
+      fileName: null,
+      fileSize: 0,
+      status: LanTransferStatus.completed,
       bytesTransferred: 0,
       createdAt: DateTime.now(),
       isIncoming: true,
     );
 
-    // 预先检查磁盘空间。
-    final hasSpace =
-        !isFilePayload ||
-        await storageService.hasSufficientSpace(message.fileSize);
-    if (!hasSpace) {
-      throw const LanHttpException(
-        HttpStatus.insufficientStorage,
-        'Insufficient LAN storage.',
-      );
-    }
     if (_closing || _closed) {
       throw const LanHttpException(
         HttpStatus.serviceUnavailable,
         'LAN transfer service is shutting down.',
-      );
-    }
-
-    if (isFilePayload) {
-      _protocolGuard.registerPendingUpload(
-        LanPendingUpload(
-          messageId: message.id,
-          senderDeviceId: senderDeviceId,
-          fileName: fileName,
-          expectedBytes: message.fileSize,
-          encrypted: isEncrypted,
-          expiresAt: DateTime.now().add(const Duration(minutes: 2)),
-        ),
       );
     }
 
@@ -912,146 +869,6 @@ class LanTransferService {
     request.response.statusCode = HttpStatus.ok;
     request.response.headers.contentType = ContentType.json;
     request.response.write(jsonEncode({'id': message.id}));
-    await request.response.close();
-  }
-
-  /// 流式接收或解密一个已接受的文件上传，失败时清理临时数据。
-  Future<void> _handleUploadRequest(HttpRequest request) async {
-    final senderDeviceId = await _protocolGuard.authorize(request);
-    final messageId = request.headers.value('x-message-id') ?? '';
-    final encodedFileName = request.headers.value('x-file-name') ?? '';
-    late final String fileName;
-    try {
-      fileName = Uri.decodeComponent(encodedFileName);
-    } catch (_) {
-      throw const LanHttpException(
-        HttpStatus.badRequest,
-        'Invalid upload file name.',
-      );
-    }
-    final isEncrypted = request.headers.value('x-e2e-pubkey') == '1';
-    final pending = _protocolGuard.consumePendingUpload(
-      messageId: messageId,
-      senderDeviceId: senderDeviceId,
-      fileName: fileName,
-      encrypted: isEncrypted,
-    );
-
-    File? targetFile;
-    var bytesReceived = 0;
-    var completed = false;
-    try {
-      if (!isEncrypted &&
-          request.contentLength >= 0 &&
-          request.contentLength != pending.expectedBytes) {
-        throw const LanHttpException(
-          HttpStatus.badRequest,
-          'Upload size does not match accepted metadata.',
-        );
-      }
-      final file = await storageService.getSandboxTargetFile(fileName);
-      targetFile = file;
-      if (isEncrypted) {
-        final blob = await _protocolGuard.readBytes(
-          request,
-          maxBytes: pending.expectedBytes + 60,
-        );
-        final plainBytes = await securityService.decryptE2E(blob);
-        if (plainBytes.length != pending.expectedBytes) {
-          throw const LanHttpException(
-            HttpStatus.badRequest,
-            'Decrypted upload size does not match accepted metadata.',
-          );
-        }
-        bytesReceived = plainBytes.length;
-        await file.writeAsBytes(plainBytes, flush: true);
-      } else {
-        final sink = file.openWrite();
-        try {
-          await for (final chunk in request.timeout(
-            LanTransferProtocolGuard.requestBodyIdleTimeout,
-            onTimeout: (sink) {
-              sink
-                ..addError(
-                  const LanHttpException(
-                    HttpStatus.requestTimeout,
-                    'Upload body timed out.',
-                  ),
-                )
-                ..close();
-            },
-          )) {
-            bytesReceived += chunk.length;
-            if (bytesReceived > pending.expectedBytes) {
-              throw const LanHttpException(
-                HttpStatus.requestEntityTooLarge,
-                'Upload exceeded its accepted size.',
-              );
-            }
-            sink.add(chunk);
-          }
-          await sink.flush();
-        } finally {
-          await sink.close();
-        }
-        if (bytesReceived != pending.expectedBytes) {
-          throw const LanHttpException(
-            HttpStatus.badRequest,
-            'Upload size does not match accepted metadata.',
-          );
-        }
-      }
-      completed = true;
-    } catch (_) {
-      _emit(
-        _messageProgressController,
-        LanMessage(
-          id: messageId,
-          senderId: senderDeviceId,
-          senderAlias: '',
-          receiverId: currentDeviceId,
-          payloadType: LanPayloadType.file,
-          fileName: fileName,
-          localPath: null,
-          bytesTransferred: bytesReceived,
-          fileSize: pending.expectedBytes,
-          status: LanTransferStatus.failed,
-          createdAt: DateTime.now(),
-          isIncoming: true,
-        ),
-      );
-      rethrow;
-    } finally {
-      final partialFile = targetFile;
-      if (!completed && partialFile != null && await partialFile.exists()) {
-        try {
-          await partialFile.delete();
-        } catch (_) {}
-      }
-      _protocolGuard.completeUpload(pending);
-    }
-
-    _emit(
-      _messageProgressController,
-      LanMessage(
-        id: messageId,
-        senderId: senderDeviceId,
-        senderAlias: '',
-        receiverId: currentDeviceId,
-        payloadType: LanPayloadType.file,
-        fileName: fileName,
-        localPath: targetFile.path,
-        bytesTransferred: bytesReceived,
-        fileSize: bytesReceived,
-        status: LanTransferStatus.completed,
-        createdAt: DateTime.now(),
-        isIncoming: true,
-      ),
-    );
-
-    request.response.statusCode = HttpStatus.ok;
-    request.response.headers.contentType = ContentType.json;
-    request.response.write(jsonEncode({'messageId': messageId}));
     await request.response.close();
   }
 
@@ -1162,8 +979,7 @@ class LanTransferService {
       _messageProgressController.close(),
       _recalledMessageIdController.close(),
       _handshakeSuccessController.close(),
-      _handshakePendingController.close(),
-      _announcedDeviceController.close(),
+      _announcedPeerController.close(),
       _pairingInviteController.close(),
       _connectionStateController.close(),
     ]);

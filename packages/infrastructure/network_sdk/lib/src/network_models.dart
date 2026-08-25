@@ -101,6 +101,7 @@ enum NetworkOperation {
   start('start'),
   stop('stop'),
   upsertPeer('upsert_peer'),
+  removePeer('remove_peer'),
   connect('connect'),
   disconnect('disconnect'),
   configureRelay('configure_relay'),
@@ -361,12 +362,16 @@ final class SdkPeerConfig {
     required this.endpointAddress,
     required this.identityPublicKey,
     required this.e2ePublicKey,
+    this.allowDirect = true,
+    this.allowRelay = false,
   });
 
   final String peerId;
   final String endpointAddress;
   final Uint8List identityPublicKey;
   final Uint8List e2ePublicKey;
+  final bool allowDirect;
+  final bool allowRelay;
 }
 
 final class SdkRelayConfig {

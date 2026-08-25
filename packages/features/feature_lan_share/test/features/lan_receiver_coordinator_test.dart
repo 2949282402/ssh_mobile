@@ -7,6 +7,7 @@
 // 4. `webSocketRelay` 被禁用时，Relay 配置快速失败且不向 native 发出命令。
 
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:drift/native.dart';
 import 'package:feature_lan_share/feature_lan_share.dart';
@@ -59,11 +60,12 @@ void main() {
   test('receiver initialization is shared and creates one ViewModel', () async {
     final database = LanShareDatabase.forTesting(NativeDatabase.memory());
     final settings = FakeLanShareSettings();
+    final identity = FakeLanShareIdentity();
     final coordinator = LanReceiverCoordinator(
       appSettings: settings,
       logger: FakeLanShareLogger(),
       dataProtection: FakeLanShareDataProtection(),
-      networkIdentity: FakeLanShareIdentity(),
+      networkIdentity: identity,
       networkFactory: FakeLanShareNetworkFactory(),
       bootstrapClient: FakeLanShareBootstrapClient(),
       historyRepository: LanShareHistoryRepository(database),
@@ -75,6 +77,7 @@ void main() {
     expect(identical(first, coordinator.ensureInitialized()), isTrue);
     await first;
     expect(coordinator.initialized, isTrue);
+    expect(identity.loadCalls, 1);
     expect(coordinator.transferService, isNotNull);
     expect(coordinator.discoveryService, isNotNull);
     expect(coordinator.securityService, isNotNull);
@@ -122,10 +125,10 @@ void main() {
         networkRuntime.requestedCapabilities,
         isNot(contains(NetworkCapability.quic)),
       );
-      expect(networkService.startCalls, 1);
+      // The App Scope owns facade startup; Feature activation only borrows it.
+      expect(networkService.startCalls, 0);
       expect(networkFactory.lastListenAddress, '0.0.0.0:0');
       expect(discovery.advertisedEndpoints, [
-        (LanTransferService.defaultHttpPort, null),
         (LanTransferService.defaultHttpPort, 43123),
       ]);
 
@@ -136,11 +139,8 @@ void main() {
   );
 
   test('paired native peers are restored before receiver use', () async {
-    _seedPairedPeer(
-      'peer-a',
-      identityKey: _encodedKey(32, 1),
-      e2eKey: _encodedKey(32, 2),
-    );
+    final trustStore = LanPeerTrustStore();
+    await trustStore.save(_trustRecord('peer-a'));
     final database = LanShareDatabase.forTesting(NativeDatabase.memory());
     final settings = FakeLanShareSettings();
     final networkService = FakeLanShareNetworkService();
@@ -153,6 +153,7 @@ void main() {
       bootstrapClient: FakeLanShareBootstrapClient(),
       historyRepository: LanShareHistoryRepository(database),
       networkRuntime: FakeLanShareNetworkRuntime(),
+      peerTrustStore: trustStore,
       transferServiceOverride: FakeLanTransferService(),
       discoveryServiceOverride: FakeLanDiscoveryService(),
     );
@@ -165,6 +166,127 @@ void main() {
     expect(networkService.lastPeerConfig?.endpointAddress, isEmpty);
 
     await coordinator.close();
+    await trustStore.dispose();
+    settings.dispose();
+    await database.dispose();
+  });
+
+  test('native trust restoration is not gated by the HTTPS listener', () async {
+    final trustStore = LanPeerTrustStore();
+    await trustStore.save(_trustRecord('peer-a'));
+    final database = LanShareDatabase.forTesting(NativeDatabase.memory());
+    final settings = FakeLanShareSettings();
+    final networkService = FakeLanShareNetworkService();
+    final networkRuntime = FakeLanShareNetworkRuntime();
+    final coordinator = LanReceiverCoordinator(
+      appSettings: settings,
+      logger: FakeLanShareLogger(),
+      dataProtection: FakeLanShareDataProtection(),
+      networkIdentity: FakeLanShareIdentity(),
+      networkFactory: FakeLanShareNetworkFactory(networkFacade: networkService),
+      bootstrapClient: FakeLanShareBootstrapClient(),
+      historyRepository: LanShareHistoryRepository(database),
+      networkRuntime: networkRuntime,
+      peerTrustStore: trustStore,
+      transferServiceOverride: FakeLanTransferService(
+        startListeningResult: NetworkFailure<int>(
+          const NetworkError(
+            code: NetworkErrorCode.ioError,
+            message: 'listener unavailable',
+            operation: NetworkOperation.startLanListener,
+          ),
+        ),
+      ),
+      discoveryServiceOverride: FakeLanDiscoveryService(),
+    );
+
+    await coordinator.ensureInitialized();
+
+    expect(
+      networkRuntime.requestedCapabilities,
+      contains(NetworkCapability.runtime),
+    );
+    expect(networkService.registerPeerCalls, 1);
+
+    await coordinator.close();
+    await trustStore.dispose();
+    settings.dispose();
+    await database.dispose();
+  });
+
+  test('newly paired trust is registered before endpoint discovery', () async {
+    final trustStore = LanPeerTrustStore();
+    await trustStore.save(_trustRecord('peer-a'));
+    final database = LanShareDatabase.forTesting(NativeDatabase.memory());
+    final settings = FakeLanShareSettings();
+    final networkService = FakeLanShareNetworkService();
+    final transfer = FakeLanTransferService();
+    final coordinator = LanReceiverCoordinator(
+      appSettings: settings,
+      logger: FakeLanShareLogger(),
+      dataProtection: FakeLanShareDataProtection(),
+      networkIdentity: FakeLanShareIdentity(),
+      networkFactory: FakeLanShareNetworkFactory(networkFacade: networkService),
+      bootstrapClient: FakeLanShareBootstrapClient(),
+      historyRepository: LanShareHistoryRepository(database),
+      networkRuntime: FakeLanShareNetworkRuntime(),
+      peerTrustStore: trustStore,
+      transferServiceOverride: transfer,
+      discoveryServiceOverride: FakeLanDiscoveryService(),
+    );
+
+    await coordinator.ensureInitialized();
+    transfer.emitHandshakeSuccess(
+      LanDiscoveredPeer(
+        deviceId: 'peer-a',
+        alias: 'Peer A',
+        ip: '192.0.2.5',
+        controlPort: 53317,
+        deviceType: LanDeviceType.desktop,
+        os: 'test',
+        lastSeen: DateTime.utc(2026),
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    expect(networkService.registerPeerCalls, 2);
+    expect(networkService.lastPeerConfig?.endpointAddress, isEmpty);
+
+    await coordinator.close();
+    await trustStore.dispose();
+    settings.dispose();
+    await database.dispose();
+  });
+
+  test('explicit unpair removes trust and the native peer', () async {
+    final trustStore = LanPeerTrustStore();
+    await trustStore.save(_trustRecord('peer-a'));
+    final database = LanShareDatabase.forTesting(NativeDatabase.memory());
+    final settings = FakeLanShareSettings();
+    final networkService = FakeLanShareNetworkService();
+    final coordinator = LanReceiverCoordinator(
+      appSettings: settings,
+      logger: FakeLanShareLogger(),
+      dataProtection: FakeLanShareDataProtection(),
+      networkIdentity: FakeLanShareIdentity(),
+      networkFactory: FakeLanShareNetworkFactory(networkFacade: networkService),
+      bootstrapClient: FakeLanShareBootstrapClient(),
+      historyRepository: LanShareHistoryRepository(database),
+      networkRuntime: FakeLanShareNetworkRuntime(),
+      peerTrustStore: trustStore,
+      transferServiceOverride: FakeLanTransferService(),
+      discoveryServiceOverride: FakeLanDiscoveryService(),
+    );
+
+    await coordinator.ensureInitialized();
+    final result = await coordinator.removeTrustedPeer('peer-a');
+
+    expect(result, isA<NetworkSuccess<void>>());
+    expect(await trustStore.read('peer-a'), isNull);
+    expect(networkService.removePeerCalls, 1);
+
+    await coordinator.close();
+    await trustStore.dispose();
     settings.dispose();
     await database.dispose();
   });
@@ -172,17 +294,23 @@ void main() {
   test(
     'incomplete or malformed paired native peers are not restored',
     () async {
-      for (final fixture in <({String? identity, String? e2e})>[
-        (identity: null, e2e: _encodedKey(32, 2)),
-        (identity: _encodedKey(32, 1), e2e: null),
-        (identity: _encodedKey(31, 1), e2e: _encodedKey(32, 2)),
-        (identity: _encodedKey(32, 1), e2e: _encodedKey(33, 2)),
+      for (final fixture in <Map<String, String?>>[
+        <String, String?>{'identity': null, 'e2e': _encodedKey(32, 2)},
+        <String, String?>{'identity': _encodedKey(32, 1), 'e2e': null},
+        <String, String?>{
+          'identity': _encodedKey(31, 1),
+          'e2e': _encodedKey(32, 2),
+        },
+        <String, String?>{
+          'identity': _encodedKey(32, 1),
+          'e2e': _encodedKey(33, 2),
+        },
       ]) {
-        _seedPairedPeer(
-          'peer-a',
-          identityKey: fixture.identity,
-          e2eKey: fixture.e2e,
+        _seedMalformedTrust(
+          identityKey: fixture['identity'],
+          e2eKey: fixture['e2e'],
         );
+        final trustStore = LanPeerTrustStore();
         final database = LanShareDatabase.forTesting(NativeDatabase.memory());
         final settings = FakeLanShareSettings();
         final networkService = FakeLanShareNetworkService();
@@ -197,6 +325,7 @@ void main() {
           bootstrapClient: FakeLanShareBootstrapClient(),
           historyRepository: LanShareHistoryRepository(database),
           networkRuntime: FakeLanShareNetworkRuntime(),
+          peerTrustStore: trustStore,
           transferServiceOverride: FakeLanTransferService(),
           discoveryServiceOverride: FakeLanDiscoveryService(),
         );
@@ -205,6 +334,7 @@ void main() {
         expect(networkService.registerPeerCalls, 0, reason: '$fixture');
 
         await coordinator.close();
+        await trustStore.dispose();
         settings.dispose();
         await database.dispose();
       }
@@ -212,11 +342,8 @@ void main() {
   );
 
   test('every new receiver runtime restores paired native peers', () async {
-    _seedPairedPeer(
-      'peer-a',
-      identityKey: _encodedKey(32, 1),
-      e2eKey: _encodedKey(32, 2),
-    );
+    final trustStore = LanPeerTrustStore();
+    await trustStore.save(_trustRecord('peer-a'));
     final database = LanShareDatabase.forTesting(NativeDatabase.memory());
     final settings = FakeLanShareSettings();
     final firstFacade = FakeLanShareNetworkService();
@@ -232,6 +359,7 @@ void main() {
       bootstrapClient: FakeLanShareBootstrapClient(),
       historyRepository: LanShareHistoryRepository(database),
       networkRuntime: FakeLanShareNetworkRuntime(),
+      peerTrustStore: trustStore,
       transferServiceOverride: FakeLanTransferService(),
       discoveryServiceOverride: FakeLanDiscoveryService(),
     );
@@ -244,11 +372,50 @@ void main() {
     expect(secondFacade.registerPeerCalls, 1);
 
     await coordinator.close();
+    await trustStore.dispose();
     settings.dispose();
     await database.dispose();
   });
 
+  test(
+    'deactivation detaches but does not dispose the shared facade',
+    () async {
+      final database = LanShareDatabase.forTesting(NativeDatabase.memory());
+      final settings = FakeLanShareSettings();
+      final networkService = FakeLanShareNetworkService();
+      final coordinator = LanReceiverCoordinator(
+        appSettings: settings,
+        logger: FakeLanShareLogger(),
+        dataProtection: FakeLanShareDataProtection(),
+        networkIdentity: FakeLanShareIdentity(),
+        networkFactory: FakeLanShareNetworkFactory(
+          networkFacade: networkService,
+        ),
+        bootstrapClient: FakeLanShareBootstrapClient(),
+        historyRepository: LanShareHistoryRepository(database),
+        networkRuntime: FakeLanShareNetworkRuntime(),
+        transferServiceOverride: FakeLanTransferService(),
+        discoveryServiceOverride: FakeLanDiscoveryService(),
+      );
+
+      await coordinator.ensureInitialized();
+      await coordinator.deactivateReceiver();
+
+      expect(coordinator.networkFacade, isNull);
+      expect(networkService.startCalls, 0);
+      expect(networkService.stopCalls, 0);
+      expect(networkService.disposed, isFalse);
+
+      await coordinator.close();
+      expect(networkService.disposed, isFalse);
+      settings.dispose();
+      await database.dispose();
+    },
+  );
+
   test('incoming offer stream survives facade recreation', () async {
+    final trustStore = LanPeerTrustStore();
+    await trustStore.save(_trustRecord('peer-a'));
     final database = LanShareDatabase.forTesting(NativeDatabase.memory());
     final settings = FakeLanShareSettings();
     final firstFacade = FakeLanShareNetworkService();
@@ -264,6 +431,7 @@ void main() {
       bootstrapClient: FakeLanShareBootstrapClient(),
       historyRepository: LanShareHistoryRepository(database),
       networkRuntime: FakeLanShareNetworkRuntime(),
+      peerTrustStore: trustStore,
       transferServiceOverride: FakeLanTransferService(),
       discoveryServiceOverride: FakeLanDiscoveryService(),
     );
@@ -287,6 +455,7 @@ void main() {
 
     await subscription.cancel();
     await coordinator.close();
+    await trustStore.dispose();
     settings.dispose();
     await database.dispose();
   });
@@ -638,23 +807,39 @@ final class _FakePathProviderPlatform extends PathProviderPlatform {
 String _encodedKey(int length, int value) =>
     base64UrlEncode(List<int>.filled(length, value)).replaceAll('=', '');
 
-void _seedPairedPeer(String deviceId, {String? identityKey, String? e2eKey}) {
-  final identityKeys = <String, String>{};
-  final e2eKeys = <String, String>{};
-  if (identityKey != null) identityKeys[deviceId] = identityKey;
-  if (e2eKey != null) e2eKeys[deviceId] = e2eKey;
+void _seedMalformedTrust({String? identityKey, String? e2eKey}) {
   FlutterSecureStorage.setMockInitialValues(<String, String>{
-    'lan_share_paired_device_ids': jsonEncode(<String, int>{deviceId: 0}),
-    'lan_share_outbound_access_tokens': jsonEncode(<String, String>{
-      deviceId: 'test-token',
+    'lan_share_peer_trust_v2': jsonEncode(<String, Object?>{
+      'schemaVersion': LanPeerTrustStore.schemaVersion,
+      'records': <Map<String, Object?>>[
+        <String, Object?>{
+          'deviceId': 'peer-a',
+          'certificateFingerprint': 'a' * 64,
+          'inboundAccessToken': 'inbound-peer-a',
+          'outboundAccessToken': 'outbound-peer-a',
+          'x25519PublicKey': e2eKey,
+          'networkIdentityPublicKey': identityKey,
+          'origin': PeerTrustOrigin.localPin.name,
+          'localDirect': true,
+          'relay': false,
+          'createdAt': DateTime.utc(2026).toIso8601String(),
+        },
+      ],
     }),
-    'lan_share_peer_certificate_fingerprints': jsonEncode(<String, String>{
-      deviceId: 'a' * 64,
-    }),
-    'lan_share_peer_network_identity_keys_v1': jsonEncode(identityKeys),
-    'lan_share_peer_x25519_keys_v1': jsonEncode(e2eKeys),
   });
 }
+
+LanPeerTrustRecord _trustRecord(String deviceId) => LanPeerTrustRecord(
+  deviceId: deviceId,
+  certificateFingerprint: 'a' * 64,
+  inboundAccessToken: 'inbound-$deviceId',
+  outboundAccessToken: 'outbound-$deviceId',
+  x25519PublicKey: Uint8List.fromList(List<int>.filled(32, 2)),
+  networkIdentityPublicKey: Uint8List.fromList(List<int>.filled(32, 1)),
+  origin: PeerTrustOrigin.localPin,
+  authorization: const PeerRouteAuthorization(localDirect: true, relay: false),
+  createdAt: DateTime.utc(2026),
+);
 
 IncomingTransferOffer _offer(String id) => IncomingTransferOffer(
   eventId: 'event-$id',

@@ -19,6 +19,25 @@ final class _NetworkPeerAdapter {
     operation: NetworkOperation.upsertPeer,
   );
 
+  Future<NetworkResult<void>> removePeer(String peerId) {
+    commands.ensureUsable();
+    if (peerId.trim().isEmpty) {
+      return Future.value(
+        _networkFailure(
+          const NetworkError(
+            code: NetworkErrorCode.invalidArgument,
+            message: 'peer_id is required',
+            operation: NetworkOperation.removePeer,
+          ),
+        ),
+      );
+    }
+    return commands.submit(
+      codec.removePeerCommand(commandId: const Uuid().v4(), peerId: peerId),
+      operation: NetworkOperation.removePeer,
+    );
+  }
+
   Future<NetworkResult<void>> connect(
     String peerId, {
     required CommunicationClass communicationClass,

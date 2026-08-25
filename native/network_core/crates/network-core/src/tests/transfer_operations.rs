@@ -1023,6 +1023,51 @@ async fn dispatch_transfer_command_cancels_an_active_transfer() {
 }
 
 #[tokio::test]
+async fn dispatch_transfer_command_cancels_a_pending_incoming_decision() {
+    let state = state();
+    let transfer_id = "cancel-pending-incoming";
+    assert!(
+        state
+            .transfer
+            .manager
+            .register_incoming(manifest(transfer_id), "peer-a".into())
+            .await
+    );
+    let (decision_tx, decision_rx) = oneshot::channel();
+    state
+        .transfer
+        .incoming_decisions
+        .write()
+        .await
+        .insert(transfer_id.into(), decision_tx);
+
+    dispatch_transfer_command(
+        Arc::clone(&state),
+        NetworkCommand {
+            command_id: "cancel-pending-incoming-command".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_protocol::network_command::Payload::CancelTransfer(
+                network_protocol::CancelTransferCommand {
+                    transfer_id: transfer_id.into(),
+                },
+            )),
+        },
+    )
+    .await
+    .expect("pending incoming transfer should be cancelled");
+
+    assert!(!decision_rx.await.expect("receiver cancellation decision"));
+    assert!(state
+        .transfer
+        .incoming_decisions
+        .read()
+        .await
+        .get(transfer_id)
+        .is_none());
+    assert!(state.transfer.manager.snapshot(transfer_id).await.is_none());
+}
+
+#[tokio::test]
 async fn start_file_send_rejects_a_duplicate_after_selecting_a_live_quic_path() {
     let state = state();
     state.peers.write().await.insert(

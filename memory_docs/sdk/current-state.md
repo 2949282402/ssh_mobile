@@ -7,6 +7,14 @@ transport-network v2. Any v1 label in the public bootstrap/compatibility surface
 is a boundary label only; it is not a transport fallback and must not reintroduce
 the retired v1 route/session owner model.
 
+LAN Control Protocol V2 is a separate breaking-only version domain. It does not
+version or replace Native Network Protocol V2: LAN Control handles pairing,
+discovery, capabilities and authenticated text/clipboard HTTPS, while Native
+Network V2 handles peer registration, sessions, route authorization, E2EE and
+binary transfer. The App Scope owns the local Ed25519/X25519 identity bundle,
+the single configured runtime and the shared Facade; Feature lifecycle cannot
+start/stop/reconfigure that runtime.
+
 - `network_sdk` provides typed bootstrap, authenticated API, Session, event,
   and Feature-safe Realtime contracts.
 - The bootstrap `RefreshRequest` requires an integer Unix-seconds timestamp.
@@ -70,6 +78,11 @@ the retired v1 route/session owner model.
 - E2EE policy is enforced end-to-end: Required installs a fresh application
   root after authenticated Noise/path admission, while Disabled is Direct
   identity-only and Relay Disabled is rejected before application crypto.
+- Peer route authorization is an explicit input to route eligibility: Direct
+  candidates require local-direct authorization and Relay candidates require
+  peer Relay authorization plus local/remote enrollment and capabilities. Relay
+  enrollment/disconnect never changes the persisted peer trust record. The Dart
+  `removePeer` chain is reserved for explicit trust revoke/unpair.
 - Connectivity stages are authoritative and ordered: Stage A uses only fresh
   configured/cache Direct candidates and can reuse any already healthy,
   capability-compatible path before control; Stage B requires one Resolve→Offer
@@ -130,3 +143,14 @@ bash scripts/bash/contracts/network_v2_acceptance.sh strict
 
 Do not copy test-run results here. Automated and device-dependent coverage is
 tracked in the [network fault matrix](../../docs/NETWORK_FAULT_MATRIX.md).
+
+LAN V2 implementation audit (2026-08-25): the typed `removePeer` chain,
+`allowDirect/allowRelay` fields, App identity wiring, V2 atomic pairing,
+discovery-only presentation models, peer registry, regular-file Network V2
+transfer coordinator, and Coordinator-owned explicit unpair path are present in
+the working tree. V1 pairing/trust helpers and the legacy aggregate model are
+removed. The HTTP binary route is removed and metadata rejects binary. App
+Runtime exactly-once and dual-runtime/device-restart acceptance are covered by
+the current App/Feature/SDK/native tests. `NetworkFacade.sendMessage` remains the
+stable unavailable boundary for this refactor; the accepted text/clipboard path
+is authenticated HTTPS + application E2E.

@@ -46,8 +46,8 @@ melos:
         concurrency: 4
         failFast: true
     test:
-      description: Run every workspace package test suite.
+      description: Run workspace tests; live backend and native-loopback integrations are optional environment gates.
       exec:
-        command: flutter test --no-pub
+        command: flutter test --no-pub --exclude-tags=client-backend,native-loopback
         concurrency: 2
         failFast: true

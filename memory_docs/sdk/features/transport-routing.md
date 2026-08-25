@@ -1,4 +1,4 @@
-> Last updated: 2026-08-22
+> Last updated: 2026-08-25
 
 # Transport and Routing
 
@@ -21,6 +21,12 @@ releases that lease when the operation ends.
 Routing invariants:
 
 - Topology and transport are separate metadata.
+- Peer Trust and route authorization are separate from Discovery and Relay
+  enrollment. A Direct candidate is eligible only when the peer's persisted
+  authorization permits `localDirect`; a Relay candidate is eligible only when
+  peer Relay authorization, local enrollment/configuration, remote capability,
+  and native route availability all pass. Relay disconnect never revokes peer
+  trust or changes this authorization.
 - A carrier is authenticated before admission to a ConnectionSession and
   publication by the owning `PeerPathManager`.
 - Reliable Delivery, Transfer, and Stream operations ask the path manager for a

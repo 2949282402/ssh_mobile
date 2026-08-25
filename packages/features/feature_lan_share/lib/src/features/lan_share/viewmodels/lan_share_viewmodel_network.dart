@@ -1,4 +1,4 @@
-// 从 LanShareViewModel 拆出的 v1 原生网络事件处理。
+// 从 LanShareViewModel 拆出的 Network V2 原生网络事件处理。
 // 确保功能编排文件低于 1000 行维护限制。
 
 part of 'lan_share_viewmodel.dart';

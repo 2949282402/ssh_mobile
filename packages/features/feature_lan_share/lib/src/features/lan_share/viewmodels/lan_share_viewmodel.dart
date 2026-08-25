@@ -1,9 +1,7 @@
-// LAN Share ViewModel：负责 v1 类型化网络命令、事件和持久化传输历史。
+// LAN Share ViewModel：负责 HTTPS 控制命令、Network V2 事件和持久化传输历史。
 // 网络事件处理位于独立 part 文件。
 
 import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
 import 'package:drift/drift.dart';
 
 import 'package:flutter/foundation.dart';
@@ -14,33 +12,23 @@ import '../../../domain/lan_share_ports.dart';
 import '../../../services/lan_share/lan_discovery_service.dart';
 import '../../../services/lan_share/lan_network_models.dart';
 import '../../../services/lan_share/lan_security_service.dart';
+import '../../../services/lan_share/lan_peer_trust.dart';
 import '../../../services/lan_share/lan_share_models.dart';
 import '../../../services/lan_share/lan_storage_service.dart';
+import '../../../services/lan_share/lan_native_transfer_coordinator.dart';
 import '../../../services/lan_share/lan_transfer_service.dart';
 import 'package:network_sdk/network_sdk.dart';
 
 part 'lan_share_viewmodel_network.dart';
 part 'lan_share_viewmodel_history.dart';
 
-/// 用户可诊断的原生文件发送阶段。
-enum LanFileTransferPhase {
-  validatingFile,
-  fetchingCapabilities,
-  registeringPeer,
-  connectingPeer,
-  awaitingReceiverApproval,
-  transferring,
-  verifying,
-  completed,
-}
-
-/// 功能范围内的 v1 LAN 状态、命令编排与历史记录外观。
+/// 功能范围内的 LAN 状态、命令编排与历史记录外观。
 class LanShareViewModel extends ChangeNotifier {
   final LanDiscoveryService discoveryService;
   final LanSecurityService securityService;
   final LanStorageService storageService;
   final LanTransferService transferService;
-  NetworkFacade? networkFacade;
+  final LanNativeTransferCoordinator? nativeTransferCoordinator;
   final LanHistoryDao historyDao;
   final AppSettings appSettings;
   final LanShareDataProtectionPort dataProtection;
@@ -48,7 +36,8 @@ class LanShareViewModel extends ChangeNotifier {
   final bool ownsRuntime;
   final ValueChanged<LanPairingRequest>? pairingRequestPublisher;
 
-  List<LanDevice> _devices = [];
+  List<LanDiscoveredPeer> _devices = [];
+  final Map<String, LanPeerTrustRecord> _trustRecords = {};
   List<LanMessage> _history = [];
   StreamSubscription? _devicesSubscription;
   StreamSubscription? _incomingMessageSubscription;
@@ -56,20 +45,16 @@ class LanShareViewModel extends ChangeNotifier {
   StreamSubscription<NetworkEvent>? _networkProgressSubscription;
   StreamSubscription? _recallSubscription;
   StreamSubscription? _historyDbSubscription;
-  StreamSubscription? _announcedDeviceSubscription;
+  StreamSubscription? _announcedPeerSubscription;
   StreamSubscription? _pairingInviteSubscription;
-  StreamSubscription? _handshakePendingSubscription;
   StreamSubscription? _connectionStateSubscription;
+  StreamSubscription<List<LanPeerTrustRecord>>? _trustSubscription;
   Timer? _keepAliveTimer;
   Future<void>? _keepAliveOperation;
   Future<void> _historyRefreshSerial = Future<void>.value();
   final Map<String, Future<void>> _messagePersistence = {};
   final Set<Future<void>> _backgroundOperations = <Future<void>>{};
 
-  /// 以设备标识为 key 的 X25519 公钥缓存（仅保存在内存）。
-  final Map<String, Uint8List> _recipientPubKeyCache = {};
-  final Map<String, Uint8List> _recipientNetworkIdentityKeyCache = {};
-  final Map<String, int> _recipientNativePortCache = {};
   final _pairingRequestController =
       StreamController<LanPairingRequest>.broadcast();
   final Map<String, LanPairingRequest> _latestPairingRequests = {};
@@ -98,16 +83,6 @@ class LanShareViewModel extends ChangeNotifier {
   int _lifecycleGeneration = 0;
   Future<void>? _initializationFuture;
 
-  /// 更新 Coordinator 当前 runtime generation 借出的 Facade。
-  ///
-  /// 调用方只可在 ViewModel 停止期间切换；ViewModel 仍只释放自己的事件订阅。
-  void attachNetworkFacade(NetworkFacade? facade) {
-    if (_isInitialized) {
-      throw StateError('Cannot replace the network facade while active.');
-    }
-    networkFacade = facade;
-  }
-
   Future<void>? _shutdownFuture;
 
   /// 基于功能拥有的 LAN 与历史服务创建 ViewModel。
@@ -116,7 +91,7 @@ class LanShareViewModel extends ChangeNotifier {
     required this.securityService,
     required this.storageService,
     required this.transferService,
-    this.networkFacade,
+    this.nativeTransferCoordinator,
     required this.historyDao,
     required this.appSettings,
     required this.dataProtection,
@@ -126,7 +101,41 @@ class LanShareViewModel extends ChangeNotifier {
   });
 
   /// 返回当前发现和手动注册的设备。
-  List<LanDevice> get devices => _devices;
+  List<LanDiscoveredPeer> get devices => _devices;
+
+  /// 返回 UI 使用的聚合 peer 状态。
+  ///
+  /// Trust records are retained when discovery disappears, so a peer with a
+  /// trust record and no current endpoint remains visible as trusted offline.
+  List<LanPeerViewState> get peerStates {
+    final states = <String, LanPeerViewState>{};
+    for (final trust in _trustRecords.values) {
+      states[trust.deviceId] = LanPeerViewState(trust: trust);
+    }
+    for (final peer in _devices) {
+      final nativePort = peer.advertisedNativePort;
+      final directAvailable =
+          peer.ip.trim().isNotEmpty &&
+          nativePort != null &&
+          nativePort > 0 &&
+          nativePort <= 65535;
+      states[peer.deviceId] = LanPeerViewState(
+        peerId: peer.deviceId,
+        trust: _trustRecords[peer.deviceId],
+        discovery: peer,
+        route: LanPeerRouteState(directAvailable: directAvailable),
+      );
+    }
+    return List<LanPeerViewState>.unmodifiable(states.values);
+  }
+
+  /// Returns one aggregated UI state by stable peer id.
+  LanPeerViewState? peerStateFor(String deviceId) {
+    for (final state in peerStates) {
+      if (state.peerId == deviceId) return state;
+    }
+    return null;
+  }
 
   /// 返回持久化 LAN 传输历史快照。
   List<LanMessage> get history => _history;
@@ -171,23 +180,6 @@ class LanShareViewModel extends ChangeNotifier {
     return NetworkFailure<T>(error);
   }
 
-  Future<NetworkFailure<T>> _recordFileTransferFailure<T>(
-    String transferId,
-    NetworkError error,
-    LanFileTransferPhase phase, {
-    int? nativePort,
-  }) async {
-    logger.warning(
-      'LAN file transfer failed',
-      details:
-          'transferId=$transferId peerId=${error.peerId ?? 'unknown'} '
-          'phase=${phase.name} code=${error.code.name} '
-          'operation=${error.operation?.name ?? 'unknown'} '
-          'routeType=unknown nativePort=${nativePort ?? 'unavailable'}',
-    );
-    return _recordNetworkFailure(transferId, error);
-  }
-
   /// 发布 ViewModel part 文件请求的状态变化。
   void _notifyHistoryChanged() => notifyListeners();
 
@@ -230,8 +222,11 @@ class LanShareViewModel extends ChangeNotifier {
 
     appSettings.addListener(_onSettingsChanged);
 
+    await _loadTrustProjection();
+    if (_disposed || generation != _lifecycleGeneration) return;
+
     // 在打开监听器前先订阅，避免 HTTPS/mDNS 启动期间到达的邀请被确认后丢失。
-    _devicesSubscription = discoveryService.discoveredDevicesStream.listen((
+    _devicesSubscription = discoveryService.discoveredPeersStream.listen((
       devs,
     ) {
       _devices = List.from(devs);
@@ -245,24 +240,20 @@ class LanShareViewModel extends ChangeNotifier {
         );
       },
     );
-    _announcedDeviceSubscription = transferService.announcedDeviceStream.listen(
-      (device) {
-        registerManualDevice(device);
-        _emitIncomingPairingRequest(device);
-      },
-    );
+    _announcedPeerSubscription = transferService.announcedPeerStream.listen((
+      peer,
+    ) {
+      registerDiscoveredPeer(peer);
+      _emitIncomingPairingRequest(peer);
+    });
     _pairingInviteSubscription = transferService.pairingInviteStream.listen((
       request,
     ) {
       if (request.isExpired) return;
-      registerManualDevice(request.device);
+      final peer = request.peer.discovery;
+      if (peer != null) registerDiscoveredPeer(peer);
       _publishPairingRequest(request);
     });
-    _handshakePendingSubscription = transferService.handshakePendingStream
-        .listen((device) {
-          registerManualDevice(device);
-          _emitIncomingPairingRequest(device);
-        });
     _progressSubscription = transferService.messageProgressStream.listen((msg) {
       _trackBackgroundOperation(
         _enqueueMessagePersistence(
@@ -277,7 +268,7 @@ class LanShareViewModel extends ChangeNotifier {
         'LAN progress persistence failed',
       );
     });
-    _networkProgressSubscription = networkFacade?.events.listen(
+    _networkProgressSubscription = nativeTransferCoordinator?.events.listen(
       _handleNetworkEvent,
     );
     _recallSubscription = transferService.recalledMessageIdStream.listen((
@@ -338,6 +329,33 @@ class LanShareViewModel extends ChangeNotifier {
     }
   }
 
+  /// Loads trust independently of discovery so offline trusted peers remain
+  /// available to the presentation layer. Test doubles that do not provide
+  /// the concrete trust store are intentionally treated as an empty store.
+  Future<void> _loadTrustProjection() async {
+    try {
+      final trustStore = securityService.peerTrustStore;
+      final records = await trustStore.loadAll();
+      if (_disposed) return;
+      _trustRecords
+        ..clear()
+        ..addEntries(
+          records.map((record) => MapEntry(record.deviceId, record)),
+        );
+      _trustSubscription = trustStore.changes.listen((records) {
+        if (_disposed) return;
+        _trustRecords
+          ..clear()
+          ..addEntries(
+            records.map((record) => MapEntry(record.deviceId, record)),
+          );
+        notifyListeners();
+      });
+    } catch (_) {
+      _trustRecords.clear();
+    }
+  }
+
   /// 取消 ViewModel 持有的全部订阅和保活定时器。
   Future<void> _cancelRuntimeSubscriptions() async {
     final subscriptions = <StreamSubscription?>[
@@ -347,10 +365,10 @@ class LanShareViewModel extends ChangeNotifier {
       _networkProgressSubscription,
       _recallSubscription,
       _historyDbSubscription,
-      _announcedDeviceSubscription,
+      _announcedPeerSubscription,
       _pairingInviteSubscription,
-      _handshakePendingSubscription,
       _connectionStateSubscription,
+      _trustSubscription,
     ];
     Object? firstError;
     StackTrace? firstStackTrace;
@@ -368,10 +386,10 @@ class LanShareViewModel extends ChangeNotifier {
     _networkProgressSubscription = null;
     _recallSubscription = null;
     _historyDbSubscription = null;
-    _announcedDeviceSubscription = null;
+    _announcedPeerSubscription = null;
     _pairingInviteSubscription = null;
-    _handshakePendingSubscription = null;
     _connectionStateSubscription = null;
+    _trustSubscription = null;
     _keepAliveTimer?.cancel();
     _keepAliveTimer = null;
     if (firstError != null) {
@@ -469,12 +487,15 @@ class LanShareViewModel extends ChangeNotifier {
   }
 
   /// 发送文本消息，并持久化稳定结果码。
-  Future<NetworkResult<void>> sendText(LanDevice device, String text) async {
+  Future<NetworkResult<void>> sendText(
+    LanDiscoveredPeer device,
+    String text,
+  ) async {
     final msg = LanMessage(
       id: const Uuid().v4(),
       senderId: discoveryService.currentDeviceId,
       senderAlias: discoveryService.currentDeviceAlias,
-      receiverId: device.id,
+      receiverId: device.deviceId,
       payloadType: LanPayloadType.text,
       textContent: text,
       status: LanTransferStatus.transferring,
@@ -483,11 +504,20 @@ class LanShareViewModel extends ChangeNotifier {
     );
 
     await _saveMessageToDb(msg);
-    final capabilityResult = await _getRecipientPubKey(device);
-    if (capabilityResult is NetworkFailure<Uint8List>) {
-      return _recordNetworkFailure(msg.id, capabilityResult.error);
+    final pubKey = await securityService.getPeerX25519PublicKey(
+      device.deviceId,
+    );
+    if (pubKey == null) {
+      return _recordNetworkFailure(
+        msg.id,
+        NetworkError(
+          code: NetworkErrorCode.authenticationFailed,
+          message: 'Recipient E2E public key is unavailable.',
+          operation: NetworkOperation.sendMeta,
+          peerId: device.deviceId,
+        ),
+      );
     }
-    final pubKey = (capabilityResult as NetworkSuccess<Uint8List>).data;
     final result = await transferService.sendMeta(
       device,
       msg,
@@ -507,14 +537,14 @@ class LanShareViewModel extends ChangeNotifier {
 
   /// 发送剪贴板内容，并持久化稳定结果码。
   Future<NetworkResult<void>> sendClipboard(
-    LanDevice device,
+    LanDiscoveredPeer device,
     String text,
   ) async {
     final msg = LanMessage(
       id: const Uuid().v4(),
       senderId: discoveryService.currentDeviceId,
       senderAlias: discoveryService.currentDeviceAlias,
-      receiverId: device.id,
+      receiverId: device.deviceId,
       payloadType: LanPayloadType.clipboard,
       textContent: text,
       status: LanTransferStatus.transferring,
@@ -523,11 +553,20 @@ class LanShareViewModel extends ChangeNotifier {
     );
 
     await _saveMessageToDb(msg);
-    final capabilityResult = await _getRecipientPubKey(device);
-    if (capabilityResult is NetworkFailure<Uint8List>) {
-      return _recordNetworkFailure(msg.id, capabilityResult.error);
+    final pubKey = await securityService.getPeerX25519PublicKey(
+      device.deviceId,
+    );
+    if (pubKey == null) {
+      return _recordNetworkFailure(
+        msg.id,
+        NetworkError(
+          code: NetworkErrorCode.authenticationFailed,
+          message: 'Recipient E2E public key is unavailable.',
+          operation: NetworkOperation.sendMeta,
+          peerId: device.deviceId,
+        ),
+      );
     }
-    final pubKey = (capabilityResult as NetworkSuccess<Uint8List>).data;
     final result = await transferService.sendMeta(
       device,
       msg,
@@ -545,327 +584,29 @@ class LanShareViewModel extends ChangeNotifier {
     return result;
   }
 
-  /// 注册原生文件传输，并在历史记录中跟踪终态事件。
+  /// Delegates binary transfer orchestration to the Network V2 coordinator.
   Future<NetworkResult<TransferSession>> sendFile(
-    LanDevice device,
+    LanDiscoveredPeer device,
     String filePath,
-  ) async {
-    final file = File(filePath);
-    if (!await file.exists()) {
-      return _networkFailure(
-        code: NetworkErrorCode.ioError,
-        message: 'Source file is unavailable.',
-        operation: NetworkOperation.sendFile,
-        peerId: device.id,
-      );
-    }
-
-    final fileName = file.path.split(Platform.pathSeparator).last;
-    final fileSize = await file.length();
-
-    final msg = LanMessage(
-      id: const Uuid().v4(),
-      senderId: discoveryService.currentDeviceId,
-      senderAlias: discoveryService.currentDeviceAlias,
-      receiverId: device.id,
-      payloadType: _guessPayloadType(fileName),
-      fileName: fileName,
-      fileSize: fileSize,
-      localPath: filePath,
-      status: LanTransferStatus.transferring,
-      createdAt: DateTime.now(),
-      isIncoming: false,
-    );
-
-    await _saveMessageToDb(msg);
-
-    final peerResult = await prepareNativePeerRegistration(device);
-    if (peerResult is NetworkFailure<PeerConfig>) {
-      return _recordFileTransferFailure(
-        msg.id,
-        peerResult.error,
-        LanFileTransferPhase.fetchingCapabilities,
-      );
-    }
-    final facade = networkFacade;
-    if (facade == null) {
-      return _recordFileTransferFailure(
-        msg.id,
-        NetworkError(
+  ) {
+    final coordinator = nativeTransferCoordinator;
+    if (coordinator == null) {
+      return Future.value(
+        _networkFailure(
           code: NetworkErrorCode.noRoute,
-          message: 'Native network facade is unavailable.',
+          message: 'Native transfer coordinator is unavailable.',
           operation: NetworkOperation.sendFile,
-          peerId: device.id,
-        ),
-        LanFileTransferPhase.registeringPeer,
-      );
-    }
-    final registerResult = await facade.registerPeer(
-      (peerResult as NetworkSuccess<PeerConfig>).data,
-    );
-    if (registerResult is NetworkFailure<void>) {
-      return _recordFileTransferFailure(
-        msg.id,
-        registerResult.error,
-        LanFileTransferPhase.registeringPeer,
-        nativePort: _recipientNativePortCache[device.id],
-      );
-    }
-    final connectResult = await facade.connectPeer(
-      device.id,
-      communicationClass: CommunicationClass.bulkTransfer,
-    );
-    if (connectResult is NetworkFailure) {
-      return _recordFileTransferFailure(
-        msg.id,
-        connectResult.error,
-        LanFileTransferPhase.connectingPeer,
-        nativePort: _recipientNativePortCache[device.id],
-      );
-    }
-    final sendResult = await facade.transferFile(
-      transferId: msg.id,
-      peerId: device.id,
-      filePath: file.absolute.path,
-    );
-    if (sendResult is NetworkFailure<TransferSession>) {
-      return _recordFileTransferFailure(
-        msg.id,
-        sendResult.error,
-        LanFileTransferPhase.awaitingReceiverApproval,
-        nativePort: _recipientNativePortCache[device.id],
-      );
-    }
-    final session = (sendResult as NetworkSuccess<TransferSession>).data;
-    await _enqueueMessagePersistence(
-      msg.id,
-      () => historyDao.updateRecordStatus(
-        msg.id,
-        LanTransferStatus.transferring.toJson(),
-        bytesTotal: fileSize,
-        routeType: session.routeType == NetworkRouteType.unspecified
-            ? null
-            : session.routeType.name,
-      ),
-    );
-    return sendResult;
-  }
-
-  /// 查询并缓存远端设备的 E2E 和原生身份密钥。
-  /// 返回接收方 X25519 公钥或稳定的网络失败。
-  Future<NetworkResult<Uint8List>> fetchRecipientE2ECapabilities(
-    LanDevice device, {
-    bool requireNativeTransfer = false,
-  }) async {
-    if (requireNativeTransfer) {
-      // The receiver binds its native endpoint ephemerally, so a process
-      // restart can invalidate an otherwise healthy device-level cache.
-      // File sends therefore revalidate the authenticated capability snapshot.
-      _recipientNativePortCache.remove(device.id);
-    }
-    final advertisedNativePort = device.nativePort;
-    if (!requireNativeTransfer &&
-        advertisedNativePort != null &&
-        advertisedNativePort >= 1 &&
-        advertisedNativePort <= 65535) {
-      _recipientNativePortCache[device.id] = advertisedNativePort;
-    }
-    if (!requireNativeTransfer &&
-        _recipientPubKeyCache.containsKey(device.id)) {
-      return NetworkSuccess(_recipientPubKeyCache[device.id]!);
-    }
-    final pinnedE2eKey = await securityService.getPeerX25519PublicKey(
-      device.id,
-    );
-    final pinnedIdentityKey = await securityService
-        .getPeerNetworkIdentityPublicKey(device.id);
-    if (pinnedE2eKey != null && pinnedIdentityKey != null) {
-      _recipientPubKeyCache[device.id] = pinnedE2eKey;
-      _recipientNetworkIdentityKeyCache[device.id] = pinnedIdentityKey;
-      if (!requireNativeTransfer) {
-        return NetworkSuccess(pinnedE2eKey);
-      }
-    }
-    HttpClient? client;
-    try {
-      client = await transferService.createHttpClientForPeer(device.id);
-      final rawHost = device.ip.trim();
-      final capabilityHost = rawHost.startsWith('[') && rawHost.endsWith(']')
-          ? rawHost.substring(1, rawHost.length - 1)
-          : rawHost;
-      final url = Uri(
-        scheme: 'https',
-        host: capabilityHost,
-        port: device.port,
-        path: '/api/lan/capabilities',
-      );
-      final req = await client.getUrl(url).timeout(const Duration(seconds: 3));
-      req.followRedirects = false;
-      final authorization = await transferService.addPairingAuthorization(
-        req.headers,
-        device.id,
-      );
-      if (authorization is NetworkFailure<void>) {
-        return NetworkFailure<Uint8List>(authorization.error);
-      }
-      final resp = await req.close().timeout(const Duration(seconds: 3));
-      if (resp.statusCode != HttpStatus.ok) {
-        return _networkFailure(
-          code: lanHttpErrorCode(resp.statusCode),
-          message: 'LAN capability query failed.',
-          operation: NetworkOperation.fetchCapabilities,
-          peerId: device.id,
-        );
-      }
-      final json = await transferService.readBoundedJsonResponse(resp);
-      if (json['e2eEncryption'] != true) {
-        return _networkFailure(
-          code: NetworkErrorCode.authenticationFailed,
-          message: 'Recipient does not support E2E encryption.',
-          operation: NetworkOperation.fetchCapabilities,
-          peerId: device.id,
-        );
-      }
-      final pubKeyB64 = json['x25519PubKey'] as String?;
-      if (pubKeyB64 == null) {
-        return _networkFailure(
-          code: NetworkErrorCode.authenticationFailed,
-          message: 'Recipient E2E public key is unavailable.',
-          operation: NetworkOperation.fetchCapabilities,
-          peerId: device.id,
-        );
-      }
-      final pubKeyBytes = base64.decode(pubKeyB64);
-      if (pubKeyBytes.length != 32) {
-        return _networkFailure(
-          code: NetworkErrorCode.invalidArgument,
-          message: 'Recipient E2E public key is invalid.',
-          operation: NetworkOperation.fetchCapabilities,
-          peerId: device.id,
-        );
-      }
-      if (pinnedE2eKey != null && !listEquals(pinnedE2eKey, pubKeyBytes)) {
-        return _networkFailure(
-          code: NetworkErrorCode.identityConflict,
-          message: 'Recipient E2E identity conflicts with the paired key.',
-          operation: NetworkOperation.fetchCapabilities,
-          peerId: device.id,
-        );
-      }
-      final identityKeyValue = json['networkIdentityPubKey'] as String?;
-      final nativePort = (json['quicPort'] as num?)?.toInt();
-      if (identityKeyValue != null &&
-          json['quicFileTransfer'] == true &&
-          nativePort != null &&
-          nativePort >= 1 &&
-          nativePort <= 65535) {
-        final identityKey = base64.decode(identityKeyValue);
-        if (identityKey.length == 32) {
-          if (pinnedIdentityKey != null &&
-              !listEquals(pinnedIdentityKey, identityKey)) {
-            return _networkFailure(
-              code: NetworkErrorCode.identityConflict,
-              message:
-                  'Recipient network identity conflicts with the paired key.',
-              operation: NetworkOperation.fetchCapabilities,
-              peerId: device.id,
-            );
-          }
-          _recipientNetworkIdentityKeyCache[device.id] = Uint8List.fromList(
-            identityKey,
-          );
-          _recipientNativePortCache[device.id] = nativePort;
-        }
-      }
-      if (requireNativeTransfer &&
-          !_recipientNativePortCache.containsKey(device.id)) {
-        return _networkFailure(
-          code: NetworkErrorCode.noRoute,
-          message: 'Recipient native file transfer is unavailable.',
-          operation: NetworkOperation.fetchCapabilities,
-          peerId: device.id,
-        );
-      }
-      _recipientPubKeyCache[device.id] = Uint8List.fromList(pubKeyBytes);
-      if (await securityService.isDevicePaired(device.id)) {
-        await securityService.storePeerX25519PublicKey(
-          device.id,
-          _recipientPubKeyCache[device.id]!,
-        );
-        final identityKey = _recipientNetworkIdentityKeyCache[device.id];
-        if (identityKey != null) {
-          await securityService.storePeerNetworkIdentityPublicKey(
-            device.id,
-            identityKey,
-          );
-        }
-      }
-      return NetworkSuccess(_recipientPubKeyCache[device.id]!);
-    } catch (e) {
-      debugPrint('[LanShareViewModel] E2E capabilities query failed: $e');
-      return NetworkFailure(
-        lanNetworkError(
-          e,
-          operation: NetworkOperation.fetchCapabilities,
-          peerId: device.id,
+          peerId: device.deviceId,
         ),
       );
-    } finally {
-      client?.close();
     }
-  }
-
-  /// 返回缓存中或刚查询得到的接收方 E2E 公钥。
-  Future<NetworkResult<Uint8List>> _getRecipientPubKey(LanDevice device) =>
-      fetchRecipientE2ECapabilities(device);
-
-  /// 刷新并构建原生文件传输对端配置，但不注册或连接。
-  Future<NetworkResult<PeerConfig>> prepareNativePeerRegistration(
-    LanDevice device,
-  ) async {
-    final e2eResult = await fetchRecipientE2ECapabilities(
-      device,
-      requireNativeTransfer: true,
-    );
-    if (e2eResult is NetworkFailure<Uint8List>) {
-      return NetworkFailure<PeerConfig>(e2eResult.error);
-    }
-    final e2eKey = (e2eResult as NetworkSuccess<Uint8List>).data;
-    final identityKey = _recipientNetworkIdentityKeyCache[device.id];
-    final nativePort = _recipientNativePortCache[device.id];
-    if (identityKey == null) {
-      return _networkFailure(
-        code: NetworkErrorCode.authenticationFailed,
-        message: 'Recipient network identity is unavailable.',
-        operation: NetworkOperation.fetchCapabilities,
-        peerId: device.id,
-      );
-    }
-    if (nativePort == null) {
-      return _networkFailure(
-        code: NetworkErrorCode.noRoute,
-        message: 'Recipient native transfer endpoint is unavailable.',
-        operation: NetworkOperation.fetchCapabilities,
-        peerId: device.id,
-      );
-    }
-    final endpoint = device.ip.contains(':')
-        ? '[${device.ip}]:$nativePort'
-        : '${device.ip}:$nativePort';
-    return NetworkSuccess(
-      PeerConfig(
-        peerId: device.id,
-        endpointAddress: endpoint,
-        identityPublicKey: identityKey,
-        e2ePublicKey: e2eKey,
-      ),
-    );
+    return coordinator.sendFile(device, filePath);
   }
 
   /// 远端撤回消息，并将本地历史记录标记为已撤回。
   Future<NetworkResult<void>> recallMessage(
     LanMessage message,
-    LanDevice? device,
+    LanDiscoveredPeer? device,
   ) async {
     NetworkResult<void> result = const NetworkSuccess<void>(null);
     if (device != null) {
@@ -894,12 +635,21 @@ class LanShareViewModel extends ChangeNotifier {
     await historyDao.deleteRecord(messageId);
   }
 
-  /// 解除设备配对，并清除其内存密钥缓存。
+  /// 解除设备配对； native peer removal is owned by the transfer coordinator.
   Future<void> forgetDevice(String deviceId) async {
-    await securityService.unpairDevice(deviceId);
-    _recipientPubKeyCache.remove(deviceId);
-    _recipientNetworkIdentityKeyCache.remove(deviceId);
-    _recipientNativePortCache.remove(deviceId);
+    final coordinator = nativeTransferCoordinator;
+    if (coordinator == null) {
+      throw StateError(
+        'Cannot unpair a LAN peer without the native transfer coordinator.',
+      );
+    }
+    final result = await coordinator.removeTrustedPeer(deviceId);
+    if (result is NetworkFailure<void>) {
+      throw StateError(
+        'Failed to remove trusted LAN peer: ${result.error.code.name}',
+      );
+    }
+    _trustRecords.remove(deviceId);
     if (!_disposed) notifyListeners();
   }
 
@@ -918,9 +668,9 @@ class LanShareViewModel extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
-  /// 执行 v1 配对认证，并确认已完成的配对。
-  Future<NetworkResult<LanHandshakeData>> authenticateDevice(
-    LanDevice device,
+  /// 执行 V2 配对认证；成功响应已原子提交完整 trust record。
+  Future<NetworkResult<void>> authenticateDevice(
+    LanDiscoveredPeer device,
     String pin, {
     bool isInitiator = true,
   }) async {
@@ -930,16 +680,14 @@ class LanShareViewModel extends ChangeNotifier {
       appSettings.lanDeviceAlias,
       isInitiator: isInitiator,
     );
-    if (result is NetworkSuccess<LanHandshakeData> &&
-        !result.data.pendingRemote) {
-      await securityService.confirmDevicePairing(device.id);
-      if (!_disposed) notifyListeners();
+    if (result is NetworkSuccess<void> && !_disposed) {
+      notifyListeners();
     }
     return result;
   }
 
   /// 请求配对，并发布生成的 UI 会话。
-  Future<NetworkResult<void>> requestPairing(LanDevice device) async {
+  Future<NetworkResult<void>> requestPairing(LanDiscoveredPeer device) async {
     final sessionId = const Uuid().v4();
     final expiresAt = DateTime.now().add(const Duration(minutes: 1));
     final result = await transferService.sendPairingInvite(
@@ -957,19 +705,19 @@ class LanShareViewModel extends ChangeNotifier {
     var resolvedDevice = device;
     if (remoteDeviceId != null &&
         remoteDeviceId.isNotEmpty &&
-        (remoteDeviceId != device.id ||
-            (remotePort != null && remotePort != device.port))) {
+        (remoteDeviceId != device.deviceId ||
+            (remotePort != null && remotePort != device.controlPort))) {
       resolvedDevice = device.copyWith(
-        id: remoteDeviceId,
-        port: remotePort,
+        deviceId: remoteDeviceId,
+        controlPort: remotePort,
         lastSeen: DateTime.now(),
       );
-      discoveryService.removeDevice(device.id);
+      discoveryService.removeDiscoveredPeer(device.deviceId);
     }
-    registerManualDevice(resolvedDevice);
+    registerDiscoveredPeer(resolvedDevice);
     _publishPairingRequest(
       LanPairingRequest(
-        device: resolvedDevice,
+        peer: LanPeerViewState(discovery: resolvedDevice),
         sessionId: sessionId,
         isIncoming: false,
         expiresAt: expiresAt,
@@ -979,10 +727,10 @@ class LanShareViewModel extends ChangeNotifier {
   }
 
   /// 为 [device] 发布传入配对请求。
-  void _emitIncomingPairingRequest(LanDevice device) {
+  void _emitIncomingPairingRequest(LanDiscoveredPeer peer) {
     _publishPairingRequest(
       LanPairingRequest(
-        device: device,
+        peer: LanPeerViewState(discovery: peer),
         sessionId: const Uuid().v4(),
         isIncoming: true,
         expiresAt: DateTime.now().add(const Duration(minutes: 1)),
@@ -991,7 +739,9 @@ class LanShareViewModel extends ChangeNotifier {
   }
 
   /// 向远端 LAN 对端广播本设备。
-  Future<NetworkResult<LanPairingEndpoint>> sendAnnouncement(LanDevice device) {
+  Future<NetworkResult<LanPairingEndpoint>> sendAnnouncement(
+    LanDiscoveredPeer device,
+  ) {
     return transferService.sendAnnouncement(device, appSettings.lanDeviceAlias);
   }
 
@@ -1000,9 +750,9 @@ class LanShareViewModel extends ChangeNotifier {
     String? ip;
     int? port;
     for (final d in _devices) {
-      if (d.id == deviceId) {
+      if (d.deviceId == deviceId) {
         ip = d.ip;
-        port = d.port;
+        port = d.controlPort;
         break;
       }
     }
@@ -1043,21 +793,21 @@ class LanShareViewModel extends ChangeNotifier {
   }
 
   Future<void> _refreshPeerConnections(int generation) async {
-    for (final device in List<LanDevice>.of(_devices)) {
-      final paired = await isDevicePaired(device.id);
+    for (final device in List<LanDiscoveredPeer>.of(_devices)) {
+      final paired = await isDevicePaired(device.deviceId);
       if (_disposed || !_isInitialized || generation != _lifecycleGeneration) {
         return;
       }
-      if (paired && !transferService.isWebSocketConnected(device.id)) {
+      if (paired && !transferService.isWebSocketConnected(device.deviceId)) {
         await transferService.connectWebSocket(device);
       }
     }
   }
 
   /// 注册手动解析的对端并刷新监听器。
-  void registerManualDevice(LanDevice device) {
+  void registerDiscoveredPeer(LanDiscoveredPeer device) {
     if (_disposed) return;
-    discoveryService.registerManualDevice(device);
+    discoveryService.registerDiscoveredPeer(device);
     notifyListeners();
   }
 

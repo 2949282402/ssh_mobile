@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:feature_webview/feature_webview.dart';
@@ -23,81 +25,266 @@ void main() {
   });
 
   test('pinned transport enforces authority and response boundaries', () async {
-    // Keep the server, its listener, and all clients in one test and async
-    // zone. Splitting them across Flutter test zones can suspend native I/O.
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    var requestCount = 0;
-    String? observedHost;
-    int? observedPort;
-    String? observedPath;
-    server.listen((request) async {
-      requestCount += 1;
-      observedHost = request.headers.host;
-      observedPort = request.headers.port;
-      observedPath = request.uri.path;
-      switch (request.uri.path) {
-        case '/status':
-          request.response
-            ..statusCode = HttpStatus.ok
-            ..headers.contentType = ContentType.text
-            ..write('pinned response');
-        case '/redirect':
-          request.response
-            ..statusCode = HttpStatus.found
-            ..headers.set(HttpHeaders.locationHeader, '/must-not-follow');
-        case '/oversized':
-          request.response
-            ..statusCode = HttpStatus.ok
-            ..contentLength = 8
-            ..write('12345678');
-        default:
-          request.response
-            ..statusCode = HttpStatus.ok
-            ..write('followed');
-      }
-      await request.response.close();
-    });
+    // The adapter itself uses HttpClient's connectionFactory to pin a
+    // validated IP while retaining the requested authority. Override the
+    // client in this Flutter test so no flutter_tester native socket bind is
+    // needed; the factory is still inspected for authority enforcement.
+    final clients = <_FakeHttpClient>[];
+    final transport = const AppWebViewPinnedTransport();
+    final loopback = InternetAddress.loopbackIPv4.address;
+    final port = 43123;
 
-    try {
-      // Production addresses first pass SafeNetworkLoader validation.
-      final response = await const AppWebViewPinnedTransport().get(
-        Uri.parse('http://public.example.com:${server.port}/status'),
-        address: InternetAddress.loopbackIPv4.address,
-        maxBytes: 1024,
-      );
-      expect(response.statusCode, HttpStatus.ok);
-      expect(response.body, 'pinned response');
-      expect(requestCount, 1);
-      expect(observedHost, 'public.example.com');
-      expect(observedPort, server.port);
-      expect(observedPath, '/status');
+    await HttpOverrides.runZoned(
+      () async {
+        final response = await transport.get(
+          Uri.parse('http://public.example.com:$port/status'),
+          address: loopback,
+          maxBytes: 1024,
+        );
+        expect(response.statusCode, HttpStatus.ok);
+        expect(response.body, 'pinned response');
+        expect(clients.single.request?.uri.host, 'public.example.com');
+        expect(clients.single.request?.uri.port, port);
+        expect(clients.single.request?.uri.path, '/status');
+        expect(
+          clients.single.request?.headers.value(HttpHeaders.connectionHeader),
+          'close',
+        );
+        expect(clients.single.request?.followRedirects, isFalse);
+        expect(clients.single.request?.maxRedirects, 0);
+        expect(clients.single.findProxy?.call(Uri()), 'DIRECT');
 
-      requestCount = 0;
-      final redirect = await const AppWebViewPinnedTransport().get(
-        Uri.parse('http://public.example.com:${server.port}/redirect'),
-        address: InternetAddress.loopbackIPv4.address,
-        maxBytes: 1024,
-      );
-      expect(redirect.statusCode, HttpStatus.found);
-      expect(redirect.redirectLocation, '/must-not-follow');
-      expect(requestCount, 1);
-
-      await expectLater(
-        const AppWebViewPinnedTransport().get(
-          Uri.parse('http://public.example.com:${server.port}/oversized'),
-          address: InternetAddress.loopbackIPv4.address,
-          maxBytes: 4,
-        ),
-        throwsA(
-          isA<ClientWebViewNetworkException>().having(
-            (error) => error.message,
-            'message',
-            contains('oversized'),
+        final connectionFactory = clients.single.connectionFactory;
+        expect(connectionFactory, isNotNull);
+        await expectLater(
+          connectionFactory!(
+            Uri.parse('http://attacker.example.com:$port/status'),
+            null,
+            null,
           ),
-        ),
-      );
-    } finally {
-      await server.close(force: true);
-    }
+          throwsA(
+            isA<ClientWebViewNetworkException>().having(
+              (error) => error.message,
+              'message',
+              contains('unpinned'),
+            ),
+          ),
+        );
+
+        final redirect = await transport.get(
+          Uri.parse('http://public.example.com:$port/redirect'),
+          address: loopback,
+          maxBytes: 1024,
+        );
+        expect(redirect.statusCode, HttpStatus.found);
+        expect(redirect.redirectLocation, '/must-not-follow');
+
+        await expectLater(
+          transport.get(
+            Uri.parse('http://public.example.com:$port/oversized'),
+            address: loopback,
+            maxBytes: 4,
+          ),
+          throwsA(
+            isA<ClientWebViewNetworkException>().having(
+              (error) => error.message,
+              'message',
+              contains('oversized'),
+            ),
+          ),
+        );
+
+        await expectLater(
+          transport.get(
+            Uri.parse('http://public.example.com:$port/stream-oversized'),
+            address: loopback,
+            maxBytes: 4,
+          ),
+          throwsA(
+            isA<ClientWebViewNetworkException>().having(
+              (error) => error.message,
+              'message',
+              contains('oversized'),
+            ),
+          ),
+        );
+      },
+      createHttpClient: (_) {
+        final client = _FakeHttpClient(_responseFor);
+        clients.add(client);
+        return client;
+      },
+    );
+    expect(clients, hasLength(4));
+    expect(clients.every((client) => client.closed), isTrue);
   });
+}
+
+_FakeHttpClientResponse _responseFor(Uri uri) {
+  return switch (uri.path) {
+    '/status' => _FakeHttpClientResponse(
+      statusCode: HttpStatus.ok,
+      contentType: ContentType.text,
+      body: 'pinned response',
+    ),
+    '/redirect' => _FakeHttpClientResponse(
+      statusCode: HttpStatus.found,
+      headers: <String, String>{HttpHeaders.locationHeader: '/must-not-follow'},
+    ),
+    '/oversized' => _FakeHttpClientResponse(
+      statusCode: HttpStatus.ok,
+      declaredLength: 8,
+      body: '12345678',
+    ),
+    '/stream-oversized' => _FakeHttpClientResponse(
+      statusCode: HttpStatus.ok,
+      body: '12345',
+    ),
+    _ => _FakeHttpClientResponse(statusCode: HttpStatus.notFound),
+  };
+}
+
+final class _FakeHttpClient extends Fake implements HttpClient {
+  _FakeHttpClient(this.responseFactory);
+
+  final _FakeHttpClientResponse Function(Uri uri) responseFactory;
+  _FakeHttpClientRequest? request;
+  bool closed = false;
+
+  @override
+  bool autoUncompress = true;
+
+  @override
+  Duration? connectionTimeout;
+
+  @override
+  Duration idleTimeout = const Duration(seconds: 15);
+
+  @override
+  String Function(Uri uri)? findProxy;
+
+  @override
+  Future<ConnectionTask<Socket>> Function(
+    Uri uri,
+    String? proxyHost,
+    int? proxyPort,
+  )?
+  connectionFactory;
+
+  @override
+  Future<HttpClientRequest> getUrl(Uri uri) async {
+    final next = _FakeHttpClientRequest(uri, responseFactory(uri));
+    request = next;
+    return next;
+  }
+
+  @override
+  void close({bool force = false}) => closed = true;
+}
+
+final class _FakeHttpClientRequest extends Fake implements HttpClientRequest {
+  _FakeHttpClientRequest(this.uri, this.response);
+
+  @override
+  final Uri uri;
+  final _FakeHttpClientResponse response;
+  final _FakeHttpHeaders requestHeaders = _FakeHttpHeaders();
+
+  @override
+  final String method = 'GET';
+
+  @override
+  HttpHeaders get headers => requestHeaders;
+
+  @override
+  bool followRedirects = true;
+
+  @override
+  int maxRedirects = 5;
+
+  @override
+  Future<HttpClientResponse> close() async => response;
+}
+
+final class _FakeHttpClientResponse extends Stream<List<int>>
+    implements HttpClientResponse {
+  _FakeHttpClientResponse({
+    required this.statusCode,
+    this.declaredLength = -1,
+    String body = '',
+    ContentType? contentType,
+    Map<String, String> headers = const <String, String>{},
+  }) : _body = utf8.encode(body),
+       _headers = _FakeHttpHeaders(
+         values: <String, String>{
+           ...headers,
+           if (contentType != null)
+             HttpHeaders.contentTypeHeader: contentType.mimeType,
+         },
+       );
+
+  @override
+  final int statusCode;
+  final int declaredLength;
+  final List<int> _body;
+  final _FakeHttpHeaders _headers;
+
+  @override
+  int get contentLength => declaredLength;
+
+  @override
+  HttpHeaders get headers => _headers;
+
+  @override
+  String get reasonPhrase => '';
+
+  @override
+  bool get isRedirect => const <int>{
+    HttpStatus.movedPermanently,
+    HttpStatus.found,
+    HttpStatus.seeOther,
+    HttpStatus.temporaryRedirect,
+    HttpStatus.permanentRedirect,
+  }.contains(statusCode);
+
+  @override
+  bool get persistentConnection => false;
+
+  @override
+  StreamSubscription<List<int>> listen(
+    void Function(List<int> event)? onData, {
+    Function? onError,
+    void Function()? onDone,
+    bool? cancelOnError,
+  }) {
+    return Stream<List<int>>.value(_body).listen(
+      onData,
+      onError: onError,
+      onDone: onDone,
+      cancelOnError: cancelOnError,
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => null;
+}
+
+final class _FakeHttpHeaders extends Fake implements HttpHeaders {
+  _FakeHttpHeaders({Map<String, String> values = const <String, String>{}}) {
+    for (final entry in values.entries) {
+      set(entry.key, entry.value);
+    }
+  }
+
+  final Map<String, List<String>> _values = <String, List<String>>{};
+
+  String _key(String name) => name.toLowerCase();
+
+  @override
+  String? value(String name) => _values[_key(name)]?.firstOrNull;
+
+  @override
+  void set(String name, Object value, {bool preserveHeaderCase = false}) {
+    _values[_key(name)] = <String>['$value'];
+  }
 }

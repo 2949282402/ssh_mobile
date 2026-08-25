@@ -3,31 +3,29 @@ import 'package:feature_lan_share/feature_lan_share.dart';
 
 void main() {
   group('LAN Share Models Test', () {
-    test('LanDevice JSON serialization and deserialization', () {
+    test('LanDiscoveredPeer V2 JSON serialization and deserialization', () {
       final now = DateTime.now();
-      final device = LanDevice(
-        id: 'dev-123',
+      final device = LanDiscoveredPeer(
+        deviceId: 'dev-123',
         alias: 'Test Phone',
         ip: '192.168.1.50',
-        port: 53317,
+        controlPort: 53317,
+        advertisedNativePort: 53318,
         deviceType: LanDeviceType.mobile,
-        osName: 'Android 14',
-        certFingerprint: 'abc123sha256',
-        isTrusted: true,
+        os: 'Android 14',
         lastSeen: now,
       );
 
       final json = device.toJson();
-      final restored = LanDevice.fromJson(json);
+      final restored = LanDiscoveredPeer.fromJson(json);
 
-      expect(restored.id, equals('dev-123'));
+      expect(restored.deviceId, equals('dev-123'));
       expect(restored.alias, equals('Test Phone'));
       expect(restored.ip, equals('192.168.1.50'));
-      expect(restored.port, equals(53317));
+      expect(restored.controlPort, equals(53317));
+      expect(restored.advertisedNativePort, equals(53318));
       expect(restored.deviceType, equals(LanDeviceType.mobile));
-      expect(restored.osName, equals('Android 14'));
-      expect(restored.certFingerprint, equals('abc123sha256'));
-      expect(restored.isTrusted, isTrue);
+      expect(restored.os, equals('Android 14'));
     });
 
     test('FileManifest JSON encode/decode', () {

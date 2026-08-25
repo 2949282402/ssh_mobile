@@ -348,6 +348,7 @@ fn parse_stun_servers(value: &str) -> Vec<SocketAddr> {
 }
 
 /// 校验并保存一个对端路由及其可信身份密钥。
+#[cfg(test)]
 pub(crate) async fn upsert_peer(
     state: &RuntimeState,
     command: UpsertPeerCommand,
@@ -1812,6 +1813,23 @@ impl InboundConnectionAcceptor {
             )
             .into());
         }
+        // A V2 registration may explicitly revoke the Direct route while
+        // leaving the trust record intact for a later re-authorization.  Do
+        // this check at inbound admission as well as outbound selection so a
+        // peer cannot bypass route policy by dialing the native listener.
+        if state
+            .peer_route_authorizations
+            .read()
+            .await
+            .get(peer_id)
+            .is_some_and(|authorization| !authorization.direct)
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "direct route is not authorized for authenticated inbound peer",
+            )
+            .into());
+        }
         let supervisor = state
             .peer_supervisors
             .get_or_create(peer_id)
@@ -1854,6 +1872,19 @@ impl InboundConnectionAcceptor {
                         )
                     })??;
                     let peer_id = session.peer_device_id.clone();
+                    if state
+                        .peer_route_authorizations
+                        .read()
+                        .await
+                        .get(&peer_id)
+                        .is_some_and(|authorization| !authorization.direct)
+                    {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::PermissionDenied,
+                            "Direct route is not authorized for inbound peer",
+                        )
+                        .into());
+                    }
                     let connection = session.connection.clone();
                     let e2ee_policy = state.e2ee_policy(&peer_id).await;
                     let binding_state = Arc::clone(&state);
@@ -2142,7 +2173,14 @@ impl InboundConnectionAcceptor {
                     let peer_id = peer_id.to_string();
                     let remote_session_binding = remote_session_binding.to_string();
                     async move {
-                        if !binding_state.peers.read().await.contains_key(&peer_id) {
+                        if !binding_state.peers.read().await.contains_key(&peer_id)
+                            || binding_state
+                                .peer_route_authorizations
+                                .read()
+                                .await
+                                .get(&peer_id)
+                                .is_some_and(|authorization| !authorization.direct)
+                        {
                             return Err(crate::crypto_handshake::CryptoHandshakeError::Failed);
                         }
                         let admission = binding_state
