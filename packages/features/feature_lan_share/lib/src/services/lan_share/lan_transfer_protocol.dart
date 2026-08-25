@@ -8,6 +8,11 @@ import 'dart:typed_data';
 import 'lan_security_service.dart';
 import 'lan_web_share_request_handler.dart';
 
+/// Defines the canonical LAN Control Protocol version.
+abstract final class LanControlProtocol {
+  static const int version = 2;
+}
+
 /// LAN HTTP 边界异常，供服务端将安全诊断转换为统一 JSON 响应。
 class LanHttpException implements Exception {
   /// 使用 HTTP 状态码和安全诊断创建异常。

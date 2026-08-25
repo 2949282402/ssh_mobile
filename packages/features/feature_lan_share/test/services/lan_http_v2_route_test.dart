@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -47,6 +48,58 @@ void main() {
       await request.response.closed.future.timeout(const Duration(seconds: 1));
 
       expect(request.response.statusCode, HttpStatus.notFound);
+    },
+  );
+
+  test(
+    '/api/lan/capabilities response includes protocolVersion == 2',
+    () async {
+      FlutterSecureStorage.setMockInitialValues(<String, String>{});
+      final store = LanPeerTrustStore();
+      final security = LanSecurityService(
+        appOwnedX25519PrivateSeed: Uint8List(32),
+        peerTrustStore: store,
+      );
+      final service = LanTransferService(
+        currentDeviceId: 'device-a',
+        securityService: security,
+        storageService: LanStorageService(),
+        networkIdentityPublicKeyProvider: () async => Uint8List(32),
+        nativeTransferPortProvider: () => 43123,
+      );
+      addTearDown(() async {
+        await service.close();
+        await store.dispose();
+      });
+
+      final trust = LanPeerTrustRecord(
+        deviceId: 'device-b',
+        certificateFingerprint:
+            '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        inboundAccessToken: 'valid-inbound-token',
+        outboundAccessToken: 'valid-outbound-token',
+        x25519PublicKey: Uint8List(32),
+        networkIdentityPublicKey: Uint8List(32),
+        origin: PeerTrustOrigin.localPin,
+        authorization: const PeerRouteAuthorization(
+          localDirect: true,
+          relay: false,
+        ),
+        createdAt: DateTime.utc(2026),
+      );
+      await store.save(trust);
+
+      final request = _CapabilitiesRequest();
+      service.handleHttpRequest(request);
+      await request.response.closed.future.timeout(const Duration(seconds: 1));
+
+      expect(request.response.statusCode, HttpStatus.ok);
+      final decoded =
+          jsonDecode(request.response.body.toString()) as Map<String, dynamic>;
+      expect(decoded['protocolVersion'], LanControlProtocol.version);
+      expect(decoded['protocolVersion'], 2);
+      expect(decoded['quicFileTransfer'], isTrue);
+      expect(decoded['quicPort'], 43123);
     },
   );
 }
@@ -108,7 +161,31 @@ final class _Response extends Fake implements HttpResponse {
   }
 }
 
+final class _CapabilitiesRequest extends Fake implements HttpRequest {
+  final _Response _response = _Response();
+  final _Headers _headers = _Headers();
+
+  _CapabilitiesRequest() {
+    _headers.set('x-device-id', 'device-b');
+    _headers.set(HttpHeaders.authorizationHeader, 'Bearer valid-inbound-token');
+  }
+
+  @override
+  String get method => 'GET';
+
+  @override
+  Uri get uri => Uri.parse('/api/lan/capabilities');
+
+  @override
+  HttpHeaders get headers => _headers;
+
+  @override
+  _Response get response => _response;
+}
+
 final class _Headers implements HttpHeaders {
+  final Map<String, String> _values = {};
+
   @override
   DateTime? date;
 
@@ -140,26 +217,38 @@ final class _Headers implements HttpHeaders {
   List<String>? operator [](String name) => null;
 
   @override
-  String? value(String name) => null;
+  String? value(String name) => _values[name.toLowerCase()];
 
   @override
-  void add(String name, Object value, {bool preserveHeaderCase = false}) {}
+  void add(String name, Object value, {bool preserveHeaderCase = false}) {
+    _values[name.toLowerCase()] = value.toString();
+  }
 
   @override
-  void set(String name, Object value, {bool preserveHeaderCase = false}) {}
+  void set(String name, Object value, {bool preserveHeaderCase = false}) {
+    _values[name.toLowerCase()] = value.toString();
+  }
 
   @override
-  void remove(String name, Object value) {}
+  void remove(String name, Object value) {
+    _values.remove(name.toLowerCase());
+  }
 
   @override
-  void removeAll(String name) {}
+  void removeAll(String name) {
+    _values.remove(name.toLowerCase());
+  }
 
   @override
-  void forEach(void Function(String name, List<String> values) action) {}
+  void forEach(void Function(String name, List<String> values) action) {
+    _values.forEach((k, v) => action(k, [v]));
+  }
 
   @override
   void noFolding(String name) {}
 
   @override
-  void clear() {}
+  void clear() {
+    _values.clear();
+  }
 }

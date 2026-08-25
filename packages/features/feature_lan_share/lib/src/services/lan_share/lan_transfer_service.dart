@@ -406,6 +406,7 @@ class LanTransferService {
     request.response.headers.contentType = ContentType.json;
     request.response.write(
       jsonEncode({
+        'protocolVersion': LanControlProtocol.version,
         'e2eEncryption': LanSecurityService.supportsE2EEncryption,
         'x25519PubKey': base64.encode(pubKeyBytes),
         if (networkIdentityKey != null)
