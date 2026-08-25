@@ -22,9 +22,9 @@ dependencies:
     path: ../../infrastructure/ssh_core
   drift: ^2.34.3
   drift_flutter: ^0.3.1
-  file_picker: 12.0.0-beta.7
+  file_picker: ^12.0.0-beta.7
   flutter_animate: ^4.5.2
-  gpt_markdown: 1.1.8
+  gpt_markdown: ^1.1.8
   http: ^1.6.0
   provider: ^6.1.5+1
   uuid: ^4.6.0

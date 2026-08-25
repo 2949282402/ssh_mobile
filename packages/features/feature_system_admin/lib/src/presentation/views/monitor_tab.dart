@@ -408,7 +408,7 @@ class _MonitorOverviewSkeleton extends StatelessWidget {
             ],
           ),
         ),
-        for (var i = 0; i < 2; i++)
+        for (var i = 0; i < 4; i++)
           Container(
             height: 180,
             margin: const EdgeInsets.only(bottom: 8),

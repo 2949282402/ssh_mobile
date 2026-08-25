@@ -33,6 +33,8 @@ final class SftpStrings {
       _en ? 'Loading remote directory…' : '正在加载远程目录…';
   String get loadingFilePreview => _en ? 'Loading file preview…' : '正在加载文件预览…';
   String get loadingRemoteFile => _en ? 'Loading remote file…' : '正在加载远程文件…';
+  String get loadingServerCatalog =>
+      _en ? 'Loading server catalog…' : '正在加载服务器目录…';
   String get moreActions => _en ? 'More actions' : '更多操作';
   String get noConnections => _en ? 'No saved connections' : '没有已保存的连接';
   String get openPath => _en ? 'Open path' : '打开路径';

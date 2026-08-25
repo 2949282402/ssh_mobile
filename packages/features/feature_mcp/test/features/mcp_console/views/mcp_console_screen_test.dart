@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:app_ui/app_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -145,4 +147,95 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('renders skeleton during initialLoading', (tester) async {
+    final completer = Completer<List<McpTool>>();
+    final slowController = createTestMcpController(
+      settings,
+      () => _SlowToolExecutor(completer.future),
+    );
+    final slowVm = McpConsoleViewModel(slowController, settings);
+    addTearDown(() {
+      slowVm.dispose();
+      slowController.dispose();
+    });
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<McpConsoleViewModel>.value(
+        value: slowVm,
+        child: const MaterialApp(home: McpConsoleScreen()),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byType(AppSkeletonizer), findsOneWidget);
+
+    completer.complete(const [
+      McpTool(name: 'run_command', description: 'Run command', properties: {}),
+    ]);
+    await tester.pumpAndSettle();
+    expect(find.byType(AppSkeletonizer), findsNothing);
+  });
+
+  testWidgets(
+    'retains console body and displays LinearProgressIndicator when refreshing after initial load',
+    (tester) async {
+      var completer = Completer<List<McpTool>>();
+      final slowController = createTestMcpController(
+        settings,
+        () => _SlowToolExecutor(completer.future),
+      );
+      final slowVm = McpConsoleViewModel(slowController, settings);
+      addTearDown(() {
+        slowVm.dispose();
+        slowController.dispose();
+      });
+
+      completer.complete(const [
+        McpTool(
+          name: 'run_command',
+          description: 'Run command',
+          properties: {},
+        ),
+      ]);
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<McpConsoleViewModel>.value(
+          value: slowVm,
+          child: const MaterialApp(home: McpConsoleScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('mcp-server-status-card')),
+        findsOneWidget,
+      );
+      expect(find.byType(AppSkeletonizer), findsNothing);
+
+      completer = Completer<List<McpTool>>();
+      unawaited(slowVm.refresh());
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('mcp-server-status-card')),
+        findsOneWidget,
+      );
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+
+      completer.complete(const []);
+      await tester.pumpAndSettle();
+    },
+  );
+}
+
+class _SlowToolExecutor extends Fake implements McpToolExecutor {
+  _SlowToolExecutor(this._future);
+  final Future<List<McpTool>> _future;
+
+  @override
+  Future<List<McpTool>> tools() => _future;
+
+  @override
+  Future<List<Map<String, dynamic>>> toolDefinitions() async => [];
 }

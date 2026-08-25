@@ -1,6 +1,7 @@
 import 'package:app_ui/app_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 
 void main() {
   group('AppSkeletonizer', () {
@@ -77,10 +78,10 @@ void main() {
       tester,
     ) async {
       await tester.pumpWidget(
-        const MediaQuery(
-          data: MediaQueryData(disableAnimations: true),
-          child: MaterialApp(
-            home: Scaffold(
+        MaterialApp(
+          home: MediaQuery(
+            data: const MediaQueryData(disableAnimations: true),
+            child: const Scaffold(
               body: AppSkeletonizer(
                 enabled: true,
                 semanticsLabel: 'Loading with reduced motion...',
@@ -92,6 +93,11 @@ void main() {
       );
 
       expect(find.byType(AppSkeletonizer), findsOneWidget);
+      final skeletonizer = tester.widget<Skeletonizer>(
+        find.byWidgetPredicate((w) => w is Skeletonizer),
+      );
+      expect(skeletonizer.effect, isA<SolidColorEffect>());
+      expect(skeletonizer.enableSwitchAnimation, isFalse);
     });
   });
 

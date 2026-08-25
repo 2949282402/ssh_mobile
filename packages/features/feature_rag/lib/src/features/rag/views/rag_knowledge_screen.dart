@@ -63,7 +63,11 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
   @override
   void initState() {
     super.initState();
-    unawaited(context.read<RagKnowledgeViewModel>().initRag());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        unawaited(context.read<RagKnowledgeViewModel>().initRag());
+      }
+    });
   }
 
   Future<void> _showAliyunSettings(

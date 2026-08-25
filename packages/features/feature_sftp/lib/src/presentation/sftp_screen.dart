@@ -78,7 +78,7 @@ class _SftpScreenState extends State<SftpScreen> {
       return AppPageSurface(
         child: AppSkeletonizer.zone(
           enabled: true,
-          semanticsLabel: strings.sftpServers,
+          semanticsLabel: strings.loadingServerCatalog,
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(

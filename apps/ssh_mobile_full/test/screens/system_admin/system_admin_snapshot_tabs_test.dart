@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:app_ui/app_ui.dart';
 import 'package:feature_system_admin/feature_system_admin.dart' as admin;
 import 'package:ssh_core/ssh_core.dart' as ssh_core;
 import 'package:ssh_mobile/app/system_admin_feature_adapters.dart';
@@ -106,6 +107,30 @@ void main() {
       );
 
       expect(find.text('选择要监控的服务器'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'Monitor displays 4 metric charts skeleton when running before first sample arrives',
+    (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final adminVm = StubSystemAdminViewModel();
+      final monitorVm = StubPerformanceMonitorViewModel();
+      adminVm.connections = fakeConnections;
+      adminVm.selectedConnectionId = 'conn_123';
+      monitorVm.isRunning = true;
+      monitorVm.monitoringConnectionIds = {'conn_123'};
+
+      await tester.pumpWidget(
+        buildTestableWidget(adminVm: adminVm, monitorVm: monitorVm),
+      );
+      await tester.pump();
+
+      expect(find.byType(AppSkeletonizer), findsOneWidget);
     },
   );
 

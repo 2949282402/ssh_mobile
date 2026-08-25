@@ -22,6 +22,7 @@ class McpConsoleScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final viewModel = context.watch<McpConsoleViewModel>();
     final english = viewModel.isEnglish;
+    final strings = McpStrings(english);
     return Scaffold(
       body: AppPageSurface(
         child: SafeArea(
@@ -35,9 +36,7 @@ class McpConsoleScreen extends StatelessWidget {
                 child: viewModel.initialLoading
                     ? AppSkeletonizer.zone(
                         enabled: true,
-                        semanticsLabel: english
-                            ? 'Loading MCP console...'
-                            : '正在加载 MCP 控制台...',
+                        semanticsLabel: strings.loadingConsole,
                         child: const _McpConsoleSkeleton(),
                       )
                     : Stack(

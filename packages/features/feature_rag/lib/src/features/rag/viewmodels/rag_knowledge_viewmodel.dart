@@ -18,6 +18,7 @@ final class RagKnowledgeViewModel extends ChangeNotifier {
   final RagService _ragService;
   final RagSettingsPort _settings;
   bool _isProcessing = false;
+  bool _disposed = false;
   String? _initializationError;
 
   List<RagDocumentMetadata> get documents => _ragService.documents;
@@ -29,7 +30,7 @@ final class RagKnowledgeViewModel extends ChangeNotifier {
   bool get isEnglish => _settings.isEnglish;
 
   bool get isInitialLoading =>
-      !_ragService.isInitialized && _initializationError == null;
+      !_ragService.isInitialized && _ragService.isLoading && !_isProcessing;
 
   String? get initializationError => _initializationError;
 
@@ -37,27 +38,25 @@ final class RagKnowledgeViewModel extends ChangeNotifier {
 
   Future<void> initRag() async {
     _initializationError = null;
-    await Future<void>.delayed(Duration.zero);
     try {
       await _ragService.init();
-    } catch (e) {
-      _initializationError = e.toString();
-    } finally {
-      notifyListeners();
+    } catch (error) {
+      _initializationError = error.toString();
+      if (!_disposed) {
+        notifyListeners();
+      }
     }
   }
 
-  Future<void> retryInit() {
-    _initializationError = null;
-    notifyListeners();
-    return initRag();
-  }
+  Future<void> retryInit() => initRag();
 
   Future<String?> getAliyunApiKey() => _settings.getAliyunApiKey();
 
   Future<void> saveAliyunApiKey(String key) async {
     await _settings.saveAliyunApiKey(key);
-    notifyListeners();
+    if (!_disposed) {
+      notifyListeners();
+    }
   }
 
   Future<void> addDocument(
@@ -75,7 +74,9 @@ final class RagKnowledgeViewModel extends ChangeNotifier {
       );
     } finally {
       _isProcessing = false;
-      notifyListeners();
+      if (!_disposed) {
+        notifyListeners();
+      }
     }
   }
 
@@ -86,18 +87,29 @@ final class RagKnowledgeViewModel extends ChangeNotifier {
       await _ragService.deleteDocument(documentId);
     } finally {
       _isProcessing = false;
-      notifyListeners();
+      if (!_disposed) {
+        notifyListeners();
+      }
     }
   }
 
   @override
   void dispose() {
+    _disposed = true;
     _ragService.removeListener(_onServiceChanged);
     _settings.removeListener(_onSettingsChanged);
     super.dispose();
   }
 
-  void _onServiceChanged() => notifyListeners();
+  void _onServiceChanged() {
+    if (!_disposed) {
+      notifyListeners();
+    }
+  }
 
-  void _onSettingsChanged() => notifyListeners();
+  void _onSettingsChanged() {
+    if (!_disposed) {
+      notifyListeners();
+    }
+  }
 }

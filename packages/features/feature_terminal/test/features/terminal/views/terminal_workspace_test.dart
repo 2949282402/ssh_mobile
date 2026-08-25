@@ -295,5 +295,33 @@ void main() {
         expect(tester.takeException(), isNull);
       },
     );
+
+    testWidgets(
+      'shows AppTerminalSkeleton and indicator when restoring output',
+      (tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: Stack(
+                children: [
+                  const SizedBox.expand(child: Text('Terminal View Area')),
+                  const Positioned.fill(
+                    child: AppTerminalSkeleton(
+                      backgroundColor: Color(0xFF1E1E1E),
+                    ),
+                  ),
+                  const TerminalBufferedOutputIndicator(
+                    strings: TerminalStrings('en'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+
+        expect(find.byType(AppTerminalSkeleton), findsOneWidget);
+        expect(find.byType(TerminalBufferedOutputIndicator), findsOneWidget);
+      },
+    );
   });
 }
