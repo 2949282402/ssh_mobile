@@ -1040,6 +1040,7 @@ job_lan_network_v2() {
     test/features/lan_share/lan_e2e_encryption_test.dart
     test/features/lan_share/lan_pairing_v2_contract_test.dart
     test/features/lan_share/lan_storage_safety_v2_test.dart
+    test/features/lan_share/lan_runtime_restart_transfer_v2_test.dart
     test/services/lan_web_share_safety_test.dart
   )
   local web_share_tls_worker='tool/lan_web_share_tls_process.dart'

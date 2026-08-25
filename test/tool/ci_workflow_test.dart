@@ -134,6 +134,14 @@ void main() {
     );
   }
 
+  final lanNetworkV2Targeted = _jobSection(workflow, 'lan-network-v2-targeted');
+  _expect(
+    lanNetworkV2Targeted.contains(
+      'bash scripts/bash/ci/full_test.sh --no-bootstrap --only lan-network-v2-targeted',
+    ),
+    'lan-network-v2-targeted 必须调用 full_test.sh --only lan-network-v2-targeted',
+  );
+
   final architectureCheck = _jobSection(workflow, 'architecture-check');
   _expect(
     architectureCheck.contains('dart run tool/check_agent_docs.dart'),
@@ -302,6 +310,7 @@ const _requiredWorkflowMarkers = <String>[
   'architecture-check:',
   'admin-api-contract:',
   'sdk-dart-quality:',
+  'lan-network-v2-targeted:',
   'native-network-quality:',
   'relay-quality:',
   'protocol-v2-contract:',

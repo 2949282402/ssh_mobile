@@ -1,4 +1,4 @@
-最新更新时间：2026-08-25
+最新更新时间：2026-08-26
 
 # LAN Share Package Guidelines
 
@@ -35,9 +35,12 @@
   以及把显式 unpair 同步到 `removePeer` 的 Owner。LAN 离线、Discovery timeout、
   Relay disconnect、route change 或 Feature deactivate 只能失效动态 endpoint，
   不得删除 Trust；`removePeer` 仅由显式 trust revoke/unpair 触发。
-- 二进制 image/video/audio/file 统一走 Native Network V2 Transfer；不得保留
+- App peer ↔ App peer 间二进制 image/video/audio/file 统一走 Native Network V2 Transfer；不得保留
   `POST /api/lan/upload`、HTTP binary fallback 或第二套目录/多文件协议。当前 V2
   transfer contract 只接受 regular file，directory/multi-file 必须明确拒绝。
+  浏览器 WebShare 接入（Browser WebShare ingress）：由于浏览器环境限制无法运行 Native Network V2，
+  使用隔离且经过认证加密的 WebShare HTTP upload 边界（`POST /api/web/upload`）；
+  WebShare HTTP upload 严禁作为 App 间传输的降级后门。
 - 按 V2 控制面决定，text/clipboard 继续走 authenticated LAN HTTPS + application
   E2E；不得为了迁移创建临时 native message implementation，也不得提供明文或逐消息
   关闭 E2E 的开关。
