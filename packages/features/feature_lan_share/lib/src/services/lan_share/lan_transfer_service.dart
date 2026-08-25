@@ -38,6 +38,7 @@ class LanTransferService {
   final LanSecurityService securityService;
   final LanStorageService storageService;
   final Future<Uint8List> Function()? networkIdentityPublicKeyProvider;
+  final int? Function()? nativeTransferPortProvider;
   late final LanTransferProtocolGuard _protocolGuard;
 
   HttpServer? _server;
@@ -79,6 +80,7 @@ class LanTransferService {
     required this.securityService,
     required this.storageService,
     this.networkIdentityPublicKeyProvider,
+    this.nativeTransferPortProvider,
   }) {
     _protocolGuard = LanTransferProtocolGuard(
       currentDeviceId: currentDeviceId,
@@ -116,6 +118,9 @@ class LanTransferService {
 
   /// 返回已绑定监听端口；绑定前返回默认端口。
   int get activePort => _server?.port ?? defaultHttpPort;
+
+  /// native runtime 已配置时返回独立的可靠传输端口。
+  int? get activeNativeTransferPort => nativeTransferPortProvider?.call();
 
   /// 启动接收 LAN 传输的 HTTPS 服务。
   /// 按 [httpPortCandidates] 顺序尝试，直到一个端口绑定成功。
@@ -395,6 +400,12 @@ class LanTransferService {
     await _protocolGuard.authorize(request);
     final pubKeyBytes = await securityService.getStaticX25519PublicKeyBytes();
     final networkIdentityKey = await networkIdentityPublicKeyProvider?.call();
+    final nativeTransferPort = nativeTransferPortProvider?.call();
+    final nativeTransferReady =
+        networkIdentityKey != null &&
+        nativeTransferPort != null &&
+        nativeTransferPort >= 1 &&
+        nativeTransferPort <= 65535;
     request.response.statusCode = HttpStatus.ok;
     request.response.headers.contentType = ContentType.json;
     request.response.write(
@@ -403,8 +414,8 @@ class LanTransferService {
         'x25519PubKey': base64.encode(pubKeyBytes),
         if (networkIdentityKey != null)
           'networkIdentityPubKey': base64.encode(networkIdentityKey),
-        if (networkIdentityKey != null) 'quicFileTransfer': true,
-        if (networkIdentityKey != null) 'quicPort': activePort,
+        'quicFileTransfer': nativeTransferReady,
+        if (nativeTransferReady) 'quicPort': nativeTransferPort,
         'maxEncryptedFileBytes':
             LanTransferProtocolGuard.maxEncryptedUploadBytes,
       }),

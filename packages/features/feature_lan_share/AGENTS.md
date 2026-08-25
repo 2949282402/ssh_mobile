@@ -1,4 +1,4 @@
-最新更新时间：2026-08-24
+最新更新时间：2026-08-25
 
 # LAN Share Package Guidelines
 
@@ -30,6 +30,9 @@
 - Receiver 启动只确保 `NetworkCapability.runtime`，不得把 QUIC capability 当作
   native command gateway 的隐式前置条件；NetworkRuntime/native handle 仍由 App
   Scope Owner 释放。
+- Receiver 必须为 LAN HTTPS 与 native QUIC/TCP 配置独立端口，并只发布 native
+  实际绑定成功的端口。发送文件使用已发现或经认证 capabilities 返回的 native
+  端口，不得回退到 HTTPS 端口猜测。
 - Wave 1 当前唯一的数据面配置仍走现有 `ConfigureRuntime`，会无条件初始化直接
   QUIC/TCP 基础设施；QUIC-free WSS-only 数据面路径推迟到后续协议能力切换（Wave 2），
   当前并不存在。`runtime` 只表示 native command-worker handle 存在。

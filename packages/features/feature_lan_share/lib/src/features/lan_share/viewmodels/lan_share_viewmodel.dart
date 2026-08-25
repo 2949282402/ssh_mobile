@@ -59,6 +59,7 @@ class LanShareViewModel extends ChangeNotifier {
   /// 以设备标识为 key 的 X25519 公钥缓存（仅保存在内存）。
   final Map<String, Uint8List> _recipientPubKeyCache = {};
   final Map<String, Uint8List> _recipientNetworkIdentityKeyCache = {};
+  final Map<String, int> _recipientNativePortCache = {};
   final Map<String, int> _recipientEncryptedFileLimit = {};
   final _pairingRequestController =
       StreamController<LanPairingRequest>.broadcast();
@@ -563,7 +564,10 @@ class LanShareViewModel extends ChangeNotifier {
 
     await _saveMessageToDb(msg);
 
-    final capabilityResult = await fetchRecipientE2ECapabilities(device);
+    final capabilityResult = await fetchRecipientE2ECapabilities(
+      device,
+      requireNativeTransfer: true,
+    );
     if (capabilityResult is NetworkFailure<Uint8List>) {
       return _recordNetworkFailure(msg.id, capabilityResult.error);
     }
@@ -608,9 +612,21 @@ class LanShareViewModel extends ChangeNotifier {
         ),
       );
     }
+    final nativePort = _recipientNativePortCache[device.id];
+    if (nativePort == null) {
+      return _recordNetworkFailure(
+        msg.id,
+        NetworkError(
+          code: NetworkErrorCode.noRoute,
+          message: 'Recipient native transfer endpoint is unavailable.',
+          operation: NetworkOperation.sendFile,
+          peerId: device.id,
+        ),
+      );
+    }
     final endpoint = device.ip.contains(':')
-        ? '[${device.ip}]:${device.port}'
-        : '${device.ip}:${device.port}';
+        ? '[${device.ip}]:$nativePort'
+        : '${device.ip}:$nativePort';
     final connectResult = await facade.connectPeer(
       device.id,
       peer: PeerConfig(
@@ -650,9 +666,18 @@ class LanShareViewModel extends ChangeNotifier {
   /// 查询并缓存远端设备的 E2E 和原生身份密钥。
   /// 返回接收方 X25519 公钥或稳定的网络失败。
   Future<NetworkResult<Uint8List>> fetchRecipientE2ECapabilities(
-    LanDevice device,
-  ) async {
-    if (_recipientPubKeyCache.containsKey(device.id)) {
+    LanDevice device, {
+    bool requireNativeTransfer = false,
+  }) async {
+    final advertisedNativePort = device.nativePort;
+    if (advertisedNativePort != null &&
+        advertisedNativePort >= 1 &&
+        advertisedNativePort <= 65535) {
+      _recipientNativePortCache[device.id] = advertisedNativePort;
+    }
+    if (_recipientPubKeyCache.containsKey(device.id) &&
+        (!requireNativeTransfer ||
+            _recipientNativePortCache.containsKey(device.id))) {
       return NetworkSuccess(_recipientPubKeyCache[device.id]!);
     }
     final pinnedE2eKey = await securityService.getPeerX25519PublicKey(
@@ -663,7 +688,10 @@ class LanShareViewModel extends ChangeNotifier {
     if (pinnedE2eKey != null && pinnedIdentityKey != null) {
       _recipientPubKeyCache[device.id] = pinnedE2eKey;
       _recipientNetworkIdentityKeyCache[device.id] = pinnedIdentityKey;
-      return NetworkSuccess(pinnedE2eKey);
+      if (!requireNativeTransfer ||
+          _recipientNativePortCache.containsKey(device.id)) {
+        return NetworkSuccess(pinnedE2eKey);
+      }
     }
     HttpClient? client;
     try {
@@ -724,13 +752,28 @@ class LanShareViewModel extends ChangeNotifier {
         );
       }
       final identityKeyValue = json['networkIdentityPubKey'] as String?;
-      if (identityKeyValue != null && json['quicFileTransfer'] == true) {
+      final nativePort = (json['quicPort'] as num?)?.toInt();
+      if (identityKeyValue != null &&
+          json['quicFileTransfer'] == true &&
+          nativePort != null &&
+          nativePort >= 1 &&
+          nativePort <= 65535) {
         final identityKey = base64.decode(identityKeyValue);
         if (identityKey.length == 32) {
           _recipientNetworkIdentityKeyCache[device.id] = Uint8List.fromList(
             identityKey,
           );
+          _recipientNativePortCache[device.id] = nativePort;
         }
+      }
+      if (requireNativeTransfer &&
+          !_recipientNativePortCache.containsKey(device.id)) {
+        return _networkFailure(
+          code: NetworkErrorCode.noRoute,
+          message: 'Recipient native file transfer is unavailable.',
+          operation: NetworkOperation.fetchCapabilities,
+          peerId: device.id,
+        );
       }
       final remoteLimit = (json['maxEncryptedFileBytes'] as num?)?.toInt();
       if (remoteLimit != null && remoteLimit > 0) {
@@ -775,7 +818,10 @@ class LanShareViewModel extends ChangeNotifier {
   Future<void> _prepareFileTransferPeer(LanDevice device) async {
     final facade = networkFacade;
     if (facade == null) return;
-    final e2eResult = await fetchRecipientE2ECapabilities(device);
+    final e2eResult = await fetchRecipientE2ECapabilities(
+      device,
+      requireNativeTransfer: true,
+    );
     if (e2eResult is NetworkFailure<Uint8List>) {
       logger.warning(
         'Native peer capability query failed',
@@ -785,10 +831,11 @@ class LanShareViewModel extends ChangeNotifier {
     }
     final e2eKey = (e2eResult as NetworkSuccess<Uint8List>).data;
     final identityKey = _recipientNetworkIdentityKeyCache[device.id];
-    if (identityKey == null) return;
+    final nativePort = _recipientNativePortCache[device.id];
+    if (identityKey == null || nativePort == null) return;
     final endpoint = device.ip.contains(':')
-        ? '[${device.ip}]:${device.port}'
-        : '${device.ip}:${device.port}';
+        ? '[${device.ip}]:$nativePort'
+        : '${device.ip}:$nativePort';
     final connect = await facade.connectPeer(
       device.id,
       peer: PeerConfig(
@@ -844,6 +891,7 @@ class LanShareViewModel extends ChangeNotifier {
     await securityService.unpairDevice(deviceId);
     _recipientPubKeyCache.remove(deviceId);
     _recipientNetworkIdentityKeyCache.remove(deviceId);
+    _recipientNativePortCache.remove(deviceId);
     _recipientEncryptedFileLimit.remove(deviceId);
     if (!_disposed) notifyListeners();
   }

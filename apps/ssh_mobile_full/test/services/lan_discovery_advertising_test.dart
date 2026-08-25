@@ -7,6 +7,7 @@ import 'package:network_sdk/network_sdk.dart';
 
 class _RecordingLanDiscoveryService extends LanDiscoveryService {
   final List<int> startedPorts = [];
+  final List<int?> startedNativePorts = [];
   int stopCount = 0;
 
   _RecordingLanDiscoveryService()
@@ -16,8 +17,9 @@ class _RecordingLanDiscoveryService extends LanDiscoveryService {
       );
 
   @override
-  Future<void> performStartAdvertising(int port) async {
+  Future<void> performStartAdvertising(int port, {int? nativePort}) async {
     startedPorts.add(port);
+    startedNativePorts.add(nativePort);
   }
 
   @override
@@ -80,17 +82,19 @@ Future<void> _waitUntil(bool Function() predicate) async {
 
 void main() {
   test(
-    'alias re-registration preserves the active native HTTPS port',
+    'alias re-registration preserves HTTPS and native transfer ports',
     () async {
       final discovery = _RecordingLanDiscoveryService();
 
-      await discovery.startAdvertising(port: 61443);
+      await discovery.startAdvertising(port: 61443, nativePort: 61444);
       await discovery.updateDeviceAlias('Renamed device');
 
       expect(discovery.currentDeviceAlias, 'Renamed device');
       expect(discovery.startedPorts, [61443, 61443]);
+      expect(discovery.startedNativePorts, [61444, 61444]);
       expect(discovery.stopCount, 1);
       expect(discovery.advertisedPort, 61443);
+      expect(discovery.advertisedNativePort, 61444);
 
       discovery.dispose();
     },
@@ -110,12 +114,13 @@ void main() {
     expect(discovery.stopCount, 2);
   });
 
-  test('UDP PING advertises the native HTTPS port', () {
+  test('UDP PING separates HTTPS and native transfer ports', () {
     final payload = LanDiscoveryService.createUdpPingPayload(
       deviceId: 'local-device',
       alias: 'Desktop',
       os: 'windows',
       port: 62001,
+      nativePort: 62002,
     );
 
     expect(payload, {
@@ -123,6 +128,7 @@ void main() {
       'id': 'local-device',
       'alias': 'Desktop',
       'port': 62001,
+      'nativePort': 62002,
       'os': 'windows',
     });
   });

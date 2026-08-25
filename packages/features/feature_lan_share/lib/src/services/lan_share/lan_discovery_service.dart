@@ -43,6 +43,7 @@ class LanDiscoveryService {
 
   nsd.Registration? _registration;
   int? _advertisedPort;
+  int? _advertisedNativePort;
   nsd.Discovery? _discovery;
   RawDatagramSocket? _udpSocket;
   StreamSubscription<RawSocketEvent>? _udpSocketSubscription;
@@ -70,6 +71,9 @@ class LanDiscoveryService {
 
   /// 当前通过 mDNS 和 UDP 广播的原生 HTTPS 端口。
   int? get advertisedPort => _advertisedPort;
+
+  /// 当前广播的原生可靠传输端口。
+  int? get advertisedNativePort => _advertisedNativePort;
 
   HttpServer? _webShareServer;
   bool _isWebShareActive = false;
@@ -118,12 +122,13 @@ class LanDiscoveryService {
     }
     currentDeviceAlias = newAlias;
     final activePort = _advertisedPort;
+    final activeNativePort = _advertisedNativePort;
     if (activePort != null) {
       debugPrint(
         '[LanDiscoveryService] Restarting advertising with new alias: $newAlias',
       );
       await stopAdvertising();
-      await startAdvertising(port: activePort);
+      await startAdvertising(port: activePort, nativePort: activeNativePort);
     }
     return const NetworkSuccess<void>(null);
   }
@@ -250,7 +255,10 @@ class LanDiscoveryService {
   }
 
   /// 启动 mDNS 注册，向附近对端广播本设备。
-  Future<NetworkResult<void>> startAdvertising({int port = defaultPort}) {
+  Future<NetworkResult<void>> startAdvertising({
+    int port = defaultPort,
+    int? nativePort,
+  }) {
     if (_closing || _closed) {
       return Future.value(
         _closedFailure<void>(NetworkOperation.startAdvertising),
@@ -269,12 +277,13 @@ class LanDiscoveryService {
             _udpSocket != null) {
           await performStopAdvertising();
         }
-        await performStartAdvertising(port);
+        await performStartAdvertising(port, nativePort: nativePort);
         if (_closing || _closed || generation != _advertisingGeneration) {
           await performStopAdvertising();
           return _closedFailure<void>(NetworkOperation.startAdvertising);
         }
         _advertisedPort = port;
+        _advertisedNativePort = nativePort;
         return const NetworkSuccess<void>(null);
       } catch (error) {
         return NetworkFailure(
@@ -290,7 +299,7 @@ class LanDiscoveryService {
 
   /// 执行平台 mDNS/UDP 广播初始化。
   @protected
-  Future<void> performStartAdvertising(int port) async {
+  Future<void> performStartAdvertising(int port, {int? nativePort}) async {
     try {
       final ips = await getLocalIpAddresses();
       final primaryIp = ips.isNotEmpty ? ips.first : '0.0.0.0';
@@ -304,6 +313,8 @@ class LanDiscoveryService {
             'alias': utf8.encode(currentDeviceAlias),
             'os': utf8.encode(Platform.operatingSystem),
             'ip': utf8.encode(primaryIp),
+            if (nativePort != null)
+              'nativePort': utf8.encode(nativePort.toString()),
           },
         ),
       );
@@ -314,13 +325,14 @@ class LanDiscoveryService {
       debugPrint('[LanDiscoveryService] mDNS Advertising error: $e');
     }
 
-    await _startUdpListener(port);
+    await _startUdpListener(port, nativePort: nativePort);
   }
 
   /// 停止 mDNS 注册。
   Future<NetworkResult<void>> stopAdvertising() {
     _advertisingGeneration++;
     _advertisedPort = null;
+    _advertisedNativePort = null;
     return _enqueueAdvertisingLifecycle(() async {
       try {
         await performStopAdvertising();
@@ -551,6 +563,9 @@ class LanDiscoveryService {
       hostIp = hostIp.substring(7);
     }
     final port = service.port ?? defaultPort;
+    final nativePort = int.tryParse(
+      txt['nativePort'] == null ? '' : utf8.decode(txt['nativePort']!),
+    );
 
     if (hostIp.isEmpty) return;
 
@@ -559,6 +574,7 @@ class LanDiscoveryService {
       alias: alias,
       ip: hostIp,
       port: port,
+      nativePort: nativePort,
       deviceType: _guessDeviceType(os),
       osName: os,
       lastSeen: DateTime.now(),
@@ -625,7 +641,10 @@ class LanDiscoveryService {
 
   /// UDP 备用 ping 数据包监听器。
   /// 启动接收发现广播的 UDP 备用监听器。
-  Future<void> _startUdpListener(int listeningHttpPort) async {
+  Future<void> _startUdpListener(
+    int listeningHttpPort, {
+    int? nativePort,
+  }) async {
     try {
       final socket = await RawDatagramSocket.bind(
         InternetAddress.anyIPv4,
@@ -664,6 +683,7 @@ class LanDiscoveryService {
                 alias: json['alias'] as String? ?? 'Device',
                 ip: cleanHostIp,
                 port: (json['port'] as num?)?.toInt() ?? defaultPort,
+                nativePort: (json['nativePort'] as num?)?.toInt(),
                 deviceType: _guessDeviceType(json['os'] as String? ?? ''),
                 osName: json['os'] as String? ?? 'Unknown',
                 lastSeen: DateTime.now(),
@@ -676,7 +696,11 @@ class LanDiscoveryService {
             if (type == 'PING') {
               final senderId = json['id'] as String?;
               if (senderId != null && senderId != currentDeviceId) {
-                _sendUdpPong(datagram.address, listeningHttpPort);
+                _sendUdpPong(
+                  datagram.address,
+                  listeningHttpPort,
+                  nativePort: nativePort,
+                );
                 registerDiscoveredDevice(
                   senderId,
                   json,
@@ -721,7 +745,11 @@ class LanDiscoveryService {
   }
 
   /// 向发现 ping 发送 UDP 响应。
-  void _sendUdpPong(InternetAddress targetAddress, int port) {
+  void _sendUdpPong(
+    InternetAddress targetAddress,
+    int port, {
+    int? nativePort,
+  }) {
     final socket = _udpSocket;
     if (socket == null) return;
     try {
@@ -730,6 +758,7 @@ class LanDiscoveryService {
         'id': currentDeviceId,
         'alias': currentDeviceAlias,
         'port': port,
+        'nativePort': ?nativePort,
         'os': Platform.operatingSystem,
       });
       final bytes = utf8.encode(payload);
@@ -832,6 +861,7 @@ class LanDiscoveryService {
           alias: currentDeviceAlias,
           os: Platform.operatingSystem,
           port: _advertisedPort ?? defaultPort,
+          nativePort: _advertisedNativePort,
         ),
       );
       final bytes = utf8.encode(payload);
@@ -889,12 +919,14 @@ class LanDiscoveryService {
     required String alias,
     required String os,
     required int port,
+    int? nativePort,
   }) {
     return {
       'type': 'PING',
       'id': deviceId,
       'alias': alias,
       'port': port,
+      'nativePort': ?nativePort,
       'os': os,
     };
   }

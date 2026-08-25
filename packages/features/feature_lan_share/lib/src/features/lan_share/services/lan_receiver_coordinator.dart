@@ -420,6 +420,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
             networkIdentityPublicKeyProvider: identity == null
                 ? null
                 : () async => identity.publicKey,
+            nativeTransferPortProvider: () => networkFactory.boundLocalPort,
           );
 
       _discoveryService = discovery;
@@ -512,7 +513,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
         deviceId: appSettings.lanDeviceId,
         identityPrivateKey: identity.privateSeed,
         e2ePrivateKey: await security.getStaticX25519PrivateKeyBytes(),
-        listenAddress: '0.0.0.0:$boundPort',
+        listenAddress: '0.0.0.0:0',
         receiveDirectory: (await storage.getSandboxDirectory()).path,
       );
       if (facade == null) return;
@@ -521,7 +522,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
           deviceId: appSettings.lanDeviceId,
           identityPrivateKey: identity.privateSeed,
           e2ePrivateKey: await security.getStaticX25519PrivateKeyBytes(),
-          listenAddress: '0.0.0.0:$boundPort',
+          listenAddress: '0.0.0.0:0',
           receiveDirectory: (await storage.getSandboxDirectory()).path,
         ),
       );
@@ -533,7 +534,23 @@ final class LanReceiverCoordinator extends ChangeNotifier {
         await facade.dispose();
         return;
       }
+      final nativePort = networkFactory.boundLocalPort;
+      if (nativePort == null || nativePort < 1 || nativePort > 65535) {
+        logger.warning('Native network runtime did not publish its bound port');
+        await facade.dispose();
+        return;
+      }
       _networkFacade = facade;
+      final nativeAdvertisingResult = await discovery.startAdvertising(
+        port: boundPort,
+        nativePort: nativePort,
+      );
+      if (nativeAdvertisingResult is NetworkFailure<void>) {
+        logger.warning(
+          'LAN native endpoint advertising failed',
+          details: nativeAdvertisingResult.error.toString(),
+        );
+      }
       await _relayCoordinator?.attachFacade(facade);
       _relayCoordinator?.connectConfiguredInBackground();
     } on Object catch (error, stackTrace) {

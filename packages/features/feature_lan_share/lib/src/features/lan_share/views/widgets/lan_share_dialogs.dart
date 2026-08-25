@@ -102,6 +102,7 @@ extension _LanShareDialogActions on _LanShareScreenState {
   ) {
     String ip = '';
     int port = 53317;
+    int? nativePort;
     String? advertisedDeviceId;
     String? advertisedFingerprint;
 
@@ -124,12 +125,19 @@ extension _LanShareDialogActions on _LanShareScreenState {
           RegExp(r'^[0-9a-f]{64}$').hasMatch(fingerprint)) {
         advertisedFingerprint = fingerprint;
       }
-      final advertisedPort = int.tryParse(
+      final advertisedLanPort = int.tryParse(
+        uri.queryParameters['lanPort'] ?? '',
+      );
+      final advertisedNativePort = int.tryParse(
         uri.queryParameters['nativePort'] ?? '',
       );
-      port = advertisedPort ?? uri.port;
-      // 兼容未包含 nativePort 的旧二维码链接。
-      if (advertisedPort == null && port == 53319) {
+      // 新链接分别携带 HTTPS 控制端口和 native 文件传输端口；旧链接的
+      // nativePort 实际是 HTTPS 端口，继续按原有语义兼容。
+      port = advertisedLanPort ?? advertisedNativePort ?? uri.port;
+      nativePort = advertisedLanPort == null ? null : advertisedNativePort;
+      if (advertisedLanPort == null &&
+          advertisedNativePort == null &&
+          port == 53319) {
         port = 53317;
       }
     } else {
@@ -157,6 +165,7 @@ extension _LanShareDialogActions on _LanShareScreenState {
       alias: ip,
       ip: ip,
       port: port,
+      nativePort: nativePort,
       deviceType: LanDeviceType.mobile,
       osName: 'Unknown OS',
       certFingerprint: advertisedFingerprint,

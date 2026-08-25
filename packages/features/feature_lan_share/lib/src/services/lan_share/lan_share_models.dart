@@ -24,6 +24,7 @@ class LanDevice {
   final String alias;
   final String ip;
   final int port;
+  final int? nativePort;
   final LanDeviceType deviceType;
   final String osName;
   final String? certFingerprint;
@@ -35,6 +36,7 @@ class LanDevice {
     required this.alias,
     required this.ip,
     required this.port,
+    this.nativePort,
     required this.deviceType,
     required this.osName,
     this.certFingerprint,
@@ -47,6 +49,7 @@ class LanDevice {
     String? alias,
     String? ip,
     int? port,
+    int? nativePort,
     LanDeviceType? deviceType,
     String? osName,
     String? certFingerprint,
@@ -58,6 +61,7 @@ class LanDevice {
       alias: alias ?? this.alias,
       ip: ip ?? this.ip,
       port: port ?? this.port,
+      nativePort: nativePort ?? this.nativePort,
       deviceType: deviceType ?? this.deviceType,
       osName: osName ?? this.osName,
       certFingerprint: certFingerprint ?? this.certFingerprint,
@@ -71,6 +75,7 @@ class LanDevice {
     'alias': alias,
     'ip': ip,
     'port': port,
+    if (nativePort != null) 'nativePort': nativePort,
     'deviceType': deviceType.toJson(),
     'osName': osName,
     'certFingerprint': certFingerprint,
@@ -84,6 +89,7 @@ class LanDevice {
       alias: json['alias'] as String? ?? 'Unknown Device',
       ip: json['ip'] as String? ?? '',
       port: (json['port'] as num?)?.toInt() ?? 53317,
+      nativePort: (json['nativePort'] as num?)?.toInt(),
       deviceType: LanDeviceType.fromJson(json['deviceType'] as String? ?? ''),
       osName: json['osName'] as String? ?? 'Unknown OS',
       certFingerprint: json['certFingerprint'] as String?,

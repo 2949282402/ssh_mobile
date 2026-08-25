@@ -1,4 +1,4 @@
-> Last updated: 2026-08-24
+> Last updated: 2026-08-25
 
 # SDK Architecture
 
@@ -21,6 +21,9 @@ Ownership rules:
   native events without exposing SDP, ICE, sockets, or FFI handles to Features.
 - `network_transport` owns the single App-scoped native-runtime facade and
   lends bounded gateways; borrowers release subscriptions, not the native handle.
+  Its diagnostics may project the native listener's confirmed bound port to an
+  App Shell adapter, but that read-only value does not expose or transfer the
+  native handle, listener, or socket.
 - `ssh_mobile_network_native` owns the helper isolate and explicit native
   `start → stop → destroy` binding lifecycle. Its stable protocol facade
   delegates command encoding, event-envelope dispatch, typed domain mapping,

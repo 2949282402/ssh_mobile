@@ -93,19 +93,21 @@ void main() {
       final settings = FakeLanShareSettings();
       final networkService = FakeLanShareNetworkService();
       final networkRuntime = FakeLanShareNetworkRuntime();
+      final networkFactory = FakeLanShareNetworkFactory(
+        networkFacade: networkService,
+      );
+      final discovery = FakeLanDiscoveryService();
       final coordinator = LanReceiverCoordinator(
         appSettings: settings,
         logger: FakeLanShareLogger(),
         dataProtection: FakeLanShareDataProtection(),
         networkIdentity: FakeLanShareIdentity(),
-        networkFactory: FakeLanShareNetworkFactory(
-          networkFacade: networkService,
-        ),
+        networkFactory: networkFactory,
         bootstrapClient: FakeLanShareBootstrapClient(),
         historyRepository: LanShareHistoryRepository(database),
         networkRuntime: networkRuntime,
         transferServiceOverride: FakeLanTransferService(),
-        discoveryServiceOverride: FakeLanDiscoveryService(),
+        discoveryServiceOverride: discovery,
       );
 
       await coordinator.ensureInitialized();
@@ -119,6 +121,11 @@ void main() {
         isNot(contains(NetworkCapability.quic)),
       );
       expect(networkService.startCalls, 1);
+      expect(networkFactory.lastListenAddress, '0.0.0.0:0');
+      expect(discovery.advertisedEndpoints, [
+        (LanTransferService.defaultHttpPort, null),
+        (LanTransferService.defaultHttpPort, 43123),
+      ]);
 
       await coordinator.close();
       settings.dispose();

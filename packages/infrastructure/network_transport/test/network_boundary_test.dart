@@ -109,6 +109,9 @@ final class _BoundaryNativeHandle implements NativeNetworkHandle {
   Stream<Uint8List> get rawEvents => _events;
 
   @override
+  int? get boundLocalPort => closed ? null : 43123;
+
+  @override
   TransportOperationStatus sendCommand(Uint8List command) =>
       closed ? TransportOperationStatus.stopped : status;
 

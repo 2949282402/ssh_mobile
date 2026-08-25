@@ -791,6 +791,49 @@ void main() {
       expect(responseBody['paired'], isTrue);
     });
 
+    test(
+      'capabilities publishes the independent native transfer port',
+      () async {
+        const remoteId = 'remote_native_peer';
+        final token = await securityService.issueInboundAccessToken(remoteId);
+        await securityService.storeOutboundAccessToken(
+          remoteId,
+          'remote-token',
+        );
+        await securityService.storePeerCertificateFingerprint(
+          remoteId,
+          '0' * 64,
+        );
+        await securityService.pairDevice(remoteId);
+        final capabilityService = LanTransferService(
+          currentDeviceId: 'local_device_123',
+          securityService: securityService,
+          storageService: storageService,
+          networkIdentityPublicKeyProvider: () async => Uint8List(32),
+          nativeTransferPortProvider: () => 43123,
+        );
+        addTearDown(capabilityService.dispose);
+        final request = FakeHttpRequest(
+          uri: Uri.parse('/api/lan/capabilities'),
+          method: 'GET',
+          body: '',
+        );
+        request.requestHeaders.set('x-device-id', remoteId);
+        request.requestHeaders.set('authorization', 'Bearer $token');
+
+        capabilityService.handleHttpRequest(request);
+        await request.response.closed.timeout(const Duration(seconds: 2));
+
+        expect(request.response.statusCode, HttpStatus.ok);
+        final responseBody =
+            jsonDecode(request.response._body.toString())
+                as Map<String, dynamic>;
+        expect(responseBody['quicFileTransfer'], isTrue);
+        expect(responseBody['quicPort'], 43123);
+        expect(responseBody['quicPort'], isNot(transferService.activePort));
+      },
+    );
+
     test('post-pair APIs reject requests without credentials', () async {
       final endpoints = <({String method, String path, String body})>[
         (method: 'GET', path: '/api/lan/capabilities', body: ''),

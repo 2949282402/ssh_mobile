@@ -1,4 +1,4 @@
-最新更新时间：2026-08-24
+最新更新时间：2026-08-25
 
 # feature_lan_share
 
@@ -27,6 +27,9 @@ LAN Quick Share 的独立 Feature Package，负责设备发现、配对、HTTPS/
 - TLS context 与静态 X25519 密钥首次创建为单飞操作，TLS cache 绑定唯一
   device ID；所有 LAN 客户端端点用结构化 URI 构造、固定证书并关闭自动重定向。
   重复广播会先收敛旧 mDNS/UDP owner，旧 socket 回调不得读取新代次数据。
+- LAN HTTPS 控制端点与 native QUIC/TCP 文件端点使用独立端口。Receiver 让 native
+  绑定系统分配端口，再通过 mDNS/UDP、受认证 capabilities 和新二维码字段发布；
+  发送端不得把 `LanDevice.port`（HTTPS）复用为 native 文件传输端口。
 - Relay 设置页只接收当前会话的 enrollment Token；Token 不进入偏好设置、数据库、
   日志或导出。Relay origin 可持久化，但更换 origin 会先断开旧 socket 并清除旧
   enrollment。原生层只保持一个 Relay socket，直连优先、Relay 兜底；断线按

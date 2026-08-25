@@ -221,6 +221,9 @@ abstract interface class LanShareNetworkIdentityPort {
 /// Realtime 协调器和 native runtime）由 App 组合根注入，避免 Feature 直接依赖
 /// FFI 或平台实现。
 abstract interface class LanShareNetworkFactory {
+  /// 原生运行时配置后实际绑定的文件传输端口。
+  int? get boundLocalPort;
+
   /// 按当前监听器和密钥配置创建可选的 LAN [NetworkFacade]。
   Future<NetworkFacade?> create({
     required String deviceId,

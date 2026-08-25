@@ -8,6 +8,24 @@ import 'package:network_sdk/network_sdk.dart';
 import '../fakes/lan_share_test_fakes.dart';
 
 void main() {
+  test('LanDevice preserves the independent native transfer port', () {
+    final device = LanDevice(
+      id: 'peer-1',
+      alias: 'Peer 1',
+      ip: '192.168.1.5',
+      port: 5432,
+      nativePort: 6543,
+      deviceType: LanDeviceType.mobile,
+      osName: 'android',
+      lastSeen: DateTime.utc(2026, 8, 25),
+    );
+
+    final decoded = LanDevice.fromJson(device.toJson());
+
+    expect(decoded.port, 5432);
+    expect(decoded.nativePort, 6543);
+  });
+
   test('LanShareViewModel forgetDevice clears the paired device', () async {
     final security = FakeLanSecurityService();
     final settings = FakeLanShareSettings();
@@ -61,6 +79,7 @@ void main() {
           alias: 'Peer 1',
           ip: '192.168.1.5',
           port: 5432,
+          nativePort: 6543,
           deviceType: LanDeviceType.mobile,
           osName: 'android',
           lastSeen: DateTime.now(),
@@ -70,6 +89,7 @@ void main() {
 
       expect(result, isA<SdkSuccess<SdkTransferSession>>());
       expect(facade.connectPeerCalls, 1);
+      expect(facade.lastPeerConfig?.endpointAddress, '192.168.1.5:6543');
       expect(facade.transferFileCalls, 1);
       viewModel.dispose();
     },

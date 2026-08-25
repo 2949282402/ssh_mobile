@@ -1,4 +1,4 @@
-> Last updated: 2026-08-24
+> Last updated: 2026-08-25
 
 # LAN Share Feature Memory
 
@@ -49,6 +49,10 @@ explicit and configuration-controlled, not an import or app-start side effect.
   pinning, direct connections, and disabled redirects. Advertising restart
   releases the previous mDNS/UDP generation; callbacks and delayed sends retain
   the socket identity they were created with.
+- LAN HTTPS and native reliable file transfer use separate listening ports.
+  Receiver configuration binds native transport ephemerally and advertises the
+  confirmed port through discovery and authenticated capabilities; senders do
+  not reuse the HTTPS port as a native endpoint.
 - Final Receiver release awaits Discovery/WebShare first and Transfer second.
   Each service serializes in-flight starts/stops, closes sockets/servers before
   event streams, and rejects late publication after shutdown begins. The

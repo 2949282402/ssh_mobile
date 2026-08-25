@@ -190,6 +190,9 @@ final class _FakeNetworkFactory implements LanShareNetworkFactory {
   int createCalls = 0;
 
   @override
+  int? get boundLocalPort => 43123;
+
+  @override
   Future<NetworkFacade?> create({
     required String deviceId,
     required Uint8List identityPrivateKey,

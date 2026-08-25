@@ -379,6 +379,9 @@ final class AppLanShareNetworkFactory implements lan.LanShareNetworkFactory {
   final sdk.RealtimeClient _realtimeClient;
 
   @override
+  int? get boundLocalPort => _networkRuntime.diagnostics.boundLocalPort;
+
+  @override
   Future<sdk.NetworkFacade?> create({
     required String deviceId,
     required Uint8List identityPrivateKey,

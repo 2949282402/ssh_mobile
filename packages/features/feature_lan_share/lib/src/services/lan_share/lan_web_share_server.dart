@@ -117,7 +117,9 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
         port: boundPort,
         queryParameters: {
           'deviceId': currentDeviceId,
-          'nativePort': transferService.activePort.toString(),
+          'lanPort': transferService.activePort.toString(),
+          if (transferService.activeNativeTransferPort case final port?)
+            'nativePort': port.toString(),
           'access': webShareToken,
           'certFingerprint': certFingerprint,
         },

@@ -114,12 +114,16 @@ final class FakeLanShareIdentity implements LanShareNetworkIdentityPort {
 }
 
 final class FakeLanShareNetworkFactory implements LanShareNetworkFactory {
-  FakeLanShareNetworkFactory({this.networkFacade});
+  FakeLanShareNetworkFactory({this.networkFacade, this.boundLocalPort = 43123});
 
   int createCalls = 0;
+  String? lastListenAddress;
 
   /// 返回给协调器的 NetworkFacade；null 模拟 App Shell 未创建原生门面。
   final NetworkFacade? networkFacade;
+
+  @override
+  final int? boundLocalPort;
 
   @override
   Future<NetworkFacade?> create({
@@ -130,6 +134,7 @@ final class FakeLanShareNetworkFactory implements LanShareNetworkFactory {
     required String receiveDirectory,
   }) async {
     createCalls++;
+    lastListenAddress = listenAddress;
     return networkFacade;
   }
 }
@@ -197,6 +202,7 @@ final class FakeLanShareNetworkService implements NetworkFacade {
   int disconnectRelayCalls = 0;
   int connectPeerCalls = 0;
   int transferFileCalls = 0;
+  SdkPeerConfig? lastPeerConfig;
   int _eventSequence = 0;
   bool disposed = false;
 
@@ -246,6 +252,7 @@ final class FakeLanShareNetworkService implements NetworkFacade {
     CommunicationClass communicationClass = CommunicationClass.reliableStream,
   }) async {
     connectPeerCalls++;
+    lastPeerConfig = peer;
     return const SdkSuccess<void>(null);
   }
 
@@ -381,6 +388,7 @@ final class FakeLanDiscoveryService extends Fake
   final bool activeWebShare;
   final String? shareUrl;
   bool disposed = false;
+  final List<(int, int?)> advertisedEndpoints = <(int, int?)>[];
 
   @override
   bool get isScanning => false;
@@ -404,7 +412,11 @@ final class FakeLanDiscoveryService extends Fake
   @override
   Future<NetworkResult<void>> startAdvertising({
     int port = LanDiscoveryService.defaultPort,
-  }) async => const NetworkSuccess<void>(null);
+    int? nativePort,
+  }) async {
+    advertisedEndpoints.add((port, nativePort));
+    return const NetworkSuccess<void>(null);
+  }
 
   @override
   Future<NetworkResult<void>> stopDiscovery() async =>

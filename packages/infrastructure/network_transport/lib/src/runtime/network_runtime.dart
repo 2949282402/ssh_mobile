@@ -39,6 +39,7 @@ final class NetworkRuntimeDiagnostics {
     required this.activeConnections,
     required this.nativeHandles,
     required Iterable<NetworkCapability> readyCapabilities,
+    this.boundLocalPort,
   }) : readyCapabilities = List.unmodifiable(readyCapabilities);
 
   /// 当前 Runtime 生命周期状态。
@@ -49,6 +50,9 @@ final class NetworkRuntimeDiagnostics {
 
   /// 当前由 Runtime 持有的 native handle 数量。
   final int nativeHandles;
+
+  /// native runtime 配置后实际绑定的可靠传输端口。
+  final int? boundLocalPort;
 
   /// 已成功初始化的 Capability。`runtime` 表示 App Scope native handle 已可用，
   /// 其余枚举值表示对应的具体传输/Realtime 能力已获准初始化。
