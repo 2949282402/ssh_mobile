@@ -55,7 +55,7 @@ func (s *Server) adminLoginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !s.admin.configured {
-		writeAdminError(w, http.StatusServiceUnavailable, adminErrorAuthenticationFailed, "Administrator authentication is not configured.")
+		writeAdminError(w, http.StatusServiceUnavailable, adminErrorUnauthorized, "Administrator authentication is not configured.")
 		return
 	}
 
@@ -65,7 +65,7 @@ func (s *Server) adminLoginHandler(w http.ResponseWriter, r *http.Request) {
 
 	if !userMatch || !passwordMatch {
 		s.recordLoginFailure(ip)
-		writeAdminError(w, http.StatusUnauthorized, adminErrorAuthenticationFailed, "Invalid administrator credentials.")
+		writeAdminError(w, http.StatusUnauthorized, adminErrorUnauthorized, "Administrator authentication failed.")
 		return
 	}
 
@@ -74,7 +74,7 @@ func (s *Server) adminLoginHandler(w http.ResponseWriter, r *http.Request) {
 	token := hex.EncodeToString(randomBytes(32))
 	if err := s.sessionStore.Create(r.Context(), token, s.config.SessionTTL); err != nil {
 		if errors.Is(err, errSessionCapacity) {
-			writeAdminError(w, http.StatusTooManyRequests, adminErrorResourceLimit, "Administrator session capacity reached.")
+			writeAdminError(w, http.StatusTooManyRequests, adminErrorResourceLimit, "Administrator session capacity is temporarily exhausted.")
 			return
 		}
 		writeAdminError(w, http.StatusServiceUnavailable, adminErrorInternal, "Failed to create administrator session.")
@@ -91,7 +91,9 @@ func (s *Server) adminLoginHandler(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   int(s.config.SessionTTL.Seconds()),
 	})
 
-	_ = json.NewEncoder(w).Encode(map[string]bool{"authenticated": true})
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"username": s.admin.user})
 }
 
 func (s *Server) adminLogoutHandler(w http.ResponseWriter, r *http.Request) {
@@ -114,13 +116,20 @@ func (s *Server) adminLogoutHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) adminSessionHandler(w http.ResponseWriter, r *http.Request) {
 	authenticated := false
+	username := ""
 	if cookie, err := r.Cookie(sessionCookieName); err == nil && cookie.Value != "" {
 		if exists, _ := s.sessionStore.Exists(r.Context(), cookie.Value); exists {
 			authenticated = true
+			username = s.admin.user
 		}
 	}
 
-	_ = json.NewEncoder(w).Encode(map[string]bool{"authenticated": authenticated})
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"authenticated": authenticated,
+		"username":      username,
+	})
 }
 
 func (s *Server) isLoginBlocked(ip string) bool {

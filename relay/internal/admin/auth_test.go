@@ -50,8 +50,8 @@ func TestAdminAuthLoginSuccessAndSessionCheck(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("login status = %d, want 200. Body: %s", rec.Code, rec.Body.String())
 	}
-	var loginResp map[string]bool
-	if err := json.Unmarshal(rec.Body.Bytes(), &loginResp); err != nil || !loginResp["authenticated"] {
+	var loginResp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &loginResp); err != nil || loginResp["username"] != user {
 		t.Fatalf("unexpected login response: %+v", loginResp)
 	}
 
@@ -76,9 +76,12 @@ func TestAdminAuthLoginSuccessAndSessionCheck(t *testing.T) {
 	if sessionRec.Code != http.StatusOK {
 		t.Fatalf("session check status = %d, want 200", sessionRec.Code)
 	}
-	var sessionResp map[string]bool
-	if err := json.Unmarshal(sessionRec.Body.Bytes(), &sessionResp); err != nil || !sessionResp["authenticated"] {
-		t.Fatalf("expected session authenticated=true, got %+v", sessionResp)
+	var sessionResp struct {
+		Authenticated bool   `json:"authenticated"`
+		Username      string `json:"username"`
+	}
+	if err := json.Unmarshal(sessionRec.Body.Bytes(), &sessionResp); err != nil || !sessionResp.Authenticated || sessionResp.Username != user {
+		t.Fatalf("expected session authenticated=true for user %s, got %+v", user, sessionResp)
 	}
 
 	// 3. Logout
@@ -97,8 +100,11 @@ func TestAdminAuthLoginSuccessAndSessionCheck(t *testing.T) {
 	sessionRec2 := httptest.NewRecorder()
 	mux.ServeHTTP(sessionRec2, sessionReq2)
 
-	var sessionResp2 map[string]bool
-	if err := json.Unmarshal(sessionRec2.Body.Bytes(), &sessionResp2); err != nil || sessionResp2["authenticated"] {
+	var sessionResp2 struct {
+		Authenticated bool   `json:"authenticated"`
+		Username      string `json:"username"`
+	}
+	if err := json.Unmarshal(sessionRec2.Body.Bytes(), &sessionResp2); err != nil || sessionResp2.Authenticated {
 		t.Fatalf("expected session authenticated=false after logout, got %+v", sessionResp2)
 	}
 }

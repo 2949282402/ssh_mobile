@@ -28,7 +28,7 @@ done
   cd "$ROOT_DIR/relay"
   GOCACHE="$CONTRACT_GOCACHE" \
     SSH_MOBILE_ADMIN_CONTRACT_FIXTURE="$FIXTURE_FILE" \
-    go test ./internal/relay -run '^TestExportAdminAPIContractFixture$' -count=1
+    go test ./internal/admin -run '^TestExportAdminAPIContractFixture$' -count=1
 )
 
 if [[ ! -s "$FIXTURE_FILE" ]]; then
@@ -42,4 +42,4 @@ fi
     npm run test:run -- src/schemas/admin-contract.test.ts
 )
 
-echo 'Front ↔ Relay administrator API contract passed.'
+echo 'Front ↔ Admin API contract passed.'

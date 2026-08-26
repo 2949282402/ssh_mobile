@@ -8,13 +8,15 @@ import (
 )
 
 const (
-	adminErrorInvalidRequest      = "invalid_request"
-	adminErrorAuthenticationFailed = "authentication_failed"
-	adminErrorResourceLimit       = "resource_limit"
-	adminErrorConflict            = "conflict"
-	adminErrorDeviceNotFound      = "device_not_found"
-	adminErrorInternal            = "internal_error"
-	adminErrorRelayUnavailable    = "relay_unavailable"
+	adminErrorInvalidRequest   = "invalid_request"
+	adminErrorUnauthorized     = "unauthorized"
+	adminErrorForbidden        = "forbidden"
+	adminErrorRateLimited      = "rate_limited"
+	adminErrorResourceLimit    = "resource_limit"
+	adminErrorConflict         = "conflict"
+	adminErrorDeviceNotFound   = "device_not_found"
+	adminErrorInternal         = "internal_error"
+	adminErrorRelayUnavailable = "relay_unavailable"
 )
 
 type adminErrorEnvelope struct {

@@ -96,7 +96,7 @@ func (s *Server) adminStateChangeMiddleware(next http.HandlerFunc) http.HandlerF
 			if origin != "" {
 				originURL, err := url.Parse(origin)
 				if err != nil || originURL.Host != r.Host {
-					writeAdminError(w, http.StatusForbidden, adminErrorAuthenticationFailed, "Same-origin verification failed.")
+					writeAdminError(w, http.StatusForbidden, adminErrorForbidden, "Administrator request origin is not allowed.")
 					return
 				}
 			}
@@ -109,7 +109,7 @@ func (s *Server) adminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cookie, err := r.Cookie(sessionCookieName)
 		if err != nil || cookie.Value == "" {
-			writeAdminError(w, http.StatusUnauthorized, adminErrorAuthenticationFailed, "Administrator authentication required.")
+			writeAdminError(w, http.StatusUnauthorized, adminErrorUnauthorized, "Administrator authentication failed.")
 			return
 		}
 
@@ -119,7 +119,7 @@ func (s *Server) adminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		if !exists {
-			writeAdminError(w, http.StatusUnauthorized, adminErrorAuthenticationFailed, "Administrator session has expired or is invalid.")
+			writeAdminError(w, http.StatusUnauthorized, adminErrorUnauthorized, "Administrator authentication failed.")
 			return
 		}
 
