@@ -2,11 +2,11 @@ package relay
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/hex"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"testing"
 	"time"
@@ -113,12 +113,8 @@ func TestNetworkV2RevokeAdmissionMatrix(t *testing.T) {
 	readRelayDataPairReady(t, activeA, active.ReservationID)
 	readRelayDataPairReady(t, activeB, active.ReservationID)
 
-	revokeRequest := httptest.NewRequest(http.MethodPost, "/api/admin/v1/devices/device-a/revoke", nil)
-	revokeRequest.SetPathValue("deviceId", "device-a")
-	revokeResponse := httptest.NewRecorder()
-	server.adminRevokeDevice(revokeResponse, revokeRequest)
-	if revokeResponse.Code != http.StatusNoContent {
-		t.Fatalf("revoke failed: got %d", revokeResponse.Code)
+	if outcome, err := server.RevokeDevice(context.Background(), "device-a"); err != nil || outcome != RevokeStatusOK {
+		t.Fatalf("revoke failed: outcome=%v err=%v", outcome, err)
 	}
 
 	if frame := readV2DataFrameDeadline(t, pendingA, 2*time.Second); frame == nil || frame.GetClose() == nil {

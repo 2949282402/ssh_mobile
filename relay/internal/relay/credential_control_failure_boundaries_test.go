@@ -9,8 +9,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -132,8 +130,6 @@ func TestConfigParsingAndEndpointFallbackBoundaries(t *testing.T) {
 		t.Helper()
 		t.Setenv("RELAY_ENROLLMENT_TOKEN", "0123456789abcdef")
 		t.Setenv("RELAY_CREDENTIAL_KEY", "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE")
-		t.Setenv("RELAY_ADMIN_USER", "admin")
-		t.Setenv("RELAY_ADMIN_PASSWORD", "long-random-password")
 		t.Setenv("RELAY_STORAGE_MODE", "memory")
 		t.Setenv("RELAY_PUBLIC_URL", "wss://relay.example.test")
 	}
@@ -179,75 +175,6 @@ func TestConfigParsingAndEndpointFallbackBoundaries(t *testing.T) {
 		if got := relayDataEndpointOrigin(Config{Address: test.address}); got != test.want {
 			t.Errorf("relayDataEndpointOrigin(%q)=%q, want %q", test.address, got, test.want)
 		}
-	}
-}
-
-func TestAdminLoginLimitPreservesBlockedKeysAtCapacity(t *testing.T) {
-	server := NewServer(Config{
-		CredentialKey:           []byte(mysqlTestCredentialKey),
-		EnrollmentToken:         "test-token",
-		MaxAdminLoginEntries:    2,
-		AdminLoginMaxAttempts:   1,
-		AdminLoginWindow:        time.Minute,
-		AdminLoginBlockDuration: time.Minute,
-	})
-	defer server.Close()
-
-	if allowed, _ := server.allowAdminLogin("client", "administrator"); !allowed {
-		t.Fatal("first administrator attempt was rejected")
-	}
-	if allowed, retry := server.allowAdminLogin("client", "administrator"); allowed || retry <= 0 {
-		t.Fatalf("administrator key was not blocked: allowed=%v retry=%s", allowed, retry)
-	}
-	if allowed, _ := server.allowAdminLogin("client", "filler"); !allowed {
-		t.Fatal("filler key was rejected before capacity")
-	}
-	if allowed, retry := server.allowAdminLogin("client", "fresh"); allowed || retry <= 0 {
-		t.Fatalf("fresh key at capacity = allowed=%v retry=%s, want fail-closed", allowed, retry)
-	}
-
-	targetKey := adminLoginKey("client", "administrator")
-	fillerKey := adminLoginKey("client", "filler")
-	freshKey := adminLoginKey("client", "fresh")
-	server.admin.mutex.Lock()
-	target, targetPresent := server.admin.loginAttempts[targetKey]
-	_, fillerPresent := server.admin.loginAttempts[fillerKey]
-	_, freshPresent := server.admin.loginAttempts[freshKey]
-	server.admin.mutex.Unlock()
-	if !targetPresent || !fillerPresent || freshPresent || !target.blockedUntil.After(time.Now()) {
-		t.Fatalf("login limiter capacity state: target=%+v targetPresent=%v fillerPresent=%v freshPresent=%v",
-			target, targetPresent, fillerPresent, freshPresent)
-	}
-	if allowed, retry := server.allowAdminLogin("client", "administrator"); allowed || retry <= 0 {
-		t.Fatalf("blocked administrator key was bypassed after capacity pressure: allowed=%v retry=%s", allowed, retry)
-	}
-}
-
-func TestAdminRevokeDeviceRequestBoundaries(t *testing.T) {
-	server := NewServer(Config{CredentialKey: []byte(mysqlTestCredentialKey), EnrollmentToken: "test-token"})
-	defer server.Close()
-	for name, request := range map[string]*http.Request{
-		"missing": httptest.NewRequest(http.MethodPost, "/api/admin/v1/devices//revoke", nil),
-		"too long": func() *http.Request {
-			r := httptest.NewRequest(http.MethodPost, "/api/admin/v1/devices/revoke", nil)
-			r.SetPathValue("deviceId", string(make([]byte, 129)))
-			return r
-		}(),
-	} {
-		t.Run(name, func(t *testing.T) {
-			rec := httptest.NewRecorder()
-			server.adminRevokeDevice(rec, request)
-			if rec.Code != http.StatusBadRequest {
-				t.Fatalf("invalid revoke request status=%d body=%s", rec.Code, rec.Body.String())
-			}
-		})
-	}
-	request := httptest.NewRequest(http.MethodPost, "/api/admin/v1/devices/missing/revoke", nil)
-	request.SetPathValue("deviceId", "missing")
-	rec := httptest.NewRecorder()
-	server.adminRevokeDevice(rec, request)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("unknown device revoke status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -690,24 +617,6 @@ func TestHubStageAdmissionStripeHonorsCallerDeadline(t *testing.T) {
 	case <-peer.done:
 	default:
 		t.Fatal("deadline-rejected staged peer was not closed")
-	}
-}
-
-func TestAdminRateLimitResponseBoundaries(t *testing.T) {
-	for _, test := range []struct {
-		name, wantRetry string
-		delay           time.Duration
-	}{
-		{name: "minimum retry", wantRetry: "1", delay: 0},
-		{name: "rounded retry", wantRetry: "2", delay: 1500 * time.Millisecond},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			rec := httptest.NewRecorder()
-			writeAdminRateLimit(rec, test.delay)
-			if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != test.wantRetry {
-				t.Fatalf("rate limit response status=%d retry=%q", rec.Code, rec.Header().Get("Retry-After"))
-			}
-		})
 	}
 }
 

@@ -160,12 +160,9 @@ func TestAuthenticatedDeviceAdmissionRechecksRevocation(t *testing.T) {
 		t.Fatalf("valid proof was rejected before revoke: ok=%v code=%d", ok, code)
 	}
 
-	revokeRequest := httptest.NewRequest(http.MethodPost, "/api/admin/v1/devices/device-a/revoke", nil)
-	revokeRequest.SetPathValue("deviceId", "device-a")
-	revokeResponse := httptest.NewRecorder()
-	server.adminRevokeDevice(revokeResponse, revokeRequest)
-	if revokeResponse.Code != http.StatusNoContent {
-		t.Fatalf("revoke failed: got %d", revokeResponse.Code)
+	outcome, err := server.RevokeDevice(context.Background(), "device-a")
+	if err != nil || outcome != RevokeStatusOK {
+		t.Fatalf("revoke failed: outcome=%v err=%v", outcome, err)
 	}
 
 	admission, admissionCode, admitted := server.admitAuthenticatedDevice(
@@ -182,10 +179,10 @@ func TestAuthenticatedDeviceAdmissionRechecksRevocation(t *testing.T) {
 	}
 }
 
-// TestAdminRevokeReturnsErrorWhenRevokeFails verifies the revoke handler reports
-// 500 instead of a false 204 when the atomic revoke fails, so the operator knows
-// the revocation did not fully land.
-func TestAdminRevokeReturnsErrorWhenRevokeFails(t *testing.T) {
+// TestRevokeReturnsErrorWhenRevokeFails verifies the internal revoke surfaces
+// the store failure so operators know the revocation did not fully land, instead
+// of a false success when the atomic revoke fails.
+func TestRevokeReturnsErrorWhenRevokeFails(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte(mysqlTestCredentialKey),
 		EnrollmentToken: "test-token",
@@ -197,12 +194,12 @@ func TestAdminRevokeReturnsErrorWhenRevokeFails(t *testing.T) {
 	}
 	server.store = failingRevokeStore{Storage: server.store}
 
-	request := httptest.NewRequest(http.MethodPost, "/api/admin/v1/devices/device-a/revoke", nil)
-	request.SetPathValue("deviceId", "device-a")
-	rec := httptest.NewRecorder()
-	server.adminRevokeDevice(rec, request)
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500 when enrollment delete fails, got %d", rec.Code)
+	outcome, err := server.RevokeDevice(context.Background(), "device-a")
+	if err == nil {
+		t.Fatal("expected an error when the revocation store fails")
+	}
+	if outcome != RevokeStatusUnavailable {
+		t.Fatalf("expected revoke status unavailable, got %v", outcome)
 	}
 }
 
@@ -256,12 +253,12 @@ func TestDisconnectDeviceDoesNotClearForeignPresence(t *testing.T) {
 	}
 }
 
-// TestAdminDeviceSnapshotSourcesRemoteAddrFromLease pins the cross-instance admin
-// fix: a device whose presence lease was written by another instance (no local
-// peer in this hub) must still show online with the lease's RemoteAddr — the old
-// code read the local hub peer table, which is empty for a cross-instance device,
-// and reported an empty address.
-func TestAdminDeviceSnapshotSourcesRemoteAddrFromLease(t *testing.T) {
+// TestDeviceSnapshotSourcesRemoteAddrFromLease pins the cross-instance device
+// snapshot fix: a device whose presence lease was written by another instance
+// (no local peer in this hub) must still show online with the lease's RemoteAddr
+// — the old code read the local hub peer table, which is empty for a
+// cross-instance device, and reported an empty address.
+func TestDeviceSnapshotSourcesRemoteAddrFromLease(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte(mysqlTestCredentialKey),
 		EnrollmentToken: "test-token",
@@ -278,12 +275,12 @@ func TestAdminDeviceSnapshotSourcesRemoteAddrFromLease(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	items, presenceAvailable, err := server.adminDeviceSnapshot()
+	items, presenceAvailable, err := server.ListDevices(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !presenceAvailable || len(items) != 1 || !items[0].Online || items[0].RemoteAddr != "203.0.113.9:9000" {
-		t.Fatalf("admin snapshot should show the cross-instance device online with the lease address: %+v", items)
+		t.Fatalf("device snapshot should show the cross-instance device online with the lease address: %+v", items)
 	}
 }
 
@@ -636,9 +633,7 @@ func TestSameDeviceRevokeReEnrollSerialized(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			request := httptest.NewRequest(http.MethodPost, "/api/admin/v1/devices/device-a/revoke", nil)
-			request.SetPathValue("deviceId", "device-a")
-			server.adminRevokeDevice(httptest.NewRecorder(), request)
+			_, _ = server.RevokeDevice(ctx, "device-a")
 		}()
 		go func() {
 			defer wg.Done()

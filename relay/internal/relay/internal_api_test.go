@@ -93,7 +93,7 @@ func TestInternalAPIStatusAndDevices(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status code = %d, want 200. Body: %s", rec.Code, rec.Body.String())
 	}
-	var statusResp adminOverviewResponse
+	var statusResp internalStatusResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &statusResp); err != nil {
 		t.Fatalf("decode status response: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestInternalAPIStatusAndDevices(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("devices code = %d, want 200. Body: %s", rec.Code, rec.Body.String())
 	}
-	var devicesResp adminDevicesResponse
+	var devicesResp internalDevicesResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &devicesResp); err != nil {
 		t.Fatalf("decode devices response: %v", err)
 	}

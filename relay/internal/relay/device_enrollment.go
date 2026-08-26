@@ -147,8 +147,8 @@ func (s *Server) enrollWithExpectedProtocolVersion(w http.ResponseWriter, r *htt
 	result, generation := s.replaceEnrollmentContext(r.Context(), request.DeviceID, request.PublicKey, request.Platform, request.ProtocolVersion, now)
 	switch result {
 	case enrollmentIdentityConflict:
-		// 与 admin 面既有的 conflict 分类（adminErrorConflict）语义一致：在既有
-		// enrollment 之下更换了身份材料，必须显式解决而非静默覆盖。
+		// 与管理面既有的 conflict 分类语义一致：在既有 enrollment 之下更换了
+		// 身份材料，必须显式解决而非静默覆盖。
 		writeNetworkError(w, http.StatusConflict, relayErrorIdentityConflict, "Relay device identity conflicts with an existing enrollment.", "enroll_relay", request.DeviceID)
 		return
 	case enrollmentResourceLimit:
@@ -340,7 +340,7 @@ func (admission *authenticatedDeviceAdmission) release() {
 }
 
 // admitAuthenticatedDevice serializes the interval between successful proof
-// authentication and socket admission with admin revocation/re-enrollment.
+// authentication and socket admission with revocation/re-enrollment.
 // authenticatedRequest intentionally releases its lock after consuming the
 // nonce; callers must retain this admission object until a staged endpoint has
 // passed its second durable check and becomes reachable. The shared context is

@@ -23,15 +23,13 @@ func TestPreSplitCharacterization(t *testing.T) {
 	ctx := context.Background()
 	credentialKey := []byte("01234567890123456789012345678901")
 	enrollmentToken := "characterization-enrollment-token"
-	adminUser := "admin"
-	adminPass := "char-admin-pass-123456"
+	internalToken := "0123456789abcdef0123456789abcdef"
 
 	cfg := Config{
 		CredentialKey:   credentialKey,
 		CredentialTTL:   time.Hour,
 		EnrollmentToken: enrollmentToken,
-		AdminUser:       adminUser,
-		AdminPassword:   adminPass,
+		InternalToken:   internalToken,
 	}
 
 	server := NewServer(cfg)
@@ -119,50 +117,32 @@ func TestPreSplitCharacterization(t *testing.T) {
 		t.Fatalf("Unexpected refresh response: %+v", refreshResp)
 	}
 
-	// 4. Lock Admin Auth and Overview
-	loginReq := map[string]string{
-		"username": adminUser,
-		"password": adminPass,
-	}
-	loginData, _ := json.Marshal(loginReq)
-	req = httptest.NewRequest(http.MethodPost, "/api/admin/v1/auth/login", bytes.NewReader(loginData))
-	req.Header.Set("Content-Type", "application/json")
-	rec = httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("Admin login status = %d; want %d. Body: %s", rec.Code, http.StatusOK, rec.Body.String())
-	}
-	cookies := rec.Result().Cookies()
-	var sessionCookie *http.Cookie
-	for _, c := range cookies {
-		if c.Name == "relay_session" {
-			sessionCookie = c
-			break
-		}
-	}
-	if sessionCookie == nil {
-		t.Fatalf("Expected relay_session cookie from login")
-	}
-
-	// Admin Overview with cookie
+	// 4. The legacy Admin API is retired on the Relay: /api/admin/v1/* returns 404.
 	req = httptest.NewRequest(http.MethodGet, "/api/admin/v1/overview", nil)
-	req.AddCookie(sessionCookie)
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("Legacy admin overview status = %d; want 404. Body: %s", rec.Code, rec.Body.String())
+	}
 
+	// 5. The internal management status endpoint is available under the internal
+	// token: /internal/v2/status returns 200 with the runtime snapshot.
+	req = httptest.NewRequest(http.MethodGet, PathInternalStatusV2, nil)
+	req.Header.Set("Authorization", "Bearer "+internalToken)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("Admin overview status = %d; want %d. Body: %s", rec.Code, http.StatusOK, rec.Body.String())
+		t.Fatalf("Internal status status = %d; want %d. Body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	var overviewResp map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &overviewResp); err != nil {
-		t.Fatalf("Unmarshal overview response error: %v", err)
+	var statusResp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &statusResp); err != nil {
+		t.Fatalf("Unmarshal internal status response error: %v", err)
 	}
-	if _, ok := overviewResp["server_time"]; !ok {
-		t.Fatalf("Expected server_time in overview: %+v", overviewResp)
+	if _, ok := statusResp["server_time"]; !ok {
+		t.Fatalf("Expected server_time in internal status: %+v", statusResp)
 	}
 
-	// 5. Verify durable enrollment exists in store
+	// 6. Verify durable enrollment exists in store
 	enrollment, err := server.store.GetEnrollment(ctx, "char-device-1")
 	if err != nil || enrollment == nil {
 		t.Fatalf("Expected durable enrollment for char-device-1: %v", err)

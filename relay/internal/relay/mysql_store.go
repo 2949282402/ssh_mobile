@@ -475,7 +475,7 @@ func (m *mysqlStore) RemoveEnrollment(ctx context.Context, deviceID string) erro
 
 // RevokeEnrollment 以单事务原子地完成吊销：先对 devices 行 FOR UPDATE（与
 // putEnrollment 的首锁一致，跨实例与并发 re-enroll 严格串行），再写 tombstone、删
-// enrollment、递减容量计数器。这消除旧复合流程（adminRevokeDevice 的 RecordRevocation
+// enrollment、递减容量计数器。这消除旧复合流程（RecordRevocation
 // + RemoveEnrollment 两个独立事务，仅靠进程内分片锁串行）在多实例下的撕裂窗口：实例 A
 // 写墓碑后、删设备前，实例 B 的 re-enroll 曾可覆盖新行并清墓碑，随后 A 误删新 enrollment
 // → "设备没了 + 墓碑也没了"。锁序 device → counter 与 putEnrollment/RemoveEnrollment

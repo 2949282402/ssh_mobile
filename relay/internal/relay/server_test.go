@@ -227,12 +227,12 @@ func TestDeviceProofRejectsReplayAndRevocation(t *testing.T) {
 		t.Fatal("replayed device proof was accepted")
 	}
 
-	revokeRequest := httptest.NewRequest("POST", "/api/admin/v1/devices/device-a/revoke", nil)
-	revokeRequest.SetPathValue("deviceId", "device-a")
-	revokeResponse := httptest.NewRecorder()
-	server.adminRevokeDevice(revokeResponse, revokeRequest)
-	if revokeResponse.Code != http.StatusNoContent {
-		t.Fatalf("expected revoke status 204, got %d", revokeResponse.Code)
+	outcome, err := server.RevokeDevice(context.Background(), "device-a")
+	if err != nil {
+		t.Fatalf("revoke failed: %v", err)
+	}
+	if outcome != RevokeStatusOK {
+		t.Fatalf("expected revoke status OK, got %v", outcome)
 	}
 	if _, _, _, ok := server.authenticatedRequest(authenticatedRequest(2)); ok {
 		t.Fatal("revoked device credential was accepted")
@@ -269,140 +269,10 @@ func TestCredentialRequiresCurrentEnrollment(t *testing.T) {
 	}
 }
 
-// TestAdminApiContract 验证独立版本化的管理员 API 契约。
-func TestAdminApiContract(t *testing.T) {
-	server := NewServer(Config{
-		CredentialKey:   []byte("01234567890123456789012345678901"),
-		EnrollmentToken: "test-token",
-		AdminUser:       "test-admin",
-		AdminPassword:   "test-password-123",
-	})
-	defer server.Close()
-
-	mux := http.NewServeMux()
-	server.RegisterRoutes(mux)
-
-	for _, path := range []string{
-		"/api/admin/v1/overview",
-		"/api/admin/v1/access/enrollment-token",
-	} {
-		request := httptest.NewRequest("GET", path, nil)
-		response := httptest.NewRecorder()
-		mux.ServeHTTP(response, request)
-		if response.Code != http.StatusUnauthorized {
-			t.Fatalf("expected status 401 for unauthenticated %s, got %d", path, response.Code)
-		}
-		var payload adminErrorResponse
-		if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-			t.Fatalf("failed to decode admin error: %v", err)
-		}
-		if payload.Error.Code != adminErrorUnauthorized {
-			t.Fatalf("unexpected admin error: %+v", payload)
-		}
-	}
-
-	oldRoute := httptest.NewRecorder()
-	mux.ServeHTTP(oldRoute, httptest.NewRequest("GET", "/api/stats", nil))
-	if oldRoute.Code != http.StatusNotFound {
-		t.Fatalf("expected removed legacy route to return 404, got %d", oldRoute.Code)
-	}
-
-	loginBody, _ := json.Marshal(map[string]string{
-		"username": "test-admin",
-		"password": "test-password-123",
-	})
-	loginRequest := httptest.NewRequest("POST", "/api/admin/v1/auth/login", bytes.NewReader(loginBody))
-	loginRequest.Header.Set("Content-Type", "application/json")
-	loginResponse := httptest.NewRecorder()
-	mux.ServeHTTP(loginResponse, loginRequest)
-	if loginResponse.Code != http.StatusOK {
-		t.Fatalf("expected status 200 for login, got %d", loginResponse.Code)
-	}
-	var loginPayload map[string]any
-	if err := json.NewDecoder(loginResponse.Body).Decode(&loginPayload); err != nil {
-		t.Fatalf("failed to decode login response: %v", err)
-	}
-	if loginPayload["username"] != "test-admin" {
-		t.Fatalf("unexpected login response: %+v", loginPayload)
-	}
-	cookie := loginResponse.Result().Cookies()[0]
-
-	sessionRequest := httptest.NewRequest("GET", "/api/admin/v1/auth/session", nil)
-	sessionRequest.AddCookie(cookie)
-	sessionResponse := httptest.NewRecorder()
-	mux.ServeHTTP(sessionResponse, sessionRequest)
-	var sessionPayload adminSessionResponse
-	if sessionResponse.Code != http.StatusOK || json.NewDecoder(sessionResponse.Body).Decode(&sessionPayload) != nil {
-		t.Fatalf("unexpected session response: status=%d body=%s", sessionResponse.Code, sessionResponse.Body.String())
-	}
-	if !sessionPayload.Authenticated || sessionPayload.Username != "test-admin" {
-		t.Fatalf("unexpected session payload: %+v", sessionPayload)
-	}
-
-	overviewRequest := httptest.NewRequest("GET", "/api/admin/v1/overview", nil)
-	overviewRequest.AddCookie(cookie)
-	overviewResponse := httptest.NewRecorder()
-	mux.ServeHTTP(overviewResponse, overviewRequest)
-	if overviewResponse.Code != http.StatusOK {
-		t.Fatalf("expected status 200 for overview, got %d", overviewResponse.Code)
-	}
-	var overview adminOverviewResponse
-	if err := json.NewDecoder(overviewResponse.Body).Decode(&overview); err != nil {
-		t.Fatalf("failed to decode overview: %v", err)
-	}
-	if overview.Devices.Enrolled != 0 || overview.Devices.Online != 0 {
-		t.Fatalf("unexpected overview devices: %+v", overview.Devices)
-	}
-	if bytes.Contains(overviewResponse.Body.Bytes(), []byte("enrollment_token")) {
-		t.Fatal("overview response leaked the enrollment token")
-	}
-
-	server.replaceEnrollment(
-		"device-a",
-		base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, ed25519.PublicKeySize)),
-		"android",
-		1,
-		time.Date(2026, time.August, 10, 0, 0, 0, 0, time.UTC),
-	)
-	devicesRequest := httptest.NewRequest("GET", "/api/admin/v1/devices", nil)
-	devicesRequest.AddCookie(cookie)
-	devicesResponse := httptest.NewRecorder()
-	mux.ServeHTTP(devicesResponse, devicesRequest)
-	if devicesResponse.Code != http.StatusOK {
-		t.Fatalf("expected status 200 for devices, got %d", devicesResponse.Code)
-	}
-	var devicesPayload adminDevicesResponse
-	if err := json.NewDecoder(devicesResponse.Body).Decode(&devicesPayload); err != nil {
-		t.Fatalf("failed to decode devices: %v", err)
-	}
-	if len(devicesPayload.Items) != 1 || devicesPayload.Items[0].PublicKeyFingerprint == "" {
-		t.Fatalf("unexpected device DTO: %+v", devicesPayload)
-	}
-	if bytes.Contains(devicesResponse.Body.Bytes(), []byte(`"public_key":`)) {
-		t.Fatal("devices response leaked the full public key field")
-	}
-
-	tokenRequest := httptest.NewRequest("GET", "/api/admin/v1/access/enrollment-token", nil)
-	tokenRequest.AddCookie(cookie)
-	tokenResponse := httptest.NewRecorder()
-	mux.ServeHTTP(tokenResponse, tokenRequest)
-	if tokenResponse.Code != http.StatusOK || !bytes.Contains(tokenResponse.Body.Bytes(), []byte("test-token")) {
-		t.Fatalf("unexpected token response: status=%d body=%s", tokenResponse.Code, tokenResponse.Body.String())
-	}
-
-	logoutRequest := httptest.NewRequest("POST", "/api/admin/v1/auth/logout", nil)
-	logoutRequest.AddCookie(cookie)
-	logoutResponse := httptest.NewRecorder()
-	mux.ServeHTTP(logoutResponse, logoutRequest)
-	if logoutResponse.Code != http.StatusNoContent || logoutResponse.Body.Len() != 0 {
-		t.Fatalf("expected empty 204 logout response, got %d", logoutResponse.Code)
-	}
-}
-
-// TestAdminOverviewCountsOnlineDevices pins the overview online count driven by
+// TestInternalStatusCountsOnlineDevices pins the status online count driven by
 // presence: a device with a live lease is counted online through the batch
 // GetPresences path, not just the enrolled count.
-func TestAdminOverviewCountsOnlineDevices(t *testing.T) {
+func TestInternalStatusCountsOnlineDevices(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte(mysqlTestCredentialKey),
 		EnrollmentToken: "test-token",
@@ -417,23 +287,24 @@ func TestAdminOverviewCountsOnlineDevices(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	overview, err := server.adminOverviewSnapshot()
+	snapshot, err := server.StatusSnapshot(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if overview.Devices.Enrolled != 1 || overview.Devices.Online != 1 || !overview.PresenceAvailable {
-		t.Fatalf("overview should count the online device with presence available: %+v", overview.Devices)
+	if snapshot.Devices.Enrolled != 1 || snapshot.Devices.Online != 1 || !snapshot.PresenceAvailable {
+		t.Fatalf("status should count the online device with presence available: %+v", snapshot.Devices)
 	}
 }
 
-// TestAdminOverviewCountsActiveRelayDataPairs pins the management metric to
+// TestInternalStatusCountsActiveRelayDataPairs pins the status metric to
 // the real RelayData registry instead of the legacy control-plane hub.
-func TestAdminOverviewCountsActiveRelayDataPairs(t *testing.T) {
+func TestInternalStatusCountsActiveRelayDataPairs(t *testing.T) {
 	server := NewServer(Config{})
 	defer server.Close()
+	ctx := context.Background()
 
-	initiator := testRelayDataConnForRegistry("reservation-admin", "device-a", relayDataRoleInitiator)
-	responder := testRelayDataConnForRegistry("reservation-admin", "device-b", relayDataRoleResponder)
+	initiator := testRelayDataConnForRegistry("reservation-internal", "device-a", relayDataRoleInitiator)
+	responder := testRelayDataConnForRegistry("reservation-internal", "device-b", relayDataRoleResponder)
 	if _, ok := server.relayData.admitEndpoint(initiator); !ok {
 		t.Fatal("initiator admission failed")
 	}
@@ -441,21 +312,21 @@ func TestAdminOverviewCountsActiveRelayDataPairs(t *testing.T) {
 		t.Fatal("responder admission failed")
 	}
 
-	overview, err := server.adminOverviewSnapshot()
+	snapshot, err := server.StatusSnapshot(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if overview.Relay.ActiveTransfers != 1 {
-		t.Fatalf("overview should report one active RelayData pair, got %d", overview.Relay.ActiveTransfers)
+	if snapshot.Relay.ActiveTransfers != 1 {
+		t.Fatalf("status should report one active RelayData pair, got %d", snapshot.Relay.ActiveTransfers)
 	}
 
 	server.relayData.releaseEndpoint(responder)
-	overview, err = server.adminOverviewSnapshot()
+	snapshot, err = server.StatusSnapshot(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if overview.Relay.ActiveTransfers != 0 {
-		t.Fatalf("released RelayData pair should not remain active, got %d", overview.Relay.ActiveTransfers)
+	if snapshot.Relay.ActiveTransfers != 0 {
+		t.Fatalf("released RelayData pair should not remain active, got %d", snapshot.Relay.ActiveTransfers)
 	}
 }
 
