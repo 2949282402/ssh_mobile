@@ -14,6 +14,7 @@ func setValidConfigEnvironment(t *testing.T) {
 		"RELAY_CREDENTIAL_KEY",
 		"MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE",
 	)
+	t.Setenv("RELAY_INTERNAL_TOKEN", "0123456789abcdef0123456789abcdef")
 	t.Setenv("RELAY_PUBLIC_URL", "wss://relay.example.test")
 	t.Setenv("RELAY_ADMIN_USER", "admin")
 	t.Setenv("RELAY_ADMIN_PASSWORD", "long-random-password")
@@ -40,6 +41,15 @@ func TestConfigRequiresExplicitSecretsAndAdministrator(t *testing.T) {
 	}
 
 	t.Setenv("RELAY_ADMIN_PASSWORD", "long-random-password")
+	t.Setenv("RELAY_INTERNAL_TOKEN", "")
+	if _, err := ConfigFromEnvironment(); err == nil {
+		t.Fatal("missing internal token was accepted")
+	}
+	t.Setenv("RELAY_INTERNAL_TOKEN", "short-token")
+	if _, err := ConfigFromEnvironment(); err == nil {
+		t.Fatal("short internal token was accepted")
+	}
+	t.Setenv("RELAY_INTERNAL_TOKEN", "0123456789abcdef0123456789abcdef")
 	t.Setenv("RELAY_CREDENTIAL_TTL", "2h")
 	t.Setenv("RELAY_ADMIN_SESSION_TTL", "6h")
 	t.Setenv("RELAY_MAX_CONNECTIONS", "512")

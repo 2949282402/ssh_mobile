@@ -5,6 +5,7 @@ package relay
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -49,6 +50,7 @@ const (
 	publishedExampleCredentialKey   = "replace-with-a-32-byte-base64url-random-key"
 	publishedExampleAdminUser       = "replace-with-an-admin-username"
 	publishedExampleAdminPassword   = "replace-with-a-random-password-of-at-least-12-characters"
+	publishedExampleInternalToken   = "replace-with-a-32-byte-random-internal-token"
 )
 
 // relayEventsChannel is the Redis Pub/Sub channel carrying cross-instance
@@ -76,6 +78,7 @@ type Config struct {
 	ServerHeartbeatInterval     time.Duration
 	ServerHeartbeatMisses       int
 	EnrollmentToken             string
+	InternalToken               string
 	CredentialKey               []byte
 	CredentialTTL               time.Duration
 	AdminSessionTTL             time.Duration
@@ -161,6 +164,10 @@ func ConfigFromEnvironment() (Config, error) {
 	if len(adminPassword) < 12 || adminPassword == publishedExampleAdminPassword {
 		return Config{}, errors.New("RELAY_ADMIN_PASSWORD must be set and contain at least 12 characters")
 	}
+	internalToken := os.Getenv("RELAY_INTERNAL_TOKEN")
+	if len(internalToken) < 32 || internalToken == publishedExampleInternalToken {
+		return Config{}, errors.New("RELAY_INTERNAL_TOKEN must be set and contain at least 32 characters")
+	}
 
 	var parseErr error
 	readDuration := func(name string, fallback time.Duration) time.Duration {
@@ -206,6 +213,7 @@ func ConfigFromEnvironment() (Config, error) {
 		ServerHeartbeatInterval:     readDuration("RELAY_SERVER_HEARTBEAT_INTERVAL", defaultServerHeartbeatInterval),
 		ServerHeartbeatMisses:       readInt("RELAY_SERVER_HEARTBEAT_MISSES", defaultServerHeartbeatMisses),
 		EnrollmentToken:             enrollment,
+		InternalToken:               internalToken,
 		CredentialKey:               decoded,
 		CredentialTTL:               readDuration("RELAY_CREDENTIAL_TTL", defaultCredentialTTL),
 		AdminSessionTTL:             readDuration("RELAY_ADMIN_SESSION_TTL", defaultAdminSessionTTL),
@@ -272,6 +280,9 @@ func withConfigDefaults(config Config) Config {
 	}
 	if config.ProtocolVersion == 0 {
 		config.ProtocolVersion = defaultProtocolVersion
+	}
+	if config.InternalToken == "" {
+		config.InternalToken = hex.EncodeToString(randomBytes(16))
 	}
 	if config.CredentialTTL <= 0 {
 		config.CredentialTTL = defaultCredentialTTL

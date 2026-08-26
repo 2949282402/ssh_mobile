@@ -310,6 +310,16 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/v1/access/enrollment-token", adminAuth(s.adminToken))
 	mux.HandleFunc("POST /api/admin/v1/access/enrollment-token/rotate", adminAuthStateChange(s.adminRotateToken))
 
+	// Relay Internal Management API (Phase 6, /internal/v2/*).
+	internalAuth := func(next http.HandlerFunc) http.HandlerFunc {
+		return s.internalAuthMiddleware(next)
+	}
+	mux.HandleFunc(RouteInternalStatusV2, internalAuth(s.internalStatusHandler))
+	mux.HandleFunc(RouteInternalDevicesV2, internalAuth(s.internalDevicesHandler))
+	mux.HandleFunc(RouteInternalRevokeDeviceV2, internalAuth(s.internalRevokeDeviceHandler))
+	mux.HandleFunc(RouteInternalTokenV2, internalAuth(s.internalTokenHandler))
+	mux.HandleFunc(RouteInternalRotateTokenV2, internalAuth(s.internalRotateTokenHandler))
+
 	// Device credential endpoints (V2 only).
 	mux.HandleFunc(RouteEnrollV2, s.enroll)
 	mux.HandleFunc(RouteRefreshV2, s.refresh)
