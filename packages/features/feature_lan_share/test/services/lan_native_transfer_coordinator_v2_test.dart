@@ -719,7 +719,7 @@ final class _Fixture {
   static Future<_Fixture> create({
     bool trusted = false,
     bool relayAuthorized = false,
-    Duration offerTimeout = const Duration(seconds: 25),
+    Duration offerTimeout = LanNativeTransferCoordinator.defaultOfferTimeout,
     double freeDiskSpaceMb = 1000.0,
   }) async {
     final store = LanPeerTrustStore();

@@ -136,42 +136,33 @@ final class FakeLanShareIdentity implements LanShareNetworkIdentityPort {
   }
 }
 
-final class FakeLanShareNetworkFactory implements LanShareNetworkFactory {
-  FakeLanShareNetworkFactory({
+final class FakeLanShareNetworkAccessPort implements LanShareNetworkAccessPort {
+  FakeLanShareNetworkAccessPort({
     this.networkFacade,
     this.networkFacades = const <NetworkFacade>[],
-    this.boundLocalPort = 43123,
   });
 
-  int createCalls = 0;
-  String? lastListenAddress;
+  int borrowCalls = 0;
 
   /// 返回给协调器的 NetworkFacade；null 模拟 App Shell 未创建原生门面。
   final NetworkFacade? networkFacade;
   final List<NetworkFacade> networkFacades;
 
   @override
-  final int? boundLocalPort;
-
-  @override
-  Future<NetworkFacade?> create({
-    required String deviceId,
-    required Uint8List identityPrivateKey,
-    required Uint8List e2ePrivateKey,
-    required String listenAddress,
-    required String receiveDirectory,
-  }) async {
-    createCalls++;
-    lastListenAddress = listenAddress;
-    if (createCalls <= networkFacades.length) {
-      return networkFacades[createCalls - 1];
+  Future<NetworkFacade?> borrowFacade() async {
+    borrowCalls++;
+    if (borrowCalls <= networkFacades.length) {
+      return networkFacades[borrowCalls - 1];
     }
     return networkFacade;
   }
 }
 
 final class FakeLanShareNetworkRuntime implements NetworkRuntime {
-  FakeLanShareNetworkRuntime({this.refuseWebSocketRelay = false});
+  FakeLanShareNetworkRuntime({
+    this.refuseWebSocketRelay = false,
+    this.boundLocalPort = 43123,
+  });
 
   int ensureCalls = 0;
 
@@ -180,6 +171,7 @@ final class FakeLanShareNetworkRuntime implements NetworkRuntime {
 
   /// 为 true 时，`webSocketRelay` 请求抛出 `UnsupportedError`。
   final bool refuseWebSocketRelay;
+  final int? boundLocalPort;
   bool disposed = false;
 
   @override
@@ -192,6 +184,7 @@ final class FakeLanShareNetworkRuntime implements NetworkRuntime {
     activeConnections: 0,
     nativeHandles: 0,
     readyCapabilities: const <NetworkCapability>[],
+    boundLocalPort: boundLocalPort,
   );
 
   @override

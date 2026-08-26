@@ -268,6 +268,10 @@ jobs:
             --descriptor_set_out=/tmp/network-v2.desc \
             protocol/proto/relay/v2/relay_v2.proto \
             protocol/proto/network/v2/network.proto
+      - name: Test Network V2 parity checker
+        run: dart run scripts/bash/contracts/check_network_v2_contract.dart --test
+      - name: Check Network V2 schema parity
+        run: dart run scripts/bash/contracts/check_network_v2_contract.dart
       - name: Run relay v2 contract check
         run: bash scripts/bash/contracts/relay_v2_contract.sh
       - name: Run strict network v2 acceptance gate

@@ -42,7 +42,7 @@ void main() {
       logger: FakeLanShareLogger(),
       dataProtection: FakeLanShareDataProtection(),
       networkIdentity: FakeLanShareIdentity(),
-      networkFactory: FakeLanShareNetworkFactory(),
+      networkAccess: FakeLanShareNetworkAccessPort(),
       bootstrapClient: FakeLanShareBootstrapClient(),
       historyRepository: LanShareHistoryRepository(database),
       networkRuntime: FakeLanShareNetworkRuntime(),
@@ -66,7 +66,7 @@ void main() {
       logger: FakeLanShareLogger(),
       dataProtection: FakeLanShareDataProtection(),
       networkIdentity: identity,
-      networkFactory: FakeLanShareNetworkFactory(),
+      networkAccess: FakeLanShareNetworkAccessPort(),
       bootstrapClient: FakeLanShareBootstrapClient(),
       historyRepository: LanShareHistoryRepository(database),
       networkRuntime: FakeLanShareNetworkRuntime(),
@@ -98,7 +98,7 @@ void main() {
       final settings = FakeLanShareSettings();
       final networkService = FakeLanShareNetworkService();
       final networkRuntime = FakeLanShareNetworkRuntime();
-      final networkFactory = FakeLanShareNetworkFactory(
+      final networkAccess = FakeLanShareNetworkAccessPort(
         networkFacade: networkService,
       );
       final discovery = FakeLanDiscoveryService();
@@ -107,7 +107,7 @@ void main() {
         logger: FakeLanShareLogger(),
         dataProtection: FakeLanShareDataProtection(),
         networkIdentity: FakeLanShareIdentity(),
-        networkFactory: networkFactory,
+        networkAccess: networkAccess,
         bootstrapClient: FakeLanShareBootstrapClient(),
         historyRepository: LanShareHistoryRepository(database),
         networkRuntime: networkRuntime,
@@ -127,7 +127,7 @@ void main() {
       );
       // The App Scope owns facade startup; Feature activation only borrows it.
       expect(networkService.startCalls, 0);
-      expect(networkFactory.lastListenAddress, '0.0.0.0:0');
+      expect(networkAccess.borrowCalls, 1);
       expect(discovery.advertisedEndpoints, [
         (LanTransferService.defaultHttpPort, 43123),
       ]);
@@ -149,7 +149,9 @@ void main() {
       logger: FakeLanShareLogger(),
       dataProtection: FakeLanShareDataProtection(),
       networkIdentity: FakeLanShareIdentity(),
-      networkFactory: FakeLanShareNetworkFactory(networkFacade: networkService),
+      networkAccess: FakeLanShareNetworkAccessPort(
+        networkFacade: networkService,
+      ),
       bootstrapClient: FakeLanShareBootstrapClient(),
       historyRepository: LanShareHistoryRepository(database),
       networkRuntime: FakeLanShareNetworkRuntime(),
@@ -183,7 +185,9 @@ void main() {
       logger: FakeLanShareLogger(),
       dataProtection: FakeLanShareDataProtection(),
       networkIdentity: FakeLanShareIdentity(),
-      networkFactory: FakeLanShareNetworkFactory(networkFacade: networkService),
+      networkAccess: FakeLanShareNetworkAccessPort(
+        networkFacade: networkService,
+      ),
       bootstrapClient: FakeLanShareBootstrapClient(),
       historyRepository: LanShareHistoryRepository(database),
       networkRuntime: networkRuntime,
@@ -226,7 +230,9 @@ void main() {
       logger: FakeLanShareLogger(),
       dataProtection: FakeLanShareDataProtection(),
       networkIdentity: FakeLanShareIdentity(),
-      networkFactory: FakeLanShareNetworkFactory(networkFacade: networkService),
+      networkAccess: FakeLanShareNetworkAccessPort(
+        networkFacade: networkService,
+      ),
       bootstrapClient: FakeLanShareBootstrapClient(),
       historyRepository: LanShareHistoryRepository(database),
       networkRuntime: FakeLanShareNetworkRuntime(),
@@ -269,7 +275,9 @@ void main() {
       logger: FakeLanShareLogger(),
       dataProtection: FakeLanShareDataProtection(),
       networkIdentity: FakeLanShareIdentity(),
-      networkFactory: FakeLanShareNetworkFactory(networkFacade: networkService),
+      networkAccess: FakeLanShareNetworkAccessPort(
+        networkFacade: networkService,
+      ),
       bootstrapClient: FakeLanShareBootstrapClient(),
       historyRepository: LanShareHistoryRepository(database),
       networkRuntime: FakeLanShareNetworkRuntime(),
@@ -319,7 +327,7 @@ void main() {
           logger: FakeLanShareLogger(),
           dataProtection: FakeLanShareDataProtection(),
           networkIdentity: FakeLanShareIdentity(),
-          networkFactory: FakeLanShareNetworkFactory(
+          networkAccess: FakeLanShareNetworkAccessPort(
             networkFacade: networkService,
           ),
           bootstrapClient: FakeLanShareBootstrapClient(),
@@ -353,7 +361,7 @@ void main() {
       logger: FakeLanShareLogger(),
       dataProtection: FakeLanShareDataProtection(),
       networkIdentity: FakeLanShareIdentity(),
-      networkFactory: FakeLanShareNetworkFactory(
+      networkAccess: FakeLanShareNetworkAccessPort(
         networkFacades: <NetworkFacade>[firstFacade, secondFacade],
       ),
       bootstrapClient: FakeLanShareBootstrapClient(),
@@ -388,7 +396,7 @@ void main() {
         logger: FakeLanShareLogger(),
         dataProtection: FakeLanShareDataProtection(),
         networkIdentity: FakeLanShareIdentity(),
-        networkFactory: FakeLanShareNetworkFactory(
+        networkAccess: FakeLanShareNetworkAccessPort(
           networkFacade: networkService,
         ),
         bootstrapClient: FakeLanShareBootstrapClient(),
@@ -425,7 +433,7 @@ void main() {
       logger: FakeLanShareLogger(),
       dataProtection: FakeLanShareDataProtection(),
       networkIdentity: FakeLanShareIdentity(),
-      networkFactory: FakeLanShareNetworkFactory(
+      networkAccess: FakeLanShareNetworkAccessPort(
         networkFacades: <NetworkFacade>[firstFacade, secondFacade],
       ),
       bootstrapClient: FakeLanShareBootstrapClient(),
@@ -472,7 +480,7 @@ void main() {
         logger: FakeLanShareLogger(),
         dataProtection: FakeLanShareDataProtection(),
         networkIdentity: FakeLanShareIdentity(),
-        networkFactory: FakeLanShareNetworkFactory(
+        networkAccess: FakeLanShareNetworkAccessPort(
           networkFacade: networkService,
         ),
         bootstrapClient: FakeLanShareBootstrapClient(),
@@ -521,7 +529,7 @@ void main() {
         logger: FakeLanShareLogger(),
         dataProtection: FakeLanShareDataProtection(),
         networkIdentity: FakeLanShareIdentity(),
-        networkFactory: FakeLanShareNetworkFactory(
+        networkAccess: FakeLanShareNetworkAccessPort(
           networkFacade: networkService,
         ),
         bootstrapClient: FakeLanShareBootstrapClient(),
@@ -786,7 +794,7 @@ void main() {
         logger: FakeLanShareLogger(),
         dataProtection: FakeLanShareDataProtection(),
         networkIdentity: FakeLanShareIdentity(),
-        networkFactory: FakeLanShareNetworkFactory(
+        networkAccess: FakeLanShareNetworkAccessPort(
           networkFacade: networkService,
         ),
         bootstrapClient: FakeLanShareBootstrapClient(),
@@ -851,7 +859,7 @@ void main() {
         logger: FakeLanShareLogger(),
         dataProtection: FakeLanShareDataProtection(),
         networkIdentity: FakeLanShareIdentity(),
-        networkFactory: FakeLanShareNetworkFactory(
+        networkAccess: FakeLanShareNetworkAccessPort(
           networkFacade: networkService,
         ),
         bootstrapClient: FakeLanShareBootstrapClient(),
@@ -909,7 +917,7 @@ void main() {
         logger: FakeLanShareLogger(),
         dataProtection: FakeLanShareDataProtection(),
         networkIdentity: FakeLanShareIdentity(),
-        networkFactory: FakeLanShareNetworkFactory(
+        networkAccess: FakeLanShareNetworkAccessPort(
           networkFacade: networkService,
         ),
         bootstrapClient: FakeLanShareBootstrapClient(),
@@ -962,7 +970,7 @@ void main() {
         logger: FakeLanShareLogger(),
         dataProtection: FakeLanShareDataProtection(),
         networkIdentity: FakeLanShareIdentity(),
-        networkFactory: FakeLanShareNetworkFactory(
+        networkAccess: FakeLanShareNetworkAccessPort(
           networkFacade: networkService,
         ),
         bootstrapClient: FakeLanShareBootstrapClient(),
@@ -1055,7 +1063,7 @@ void main() {
         logger: FakeLanShareLogger(),
         dataProtection: FakeLanShareDataProtection(),
         networkIdentity: FakeLanShareIdentity(),
-        networkFactory: FakeLanShareNetworkFactory(
+        networkAccess: FakeLanShareNetworkAccessPort(
           networkFacade: networkService,
         ),
         bootstrapClient: FakeLanShareBootstrapClient(),
@@ -1114,7 +1122,7 @@ LanReceiverCoordinator _buildRelayCoordinator(
     logger: FakeLanShareLogger(),
     dataProtection: FakeLanShareDataProtection(),
     networkIdentity: FakeLanShareIdentity(),
-    networkFactory: FakeLanShareNetworkFactory(networkFacade: networkService),
+    networkAccess: FakeLanShareNetworkAccessPort(networkFacade: networkService),
     bootstrapClient: bootstrapClient,
     historyRepository: LanShareHistoryRepository(database),
     networkRuntime: FakeLanShareNetworkRuntime(),

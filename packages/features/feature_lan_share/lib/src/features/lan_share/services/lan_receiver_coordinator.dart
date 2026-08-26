@@ -37,7 +37,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     required this.logger,
     required this.dataProtection,
     required this.networkIdentity,
-    required this.networkFactory,
+    required this.networkAccess,
     required this.bootstrapClient,
     required this.historyRepository,
     required this.networkRuntime,
@@ -50,7 +50,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
        _ownsPeerTrustStore = peerTrustStore == null;
 
   /// App Scope 的 LAN 设置和身份配置。
-  final AppSettings appSettings;
+  final LanShareSettingsPort appSettings;
 
   /// App Scope 的日志适配器。
   final LanShareLoggerPort logger;
@@ -61,8 +61,8 @@ final class LanReceiverCoordinator extends ChangeNotifier {
   /// App Scope 的稳定 QUIC 身份加载端口。
   final LanShareNetworkIdentityPort networkIdentity;
 
-  /// App Shell 创建原生网络服务的唯一入口。
-  final LanShareNetworkFactory networkFactory;
+  /// 访问 App 级共享原生网络 Facade 的端口。
+  final LanShareNetworkAccessPort networkAccess;
 
   /// App Shell 注入的无 Bearer Bootstrap 客户端。
   final BootstrapClient bootstrapClient;
@@ -105,7 +105,6 @@ final class LanReceiverCoordinator extends ChangeNotifier {
   LanRelayCoordinator? _relayCoordinator;
   LanNativeTransferCoordinator? _nativeTransferCoordinator;
   NetworkFacade? _networkFacade;
-  LanShareNetworkIdentityMaterial? _networkIdentityMaterial;
   bool _receiverActive = false;
 
   final StreamController<LanPairingRequest> _pairingRequestController =
@@ -172,7 +171,8 @@ final class LanReceiverCoordinator extends ChangeNotifier {
 
   /// 传入传输申请的超时时间。
   Duration get incomingOfferTimeout =>
-      _nativeTransferCoordinator?.offerTimeout ?? const Duration(seconds: 25);
+      _nativeTransferCoordinator?.offerTimeout ??
+      LanNativeTransferCoordinator.defaultOfferTimeout;
 
   /// 接收器初始化后发布原生传入传输申请。
   Stream<IncomingTransferOffer> get nativeIncomingTransferOffers =>
@@ -451,7 +451,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     await _viewModel?.shutdown();
     await _transferService?.stopListening();
     await _discoveryService?.stopAdvertising();
-    await _disposeNetworkFacade();
+    await _detachBorrowedNetworkFacade();
     _receiverActive = false;
     notifyListeners();
   }
@@ -567,7 +567,8 @@ final class LanReceiverCoordinator extends ChangeNotifier {
             securityService: security,
             storageService: lanStorage,
             networkIdentityPublicKeyProvider: () async => identity.publicKey,
-            nativeTransferPortProvider: () => networkFactory.boundLocalPort,
+            nativeTransferPortProvider: () =>
+                networkRuntime.diagnostics.boundLocalPort,
           );
 
       _discoveryService = discovery;
@@ -575,7 +576,6 @@ final class LanReceiverCoordinator extends ChangeNotifier {
       _lanStorageService = lanStorage;
       _transferService = transfer;
       _relayCoordinator = relay;
-      _networkIdentityMaterial = identity;
       _listenToTransferEvents(transfer, discovery);
       if (security.activePin == null) security.generate6DigitPin();
 
@@ -588,14 +588,13 @@ final class LanReceiverCoordinator extends ChangeNotifier {
       await _cancelReceiverSubscriptions();
       await discovery?.close();
       await transfer?.close();
-      await _disposeNetworkFacade();
+      await _detachBorrowedNetworkFacade();
       await relay?.close();
       _discoveryService = null;
       _securityService = null;
       _lanStorageService = null;
       _transferService = null;
       _relayCoordinator = null;
-      _networkIdentityMaterial = null;
       _initialized = false;
       _initFuture = null;
       rethrow;
@@ -680,19 +679,11 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     // control-listener failure must not suppress inbound trust restoration.
     int? nativePort;
     if (_networkFacade == null) {
-      final identity = _networkIdentityMaterial;
-      final security = _securityService;
       final storage = _lanStorageService;
-      if (identity != null && security != null && storage != null) {
+      if (storage != null) {
         try {
           await networkRuntime.ensureCapability(NetworkCapability.runtime);
-          final facade = await networkFactory.create(
-            deviceId: appSettings.lanDeviceId,
-            identityPrivateKey: identity.privateSeed,
-            e2ePrivateKey: identity.x25519PrivateSeed,
-            listenAddress: '0.0.0.0:0',
-            receiveDirectory: (await storage.getSandboxDirectory()).path,
-          );
+          final facade = await networkAccess.borrowFacade();
           if (facade != null) {
             _networkFacade = facade;
             peerRegistry.attachFacade(facade);
@@ -708,7 +699,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
             if (discoveredPeers.isNotEmpty) {
               await peerRegistry.syncDiscoveredEndpoints(discoveredPeers);
             }
-            nativePort = networkFactory.boundLocalPort;
+            nativePort = networkRuntime.diagnostics.boundLocalPort;
             await _relayCoordinator?.attachFacade(facade);
             _relayCoordinator?.connectConfiguredInBackground();
           }
@@ -717,11 +708,11 @@ final class LanReceiverCoordinator extends ChangeNotifier {
             'Native network runtime initialization failed',
             details: '$error\n$stackTrace',
           );
-          await _disposeNetworkFacade();
+          await _detachBorrowedNetworkFacade();
         }
       }
     } else {
-      nativePort = networkFactory.boundLocalPort;
+      nativePort = networkRuntime.diagnostics.boundLocalPort;
     }
 
     int? boundPort;
@@ -804,8 +795,8 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     _discoveredPeersSubscription = null;
   }
 
-  /// 撤销 Feature 对 App-owned Facade 的订阅；不停止或释放共享 Runtime。
-  Future<void> _disposeNetworkFacade() async {
+  /// 撤销 Feature 对 App-owned Facade 的借用与订阅；不停止或释放共享 Runtime。
+  Future<void> _detachBorrowedNetworkFacade() async {
     _networkFacade = null;
     peerRegistry.detachFacade();
     await _nativeOfferSubscription?.cancel();
@@ -858,7 +849,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     await attempt(_cancelReceiverSubscriptions);
     await attempt(() => transferService?.stopListening());
     await attempt(() => discoveryService?.stopAdvertising());
-    await attempt(_disposeNetworkFacade);
+    await attempt(_detachBorrowedNetworkFacade);
     await attempt(() => relayCoordinator?.close());
     _relayCoordinator = null;
     await attempt(() => discoveryService?.close());

@@ -26,7 +26,7 @@ final class LanNativeTransferCoordinator {
     required NetworkFacade networkFacade,
     required LanNativePeerPolicyPort policyPort,
     required LanStorageService storageService,
-    this.offerTimeout = const Duration(seconds: 25),
+    this.offerTimeout = defaultOfferTimeout,
   }) : _transferService = transferService,
        _networkFacade = networkFacade,
        _policyPort = policyPort,
@@ -38,6 +38,9 @@ final class LanNativeTransferCoordinator {
       },
     );
   }
+
+  /// 默认传入传输申请超时时间（25 秒）。
+  static const defaultOfferTimeout = Duration(seconds: 25);
 
   /// Authenticated LAN HTTPS capability/control service.
   final LanTransferService _transferService;

@@ -19,7 +19,7 @@ void main() {
   }) {
     return MultiProvider(
       providers: [
-        ListenableProvider<AppSettings>.value(value: settings),
+        ListenableProvider<LanShareSettingsPort>.value(value: settings),
         Provider<LanShareLoggerPort>.value(value: logger),
       ],
       child: MaterialApp(

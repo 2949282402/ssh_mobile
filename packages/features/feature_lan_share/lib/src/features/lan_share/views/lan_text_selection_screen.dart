@@ -1,8 +1,8 @@
+import 'package:app_ui/app_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../../services/app_settings.dart';
-import 'package:app_ui/app_ui.dart';
+import '../../../domain/lan_share_ports.dart';
 
 class LanTextSelectionScreen extends StatelessWidget {
   const LanTextSelectionScreen({super.key, required this.text});
@@ -11,7 +11,7 @@ class LanTextSelectionScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final settings = context.watch<AppSettings>();
+    final settings = context.watch<LanShareSettingsPort>();
     final strings = settings.strings;
     final theme = Theme.of(context);
 

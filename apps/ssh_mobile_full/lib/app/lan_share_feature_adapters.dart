@@ -372,24 +372,13 @@ final class AppLanShareNetworkIdentityAdapter
 ///
 /// Feature 只借用共享 Facade；这里不创建、configure、stop 或 dispose
 /// [NetworkRuntime]，也不创建第二个 Session/Realtime owner。
-final class AppLanShareNetworkFactory implements lan.LanShareNetworkFactory {
-  /// 创建只借用 AppRuntime-owned NetworkRuntime 与 NetworkFacade 的工厂。
-  const AppLanShareNetworkFactory(this._networkRuntime, this._networkFacade);
+final class AppLanShareNetworkAccessAdapter
+    implements lan.LanShareNetworkAccessPort {
+  /// 创建只借用 AppRuntime-owned NetworkFacade 的适配器。
+  const AppLanShareNetworkAccessAdapter(this._networkFacade);
 
-  final NetworkRuntime _networkRuntime;
   final sdk.NetworkFacade _networkFacade;
 
   @override
-  int? get boundLocalPort => _networkRuntime.diagnostics.boundLocalPort;
-
-  @override
-  Future<sdk.NetworkFacade?> create({
-    required String deviceId,
-    required Uint8List identityPrivateKey,
-    required Uint8List e2ePrivateKey,
-    required String listenAddress,
-    required String receiveDirectory,
-  }) async {
-    return _networkFacade;
-  }
+  Future<sdk.NetworkFacade?> borrowFacade() async => _networkFacade;
 }

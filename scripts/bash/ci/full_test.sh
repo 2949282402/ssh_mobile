@@ -957,6 +957,7 @@ job_protocol() {
     --descriptor_set_out="$LOG_DIR/network-v2-$RUN_ID.desc" \
     protocol/proto/relay/v2/relay_v2.proto \
     protocol/proto/network/v2/network.proto
+  step 'Test Network V2 schema parity checker' dart run scripts/bash/contracts/check_network_v2_contract.dart --test
   step 'Run Network V2 schema parity check' dart run scripts/bash/contracts/check_network_v2_contract.dart
   step 'Run Relay V2 contract check' bash scripts/bash/contracts/relay_v2_contract.sh
   step 'Run strict Network V2 acceptance gate' bash scripts/bash/contracts/network_v2_acceptance.sh strict

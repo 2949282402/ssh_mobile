@@ -15,6 +15,8 @@ void main() {
   ).readAsStringSync();
 
   _verifyScriptTrees(root);
+  _verifyFullTestScripts(root);
+  _testProtocolV2WorkflowChecker();
 
   _expect(pubspec.contains('\nmelos:\n'), '根 pubspec 必须声明 Melos 配置');
   _expect(pubspec.contains('    format:'), 'Melos 必须提供 format 脚本');
@@ -55,22 +57,7 @@ void main() {
     'Rust toolchain pin 必须与 CI 的 RUST_TOOLCHAIN 对齐',
   );
 
-  final protocolV2Contract = _jobSection(workflow, 'protocol-v2-contract');
-  _expect(
-    protocolV2Contract.contains('subosito/flutter-action@v2'),
-    'protocol-v2-contract 必须安装 Flutter 后运行 Dart owner tests',
-  );
-  _expect(
-    protocolV2Contract.contains('run: dart pub get'),
-    'protocol-v2-contract 必须安装 workspace dependencies',
-  );
-  _expect(
-    protocolV2Contract.contains(
-          'working-directory: packages/infrastructure/ssh_mobile_network_native',
-        ) &&
-        protocolV2Contract.contains('run: flutter pub get'),
-    'protocol-v2-contract 必须安装 native Dart package dependencies',
-  );
+  _verifyProtocolV2Workflow(workflow);
 
   final adminApiContract = _jobSection(workflow, 'admin-api-contract');
   _expect(
@@ -303,6 +290,167 @@ String _jobSection(String workflow, String jobName) {
   return workflow.substring(
     startMatch.start,
     endMatch?.start ?? workflow.length,
+  );
+}
+
+String _stepSection(String jobSection, String stepName) {
+  final startMatch = RegExp(
+    r'^\s*-\s+name:\s+' + RegExp.escape(stepName) + r'\s*$',
+    multiLine: true,
+  ).firstMatch(jobSection);
+  if (startMatch == null) {
+    throw StateError('Job 缺少 step：$stepName');
+  }
+
+  final nextStepMatches = RegExp(
+    r'^\s*-\s+(?:name|uses):\s+',
+    multiLine: true,
+  ).allMatches(jobSection, startMatch.end);
+  final nextStepMatch = nextStepMatches.isEmpty ? null : nextStepMatches.first;
+  return jobSection.substring(
+    startMatch.start,
+    nextStepMatch?.start ?? jobSection.length,
+  );
+}
+
+void _verifyProtocolV2Workflow(String workflow) {
+  final protocolV2Contract = _jobSection(workflow, 'protocol-v2-contract');
+  _expect(
+    protocolV2Contract.contains('subosito/flutter-action@v2'),
+    'protocol-v2-contract 必须安装 Flutter 后运行 Dart owner tests',
+  );
+  _expect(
+    protocolV2Contract.contains('run: dart pub get'),
+    'protocol-v2-contract 必须安装 workspace dependencies',
+  );
+  _expect(
+    protocolV2Contract.contains(
+          'working-directory: packages/infrastructure/ssh_mobile_network_native',
+        ) &&
+        protocolV2Contract.contains('run: flutter pub get'),
+    'protocol-v2-contract 必须安装 native Dart package dependencies',
+  );
+
+  final paritySelfTest = _stepSection(
+    protocolV2Contract,
+    'Test Network V2 parity checker',
+  );
+  _expect(
+    paritySelfTest.contains(
+      'dart run scripts/bash/contracts/check_network_v2_contract.dart --test',
+    ),
+    'Test Network V2 parity checker 必须运行在 --test 自测模式',
+  );
+
+  final parityCheck = _stepSection(
+    protocolV2Contract,
+    'Check Network V2 schema parity',
+  );
+  _expect(
+    parityCheck.contains(
+      'dart run scripts/bash/contracts/check_network_v2_contract.dart',
+    ),
+    'Check Network V2 schema parity 必须运行正式 parity check',
+  );
+  _expect(
+    !parityCheck.contains('--test'),
+    'Check Network V2 schema parity 严禁使用 --test 模式',
+  );
+}
+
+void _testProtocolV2WorkflowChecker() {
+  const validSnippet = '''
+  protocol-v2-contract:
+    steps:
+      - uses: subosito/flutter-action@v2
+      - run: dart pub get
+      - working-directory: packages/infrastructure/ssh_mobile_network_native
+        run: flutter pub get
+      - name: Test Network V2 parity checker
+        run: dart run scripts/bash/contracts/check_network_v2_contract.dart --test
+      - name: Check Network V2 schema parity
+        run: dart run scripts/bash/contracts/check_network_v2_contract.dart
+''';
+
+  _verifyProtocolV2Workflow(validSnippet);
+
+  const missingFormalStep = '''
+  protocol-v2-contract:
+    steps:
+      - uses: subosito/flutter-action@v2
+      - run: dart pub get
+      - working-directory: packages/infrastructure/ssh_mobile_network_native
+        run: flutter pub get
+      - name: Test Network V2 parity checker
+        run: dart run scripts/bash/contracts/check_network_v2_contract.dart --test
+''';
+  var failedMissing = false;
+  try {
+    _verifyProtocolV2Workflow(missingFormalStep);
+  } catch (_) {
+    failedMissing = true;
+  }
+  _expect(
+    failedMissing,
+    'CI contract checker must fail when formal parity step is missing',
+  );
+
+  const formalCheckWithTestFlag = '''
+  protocol-v2-contract:
+    steps:
+      - uses: subosito/flutter-action@v2
+      - run: dart pub get
+      - working-directory: packages/infrastructure/ssh_mobile_network_native
+        run: flutter pub get
+      - name: Test Network V2 parity checker
+        run: dart run scripts/bash/contracts/check_network_v2_contract.dart --test
+      - name: Check Network V2 schema parity
+        run: dart run scripts/bash/contracts/check_network_v2_contract.dart --test
+''';
+  var failedWithTestFlag = false;
+  try {
+    _verifyProtocolV2Workflow(formalCheckWithTestFlag);
+  } catch (_) {
+    failedWithTestFlag = true;
+  }
+  _expect(
+    failedWithTestFlag,
+    'CI contract checker must fail when formal parity step contains --test',
+  );
+}
+
+void _verifyFullTestScripts(Directory root) {
+  final bashFullTest = File(
+    '${root.path}/scripts/bash/ci/full_test.sh',
+  ).readAsStringSync();
+  final powerShellFullTest = File(
+    '${root.path}/scripts/powershell/ci/full_test.ps1',
+  ).readAsStringSync();
+
+  _expect(
+    bashFullTest.contains(
+      "step 'Test Network V2 schema parity checker' dart run scripts/bash/contracts/check_network_v2_contract.dart --test",
+    ),
+    'full_test.sh 缺少 Network V2 schema parity checker self-test step',
+  );
+  _expect(
+    bashFullTest.contains(
+      "step 'Run Network V2 schema parity check' dart run scripts/bash/contracts/check_network_v2_contract.dart",
+    ),
+    'full_test.sh 缺少 Network V2 schema parity check step',
+  );
+
+  _expect(
+    powerShellFullTest.contains(
+      "Cmd dart @('run','scripts/bash/contracts/check_network_v2_contract.dart','--test')",
+    ),
+    'full_test.ps1 缺少 Network V2 schema parity checker self-test',
+  );
+  _expect(
+    powerShellFullTest.contains(
+      "Cmd dart @('run','scripts/bash/contracts/check_network_v2_contract.dart')",
+    ),
+    'full_test.ps1 缺少 Network V2 schema parity check',
   );
 }
 

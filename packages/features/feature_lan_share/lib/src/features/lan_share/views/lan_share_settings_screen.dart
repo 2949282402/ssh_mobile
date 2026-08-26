@@ -5,7 +5,7 @@ import 'package:network_sdk/network_sdk.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 
-import '../../../services/app_settings.dart';
+import '../../../domain/lan_share_ports.dart';
 import 'package:app_ui/app_ui.dart';
 import '../services/lan_receiver_coordinator.dart';
 import '../utils/lan_platform_capabilities.dart';
@@ -185,8 +185,8 @@ class _LanShareSettingsScreenState extends State<LanShareSettingsScreen> {
 
   Widget _buildRelayTile(
     BuildContext context,
-    AppSettings settings,
-    AppStrings strings,
+    LanShareSettingsPort settings,
+    LanShareStrings strings,
   ) {
     final relayViewModel = _relayViewModel;
     if (relayViewModel == null) {
@@ -226,8 +226,8 @@ class _LanShareSettingsScreenState extends State<LanShareSettingsScreen> {
   }
 
   String _relaySubtitle(
-    AppSettings settings,
-    AppStrings strings,
+    LanShareSettingsPort settings,
+    LanShareStrings strings,
     LanRelaySettingsViewModel relayViewModel,
   ) {
     final endpoint = settings.relayHost.isEmpty
@@ -248,9 +248,9 @@ class _LanShareSettingsScreenState extends State<LanShareSettingsScreen> {
 
   Future<void> _rename(
     BuildContext context,
-    AppSettings settings,
+    LanShareSettingsPort settings,
     String current,
-    AppStrings strings,
+    LanShareStrings strings,
   ) async {
     final controller = TextEditingController(text: current);
     final value = await showDialog<String>(
@@ -284,8 +284,8 @@ class _LanShareSettingsScreenState extends State<LanShareSettingsScreen> {
 
   Future<void> _editRelay(
     BuildContext context,
-    AppSettings settings,
-    AppStrings strings,
+    LanShareSettingsPort settings,
+    LanShareStrings strings,
   ) async {
     final relayViewModel = _relayViewModel;
     if (relayViewModel != null) {
@@ -376,8 +376,8 @@ class _RelayEditorDialog extends StatefulWidget {
   });
 
   final LanRelaySettingsViewModel viewModel;
-  final AppSettings settings;
-  final AppStrings strings;
+  final LanShareSettingsPort settings;
+  final LanShareStrings strings;
 
   @override
   State<_RelayEditorDialog> createState() => _RelayEditorDialogState();
@@ -563,7 +563,7 @@ class _RelayStatusBanner extends StatelessWidget {
   const _RelayStatusBanner({required this.status, required this.strings});
 
   final LanRelayStatus status;
-  final AppStrings strings;
+  final LanShareStrings strings;
 
   @override
   Widget build(BuildContext context) {
@@ -618,7 +618,7 @@ class _PermissionTile extends StatelessWidget {
   final String title;
   final bool granted;
   final VoidCallback? onTap;
-  final AppStrings strings;
+  final LanShareStrings strings;
 
   const _PermissionTile({
     required this.title,

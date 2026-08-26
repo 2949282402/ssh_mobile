@@ -5,7 +5,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../../services/app_settings.dart';
+import '../../../domain/lan_share_ports.dart';
 import '../../../services/lan_share/lan_share_models.dart';
 import 'package:network_sdk/network_sdk.dart';
 import 'package:app_ui/app_ui.dart';
@@ -161,7 +161,7 @@ class _LanPairingScreenState extends State<LanPairingScreen>
   }
 
   /// 通过类型化 ViewModel 结果契约提交输入的 PIN。
-  Future<void> _submitPin(LanShareViewModel vm, AppStrings strings) async {
+  Future<void> _submitPin(LanShareViewModel vm, LanShareStrings strings) async {
     final pin = _pinController.text.trim();
     if (pin.length != 6) {
       setState(() {
@@ -214,7 +214,7 @@ class _LanPairingScreenState extends State<LanPairingScreen>
   @override
   Widget build(BuildContext context) {
     final vm = context.watch<LanShareViewModel>();
-    final settings = context.read<AppSettings>();
+    final settings = context.read<LanShareSettingsPort>();
     final strings = settings.strings;
     final theme = Theme.of(context);
     final colors = theme.colorScheme;

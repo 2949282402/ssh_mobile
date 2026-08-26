@@ -36,7 +36,7 @@ final class LanShareModule implements AppModule {
   LanShareLoggerPort? _logger;
   LanShareDataProtectionPort? _dataProtection;
   LanShareNetworkIdentityPort? _networkIdentity;
-  LanShareNetworkFactory? _networkFactory;
+  LanShareNetworkAccessPort? _networkAccess;
   BootstrapClient? _bootstrapClient;
   NetworkRuntime? _networkRuntime;
   bool? _receiverEnabled;
@@ -85,7 +85,7 @@ final class LanShareModule implements AppModule {
     _logger = context.require<LanShareLoggerPort>();
     _dataProtection = context.require<LanShareDataProtectionPort>();
     _networkIdentity = context.require<LanShareNetworkIdentityPort>();
-    _networkFactory = context.require<LanShareNetworkFactory>();
+    _networkAccess = context.require<LanShareNetworkAccessPort>();
     _bootstrapClient = context.require<BootstrapClient>();
     _networkRuntime = context.require<NetworkRuntime>();
     _receiverEnabled = _configuredReceiverEnabled ?? _settings!.receiverEnabled;
@@ -104,14 +104,14 @@ final class LanShareModule implements AppModule {
     final logger = _logger;
     final dataProtection = _dataProtection;
     final networkIdentity = _networkIdentity;
-    final networkFactory = _networkFactory;
+    final networkAccess = _networkAccess;
     final bootstrapClient = _bootstrapClient;
     final networkRuntime = _networkRuntime;
     if (settings == null ||
         logger == null ||
         dataProtection == null ||
         networkIdentity == null ||
-        networkFactory == null ||
+        networkAccess == null ||
         bootstrapClient == null ||
         networkRuntime == null) {
       _initializeFuture = null;
@@ -133,7 +133,7 @@ final class LanShareModule implements AppModule {
         logger: logger,
         dataProtection: dataProtection,
         networkIdentity: networkIdentity,
-        networkFactory: networkFactory,
+        networkAccess: networkAccess,
         bootstrapClient: bootstrapClient,
         historyRepository: repository,
         networkRuntime: networkRuntime,
@@ -211,7 +211,7 @@ final class LanShareModule implements AppModule {
     _logger = null;
     _dataProtection = null;
     _networkIdentity = null;
-    _networkFactory = null;
+    _networkAccess = null;
     _bootstrapClient = null;
     _networkRuntime = null;
     _state = ModuleState.disposed;

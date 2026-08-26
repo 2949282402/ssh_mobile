@@ -1,4 +1,4 @@
-最新更新时间：2026-08-25
+最新更新时间：2026-08-26
 
 # feature_lan_share
 
@@ -69,7 +69,7 @@ control HTTP、WSS Relay enrollment/编排、Web Share、传输历史和非秘�
 旧 `apps/ssh_mobile_full/lib/features/lan_share/**`、
 `apps/ssh_mobile_full/lib/services/lan_share/**`、V1 pairing/trust helpers 和 Relay
 facade 已删除；App Shell 只保留 `lan_share_feature_adapters.dart`、LAN Control V2
-HTTP/identity adapters 以及 Native Network V2 的共享 facade 创建边界。当前 LAN
+HTTP/identity adapters 以及 Native Network V2 的共享 facade 借用边界。当前 LAN
 Control 只暴露 V2 pairing/upload contract。
 
 ## Package contract
@@ -78,7 +78,8 @@ Control 只暴露 V2 pairing/upload contract。
   enrollment/状态、Web Share 和传输历史；二进制数据面只消费 Network V2 Transfer。
 - 不负责：SSH、其他 Feature 实现、App `/src/`、未审批的网络写入或秘密持久化。
 - Public API：`package:feature_lan_share/feature_lan_share.dart`，包括 Module、
-  Receiver 配置、页面和 Port。纯 Dart WebShare route worker 使用
+  Receiver 配置、页面和 Port。不再保留旧 `AppLanguage`、`AppSettings`、`AppStrings` 别名
+  或 `services/*.dart` 兼容导入 shim。纯 Dart WebShare route worker 使用
   `package:feature_lan_share/lan_web_share.dart`；该窄入口只导出生产
   `LanWebShareRequestHandler` 及其 DTO/回调契约，不携带 Flutter 服务或页面。
   worker 只验证真实 TLS listener 与 production route handler；Native Network V2

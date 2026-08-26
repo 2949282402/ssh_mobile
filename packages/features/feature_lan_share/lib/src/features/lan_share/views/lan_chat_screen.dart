@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
-import '../../../services/app_settings.dart';
+import '../../../domain/lan_share_ports.dart';
 import '../../../services/lan_share/lan_share_models.dart';
 import 'package:network_sdk/network_sdk.dart';
 import 'package:app_ui/app_ui.dart';
@@ -77,7 +77,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
 
   void _showAttachmentOptions(
     BuildContext context,
-    AppStrings strings,
+    LanShareStrings strings,
     LanShareViewModel vm,
     String peerId,
     LanDiscoveredPeer? device,
@@ -224,7 +224,10 @@ class _LanChatScreenState extends State<LanChatScreen> {
     );
   }
 
-  void _showE2ENotSupportedError(BuildContext context, AppStrings strings) {
+  void _showE2ENotSupportedError(
+    BuildContext context,
+    LanShareStrings strings,
+  ) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
@@ -242,7 +245,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final settings = context.watch<AppSettings>();
+    final settings = context.watch<LanShareSettingsPort>();
     final strings = settings.strings;
     final vm = context.watch<LanShareViewModel>();
 
@@ -732,7 +735,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
 
   Widget _buildMessageBubble(
     BuildContext context,
-    AppStrings strings,
+    LanShareStrings strings,
     LanShareViewModel vm,
     LanMessage msg,
     bool isMe,
@@ -885,7 +888,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
 
   Widget _buildFileBubbleContent(
     BuildContext context,
-    AppStrings strings,
+    LanShareStrings strings,
     LanShareViewModel vm,
     LanMessage msg,
     bool isMe,
@@ -1013,7 +1016,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
 
   void _showMessageContextMenu(
     BuildContext context,
-    AppStrings strings,
+    LanShareStrings strings,
     LanShareViewModel vm,
     LanMessage msg,
     bool isMe,

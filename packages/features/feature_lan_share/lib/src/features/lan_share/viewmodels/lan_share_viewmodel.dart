@@ -31,7 +31,7 @@ class LanShareViewModel extends ChangeNotifier {
   final LanTransferService transferService;
   final LanNativeTransferCoordinator? nativeTransferCoordinator;
   final LanHistoryDao historyDao;
-  final AppSettings appSettings;
+  final LanShareSettingsPort appSettings;
   final LanShareDataProtectionPort dataProtection;
   final LanShareLoggerPort logger;
   final bool ownsRuntime;
