@@ -1,4 +1,4 @@
-> Last updated: 2026-08-25
+> Last updated: 2026-08-26
 
 # Coverage policy
 
@@ -23,6 +23,12 @@ uncovered files/lines or functions so the next change can add a behavior test
 for the missing boundary, error path, extreme value, or state transition.
 Tests that only execute a line without checking an observable result are not
 an acceptable way to satisfy this policy.
+
+Coverage is evidence about exercised code, not the goal of TDD. Meet these
+thresholds with tests that protect business contracts and meaningful boundaries;
+do not add low-value getter, constructor, mock-interaction, or branch-only tests
+solely to raise a percentage. The test-first development procedure is owned by
+the [Maintenance Workflow](../.agents/skills/ssh-mobile-maintenance/references/workflow.md).
 
 ## New-file requirement
 

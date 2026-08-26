@@ -1,4 +1,4 @@
-> Last updated: 2026-08-25
+> Last updated: 2026-08-26
 
 # Project Memory
 
@@ -16,6 +16,11 @@ Load only the domains selected by the
 Detailed decisions remain in [`docs/adr/`](../docs/adr/), complete designs remain
 in [`docs/architecture/`](../docs/architecture/) and focused project documents,
 and current behavior remains authoritative in code and tests.
+
+Changes to observable business behavior use test-first development by default.
+The canonical procedure, exceptions, and high-risk owner guidance live in the
+[Maintenance Workflow](../.agents/skills/ssh-mobile-maintenance/references/workflow.md);
+Memory does not duplicate that Agent work contract.
 
 ## Repository-wide validation
 

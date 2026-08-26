@@ -1,4 +1,4 @@
-> Last updated: 2026-08-25
+> Last updated: 2026-08-26
 
 # Repository Bootstrap
 
@@ -78,6 +78,21 @@ local contracts; do not replace them with project Memory.
 - Route diagnostics through the injected logger; do not add ad hoc `print` calls.
 - Preserve unrelated worktree changes. Avoid destructive Git/file operations and
   do not broaden a diagnosis, review, or docs-only request into implementation.
+
+## Test-first development
+
+- Observable business behavior changes default to test-first development. An
+  automatable bug first gets a failing regression test; a feature starts with
+  one failing externally observable behavior; risky untested code first gets a
+  characterization test. Work in small Red → Green → Refactor increments.
+- Use the lowest reasonable test layer and assert results or invariants, not
+  private structure. Never weaken or skip a new failure to accept incorrect code.
+- Generated/documentation/formatting changes, behavior-free configuration, and
+  pure visual tweaks do not mechanically require Red. Coverage is a merge signal,
+  not the purpose of TDD.
+
+The complete procedure, exceptions, and high-risk owner guidance are canonical in
+[Maintenance Workflow](.agents/skills/ssh-mobile-maintenance/references/workflow.md).
 
 ## Documentation and validation
 

@@ -1,4 +1,4 @@
-> Last updated: 2026-08-25
+> Last updated: 2026-08-26
 
 # SSH Mobile Control and Relay Server
 
@@ -387,6 +387,12 @@ mutating the worktree. If `protoc` is unavailable, the script prints `NOT RUN` f
 equality; that local result does not claim the complete descriptor gate passed.
 
 ## Validation
+
+HTTP/WebSocket contracts, enrollment/credential/revoke, authentication,
+anti-replay/timestamp checks, reservations/rate limits, MySQL/Redis semantics,
+multi-instance behavior, and administrator sessions use test-first changes:
+first reproduce or define the behavior with the lowest reasonable failing Go or
+contract test, then run the broader storage/race/contract layer after Green.
 
 ```sh
 go fmt ./...

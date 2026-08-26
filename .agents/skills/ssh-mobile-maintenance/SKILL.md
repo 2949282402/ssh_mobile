@@ -3,7 +3,7 @@ name: ssh-mobile-maintenance
 description: Maintain and debug the SSH Mobile repository, including Flutter, Dart packages, the Rust network SDK, Relay, Admin UI, tests, documentation, and shared Agent guidance. Use for any non-trivial implementation, diagnosis, validation, or documentation change in this repository.
 ---
 
-> Last updated: 2026-08-25
+> Last updated: 2026-08-26
 
 # SSH Mobile Maintenance
 
@@ -75,6 +75,20 @@ the write mechanics; this Skill owns the repository validation gate.
   the compatibility inventory permits removal.
 - Do not broaden a docs-only or checker task into Flutter, Rust, Go, frontend,
   protocol, FFI, or database behavior changes.
+
+## Test-first contract
+
+Observable business behavior changes default to test-first development. Before
+production edits, identify the contract and lowest reasonable test layer, then
+work in small Red → Green → Refactor increments. Bugs first receive a failing
+regression test; risky untested code first receives a characterization test.
+The documented visual/generated/docs exceptions do not fabricate a Red step.
+Never weaken or skip a failure or add test-only production coupling.
+
+The canonical detailed procedure, high-risk owner matrix, exceptions, and
+self-check are in [Maintenance Workflow](references/workflow.md). Existing test
+commands and cross-boundary gates remain owned by
+[Validation](references/validation.md) and local package contracts.
 
 ## Repository boundaries
 

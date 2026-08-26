@@ -1,4 +1,4 @@
-> Last updated: 2026-08-25
+> Last updated: 2026-08-26
 
 # Validation Matrix
 
@@ -113,6 +113,19 @@ dart run test/tool/ci_workflow_test.dart
 
 Docs-only facts also require the owning package or Domain source to be checked;
 a Markdown link check cannot establish semantic correctness.
+
+## Test-first evidence
+
+For behavior changes, run the new focused test before production edits and keep
+the failure output long enough to verify that Red corresponds to the intended
+contract. After Green, rerun that test and the owning package suite. Add the
+existing contract, integration, acceptance, race, storage, or platform gate
+when the behavior crosses an owner boundary; a mocked unit test does not replace
+that evidence. The procedure and exceptions are canonical in
+[Maintenance Workflow](workflow.md).
+
+Documentation-only workflow changes do not fabricate Red/Green evidence. They
+use the Agent knowledge checks above plus the always-required final diff checks.
 
 ## Flutter/Dart Workspace Member
 

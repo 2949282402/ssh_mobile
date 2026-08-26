@@ -1,4 +1,4 @@
-最新更新时间：2026-08-24
+最新更新时间：2026-08-26
 
 # ssh_mobile_network_native 维护约束
 
@@ -79,6 +79,11 @@ Module 管理，native runtime 不得持久化秘密。
 停止后拒绝新命令。
 
 ## 必须运行的测试
+
+Peer/Session/Path/Lease、Direct/Relay fallback、recovery、Delivery/Transfer/Stream、
+E2EE、nonce/counter/key lifecycle、cancellation/timeout/race 或 FFI mapping 变化
+必须先由最低合理层级的失败测试锁定；跨 Dart/Rust/wire 边界还必须补 contract 或
+acceptance evidence，不能只保留单侧 unit test。
 
 ```bash
 dart analyze

@@ -1,4 +1,4 @@
-最新更新时间：2026-08-25
+最新更新时间：2026-08-26
 
 # network_sdk Package Guidelines
 
@@ -59,6 +59,10 @@ deprecated alias、旧 LAN pairing/storage migration、V1/V2 dual path 或旧文
   stopped、failed 的主要 Source of Truth；stop command 成功仍须等待 native `closed`。
 
 ## 必须验证
+
+JSON/request/error mapping、401 refresh、Facade/Realtime 状态转换和 dispose 语义
+变更必须先有失败的行为测试；涉及 native command/event 或 wire contract 时还要先
+固定 Dart 侧 contract，并在 Green 后运行对应 Dart ↔ Rust/Protocol 门禁。
 
 ```bash
 flutter analyze --no-pub

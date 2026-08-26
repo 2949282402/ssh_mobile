@@ -1,4 +1,4 @@
-最新更新时间：2026-08-24
+最新更新时间：2026-08-26
 
 # feature_ai 维护约束
 
@@ -33,6 +33,10 @@ Stream、Timer 和 Controller。App Shell 注入的 SSH、WebView、日志和数
 Tool loop 的 preflight、预算审计和结果折叠是独立安全 Owner：隐藏工具必须在预算、
 审批、cache 和执行前被 preflight 拒绝；顺序与并行路径必须共用 result recorder；
 预算审计统一通过 budget coordinator 封禁剩余调用。不得把这些规则复制回 round loop。
+
+修改 Agent/tool loop、approval、budget、plan mode、cancel/close、provider error 或
+trace/ledger/result folding 时，必须先添加失败测试验证外部状态、安全结果或生命周期，
+不得只断言 mock 调用顺序。
 
 ## 必须运行的测试
 

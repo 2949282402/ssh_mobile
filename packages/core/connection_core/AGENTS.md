@@ -1,4 +1,4 @@
-最新更新时间：2026-08-10
+最新更新时间：2026-08-26
 
 # connection_core 维护约束
 
@@ -12,6 +12,8 @@
   SharedPreferences 的迁移适配器。
 - 新增或修改代码需要补充中文职责/约束注释，并为 CRUD、并发顺序、凭据隔离和
   生命周期补充测试。
+- Repository、Drift 持久化/迁移、Credential/Host Key 合同或敏感数据边界变化
+  必须先用失败测试定义可观察结果；修改无覆盖旧实现前先补 characterization test。
 - Full App 迁移已关闭旧 Connection 导入门禁；不得恢复旧
   `apps/ssh_mobile_full/lib/features/connection/` 业务入口或模型转导出。
 

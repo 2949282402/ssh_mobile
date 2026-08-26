@@ -1,4 +1,4 @@
-> Last updated: 2026-08-25
+> Last updated: 2026-08-26
 
 # Maintenance Workflow
 
@@ -29,6 +29,87 @@ Use this sequence after the canonical Skill and
   evidence that the current boundary cannot own the behavior.
 
 ## 3. Implement coherently
+
+### Test-first workflow
+
+This section is the detailed TDD source of truth. Apply it by default when a
+change affects observable business behavior, including a state transition,
+protocol or API contract, security invariant, persistence result, resource
+lifecycle, concurrency/ordering rule, cancellation/timeout/retry path, or
+returned error.
+
+Choose the lowest reasonable evidence layer:
+
+```text
+pure unit → repository/service/ViewModel → contract → widget → integration → E2E
+```
+
+Do not stop at a unit test when the contract crosses Dart ↔ Rust FFI, Protobuf or
+wire encoding, Flutter ↔ native runtime, Relay HTTP/WebSocket, Redis/MySQL,
+multi-instance behavior, or App Shell ↔ Feature composition. Add the focused
+cross-boundary gate after the fast test proves the local behavior.
+
+For an automatable bug:
+
+1. Read the implementation and existing tests; select the lowest layer that
+   observes the defect.
+2. Add one stable regression test and run it before production edits. Confirm
+   Red is caused by the target defect, not a fixture, environment, or unrelated
+   failure.
+3. Make the smallest production change that turns it Green, then refactor under
+   the passing test.
+4. Run the focused test, the owning package suite, and any affected contract,
+   integration, acceptance, or race-sensitive gate.
+
+For a new feature, state Given/When/Then for the first externally observable
+behavior, including the relevant boundary, error, lifecycle, cancellation, or
+retry case. Add one failing test, confirm Red, implement only enough for Green,
+refactor, and repeat for the next behavior. Do not batch an entire feature's
+tests before beginning implementation.
+
+For risky existing code without coverage, first add a characterization test for
+the current observable behavior. A deliberate contract change then needs a new
+failing expectation; a behavior-preserving refactor keeps the characterization
+test Green. If a defect cannot be automated realistically, record why and use
+the nearest contract-level evidence instead of inventing a low-value test.
+
+Tests should assert public results, persisted state, emitted events, returned
+errors, ownership/release effects, protocol compatibility, and security
+invariants. Avoid private fields, private call order, incidental collection
+shape, or mock interaction alone unless the interaction is itself the contract
+(for example, close exactly once or retry at most N times).
+
+Never repair Red by deleting or weakening an assertion, skipping the new test,
+changing the test to accept the defect, or adding test-only hooks to production
+business modules. Coverage is an evidence gate, not a reason to test trivial
+getters, constructors, or meaningless branches.
+
+Pure visual spacing/color/radius/typography changes, generated code and
+generated FFI bindings, export-only files, documentation/comments/formatting, and
+configuration without important behavior do not mechanically require TDD. Test
+UI business state in unit/ViewModel tests, key widget behavior in widget tests,
+critical flows in integration tests, and visual regressions with golden tests
+only when the visual contract warrants them.
+
+High-risk owner focus:
+
+| Owner | Test-first behavior |
+| --- | --- |
+| `native/network_core` | Peer/Session/Path/Lease state, Direct/Relay fallback, recovery, Delivery/Stream/Transfer, E2EE, counters/keys, cancellation, timeout, and races |
+| `relay` | HTTP/WebSocket, enrollment/refresh/revoke, authentication/anti-replay/time, reservation/rate limits, MySQL/Redis, multi-instance, and administrator sessions |
+| `connection_core` | Repository/Drift behavior, credentials/Host Keys, migration, and sensitive persistence boundaries |
+| `ssh_core` | Pool/Lease/reference count, idle timeout, shutdown, reacquire, and lifecycle races |
+| `network_sdk` and native binding | JSON/request/error mapping, refresh, facade/realtime transitions, dispose, and Dart ↔ Rust/wire parity |
+| `feature_ai` | Agent/tool loop, approval, budget, plan mode, cancellation/close, provider errors, trace/ledger/result folding |
+| `feature_sftp` | target fingerprint, browse/preview/edit/transfer/delete, repository/lifecycle behavior, and fail-closed rules |
+| Other Features | ViewModel/controller/reducer, repository, parser, state transition, and domain/service behavior |
+
+Before handoff, be able to identify the changed contract, the test added before
+production code, its intended Red failure, the implementation that made it
+Green, whether any existing assertion changed, remaining unprotected edges, the
+package suite run, and any required cross-boundary gate. Report this evidence
+proportionally; do not fabricate a Red step for work that qualified for an
+exception.
 
 - Keep UI composition in Views, state/actions in ViewModels, orchestration in
   Services/Modules, persistence in owning Repositories, and platform/protocol
