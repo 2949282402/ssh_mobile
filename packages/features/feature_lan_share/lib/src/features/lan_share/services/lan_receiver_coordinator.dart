@@ -6,11 +6,13 @@
 
 import 'dart:async';
 
+import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart';
 import 'package:network_sdk/network_sdk.dart';
 import 'package:network_transport/network_transport.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../../data/database/lan_share_database.dart';
 import '../../../data/repositories/lan_share_history_repository.dart';
 import '../../../domain/lan_share_ports.dart';
 import '../../../services/lan_share/lan_discovery_service.dart';
@@ -179,8 +181,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     await ensureInitialized();
     await ensureViewModel();
     final nativeTransfer = _nativeTransferCoordinator;
-    final transfer = _transferService;
-    if (nativeTransfer == null || transfer == null) {
+    if (nativeTransfer == null) {
       return _networkFailure(
         NetworkErrorCode.noRoute,
         'native network runtime is unavailable',
@@ -196,23 +197,65 @@ final class LanReceiverCoordinator extends ChangeNotifier {
       // incoming-transfer owner.
       return nativeTransfer.reject(offer);
     }
+
+    // 1. Ensure incoming connecting history record is persisted BEFORE native acceptance.
+    try {
+      final existing = await historyRepository.dao.getRecord(offer.transferId);
+      if (existing == null) {
+        await historyRepository.dao.insertRecord(
+          LanTransferRecordsCompanion(
+            id: Value(offer.transferId),
+            senderId: Value(offer.peerId),
+            senderAlias: Value(offer.peerId),
+            receiverId: Value(appSettings.lanDeviceId),
+            payloadType: Value(
+              classifyAttachment(fileName: offer.fileName).toJson(),
+            ),
+            fileName: Value(offer.fileName),
+            fileSize: Value(offer.fileSize),
+            status: Value(LanTransferStatus.connecting.toJson()),
+            createdAt: Value(DateTime.now().millisecondsSinceEpoch),
+            isIncoming: const Value(true),
+            isRecalled: const Value(false),
+            routeType: Value(offer.routeType.name),
+            bytesTotal: Value(offer.fileSize),
+            bytesTransferred: const Value(0),
+          ),
+        );
+      }
+    } catch (error, stackTrace) {
+      logger.warning(
+        'Failed to persist incoming transfer history before native accept',
+        details: '$error\n$stackTrace',
+      );
+      return _networkFailure(
+        NetworkErrorCode.ioError,
+        'Failed to persist incoming transfer history: $error',
+        NetworkOperation.respondToIncoming,
+        peerId: offer.peerId,
+      );
+    }
+
+    // 2. Perform native accept.
     final nativeResult = await nativeTransfer.accept(offer);
-    if (nativeResult is NetworkFailure<void>) return nativeResult;
-    transfer.handleIncomingMessageFromWeb(
-      LanMessage(
-        id: offer.transferId,
-        senderId: offer.peerId,
-        senderAlias: offer.peerId,
-        receiverId: appSettings.lanDeviceId,
-        payloadType: classifyAttachment(fileName: offer.fileName),
-        fileName: offer.fileName,
-        fileSize: offer.fileSize,
-        status: LanTransferStatus.connecting,
-        createdAt: DateTime.now(),
-        isIncoming: true,
-        routeType: offer.routeType,
-      ),
-    );
+    if (nativeResult is NetworkFailure<void>) {
+      if (!isRetryableNetworkError(nativeResult.error.code)) {
+        try {
+          await historyRepository.dao.updateRecordStatus(
+            offer.transferId,
+            LanTransferStatus.failed.toJson(),
+            failureReason: nativeResult.error.code.name,
+          );
+        } catch (error, stackTrace) {
+          logger.warning(
+            'Failed to update transfer status to failed on terminal failure',
+            details: '$error\n$stackTrace',
+          );
+        }
+      }
+      return nativeResult;
+    }
+
     return nativeResult;
   }
 
@@ -227,6 +270,19 @@ final class LanReceiverCoordinator extends ChangeNotifier {
         NetworkErrorCode.noRoute,
         'native network runtime is unavailable',
         NetworkOperation.respondToIncoming,
+      );
+    }
+    try {
+      final record = await historyRepository.dao.getRecord(offer.transferId);
+      if (record != null &&
+          (record.status == LanTransferStatus.connecting.toJson() ||
+              record.status == LanTransferStatus.pending.toJson())) {
+        await historyRepository.dao.deleteRecord(offer.transferId);
+      }
+    } catch (error, stackTrace) {
+      logger.warning(
+        'Failed to clean up pending history on reject: ${offer.transferId}',
+        details: '$error\n$stackTrace',
       );
     }
     return nativeTransfer.reject(offer);
@@ -711,9 +767,15 @@ final class LanReceiverCoordinator extends ChangeNotifier {
   NetworkFailure<void> _networkFailure(
     NetworkErrorCode code,
     String message,
-    NetworkOperation operation,
-  ) => NetworkFailure(
-    NetworkError(code: code, message: message, operation: operation),
+    NetworkOperation operation, {
+    String? peerId,
+  }) => NetworkFailure(
+    NetworkError(
+      code: code,
+      message: message,
+      operation: operation,
+      peerId: peerId,
+    ),
   );
 
   /// 异步关闭所有由 Coordinator 使用的网络、传输、订阅和 ViewModel。

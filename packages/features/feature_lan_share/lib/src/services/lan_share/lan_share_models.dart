@@ -358,6 +358,17 @@ LanPayloadType classifyAttachment({
   return LanPayloadType.file;
 }
 
+/// Predicate determining whether a network error during transfer/approval is retryable.
+bool isRetryableNetworkError(NetworkErrorCode code) => switch (code) {
+  NetworkErrorCode.ioError ||
+  NetworkErrorCode.timeout ||
+  NetworkErrorCode.quicError ||
+  NetworkErrorCode.pathLost ||
+  NetworkErrorCode.peerOffline ||
+  NetworkErrorCode.noRoute => true,
+  _ => false,
+};
+
 /// Transfer status state
 enum LanTransferStatus {
   pending,
