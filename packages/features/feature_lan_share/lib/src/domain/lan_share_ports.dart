@@ -219,23 +219,13 @@ abstract interface class LanShareNetworkIdentityPort {
   Future<LanShareNetworkIdentityMaterial> loadOrCreate();
 }
 
-/// 创建 LAN 原生传输 Facade 的端口。
+/// 访问 App 层拥有的共享 [NetworkFacade] 的端口。
 ///
-/// Package 只消费 [NetworkFacade] 合约；Facade 的具体构造（底层 SessionClient、
-/// Realtime 协调器和 native runtime）由 App 组合根注入，避免 Feature 直接依赖
-/// FFI 或平台实现。
-abstract interface class LanShareNetworkFactory {
-  /// 原生运行时配置后实际绑定的文件传输端口。
-  int? get boundLocalPort;
-
-  /// 按当前监听器和密钥配置创建可选的 LAN [NetworkFacade]。
-  Future<NetworkFacade?> create({
-    required String deviceId,
-    required Uint8List identityPrivateKey,
-    required Uint8List e2ePrivateKey,
-    required String listenAddress,
-    required String receiveDirectory,
-  });
+/// Feature 仅借用共享的 [NetworkFacade]；底层 SessionClient、Realtime 协调器和
+/// native runtime 由 App 组合根生命周期完全拥有与管理。
+abstract interface class LanShareNetworkAccessPort {
+  /// 借用 App 级单例 [NetworkFacade]。
+  Future<NetworkFacade?> borrowFacade();
 }
 
 /// 旧 App 设置类型的包内兼容别名；实现仍必须是 Port。

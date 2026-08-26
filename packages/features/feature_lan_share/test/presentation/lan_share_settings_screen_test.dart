@@ -47,7 +47,7 @@ void main() {
       logger: FakeLanShareLogger(),
       dataProtection: FakeLanShareDataProtection(),
       networkIdentity: FakeLanShareIdentity(),
-      networkFactory: FakeLanShareNetworkFactory(),
+      networkAccess: FakeLanShareNetworkAccessPort(),
       bootstrapClient: FakeLanShareBootstrapClient(),
       historyRepository: LanShareHistoryRepository(database),
       networkRuntime: FakeLanShareNetworkRuntime(),

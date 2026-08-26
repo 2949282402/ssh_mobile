@@ -16,7 +16,7 @@ void main() {
     'disabled receiver initializes without starting network services',
     () async {
       final database = LanShareDatabase.forTesting(NativeDatabase.memory());
-      final networkFactory = _FakeNetworkFactory();
+      final networkAccess = _FakeNetworkAccessPort();
       final networkRuntime = _FakeNetworkRuntime();
       final module = LanShareModule(
         receiverEnabled: false,
@@ -29,7 +29,7 @@ void main() {
           LanShareLoggerPort: _FakeLogger(),
           LanShareDataProtectionPort: _FakeDataProtection(),
           LanShareNetworkIdentityPort: _FakeIdentity(),
-          LanShareNetworkFactory: networkFactory,
+          LanShareNetworkAccessPort: networkAccess,
           BootstrapClient: _FakeBootstrapClient(),
           NetworkRuntime: networkRuntime,
         }),
@@ -41,7 +41,7 @@ void main() {
       await module.activate();
       expect(module.state, ModuleState.active);
       expect(module.receiverEnabled, isFalse);
-      expect(networkFactory.createCalls, 0);
+      expect(networkAccess.borrowCalls, 0);
       expect(networkRuntime.ensureCalls, 0);
 
       await module.deactivate();
@@ -188,21 +188,12 @@ final class _FakeIdentity implements LanShareNetworkIdentityPort {
       );
 }
 
-final class _FakeNetworkFactory implements LanShareNetworkFactory {
-  int createCalls = 0;
+final class _FakeNetworkAccessPort implements LanShareNetworkAccessPort {
+  int borrowCalls = 0;
 
   @override
-  int? get boundLocalPort => 43123;
-
-  @override
-  Future<NetworkFacade?> create({
-    required String deviceId,
-    required Uint8List identityPrivateKey,
-    required Uint8List e2ePrivateKey,
-    required String listenAddress,
-    required String receiveDirectory,
-  }) async {
-    createCalls++;
+  Future<NetworkFacade?> borrowFacade() async {
+    borrowCalls++;
     return null;
   }
 }

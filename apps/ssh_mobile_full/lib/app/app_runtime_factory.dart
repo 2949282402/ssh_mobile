@@ -443,10 +443,8 @@ final class AppRuntimeFactory {
               AppLanShareDataProtectionAdapter(DataProtectionService.instance),
           feature_lan_share.LanShareNetworkIdentityPort:
               AppLanShareNetworkIdentityAdapter(runtimeNetworkIdentityService),
-          feature_lan_share.LanShareNetworkFactory: AppLanShareNetworkFactory(
-            runtimeNetworkRuntime,
-            networkFacade,
-          ),
+          feature_lan_share.LanShareNetworkAccessPort:
+              AppLanShareNetworkAccessAdapter(networkFacade),
           BootstrapClient: bootstrapClient,
           NetworkRuntime: runtimeNetworkRuntime,
         }),
