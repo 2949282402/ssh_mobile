@@ -21,8 +21,11 @@ void main() {
       addTearDown(fixture.dispose);
 
       final result = await fixture.coordinator.sendFile(
-        _device('peer-a'),
-        '/tmp/does-not-exist-${DateTime.now().microsecondsSinceEpoch}',
+        peerId: 'peer-a',
+        transferId: 'tx-1',
+        filePath:
+            '/tmp/does-not-exist-${DateTime.now().microsecondsSinceEpoch}',
+        discovery: _device('peer-a'),
       );
 
       expect(result, isA<SdkFailure<SdkTransferSession>>());
@@ -44,8 +47,10 @@ void main() {
       addTearDown(() => directory.delete(recursive: true));
 
       final directoryResult = await fixture.coordinator.sendFile(
-        _device('peer-a'),
-        directory.path,
+        peerId: 'peer-a',
+        transferId: 'tx-dir',
+        filePath: directory.path,
+        discovery: _device('peer-a'),
       );
       expect(directoryResult, isA<SdkFailure<SdkTransferSession>>());
       expect(
@@ -59,8 +64,10 @@ void main() {
       final file = File('${directory.path}/payload.bin')
         ..writeAsStringSync('x');
       final untrustedResult = await fixture.coordinator.sendFile(
-        _device('peer-a'),
-        file.path,
+        peerId: 'peer-a',
+        transferId: 'tx-untrusted',
+        filePath: file.path,
+        discovery: _device('peer-a'),
       );
       expect(untrustedResult, isA<SdkFailure<SdkTransferSession>>());
       expect(
@@ -73,7 +80,7 @@ void main() {
   );
 
   test(
-    'capability failure invalidates the dynamic endpoint and never falls back to HTTP upload',
+    'capability failure invalidates the dynamic endpoint and falls back to relay if authorized',
     () async {
       final fixture = await _Fixture.create(trusted: true);
       addTearDown(fixture.dispose);
@@ -83,8 +90,10 @@ void main() {
         ..writeAsStringSync('x');
 
       final result = await fixture.coordinator.sendFile(
-        _device('peer-a'),
-        file.path,
+        peerId: 'peer-a',
+        transferId: 'tx-cap-fail',
+        filePath: file.path,
+        discovery: _device('peer-a'),
       );
 
       expect(result, isA<SdkFailure<SdkTransferSession>>());
@@ -92,6 +101,106 @@ void main() {
       expect(fixture.updatedEndpoints, isEmpty);
       expect(fixture.facade.connectCalls, 0);
       expect(fixture.facade.transferCalls, 0);
+    },
+  );
+
+  test(
+    'trusted offline peer with relay=true sends file via Relay directly',
+    () async {
+      final fixture = await _Fixture.create(
+        trusted: true,
+        relayAuthorized: true,
+      );
+      addTearDown(fixture.dispose);
+      final directory = await Directory.systemTemp.createTemp('lan-v2-source-');
+      addTearDown(() => directory.delete(recursive: true));
+      final file = File('${directory.path}/payload.bin')
+        ..writeAsStringSync('hello-relay');
+
+      final result = await fixture.coordinator.sendFile(
+        peerId: 'peer-a',
+        transferId: 'tx-relay-offline',
+        filePath: file.path,
+        discovery: null, // Offline, no discovery candidate
+      );
+
+      expect(result, isA<SdkSuccess<SdkTransferSession>>());
+      expect(fixture.facade.connectCalls, 1);
+      expect(fixture.facade.transferCalls, 1);
+      expect(fixture.invalidatedPeerIds, contains('peer-a'));
+    },
+  );
+
+  test('trusted offline peer with relay=false returns noRoute', () async {
+    final fixture = await _Fixture.create(
+      trusted: true,
+      relayAuthorized: false,
+    );
+    addTearDown(fixture.dispose);
+    final directory = await Directory.systemTemp.createTemp('lan-v2-source-');
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}/payload.bin')
+      ..writeAsStringSync('hello-no-relay');
+
+    final result = await fixture.coordinator.sendFile(
+      peerId: 'peer-a',
+      transferId: 'tx-no-route',
+      filePath: file.path,
+      discovery: null,
+    );
+
+    expect(result, isA<SdkFailure<SdkTransferSession>>());
+    final failure = result as SdkFailure<SdkTransferSession>;
+    expect(failure.error.code, NetworkErrorCode.noRoute);
+    expect(fixture.facade.connectCalls, 0);
+    expect(fixture.facade.transferCalls, 0);
+  });
+
+  test(
+    'runtime-blocked incoming offer is rejected and never published to UI',
+    () async {
+      final fixture = await _Fixture.create(trusted: true);
+      addTearDown(fixture.dispose);
+      fixture.policyPort.blockedPeers.add('peer-a');
+
+      final offer = _offer('transfer-blocked', 'peer-a');
+      var offerEmitted = false;
+      final sub = fixture.coordinator.incomingOffers.listen((_) {
+        offerEmitted = true;
+      });
+      addTearDown(sub.cancel);
+
+      fixture.facade.emit(offer);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(offerEmitted, isFalse);
+      expect(fixture.facade.responses, contains(('transfer-blocked', false)));
+    },
+  );
+
+  test(
+    'insufficient disk space rejects incoming offer with resourceLimit',
+    () async {
+      final fixture = await _Fixture.create(
+        trusted: true,
+        freeDiskSpaceMb: 50.0, // Less than 100MB buffer
+      );
+      addTearDown(fixture.dispose);
+
+      final offer = _offer(
+        'transfer-large',
+        'peer-a',
+        fileSize: 1024 * 1024 * 100,
+      );
+      final incoming = fixture.coordinator.incomingOffers.first;
+      fixture.facade.emit(offer);
+      expect(await incoming, same(offer));
+
+      final result = await fixture.coordinator.accept(offer);
+      expect(result, isA<SdkFailure<void>>());
+      final failure = result as SdkFailure<void>;
+      expect(failure.error.code, NetworkErrorCode.resourceLimit);
+      expect(fixture.facade.responses, contains(('transfer-large', false)));
     },
   );
 
@@ -129,7 +238,9 @@ void main() {
       final fixture = await _Fixture.create(trusted: true);
       addTearDown(fixture.dispose);
       final offer = _offer('transfer-a', 'peer-a');
+      final incoming = fixture.coordinator.incomingOffers.first;
       fixture.facade.emit(offer);
+      expect(await incoming, same(offer));
 
       fixture.facade.failRespond = true;
       final failedAccept = await fixture.coordinator.accept(offer);
@@ -151,7 +262,9 @@ void main() {
     final fixture = await _Fixture.create(trusted: true);
     addTearDown(fixture.dispose);
     final offer = _offer('transfer-a', 'peer-a');
+    final incoming = fixture.coordinator.incomingOffers.first;
     fixture.facade.emit(offer);
+    expect(await incoming, same(offer));
 
     fixture.facade.failRespond = true;
     final failedReject = await fixture.coordinator.reject(offer);
@@ -172,7 +285,9 @@ void main() {
       final fixture = await _Fixture.create(trusted: true);
       addTearDown(fixture.dispose);
       final offer = _offer('transfer-a', 'peer-a');
+      final incoming = fixture.coordinator.incomingOffers.first;
       fixture.facade.emit(offer);
+      expect(await incoming, same(offer));
 
       final completer = Completer<void>();
       fixture.facade.respondCompleter = completer;
@@ -195,7 +310,9 @@ void main() {
       final fixture = await _Fixture.create(trusted: true);
       addTearDown(fixture.dispose);
       final offer = _offer('transfer-a', 'peer-a');
+      final incoming = fixture.coordinator.incomingOffers.first;
       fixture.facade.emit(offer);
+      expect(await incoming, same(offer));
 
       final completer = Completer<void>();
       fixture.facade.respondCompleter = completer;
@@ -220,17 +337,15 @@ void main() {
     () async {
       final fixture = await _Fixture.create(trusted: true);
       addTearDown(fixture.dispose);
-      // Relay offer for peer with relay=false (default trust)
       final offer = IncomingTransferOffer(
-        eventId: 'event-transfer-r',
-        timestamp: DateTime.utc(2026),
-        transferId: 'transfer-r',
+        eventId: 'ev-relay',
+        timestamp: DateTime.now(),
+        transferId: 'tx-relay',
         peerId: 'peer-a',
-        fileName: 'payload.bin',
-        fileSize: 1,
+        fileName: 'file.bin',
+        fileSize: 10,
         routeType: NetworkRouteType.relay,
       );
-      fixture.facade.emit(offer);
 
       final result = await fixture.coordinator.accept(offer);
       expect(result, isA<SdkFailure<void>>());
@@ -238,162 +353,79 @@ void main() {
         (result as SdkFailure<void>).error.code,
         NetworkErrorCode.authenticationFailed,
       );
-      expect(fixture.facade.responses, <(String, bool)>[('transfer-r', false)]);
+      expect(fixture.facade.responses, contains(('tx-relay', false)));
     },
   );
 
   test(
-    'when accept is in flight and timeout timer fires, successful accept does not trigger duplicate reject',
+    'offer timeout rejects automatically after deadline if no decision made',
     () async {
       final fixture = await _Fixture.create(
         trusted: true,
-        offerTimeout: const Duration(milliseconds: 30),
+        offerTimeout: const Duration(milliseconds: 50),
       );
       addTearDown(fixture.dispose);
-      final offer = _offer('transfer-timeout-success', 'peer-a');
+      final offer = _offer('transfer-timeout', 'peer-a');
+      final incoming = fixture.coordinator.incomingOffers.first;
       fixture.facade.emit(offer);
+      expect(await incoming, same(offer));
+
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      expect(fixture.facade.responses, contains(('transfer-timeout', false)));
+    },
+  );
+
+  test(
+    'accept in-flight timeout race: successful accept completes and cancels timeout reject',
+    () async {
+      final fixture = await _Fixture.create(
+        trusted: true,
+        offerTimeout: const Duration(milliseconds: 50),
+      );
+      addTearDown(fixture.dispose);
+      final offer = _offer('transfer-race-win', 'peer-a');
+      final incoming = fixture.coordinator.incomingOffers.first;
+      fixture.facade.emit(offer);
+      expect(await incoming, same(offer));
 
       final completer = Completer<void>();
       fixture.facade.respondCompleter = completer;
 
       final acceptFuture = fixture.coordinator.accept(offer);
 
-      // Wait until the 30ms offerTimeout timer fires and enters _expireOffer,
-      // which will await the in-flight acceptFuture
-      await Future<void>.delayed(const Duration(milliseconds: 60));
+      await Future<void>.delayed(const Duration(milliseconds: 80));
 
-      // Complete native response successfully
       completer.complete();
-      final acceptResult = await acceptFuture;
-      expect(acceptResult, isA<SdkSuccess<void>>());
+      final result = await acceptFuture;
+      expect(result, isA<SdkSuccess<void>>());
 
-      // Give event loop time to run _expireOffer completion
       await Future<void>.delayed(const Duration(milliseconds: 20));
-
-      // Assert coordinator committed the accept and did not send a reject
       expect(fixture.facade.responses, <(String, bool)>[
-        ('transfer-timeout-success', true),
+        ('transfer-race-win', true),
       ]);
     },
   );
 
-  test(
-    'when accept is in flight and timeout timer fires, failed accept causes timeout handler to send reject',
-    () async {
-      final fixture = await _Fixture.create(
-        trusted: true,
-        offerTimeout: const Duration(milliseconds: 30),
-      );
-      addTearDown(fixture.dispose);
-      final offer = _offer('transfer-timeout-fail', 'peer-a');
-      fixture.facade.emit(offer);
+  test('setRelayAuthorization delegates to policyPort', () async {
+    final fixture = await _Fixture.create(trusted: true);
+    addTearDown(fixture.dispose);
 
-      final completer = Completer<void>();
-      fixture.facade.respondCompleter = completer;
-      fixture.facade.failRespondCount =
-          1; // Fail first response (in-flight accept), allow subsequent fallback reject
-
-      final acceptFuture = fixture.coordinator.accept(offer);
-
-      // Wait until timer fires and waits on in-flight accept
-      await Future<void>.delayed(const Duration(milliseconds: 60));
-
-      completer.complete();
-      final acceptResult = await acceptFuture;
-      expect(acceptResult, isA<SdkFailure<void>>());
-
-      // Give event loop time to run _expireOffer fallback reject
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-
-      expect(fixture.facade.responses, <(String, bool)>[
-        ('transfer-timeout-fail', true),
-        ('transfer-timeout-fail', false),
-      ]);
-    },
-  );
-
-  test(
-    'setRelayAuthorization callback throws returns NetworkFailure',
-    () async {
-      final store = LanPeerTrustStore();
-      await store.save(_trust('peer-a'));
-      final facade = _RecordingFacade();
-      final transferService = LanTransferService(
-        currentDeviceId: 'device-a',
-        securityService: LanSecurityService(
-          appOwnedX25519PrivateSeed: Uint8List(32),
-          peerTrustStore: store,
-        ),
-        storageService: LanStorageService(),
-      );
-      final coordinator = LanNativeTransferCoordinator(
-        transferService: transferService,
-        networkFacade: facade,
-        trustStore: store,
-        updateDirectEndpoint: (deviceId, endpoint) async =>
-            const SdkSuccess<void>(null),
-        invalidateDirectEndpoint: (deviceId) async =>
-            const SdkSuccess<void>(null),
-        setRelayAuthorization: (peerId, enabled) async {
-          throw Exception('Simulated setRelayAuthorization callback throw');
-        },
-      );
-      addTearDown(() async {
-        await coordinator.dispose();
-        transferService.dispose();
-        await store.dispose();
-        await facade.close();
-      });
-
-      final result = await coordinator.setRelayAuthorization(
-        peerId: 'peer-a',
-        enabled: true,
-      );
-
-      expect(result, isA<SdkFailure<void>>());
-      final failure = result as SdkFailure<void>;
-      expect(failure.error.operation, NetworkOperation.upsertPeer);
-      expect(failure.error.peerId, 'peer-a');
-    },
-  );
-
-  test('removeTrustedPeer callback throws returns NetworkFailure', () async {
-    final store = LanPeerTrustStore();
-    await store.save(_trust('peer-a'));
-    final facade = _RecordingFacade();
-    final transferService = LanTransferService(
-      currentDeviceId: 'device-a',
-      securityService: LanSecurityService(
-        appOwnedX25519PrivateSeed: Uint8List(32),
-        peerTrustStore: store,
-      ),
-      storageService: LanStorageService(),
+    final result = await fixture.coordinator.setRelayAuthorization(
+      peerId: 'peer-a',
+      enabled: true,
     );
-    final coordinator = LanNativeTransferCoordinator(
-      transferService: transferService,
-      networkFacade: facade,
-      trustStore: store,
-      updateDirectEndpoint: (deviceId, endpoint) async =>
-          const SdkSuccess<void>(null),
-      invalidateDirectEndpoint: (deviceId) async =>
-          const SdkSuccess<void>(null),
-      removeTrust: (deviceId) async {
-        throw Exception('Simulated removeTrust callback throw');
-      },
-    );
-    addTearDown(() async {
-      await coordinator.dispose();
-      transferService.dispose();
-      await store.dispose();
-      await facade.close();
-    });
+    expect(result, isA<SdkSuccess<void>>());
+    expect((await fixture.store.read('peer-a'))?.authorization.relay, isTrue);
+  });
 
-    final result = await coordinator.removeTrustedPeer('peer-a');
+  test('removeTrustedPeer delegates to policyPort', () async {
+    final fixture = await _Fixture.create(trusted: true);
+    addTearDown(fixture.dispose);
 
-    expect(result, isA<SdkFailure<void>>());
-    final failure = result as SdkFailure<void>;
-    expect(failure.error.operation, NetworkOperation.removePeer);
-    expect(failure.error.peerId, 'peer-a');
+    final result = await fixture.coordinator.removeTrustedPeer('peer-a');
+    expect(result, isA<SdkSuccess<void>>());
+    expect(await fixture.store.read('peer-a'), isNull);
   });
 }
 
@@ -402,6 +434,7 @@ final class _Fixture {
     required this.store,
     required this.facade,
     required this.transferService,
+    required this.policyPort,
     required this.coordinator,
     required this.updatedEndpoints,
     required this.invalidatedPeerIds,
@@ -410,16 +443,28 @@ final class _Fixture {
   final LanPeerTrustStore store;
   final _RecordingFacade facade;
   final LanTransferService transferService;
+  final _RecordingPolicyPort policyPort;
   final LanNativeTransferCoordinator coordinator;
   final List<String> updatedEndpoints;
   final List<String> invalidatedPeerIds;
 
   static Future<_Fixture> create({
     bool trusted = false,
+    bool relayAuthorized = false,
     Duration offerTimeout = const Duration(seconds: 25),
+    double freeDiskSpaceMb = 1000.0,
   }) async {
     final store = LanPeerTrustStore();
-    if (trusted) await store.save(_trust('peer-a'));
+    if (trusted) {
+      await store.save(
+        _trust('peer-a').copyWith(
+          authorization: PeerRouteAuthorization(
+            localDirect: true,
+            relay: relayAuthorized,
+          ),
+        ),
+      );
+    }
     final facade = _RecordingFacade();
     final transferService = LanTransferService(
       currentDeviceId: 'device-a',
@@ -427,28 +472,32 @@ final class _Fixture {
         appOwnedX25519PrivateSeed: Uint8List(32),
         peerTrustStore: store,
       ),
-      storageService: LanStorageService(),
+      storageService: LanStorageService(
+        freeDiskSpaceMbProvider: () async => freeDiskSpaceMb,
+      ),
     );
     final updatedEndpoints = <String>[];
     final invalidatedPeerIds = <String>[];
+    final policyPort = _RecordingPolicyPort(
+      store: store,
+      facade: facade,
+      updatedEndpoints: updatedEndpoints,
+      invalidatedPeerIds: invalidatedPeerIds,
+    );
     final coordinator = LanNativeTransferCoordinator(
       transferService: transferService,
       networkFacade: facade,
-      trustStore: store,
-      updateDirectEndpoint: (deviceId, endpoint) async {
-        updatedEndpoints.add('$deviceId:$endpoint');
-        return const SdkSuccess<void>(null);
-      },
-      invalidateDirectEndpoint: (deviceId) async {
-        invalidatedPeerIds.add(deviceId);
-        return const SdkSuccess<void>(null);
-      },
+      policyPort: policyPort,
+      storageService: LanStorageService(
+        freeDiskSpaceMbProvider: () async => freeDiskSpaceMb,
+      ),
       offerTimeout: offerTimeout,
     );
     final fixture = _Fixture._(
       store: store,
       facade: facade,
       transferService: transferService,
+      policyPort: policyPort,
       coordinator: coordinator,
       updatedEndpoints: updatedEndpoints,
       invalidatedPeerIds: invalidatedPeerIds,
@@ -461,6 +510,73 @@ final class _Fixture {
     transferService.dispose();
     await store.dispose();
     await facade.close();
+  }
+}
+
+final class _RecordingPolicyPort implements LanNativePeerPolicyPort {
+  _RecordingPolicyPort({
+    required this.store,
+    required this.facade,
+    this.updatedEndpoints,
+    this.invalidatedPeerIds,
+  });
+
+  final LanPeerTrustStore store;
+  final NetworkFacade facade;
+  final List<String>? updatedEndpoints;
+  final List<String>? invalidatedPeerIds;
+  final Set<String> blockedPeers = {};
+
+  @override
+  Future<NetworkResult<LanPeerPolicySnapshot>> getPeerPolicy(
+    String peerId,
+  ) async {
+    final t = await store.read(peerId);
+    final isBlocked = blockedPeers.contains(peerId);
+    return NetworkSuccess(
+      LanPeerPolicySnapshot(
+        trust: t,
+        runtimeBlocked: isBlocked,
+        revoked: false,
+      ),
+    );
+  }
+
+  @override
+  Future<NetworkResult<void>> updateDirectEndpoint(
+    String peerId,
+    String endpoint,
+  ) async {
+    updatedEndpoints?.add('$peerId:$endpoint');
+    return const NetworkSuccess(null);
+  }
+
+  @override
+  Future<NetworkResult<void>> invalidateDirectEndpoint(String peerId) async {
+    invalidatedPeerIds?.add(peerId);
+    return const NetworkSuccess(null);
+  }
+
+  @override
+  Future<NetworkResult<void>> setRelayAuthorization(
+    String peerId,
+    bool enabled,
+  ) async {
+    await store.setRelayAuthorization(peerId, enabled);
+    return const NetworkSuccess(null);
+  }
+
+  @override
+  Future<NetworkResult<void>> removeTrust(String peerId) async {
+    await store.delete(peerId);
+    return const NetworkSuccess(null);
+  }
+
+  @override
+  Future<NetworkResult<void>> reconcilePersistedTrust(
+    LanPeerTrustRecord record,
+  ) async {
+    return const NetworkSuccess(null);
   }
 }
 
@@ -544,25 +660,28 @@ LanDiscoveredPeer _device(String id) => LanDiscoveredPeer(
   lastSeen: DateTime.utc(2026),
 );
 
-IncomingTransferOffer _offer(String transferId, String peerId) =>
-    IncomingTransferOffer(
-      eventId: 'event-$transferId',
-      timestamp: DateTime.utc(2026),
-      transferId: transferId,
-      peerId: peerId,
-      fileName: 'payload.bin',
-      fileSize: 1,
-      routeType: NetworkRouteType.quicDirect,
-    );
+IncomingTransferOffer _offer(
+  String transferId,
+  String peerId, {
+  int fileSize = 100,
+}) => IncomingTransferOffer(
+  eventId: 'event-$transferId',
+  timestamp: DateTime.now(),
+  transferId: transferId,
+  peerId: peerId,
+  fileName: 'test.bin',
+  fileSize: fileSize,
+  routeType: NetworkRouteType.quicDirect,
+);
 
-LanPeerTrustRecord _trust(String deviceId) => LanPeerTrustRecord(
-  deviceId: deviceId,
+LanPeerTrustRecord _trust(String id) => LanPeerTrustRecord(
+  deviceId: id,
   certificateFingerprint:
       '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
-  inboundAccessToken: 'inbound-$deviceId',
-  outboundAccessToken: 'outbound-$deviceId',
-  x25519PublicKey: Uint8List.fromList(List<int>.filled(32, 1)),
-  networkIdentityPublicKey: Uint8List.fromList(List<int>.filled(32, 2)),
+  inboundAccessToken: 'inbound',
+  outboundAccessToken: 'outbound',
+  x25519PublicKey: Uint8List(32),
+  networkIdentityPublicKey: Uint8List(32),
   origin: PeerTrustOrigin.localPin,
   authorization: const PeerRouteAuthorization(localDirect: true, relay: false),
   createdAt: DateTime.utc(2026),

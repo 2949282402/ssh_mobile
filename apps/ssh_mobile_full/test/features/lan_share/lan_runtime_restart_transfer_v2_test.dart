@@ -123,13 +123,8 @@ void main() {
       final coordinatorA = LanNativeTransferCoordinator(
         transferService: transferServiceA,
         networkFacade: facadeA,
-        trustStore: storeA,
-        updateDirectEndpoint: registryA.updateDirectEndpoint,
-        invalidateDirectEndpoint: registryA.invalidateDirectEndpoint,
-        removeTrust: registryA.removeTrust,
-        setRelayAuthorization: (id, enable) => enable
-            ? registryA.authorizeRelayForPeer(id)
-            : registryA.revokeRelayForPeer(id),
+        policyPort: registryA,
+        storageService: storageA,
       );
       addTearDown(() async {
         await coordinatorA.dispose();
@@ -161,13 +156,8 @@ void main() {
       final coordinatorB1 = LanNativeTransferCoordinator(
         transferService: transferServiceB1,
         networkFacade: facadeB1,
-        trustStore: storeB,
-        updateDirectEndpoint: registryB1.updateDirectEndpoint,
-        invalidateDirectEndpoint: registryB1.invalidateDirectEndpoint,
-        removeTrust: registryB1.removeTrust,
-        setRelayAuthorization: (id, enable) => enable
-            ? registryB1.authorizeRelayForPeer(id)
-            : registryB1.revokeRelayForPeer(id),
+        policyPort: registryB1,
+        storageService: storageB,
       );
 
       // Link facades for file data transmission
@@ -198,8 +188,10 @@ void main() {
       final b1OfferFuture = coordinatorB1.incomingOffers.first;
 
       final sendSessionResult1 = await coordinatorA.sendFile(
-        discoveredB1,
-        file1.path,
+        peerId: discoveredB1.deviceId,
+        transferId: 'transfer-1',
+        filePath: file1.path,
+        discovery: discoveredB1,
       );
       expect(sendSessionResult1, isA<NetworkSuccess<TransferSession>>());
 
@@ -248,13 +240,8 @@ void main() {
       final coordinatorB2 = LanNativeTransferCoordinator(
         transferService: transferServiceB2,
         networkFacade: facadeB2,
-        trustStore: storeB,
-        updateDirectEndpoint: registryB2.updateDirectEndpoint,
-        invalidateDirectEndpoint: registryB2.invalidateDirectEndpoint,
-        removeTrust: registryB2.removeTrust,
-        setRelayAuthorization: (id, enable) => enable
-            ? registryB2.authorizeRelayForPeer(id)
-            : registryB2.revokeRelayForPeer(id),
+        policyPort: registryB2,
+        storageService: storageB,
       );
       addTearDown(() async {
         await coordinatorB2.dispose();
@@ -292,8 +279,10 @@ void main() {
 
       // Sender A queries /api/lan/capabilities and transfers file2
       final sendSessionResult2 = await coordinatorA.sendFile(
-        discoveredB2,
-        file2.path,
+        peerId: discoveredB2.deviceId,
+        transferId: 'transfer-2',
+        filePath: file2.path,
+        discovery: discoveredB2,
       );
       expect(sendSessionResult2, isA<NetworkSuccess<TransferSession>>());
 

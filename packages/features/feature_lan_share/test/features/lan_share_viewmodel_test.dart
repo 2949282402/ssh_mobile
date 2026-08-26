@@ -49,10 +49,11 @@ void main() {
         ownsRuntime: false,
       );
 
-      await expectLater(
-        viewModel.forgetDevice('test-device-id'),
-        throwsStateError,
-      );
+      final result = await viewModel.forgetDevice('test-device-id');
+      expect(result, isA<NetworkFailure<void>>());
+      final failure = result as NetworkFailure<void>;
+      expect(failure.error.code, NetworkErrorCode.noRoute);
+      expect(failure.error.operation, NetworkOperation.removePeer);
 
       viewModel.dispose();
       settings.dispose();
@@ -137,7 +138,8 @@ void main() {
         ),
         createdAt: DateTime.utc(2026),
       );
-      await registry.registerTrust(record);
+      await store.save(record);
+      await registry.reconcilePersistedTrust(record);
 
       final transfer = LanTransferService(
         currentDeviceId: 'sender-1',
@@ -148,13 +150,7 @@ void main() {
       final coordinator = LanNativeTransferCoordinator(
         transferService: transfer,
         networkFacade: facade,
-        trustStore: store,
-        updateDirectEndpoint: registry.updateDirectEndpoint,
-        invalidateDirectEndpoint: registry.invalidateDirectEndpoint,
-        removeTrust: registry.removeTrust,
-        setRelayAuthorization: (deviceId, enabled) => enabled
-            ? registry.authorizeRelayForPeer(deviceId)
-            : registry.revokeRelayForPeer(deviceId),
+        policyPort: registry,
       );
 
       final viewModel = LanShareViewModel(
@@ -232,7 +228,8 @@ void main() {
         ),
         createdAt: DateTime.utc(2026),
       );
-      await registry.registerTrust(record);
+      await store.save(record);
+      await registry.reconcilePersistedTrust(record);
 
       final transfer = LanTransferService(
         currentDeviceId: 'sender-1',
@@ -243,13 +240,7 @@ void main() {
       final coordinator = LanNativeTransferCoordinator(
         transferService: transfer,
         networkFacade: facade,
-        trustStore: store,
-        updateDirectEndpoint: registry.updateDirectEndpoint,
-        invalidateDirectEndpoint: registry.invalidateDirectEndpoint,
-        removeTrust: registry.removeTrust,
-        setRelayAuthorization: (deviceId, enabled) => enabled
-            ? registry.authorizeRelayForPeer(deviceId)
-            : registry.revokeRelayForPeer(deviceId),
+        policyPort: registry,
       );
 
       final viewModel = LanShareViewModel(

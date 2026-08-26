@@ -957,6 +957,7 @@ job_protocol() {
     --descriptor_set_out="$LOG_DIR/network-v2-$RUN_ID.desc" \
     protocol/proto/relay/v2/relay_v2.proto \
     protocol/proto/network/v2/network.proto
+  step 'Run Network V2 schema parity check' dart run scripts/bash/contracts/check_network_v2_contract.dart
   step 'Run Relay V2 contract check' bash scripts/bash/contracts/relay_v2_contract.sh
   step 'Run strict Network V2 acceptance gate' bash scripts/bash/contracts/network_v2_acceptance.sh strict
   step 'buf lint' run_in protocol buf lint
@@ -1020,6 +1021,7 @@ job_lan_network_v2() {
   local -a feature_tests=(
     test/services/lan_peer_trust_v2_test.dart
     test/features/lan_native_peer_registry_v2_test.dart
+    test/features/lan_network_v2_acceptance_matrix_test.dart
     test/services/lan_pairing_protocol_v2_test.dart
     test/services/lan_peer_trust_identity_v2_test.dart
     test/services/lan_peer_presentation_models_test.dart
