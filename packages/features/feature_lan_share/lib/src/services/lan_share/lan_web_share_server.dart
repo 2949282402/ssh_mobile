@@ -1,36 +1,27 @@
-// v1 WebShare HTTPS 请求路由与上传会话状态。
+// V2 WebShare HTTPS 请求路由与上传会话状态。
 // WebShare 固定使用 HTTPS，不保留明文 HTTP 降级路径。
 
 part of 'lan_discovery_service.dart';
 
-/// 跟踪一个已通过元数据端点认证并接受的 WebShare 上传。
-class _PendingWebUpload {
-  final String messageId;
-  final String fileName;
-  final int expectedBytes;
-  final bool encrypted;
-  final DateTime expiresAt;
-
-  /// 创建上传预留。
-  const _PendingWebUpload({
-    required this.messageId,
-    required this.fileName,
-    required this.expectedBytes,
-    required this.encrypted,
-    required this.expiresAt,
-  });
-
-  /// 预留是否已经超过有效期。
-  bool get isExpired => DateTime.now().isAfter(expiresAt);
-}
-
-/// WebShare 端点边界使用的安全 HTTP 失败。
-class _WebShareHttpException implements Exception {
-  final int statusCode;
-  final String message;
-
-  /// 创建规范化 WebShare HTTP 失败。
-  const _WebShareHttpException(this.statusCode, this.message);
+LanMessage _toLanMessage(LanWebShareMessage message) {
+  return LanMessage(
+    id: message.id,
+    senderId: message.senderId,
+    senderAlias: message.senderAlias,
+    receiverId: message.receiverId,
+    payloadType: LanPayloadType.file,
+    fileName: message.fileName,
+    localPath: message.localPath,
+    fileSize: message.fileSize,
+    bytesTransferred: message.bytesTransferred,
+    status: switch (message.status) {
+      LanWebShareMessageStatus.pending => LanTransferStatus.pending,
+      LanWebShareMessageStatus.completed => LanTransferStatus.completed,
+      LanWebShareMessageStatus.failed => LanTransferStatus.failed,
+    },
+    createdAt: message.createdAt,
+    isIncoming: true,
+  );
 }
 
 extension _LanWebShareServerOperations on LanDiscoveryService {
@@ -92,6 +83,7 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
         '[LanDiscoveryService] WebShare using ephemeral port $boundPort',
       );
     }
+    LanWebShareRequestHandler? requestHandler;
     try {
       final pubKeyBytes = await securityService.getStaticX25519PublicKeyBytes();
       final pubKeyB64 = base64.encode(pubKeyBytes);
@@ -107,17 +99,46 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
       const scheme = 'https';
 
       _webShareToken = webShareToken;
-      _pendingWebUploads.clear();
-      _activeWebUploads.clear();
       _webShareServer = bound;
       _isWebShareActive = true;
+      requestHandler = LanWebShareRequestHandler(
+        currentDeviceId: currentDeviceId,
+        webShareToken: webShareToken,
+        decryptPayload: securityService.decryptE2E,
+        hasSufficientSpace: storageService.hasSufficientSpace,
+        createTargetFile: storageService.getSandboxTargetFile,
+        deleteFile: (path) async {
+          await storageService.deleteSandboxFile(path);
+        },
+        onIncomingMessage: (message) {
+          transferService.handleIncomingMessageFromWeb(_toLanMessage(message));
+        },
+        onMessageProgress: (message) {
+          transferService.handleMessageProgressFromWeb(_toLanMessage(message));
+        },
+        isActive: () =>
+            !_closing &&
+            !_closed &&
+            _isWebShareActive &&
+            identical(_webShareRequestHandler, requestHandler) &&
+            _webShareToken == webShareToken,
+        buildHtml: () => _buildWebShareHtml(
+          appPubKeyB64: pubKeyB64,
+          webShareToken: webShareToken,
+        ),
+        logger: debugPrint,
+      );
+      _webShareRequestHandler = requestHandler;
+      final handlerForServer = requestHandler;
       _webShareUrl = Uri(
         scheme: scheme,
         host: hostIp,
         port: boundPort,
         queryParameters: {
           'deviceId': currentDeviceId,
-          'nativePort': transferService.activePort.toString(),
+          'lanPort': transferService.activePort.toString(),
+          if (transferService.activeNativeTransferPort case final port?)
+            'nativePort': port.toString(),
           'access': webShareToken,
           'certFingerprint': certFingerprint,
         },
@@ -125,19 +146,12 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
 
       _webShareServer!.listen((HttpRequest request) {
         late final Future<void> operation;
-        operation =
-            _handleWebShareRequest(
-                  request,
-                  webShareToken: webShareToken,
-                  pubKeyB64: pubKeyB64,
-                  securityService: securityService,
-                  transferService: transferService,
-                  storageService: storageService,
-                )
-                .then<void>((_) {}, onError: (Object _, StackTrace _) {})
-                .whenComplete(() {
-                  _webShareRequestOperations.remove(operation);
-                });
+        operation = handlerForServer
+            .handleRequest(request)
+            .then<void>((_) {}, onError: (Object _, StackTrace _) {})
+            .whenComplete(() {
+              _webShareRequestOperations.remove(operation);
+            });
         _webShareRequestOperations.add(operation);
       });
 
@@ -147,6 +161,8 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
       return _webShareUrl;
     } catch (_) {
       await bound.close(force: true);
+      await requestHandler?.close();
+      _webShareRequestHandler = null;
       _webShareServer = null;
       _isWebShareActive = false;
       _webShareUrl = null;
@@ -158,6 +174,8 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
   /// 停止 WebShare 服务并清除所有待处理上传。
   Future<void> _stopWebShareServer() async {
     final server = _webShareServer;
+    final requestHandler = _webShareRequestHandler;
+    _webShareRequestHandler = null;
     _webShareServer = null;
     _isWebShareActive = false;
     _webShareUrl = null;
@@ -168,125 +186,7 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
       await Future.wait(requestOperations);
     }
     _webShareRequestOperations.clear();
-    _pendingWebUploads.clear();
-    _activeWebUploads.clear();
-  }
-
-  /// 路由一个 WebShare HTTP 请求，并写入规范化错误响应。
-  Future<void> _handleWebShareRequest(
-    HttpRequest request, {
-    required String webShareToken,
-    required String pubKeyB64,
-    required LanSecurityService securityService,
-    required LanTransferService transferService,
-    required LanStorageService storageService,
-  }) async {
-    _setWebShareResponseHeaders(request.response);
-    final path = request.uri.path;
-    try {
-      if (_closing ||
-          _closed ||
-          !_isWebShareActive ||
-          _webShareToken != webShareToken) {
-        throw const _WebShareHttpException(
-          HttpStatus.serviceUnavailable,
-          'Web Share service is shutting down.',
-        );
-      }
-      if (request.method == 'GET' && (path == '/' || path == '/index.html')) {
-        _requireWebShareToken(request, allowQueryParameter: true);
-        request.response.headers.contentType = ContentType.html;
-        request.response.headers.set(
-          'Content-Security-Policy',
-          "default-src 'none'; style-src 'unsafe-inline'; "
-              "script-src 'unsafe-inline'; connect-src 'self'; "
-              "img-src data:; base-uri 'none'; form-action 'none'; "
-              "frame-ancestors 'none'",
-        );
-        request.response.headers.set('X-Frame-Options', 'DENY');
-        request.response.write(
-          _buildWebShareHtml(
-            appPubKeyB64: pubKeyB64,
-            webShareToken: webShareToken,
-          ),
-        );
-        await request.response.close();
-        return;
-      }
-      if (request.method == 'POST' && path == '/api/web/meta') {
-        await _LanWebShareUploadOperations(this)._handleWebMetaRequest(
-          request,
-          securityService,
-          transferService,
-          storageService,
-        );
-        return;
-      }
-      if (request.method == 'POST' && path == '/api/web/upload') {
-        await _LanWebShareUploadOperations(this)._handleWebUploadRequest(
-          request,
-          securityService,
-          transferService,
-          storageService,
-        );
-        return;
-      }
-      throw const _WebShareHttpException(
-        HttpStatus.notFound,
-        'Web Share endpoint not found.',
-      );
-    } on _WebShareHttpException catch (error) {
-      await _writeWebShareJson(request.response, error.statusCode, {
-        'code': lanHttpErrorCode(error.statusCode).wireValue,
-        'message': error.message,
-        'operation': _webOperationForPath(path).wireName,
-      });
-    } catch (error) {
-      debugPrint(
-        '[LanDiscoveryService] Web Share request failed: '
-        'errorType=${error.runtimeType}',
-      );
-      try {
-        await _writeWebShareJson(
-          request.response,
-          HttpStatus.internalServerError,
-          {
-            'code': NetworkErrorCode.ioError.wireValue,
-            'message': 'WebShare request failed.',
-            'operation': _webOperationForPath(path).wireName,
-          },
-        );
-      } catch (_) {}
-    }
-  }
-
-  /// 将 WebShare 端点路径映射为稳定操作名称。
-  NetworkOperation _webOperationForPath(String path) {
-    return switch (path) {
-      '/api/web/meta' => NetworkOperation.webShareSendMeta,
-      '/api/web/upload' => NetworkOperation.webShareSendFile,
-      _ => NetworkOperation.webShareRequest,
-    };
-  }
-
-  /// 为 WebShare 响应添加安全和缓存响应头。
-  void _setWebShareResponseHeaders(HttpResponse response) {
-    response.headers.set(HttpHeaders.cacheControlHeader, 'no-store');
-    response.headers.set('Pragma', 'no-cache');
-    response.headers.set('X-Content-Type-Options', 'nosniff');
-    response.headers.set('Referrer-Policy', 'no-referrer');
-  }
-
-  /// 使用规范化 HTTP 状态写入端点专属 JSON。
-  Future<void> _writeWebShareJson(
-    HttpResponse response,
-    int statusCode,
-    Map<String, Object?> body,
-  ) async {
-    response.statusCode = statusCode;
-    response.headers.contentType = ContentType.json;
-    response.write(jsonEncode(body));
-    await response.close();
+    await requestHandler?.close();
   }
 
   /// 生成密码学安全的随机 WebShare bearer token。
@@ -296,41 +196,6 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
       List<int>.generate(32, (_) => random.nextInt(256)),
     );
     return base64Url.encode(bytes).replaceAll('=', '');
-  }
-
-  /// 校验请求头或初始 URL 中的 WebShare bearer token。
-  void _requireWebShareToken(
-    HttpRequest request, {
-    bool allowQueryParameter = false,
-  }) {
-    if (_closing || _closed || !_isWebShareActive) {
-      throw const _WebShareHttpException(
-        HttpStatus.serviceUnavailable,
-        'Web Share service is shutting down.',
-      );
-    }
-    final expected = _webShareToken;
-    final provided = allowQueryParameter
-        ? request.uri.queryParameters['access']
-        : request.headers.value(LanDiscoveryService._webShareTokenHeader);
-    if (expected == null ||
-        provided == null ||
-        !_constantTimeEquals(expected, provided)) {
-      throw const _WebShareHttpException(
-        HttpStatus.unauthorized,
-        'A valid Web Share access token is required.',
-      );
-    }
-  }
-
-  /// 比较两个 token，避免提前退出造成时序信号。
-  static bool _constantTimeEquals(String expected, String provided) {
-    var difference = expected.length ^ provided.length;
-    for (var i = 0; i < expected.length; i++) {
-      final providedCode = i < provided.length ? provided.codeUnitAt(i) : 0;
-      difference |= expected.codeUnitAt(i) ^ providedCode;
-    }
-    return difference == 0;
   }
 
   /// 将用户可控文本嵌入生成 HTML 前进行转义。
@@ -343,7 +208,7 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
         .replaceAll("'", '&#39;');
   }
 
-  /// 使用 v1 端点值构建静态 WebShare HTML 客户端。
+  /// 使用 V2 端点值构建静态 WebShare HTML 客户端。
   String _buildWebShareHtml({
     required String appPubKeyB64,
     required String webShareToken,

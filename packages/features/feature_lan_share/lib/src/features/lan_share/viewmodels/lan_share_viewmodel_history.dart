@@ -1,24 +1,9 @@
-// 从功能 ViewModel 拆出的 v1 LAN 历史持久化与载荷映射。
+// 从功能 ViewModel 拆出的 LAN 历史持久化与载荷映射。
 // 确保每个源码文件低于 1000 行维护限制。
 
 part of 'lan_share_viewmodel.dart';
 
 extension LanShareViewModelHistory on LanShareViewModel {
-  /// 根据文件扩展名推断 LAN 载荷类别。
-  LanPayloadType _guessPayloadType(String fileName) {
-    final ext = fileName.split('.').last.toLowerCase();
-    if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].contains(ext)) {
-      return LanPayloadType.image;
-    }
-    if (['mp4', 'mov', 'mkv', 'avi', 'webm'].contains(ext)) {
-      return LanPayloadType.video;
-    }
-    if (['mp3', 'wav', 'm4a', 'flac', 'ogg'].contains(ext)) {
-      return LanPayloadType.audio;
-    }
-    return LanPayloadType.file;
-  }
-
   /// 在写入数据库前加密一项敏感历史字段。
   Future<String?> _encryptSensitive(String? value) {
     if (value == null) return Future<String?>.value();

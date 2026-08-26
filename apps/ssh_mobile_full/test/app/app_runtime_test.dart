@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:connection_core/connection_core.dart';
 import 'package:drift/native.dart';
@@ -15,13 +18,20 @@ import 'package:network_transport/network_transport.dart';
 import 'package:ssh_mobile/app/app_runtime.dart';
 import 'package:ssh_mobile/app/app_runtime_factory.dart';
 import 'package:ssh_mobile/app/terminal_ssh_capability_adapter.dart';
+import 'package:ssh_mobile/services/network/network_protocol_v2_codec.dart';
+
+const _pathProviderChannel = MethodChannel('plugins.flutter.io/path_provider');
 
 /// 可注入的 NetworkRuntime 替身：记录 dispose 次数，可配置 dispose 抛错，
 /// 便于确定性地验证回滚顺序和错误隔离，而不触碰 native handle。
 final class _FakeNetworkRuntime implements NetworkRuntime {
   Object? disposeError;
   int disposeCalls = 0;
+  int ensureCapabilityCalls = 0;
+  int openCommandGatewayCalls = 0;
   bool disposed = false;
+  final _FakeCommandGateway gateway = _FakeCommandGateway();
+  final Set<NetworkCapability> _readyCapabilities = <NetworkCapability>{};
 
   @override
   NetworkRuntimeState get state =>
@@ -36,11 +46,16 @@ final class _FakeNetworkRuntime implements NetworkRuntime {
   );
 
   @override
-  Future<void> ensureCapability(NetworkCapability capability) async {}
+  Future<void> ensureCapability(NetworkCapability capability) async {
+    if (_readyCapabilities.contains(capability)) return;
+    ensureCapabilityCalls++;
+    _readyCapabilities.add(capability);
+  }
 
   @override
   Future<NetworkCommandGateway> openCommandGateway() async {
-    throw UnimplementedError('openCommandGateway is not expected in tests');
+    openCommandGatewayCalls++;
+    return gateway;
   }
 
   @override
@@ -55,9 +70,68 @@ final class _FakeNetworkRuntime implements NetworkRuntime {
   Future<void> dispose() async {
     disposeCalls++;
     disposed = true;
+    await gateway.close();
     final error = disposeError;
     if (error != null) throw error;
   }
+}
+
+final class _FakeCommandGateway implements NetworkCommandGateway {
+  final StreamController<Uint8List> _events =
+      StreamController<Uint8List>.broadcast();
+  final List<Uint8List> commands = <Uint8List>[];
+  final NetworkProtocolV2Codec _codec = const NetworkProtocolV2Codec();
+
+  @override
+  Stream<Uint8List> get events => _events.stream;
+
+  @override
+  TransportOperationStatus sendCommand(Uint8List command) {
+    commands.add(command);
+    final commandId = _codec.commandId(command);
+    scheduleMicrotask(() {
+      if (!_events.isClosed) _events.add(_commandResultFrame(commandId));
+    });
+    return TransportOperationStatus.success;
+  }
+
+  Future<void> close() => _events.close();
+}
+
+Uint8List _commandResultFrame(String commandId) => Uint8List.fromList(
+  _eventFrame(13, <int>[
+    ..._bytesField(1, utf8.encode(commandId)),
+    ..._varintField(2, 1),
+  ]),
+);
+
+List<int> _eventFrame(int eventField, List<int> payload) => <int>[
+  ..._bytesField(1, utf8.encode('event-a')),
+  ..._varintField(2, 1),
+  ..._varintField(3, 2),
+  ..._bytesField(eventField, payload),
+];
+
+List<int> _varintField(int fieldNumber, int value) => <int>[
+  ..._varint(fieldNumber << 3),
+  ..._varint(value),
+];
+
+List<int> _bytesField(int fieldNumber, List<int> value) => <int>[
+  ..._varint((fieldNumber << 3) | 2),
+  ..._varint(value.length),
+  ...value,
+];
+
+List<int> _varint(int value) {
+  final bytes = <int>[];
+  var remaining = value;
+  do {
+    final next = remaining & 0x7f;
+    remaining >>= 7;
+    bytes.add(remaining == 0 ? next : next | 0x80);
+  } while (remaining != 0);
+  return bytes;
 }
 
 /// ConnectionRepository 替身：initialize 永久挂起，用于证明构造失败回滚
@@ -120,6 +194,8 @@ final class _RuntimeHarness {
   Future<void> close() async {
     // ConnectionDatabase.dispose 幂等，重复调用安全。
     await connectionDatabase.dispose();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_pathProviderChannel, null);
     try {
       await ragCacheDirectory.delete(recursive: true);
     } on FileSystemException {
@@ -141,12 +217,18 @@ Future<_RuntimeHarness> _newHarness({
   void Function(String event)? lifecycleObserver,
 }) async {
   SharedPreferences.setMockInitialValues({});
+  FlutterSecureStorage.setMockInitialValues({});
   final connectionDatabase = ConnectionDatabase.forTesting(
     NativeDatabase.memory(),
   );
   final ragCacheDirectory = await Directory.systemTemp.createTemp(
     'app-runtime-rag-',
   );
+  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+      .setMockMethodCallHandler(
+        _pathProviderChannel,
+        (_) async => ragCacheDirectory.path,
+      );
   final harness = _RuntimeHarness._(connectionDatabase, ragCacheDirectory);
   harness.createFuture = AppRuntimeFactory.create(
     connectionDatabase: connectionDatabase,
@@ -198,7 +280,11 @@ void main() {
   test(
     'AppRuntimeFactory creates one app scope and disposes idempotently',
     () async {
-      final harness = await _newHarness(disposeLogger: false);
+      final network = _FakeNetworkRuntime();
+      final harness = await _newHarness(
+        networkRuntime: network,
+        disposeLogger: false,
+      );
       try {
         final runtime = await harness.createFuture;
 
@@ -211,9 +297,12 @@ void main() {
         expect(runtime.credentialRepository, isNotNull);
         expect(runtime.hostKeyRepository, same(runtime.connectionRepository));
         expect(runtime.networkRuntime, isNotNull);
+        expect(runtime.networkIdentityService, isNotNull);
         expect(runtime.realtimeClient, isA<RealtimeClient>());
-        // 接收器未激活时 Facade 不可用；激活后由 App 组合根装配的工厂创建。
-        expect(runtime.networkFacade, isNull);
+        expect(runtime.networkFacade, isA<NetworkFacade>());
+        expect(network.ensureCapabilityCalls, 1);
+        expect(network.openCommandGatewayCalls, 1);
+        expect(network.gateway.commands, hasLength(1));
         expect(runtime.sshService, isNotNull);
         expect(runtime.sshSessionManager, isA<AppTerminalSshSessionManager>());
         final terminalManager =
@@ -232,6 +321,7 @@ void main() {
         expect(identical(firstDispose, secondDispose), isTrue);
         await firstDispose;
         expect(runtime.isDisposed, isTrue);
+        expect(network.disposeCalls, 1);
       } finally {
         await harness.close();
       }

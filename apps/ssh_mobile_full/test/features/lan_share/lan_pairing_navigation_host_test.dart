@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -8,14 +9,19 @@ import 'package:feature_lan_share/feature_lan_share.dart';
 import 'package:ssh_mobile/app/lan_share_feature_adapters.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 
-LanDevice _device(String id, {String alias = 'Peer', int port = 53317}) {
-  return LanDevice(
-    id: id,
+LanDiscoveredPeer _device(
+  String id, {
+  String alias = 'Peer',
+  int port = 53317,
+}) {
+  return LanDiscoveredPeer(
+    deviceId: id,
     alias: alias,
     ip: '192.168.1.20',
-    port: port,
+    controlPort: port,
+    advertisedNativePort: null,
     deviceType: LanDeviceType.desktop,
-    osName: 'windows',
+    os: 'windows',
     lastSeen: DateTime.now(),
   );
 }
@@ -29,7 +35,9 @@ LanPairingRequest _request({
   Duration lifetime = const Duration(minutes: 1),
 }) {
   return LanPairingRequest(
-    device: _device(deviceId, alias: alias, port: port),
+    peer: LanPeerViewState(
+      discovery: _device(deviceId, alias: alias, port: port),
+    ),
     sessionId: sessionId,
     isIncoming: isIncoming,
     expiresAt: DateTime.now().add(lifetime),
@@ -38,7 +46,8 @@ LanPairingRequest _request({
 
 class _FakeTransferService extends Fake implements LanTransferService {
   @override
-  Stream<LanDevice> get handshakeSuccessStream => const Stream.empty();
+  Stream<LanDiscoveredPeer> get handshakeSuccessPeerStream =>
+      const Stream.empty();
 }
 
 class _FakeLanShareViewModel extends Fake implements LanShareViewModel {
@@ -48,7 +57,9 @@ class _FakeLanShareViewModel extends Fake implements LanShareViewModel {
   final Set<VoidCallback> _listeners = {};
 
   @override
-  final LanSecurityService securityService = LanSecurityService();
+  final LanSecurityService securityService = LanSecurityService(
+    appOwnedX25519PrivateSeed: Uint8List(32),
+  );
 
   @override
   final LanTransferService transferService = _FakeTransferService();
@@ -111,8 +122,8 @@ void main() {
         final active = queue.activeRequest!;
         expect(active.sessionId, outgoing.sessionId);
         expect(active.isIncoming, isTrue);
-        expect(active.device.alias, 'Resolved alias');
-        expect(active.device.port, 62001);
+        expect(active.peer.displayAlias, 'Resolved alias');
+        expect(active.peer.discovery!.controlPort, 62001);
         expect(active.expiresAt, incoming.expiresAt);
         expect(queue.pendingCount, 0);
       },
@@ -159,9 +170,9 @@ void main() {
       );
 
       expect(queue.pendingCount, 2);
-      expect(queue.completeActive()!.device.id, 'peer-b');
+      expect(queue.completeActive()!.peer.peerId, 'peer-b');
       expect(queue.activeRequest!.isIncoming, isTrue);
-      expect(queue.completeActive()!.device.id, 'peer-c');
+      expect(queue.completeActive()!.peer.peerId, 'peer-c');
       expect(queue.completeActive(), isNull);
     });
 

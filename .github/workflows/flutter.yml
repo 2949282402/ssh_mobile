@@ -65,7 +65,7 @@ jobs:
         working-directory: front
         run: npm ci
       - name: Check Front ↔ Relay administrator API contract
-        run: bash scripts/admin_api_contract.sh
+        run: bash scripts/bash/contracts/admin_api_contract.sh
 
   native-network-quality:
     runs-on: ubuntu-latest
@@ -142,6 +142,34 @@ jobs:
           --scope=network_sdk
           --scope=network_transport
           --scope=ssh_mobile_network_native
+
+  lan-network-v2-targeted:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - name: Install test prerequisites
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - name: Install workspace dependencies
+        run: dart pub get
+      - name: Install native Dart package dependencies
+        working-directory: packages/infrastructure/ssh_mobile_network_native
+        run: flutter pub get
+      - name: Install Full App dependencies
+        working-directory: apps/ssh_mobile_full
+        run: flutter pub get
+      - name: Run LAN Network V2 targeted acceptance
+        run: bash scripts/bash/ci/full_test.sh --no-bootstrap --only lan-network-v2-targeted
 
   relay-quality:
     runs-on: ubuntu-latest
@@ -241,9 +269,9 @@ jobs:
             protocol/proto/relay/v2/relay_v2.proto \
             protocol/proto/network/v2/network.proto
       - name: Run relay v2 contract check
-        run: bash scripts/relay_v2_contract.sh
+        run: bash scripts/bash/contracts/relay_v2_contract.sh
       - name: Run strict network v2 acceptance gate
-        run: bash scripts/network_v2_acceptance.sh strict
+        run: bash scripts/bash/contracts/network_v2_acceptance.sh strict
       - name: buf lint
         working-directory: protocol
         run: buf lint
@@ -290,7 +318,7 @@ jobs:
       - name: Run strict client → Caddy → Go Relay E2E
         env:
           CLIENT_BACKEND_E2E_STORAGE: ${{ matrix.storage }}
-        run: bash scripts/client_backend_e2e.sh strict
+        run: bash scripts/bash/e2e/client_backend_e2e.sh strict
 
   architecture-check:
     runs-on: ubuntu-latest
@@ -712,7 +740,10 @@ jobs:
         working-directory: apps/ssh_mobile_full
         run: flutter pub get
       - name: Build Windows
-        run: flutter build windows
+        working-directory: .
+        run: >-
+          pwsh .\scripts\powershell\ci\full_test.ps1
+          -NoBootstrap -NoCoverage -Only windows-build
 
   macos-build:
     runs-on: macos-latest

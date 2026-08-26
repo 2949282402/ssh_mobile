@@ -12,7 +12,6 @@ import '../core/services/data_protection_service.dart';
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
 import '../services/network/network_identity_service.dart';
-import '../services/network/network_service.dart';
 
 /// 将旧 AppSettings 适配为 LAN Feature 的最小设置 Port。
 final class AppLanShareSettingsAdapter extends ChangeNotifier
@@ -349,10 +348,10 @@ final class AppLanShareDataProtectionAdapter
   bool isEncrypted(String value) => _service.isEncrypted(value);
 }
 
-/// 将旧 QUIC 身份 Service 适配为 Feature Port。
+/// 将 App Scope Network V2 身份 Service 适配为 Feature Port。
 final class AppLanShareNetworkIdentityAdapter
     implements lan.LanShareNetworkIdentityPort {
-  /// 创建不拥有旧身份 Service 的适配器。
+  /// 创建不拥有 App Scope 身份 Service 的适配器。
   const AppLanShareNetworkIdentityAdapter(this._service);
 
   final NetworkIdentityService _service;
@@ -361,22 +360,27 @@ final class AppLanShareNetworkIdentityAdapter
   Future<lan.LanShareNetworkIdentityMaterial> loadOrCreate() async {
     final material = await _service.loadOrCreate();
     return lan.LanShareNetworkIdentityMaterial(
-      privateSeed: material.privateSeed,
-      publicKey: material.publicKey,
+      privateSeed: material.ed25519PrivateSeed,
+      publicKey: material.ed25519PublicKey,
+      x25519PrivateSeed: material.x25519PrivateSeed,
+      x25519PublicKey: material.x25519PublicKey,
     );
   }
 }
 
-/// 在 App Shell 创建 [sdk.NetworkFacade]，并隐藏底层 FFI/gateway 具体类型。
+/// 暴露 App Scope 已创建的 [sdk.NetworkFacade]，并隐藏底层 FFI/gateway 类型。
 ///
-/// Facade 包装一个基于共享 [NetworkRuntime] gateway 的 [NativeNetworkService]
-/// 和 App Scope [RealtimeClient]；业务只消费 [sdk.NetworkFacade] 高层操作。
+/// Feature 只借用共享 Facade；这里不创建、configure、stop 或 dispose
+/// [NetworkRuntime]，也不创建第二个 Session/Realtime owner。
 final class AppLanShareNetworkFactory implements lan.LanShareNetworkFactory {
-  /// 创建只使用 AppRuntime-owned NetworkRuntime 与 RealtimeClient 的网络工厂。
-  const AppLanShareNetworkFactory(this._networkRuntime, this._realtimeClient);
+  /// 创建只借用 AppRuntime-owned NetworkRuntime 与 NetworkFacade 的工厂。
+  const AppLanShareNetworkFactory(this._networkRuntime, this._networkFacade);
 
   final NetworkRuntime _networkRuntime;
-  final sdk.RealtimeClient _realtimeClient;
+  final sdk.NetworkFacade _networkFacade;
+
+  @override
+  int? get boundLocalPort => _networkRuntime.diagnostics.boundLocalPort;
 
   @override
   Future<sdk.NetworkFacade?> create({
@@ -386,8 +390,6 @@ final class AppLanShareNetworkFactory implements lan.LanShareNetworkFactory {
     required String listenAddress,
     required String receiveDirectory,
   }) async {
-    final gateway = await _networkRuntime.openCommandGateway();
-    final sessions = NativeNetworkService.fromGateway(gateway);
-    return sdk.NetworkFacadeImpl(sessions: sessions, realtime: _realtimeClient);
+    return _networkFacade;
   }
 }

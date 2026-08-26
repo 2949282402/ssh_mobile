@@ -1,4 +1,4 @@
-// v1 LAN 发现、广播与 WebShare 生命周期服务。
+// LAN Control V2 发现、广播与 WebShare 生命周期服务。
 //
 // 设备事件保持类型化事件流，生命周期和 WebShare 命令返回统一
 // NetworkResult 模型。
@@ -8,20 +8,18 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:nsd/nsd.dart' as nsd;
 import 'lan_multicast_lock.dart';
-import 'lan_network_models.dart';
 import 'package:network_sdk/network_sdk.dart';
 import 'lan_share_models.dart';
 import 'lan_security_service.dart';
 import 'lan_storage_service.dart';
 import 'lan_transfer_protocol.dart';
 import 'lan_transfer_service.dart';
+import 'lan_web_share_request_handler.dart';
 
 part 'lan_web_share_server.dart';
-part 'lan_web_share_upload.dart';
 
 /// 负责 LAN 设备发现（mDNS 与 UDP 备用路径）以及 Web Share 服务。
 class LanDiscoveryService {
@@ -32,10 +30,6 @@ class LanDiscoveryService {
   // 避免清理逻辑使正在显示的 PIN 界面失效。
   static const Duration devicePresenceTtl = Duration(seconds: 90);
   static const Duration _deviceCleanupInterval = Duration(seconds: 10);
-  static const Duration _pendingWebUploadTtl = Duration(minutes: 5);
-  static const int _maxPendingWebUploads = 32;
-  static const int _e2eEnvelopeOverheadBytes = 60;
-  static const String _webShareTokenHeader = 'x-web-share-token';
 
   final String currentDeviceId;
   String currentDeviceAlias;
@@ -43,6 +37,7 @@ class LanDiscoveryService {
 
   nsd.Registration? _registration;
   int? _advertisedPort;
+  int? _advertisedNativePort;
   nsd.Discovery? _discovery;
   RawDatagramSocket? _udpSocket;
   StreamSubscription<RawSocketEvent>? _udpSocketSubscription;
@@ -59,9 +54,9 @@ class LanDiscoveryService {
   bool _closing = false;
   bool _closed = false;
 
-  final _discoveredDevicesController =
-      StreamController<List<LanDevice>>.broadcast();
-  final Map<String, LanDevice> _deviceMap = {};
+  final _discoveredPeersController =
+      StreamController<List<LanDiscoveredPeer>>.broadcast();
+  final Map<String, LanDiscoveredPeer> _peerMap = {};
 
   bool _isScanning = false;
 
@@ -71,7 +66,11 @@ class LanDiscoveryService {
   /// 当前通过 mDNS 和 UDP 广播的原生 HTTPS 端口。
   int? get advertisedPort => _advertisedPort;
 
+  /// 当前广播的原生可靠传输端口。
+  int? get advertisedNativePort => _advertisedNativePort;
+
   HttpServer? _webShareServer;
+  LanWebShareRequestHandler? _webShareRequestHandler;
   bool _isWebShareActive = false;
 
   /// 当前是否正在运行 WebShare 服务。
@@ -81,8 +80,6 @@ class LanDiscoveryService {
   /// WebShare 激活时返回当前 URL。
   String? get webShareUrl => _webShareUrl;
   String? _webShareToken;
-  final Map<String, _PendingWebUpload> _pendingWebUploads = {};
-  final Map<String, _PendingWebUpload> _activeWebUploads = {};
 
   String? _customIp;
 
@@ -118,12 +115,13 @@ class LanDiscoveryService {
     }
     currentDeviceAlias = newAlias;
     final activePort = _advertisedPort;
+    final activeNativePort = _advertisedNativePort;
     if (activePort != null) {
       debugPrint(
         '[LanDiscoveryService] Restarting advertising with new alias: $newAlias',
       );
       await stopAdvertising();
-      await startAdvertising(port: activePort);
+      await startAdvertising(port: activePort, nativePort: activeNativePort);
     }
     return const NetworkSuccess<void>(null);
   }
@@ -151,29 +149,29 @@ class LanDiscoveryService {
     return rawAlias;
   }
 
-  /// 发布去重后的已发现设备列表。
-  Stream<List<LanDevice>> get discoveredDevicesStream =>
-      _discoveredDevicesController.stream;
+  /// 发布去重后的 discovery-only 对端列表。
+  Stream<List<LanDiscoveredPeer>> get discoveredPeersStream =>
+      _discoveredPeersController.stream;
 
-  /// 返回按最近观察时间排序的已发现设备。
-  List<LanDevice> get currentDiscoveredDevices {
-    final uniqueDevices = <String, LanDevice>{};
-    final sorted = _deviceMap.values.toList()
+  /// 返回按最近观察时间排序的已发现对端。
+  List<LanDiscoveredPeer> get currentDiscoveredPeers {
+    final uniquePeers = <String, LanDiscoveredPeer>{};
+    final sorted = _peerMap.values.toList()
       ..sort((a, b) => b.lastSeen.compareTo(a.lastSeen));
 
-    for (final device in sorted) {
-      final cleanId = _extractCleanId(device.id);
-      if (uniqueDevices.containsKey(cleanId)) {
+    for (final peer in sorted) {
+      final cleanId = _extractCleanId(peer.deviceId);
+      if (uniquePeers.containsKey(cleanId)) {
         // 已存在时保留 lastSeen 更新的记录。
-        final existing = uniqueDevices[cleanId]!;
-        if (device.lastSeen.isAfter(existing.lastSeen)) {
-          uniqueDevices[cleanId] = device.copyWith(id: cleanId);
+        final existing = uniquePeers[cleanId]!;
+        if (peer.lastSeen.isAfter(existing.lastSeen)) {
+          uniquePeers[cleanId] = peer.copyWith(deviceId: cleanId);
         }
         continue;
       }
-      uniqueDevices[cleanId] = device.copyWith(id: cleanId);
+      uniquePeers[cleanId] = peer.copyWith(deviceId: cleanId);
     }
-    return uniqueDevices.values.toList();
+    return uniquePeers.values.toList(growable: false);
   }
 
   /// 判断接口是否属于不参与 LAN 发现的虚拟网络或 VPN。
@@ -250,7 +248,10 @@ class LanDiscoveryService {
   }
 
   /// 启动 mDNS 注册，向附近对端广播本设备。
-  Future<NetworkResult<void>> startAdvertising({int port = defaultPort}) {
+  Future<NetworkResult<void>> startAdvertising({
+    int port = defaultPort,
+    int? nativePort,
+  }) {
     if (_closing || _closed) {
       return Future.value(
         _closedFailure<void>(NetworkOperation.startAdvertising),
@@ -269,12 +270,13 @@ class LanDiscoveryService {
             _udpSocket != null) {
           await performStopAdvertising();
         }
-        await performStartAdvertising(port);
+        await performStartAdvertising(port, nativePort: nativePort);
         if (_closing || _closed || generation != _advertisingGeneration) {
           await performStopAdvertising();
           return _closedFailure<void>(NetworkOperation.startAdvertising);
         }
         _advertisedPort = port;
+        _advertisedNativePort = nativePort;
         return const NetworkSuccess<void>(null);
       } catch (error) {
         return NetworkFailure(
@@ -290,7 +292,7 @@ class LanDiscoveryService {
 
   /// 执行平台 mDNS/UDP 广播初始化。
   @protected
-  Future<void> performStartAdvertising(int port) async {
+  Future<void> performStartAdvertising(int port, {int? nativePort}) async {
     try {
       final ips = await getLocalIpAddresses();
       final primaryIp = ips.isNotEmpty ? ips.first : '0.0.0.0';
@@ -304,6 +306,8 @@ class LanDiscoveryService {
             'alias': utf8.encode(currentDeviceAlias),
             'os': utf8.encode(Platform.operatingSystem),
             'ip': utf8.encode(primaryIp),
+            if (nativePort != null)
+              'nativePort': utf8.encode(nativePort.toString()),
           },
         ),
       );
@@ -314,13 +318,14 @@ class LanDiscoveryService {
       debugPrint('[LanDiscoveryService] mDNS Advertising error: $e');
     }
 
-    await _startUdpListener(port);
+    await _startUdpListener(port, nativePort: nativePort);
   }
 
   /// 停止 mDNS 注册。
   Future<NetworkResult<void>> stopAdvertising() {
     _advertisingGeneration++;
     _advertisedPort = null;
+    _advertisedNativePort = null;
     return _enqueueAdvertisingLifecycle(() async {
       try {
         await performStopAdvertising();
@@ -369,8 +374,8 @@ class LanDiscoveryService {
     if (_isScanning) return const NetworkSuccess<void>(null);
     _isScanning = true;
     final generation = ++_discoveryGeneration;
-    _deviceMap.clear();
-    _notifyDevicesUpdated();
+    _peerMap.clear();
+    _notifyPeersUpdated();
 
     try {
       await _enqueueDiscoveryLifecycle(
@@ -551,21 +556,25 @@ class LanDiscoveryService {
       hostIp = hostIp.substring(7);
     }
     final port = service.port ?? defaultPort;
+    final nativePort = int.tryParse(
+      txt['nativePort'] == null ? '' : utf8.decode(txt['nativePort']!),
+    );
 
     if (hostIp.isEmpty) return;
 
-    final device = LanDevice(
-      id: id,
+    final peer = LanDiscoveredPeer(
+      deviceId: id,
       alias: alias,
       ip: hostIp,
-      port: port,
+      controlPort: port,
+      advertisedNativePort: nativePort,
       deviceType: _guessDeviceType(os),
-      osName: os,
+      os: os,
       lastSeen: DateTime.now(),
     );
 
-    _deviceMap[id] = device;
-    _notifyDevicesUpdated();
+    _peerMap[id] = peer;
+    _notifyPeersUpdated();
   }
 
   /// 将发现到的操作系统标签映射为功能使用的设备类别。
@@ -580,10 +589,10 @@ class LanDiscoveryService {
     return LanDeviceType.desktop;
   }
 
-  /// 发布当前已发现设备快照。
-  void _notifyDevicesUpdated() {
-    if (!_closing && !_closed && !_discoveredDevicesController.isClosed) {
-      _discoveredDevicesController.add(currentDiscoveredDevices);
+  /// 发布当前 discovery-only 对端快照。
+  void _notifyPeersUpdated() {
+    if (!_closing && !_closed && !_discoveredPeersController.isClosed) {
+      _discoveredPeersController.add(currentDiscoveredPeers);
     }
   }
 
@@ -612,20 +621,23 @@ class LanDiscoveryService {
         } catch (_) {}
       }
     }
-    final before = _deviceMap.length;
-    _deviceMap.removeWhere(
-      (_, device) =>
-          device.lastSeen.isBefore(cutoff) &&
-          !activeNsdDeviceIds.contains(_extractCleanId(device.id)),
+    final before = _peerMap.length;
+    _peerMap.removeWhere(
+      (_, peer) =>
+          peer.lastSeen.isBefore(cutoff) &&
+          !activeNsdDeviceIds.contains(_extractCleanId(peer.deviceId)),
     );
-    final removed = before - _deviceMap.length;
-    if (removed > 0) _notifyDevicesUpdated();
+    final removed = before - _peerMap.length;
+    if (removed > 0) _notifyPeersUpdated();
     return removed;
   }
 
   /// UDP 备用 ping 数据包监听器。
   /// 启动接收发现广播的 UDP 备用监听器。
-  Future<void> _startUdpListener(int listeningHttpPort) async {
+  Future<void> _startUdpListener(
+    int listeningHttpPort, {
+    int? nativePort,
+  }) async {
     try {
       final socket = await RawDatagramSocket.bind(
         InternetAddress.anyIPv4,
@@ -649,7 +661,7 @@ class LanDiscoveryService {
             final json = jsonDecode(messageStr) as Map<String, dynamic>;
 
             /// 注册一个通过 UDP 发现的对端，并发布设备快照。
-            void registerDiscoveredDevice(
+            void registerDiscoveredPeerFromDatagram(
               String rawId,
               Map<String, dynamic> json,
               String hostIp,
@@ -659,25 +671,30 @@ class LanDiscoveryService {
               final cleanHostIp = hostIp.startsWith('::ffff:')
                   ? hostIp.substring(7)
                   : hostIp;
-              final device = LanDevice(
-                id: id,
+              final peer = LanDiscoveredPeer(
+                deviceId: id,
                 alias: json['alias'] as String? ?? 'Device',
                 ip: cleanHostIp,
-                port: (json['port'] as num?)?.toInt() ?? defaultPort,
+                controlPort: (json['port'] as num?)?.toInt() ?? defaultPort,
+                advertisedNativePort: (json['nativePort'] as num?)?.toInt(),
                 deviceType: _guessDeviceType(json['os'] as String? ?? ''),
-                osName: json['os'] as String? ?? 'Unknown',
+                os: json['os'] as String? ?? 'Unknown',
                 lastSeen: DateTime.now(),
               );
-              _deviceMap[id] = device;
-              _notifyDevicesUpdated();
+              _peerMap[id] = peer;
+              _notifyPeersUpdated();
             }
 
             final type = json['type'] as String?;
             if (type == 'PING') {
               final senderId = json['id'] as String?;
               if (senderId != null && senderId != currentDeviceId) {
-                _sendUdpPong(datagram.address, listeningHttpPort);
-                registerDiscoveredDevice(
+                _sendUdpPong(
+                  datagram.address,
+                  listeningHttpPort,
+                  nativePort: nativePort,
+                );
+                registerDiscoveredPeerFromDatagram(
                   senderId,
                   json,
                   datagram.address.address,
@@ -686,7 +703,11 @@ class LanDiscoveryService {
             } else if (type == 'PONG') {
               final id = json['id'] as String?;
               if (id != null && id != currentDeviceId) {
-                registerDiscoveredDevice(id, json, datagram.address.address);
+                registerDiscoveredPeerFromDatagram(
+                  id,
+                  json,
+                  datagram.address.address,
+                );
               }
             } else if (type == 'BYE' ||
                 type == 'DISCONNECT' ||
@@ -694,9 +715,9 @@ class LanDiscoveryService {
               final id = json['id'] as String?;
               if (id != null) {
                 final cleanId = _extractCleanId(id);
-                _deviceMap.remove(cleanId);
-                _deviceMap.remove(id);
-                _notifyDevicesUpdated();
+                _peerMap.remove(cleanId);
+                _peerMap.remove(id);
+                _notifyPeersUpdated();
               }
             }
           } catch (_) {}
@@ -721,7 +742,11 @@ class LanDiscoveryService {
   }
 
   /// 向发现 ping 发送 UDP 响应。
-  void _sendUdpPong(InternetAddress targetAddress, int port) {
+  void _sendUdpPong(
+    InternetAddress targetAddress,
+    int port, {
+    int? nativePort,
+  }) {
     final socket = _udpSocket;
     if (socket == null) return;
     try {
@@ -730,6 +755,7 @@ class LanDiscoveryService {
         'id': currentDeviceId,
         'alias': currentDeviceAlias,
         'port': port,
+        'nativePort': ?nativePort,
         'os': Platform.operatingSystem,
       });
       final bytes = utf8.encode(payload);
@@ -737,7 +763,7 @@ class LanDiscoveryService {
     } catch (_) {}
   }
 
-  /// 向已发现对端广播 v1 离线通知。
+  /// 向已发现对端广播 V2 离线通知。
   Future<void> _sendUdpDisconnect() async {
     final socket = _udpSocket;
     if (socket == null) return;
@@ -832,6 +858,7 @@ class LanDiscoveryService {
           alias: currentDeviceAlias,
           os: Platform.operatingSystem,
           port: _advertisedPort ?? defaultPort,
+          nativePort: _advertisedNativePort,
         ),
       );
       final bytes = utf8.encode(payload);
@@ -882,19 +909,21 @@ class LanDiscoveryService {
     } catch (_) {}
   }
 
-  /// 构建稳定的 v1 UDP 发现载荷。
+  /// 构建稳定的 V2 UDP 发现载荷。
   @visibleForTesting
   static Map<String, Object> createUdpPingPayload({
     required String deviceId,
     required String alias,
     required String os,
     required int port,
+    int? nativePort,
   }) {
     return {
       'type': 'PING',
       'id': deviceId,
       'alias': alias,
       'port': port,
+      'nativePort': ?nativePort,
       'os': os,
     };
   }
@@ -916,7 +945,7 @@ class LanDiscoveryService {
     );
   }
 
-  /// 启动 WebShare 实现，并将失败转换为 v1 结果。
+  /// 启动 WebShare 实现，并将失败转换为 V2 结果。
   Future<NetworkResult<String>> _startWebShareServerResult({
     required int port,
     required LanSecurityService securityService,
@@ -985,19 +1014,19 @@ class LanDiscoveryService {
     return next;
   }
 
-  /// 新增或替换手动配置的对端。
-  void registerManualDevice(LanDevice device) {
-    _deviceMap[device.id] = device;
-    _notifyDevicesUpdated();
+  /// 新增或替换一个 discovery-only 对端观察。
+  void registerDiscoveredPeer(LanDiscoveredPeer peer) {
+    _peerMap[peer.deviceId] = peer;
+    _notifyPeersUpdated();
   }
 
-  /// 根据标识移除已发现或手动配置的对端。
-  void removeDevice(String deviceId) {
-    _deviceMap.remove(deviceId);
-    _deviceMap.removeWhere(
-      (key, device) => _extractCleanId(device.id) == deviceId,
+  /// 根据标识移除一个动态 discovery observation。
+  void removeDiscoveredPeer(String deviceId) {
+    _peerMap.remove(deviceId);
+    _peerMap.removeWhere(
+      (key, peer) => _extractCleanId(peer.deviceId) == deviceId,
     );
-    _notifyDevicesUpdated();
+    _notifyPeersUpdated();
   }
 
   NetworkFailure<T> _closedFailure<T>(NetworkOperation operation) {
@@ -1022,8 +1051,8 @@ class LanDiscoveryService {
       stopAdvertising(),
       stopWebShareServer(),
     ]);
-    if (!_discoveredDevicesController.isClosed) {
-      await _discoveredDevicesController.close();
+    if (!_discoveredPeersController.isClosed) {
+      await _discoveredPeersController.close();
     }
     _closed = true;
   }

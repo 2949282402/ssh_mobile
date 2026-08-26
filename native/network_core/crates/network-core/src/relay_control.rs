@@ -341,6 +341,20 @@ pub(super) fn spawn_responder_connectivity_checks(
             tracing::debug!(peer_id = %peer_id, attempt_id = %offer.attempt_id, "ignored offer for unconfigured peer");
             return;
         };
+        if state
+            .peer_route_authorizations
+            .read()
+            .await
+            .get(&peer_id)
+            .is_some_and(|authorization| !authorization.direct)
+        {
+            tracing::debug!(
+                peer_id = %peer_id,
+                attempt_id = %offer.attempt_id,
+                "ignored connectivity offer without Direct route authorization"
+            );
+            return;
+        }
         let endpoint = state.lifecycle.endpoint.read().await.clone();
         let Some(endpoint) = endpoint else {
             tracing::debug!(peer_id = %peer_id, attempt_id = %offer.attempt_id, "cannot run responder checks without endpoint");

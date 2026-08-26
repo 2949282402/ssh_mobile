@@ -1,4 +1,5 @@
-// v1 LAN HTTPS 客户端的配对、元数据、文件传输和撤回操作。
+// LAN Control Protocol V2 客户端的配对、元数据和撤回操作。
+// Binary files are sent by LanNativeTransferCoordinator through Network V2.
 // 使用 part 文件与服务端实现分离，确保源码低于仓库 1000 行维护上限。
 
 part of 'lan_transfer_service.dart';
@@ -8,29 +9,46 @@ class _ValidatedPairingCredential {
   final String accessToken;
   final String certFingerprint;
   final String status;
+  final Uint8List x25519PublicKey;
+  final Uint8List networkIdentityPublicKey;
 
   const _ValidatedPairingCredential({
     required this.accessToken,
     required this.certFingerprint,
     required this.status,
+    required this.x25519PublicKey,
+    required this.networkIdentityPublicKey,
   });
 }
 
-/// 保存通过 SPAKE2/证书校验的临时配对 offer。
+/// 保存通过 SRP/TLS 校验且绑定 V2 静态身份的配对 offer。
 class _AcceptedPairingOffer {
   final String handshakeId;
   final LanPairingSessionSecrets sessionSecrets;
   final String certFingerprint;
+  final Uint8List serverX25519PublicKey;
+  final Uint8List serverNetworkIdentityPublicKey;
 
   const _AcceptedPairingOffer({
     required this.handshakeId,
     required this.sessionSecrets,
     required this.certFingerprint,
+    required this.serverX25519PublicKey,
+    required this.serverNetworkIdentityPublicKey,
   });
 }
 
+bool _constantTimeBytesEqual(List<int> left, List<int> right) {
+  if (left.length != right.length) return false;
+  var difference = 0;
+  for (var index = 0; index < left.length; index++) {
+    difference |= left[index] ^ right[index];
+  }
+  return difference == 0;
+}
+
 extension LanTransferClientApi on LanTransferService {
-  Uri _lanEndpoint(LanDevice device, String path) {
+  Uri _lanEndpoint(LanDiscoveredPeer device, String path) {
     final rawHost = device.ip.trim();
     final host = rawHost.startsWith('[') && rawHost.endsWith(']')
         ? rawHost.substring(1, rawHost.length - 1)
@@ -40,12 +58,23 @@ extension LanTransferClientApi on LanTransferService {
         RegExp(r'[\x00-\x20/@?#\\\[\]]').hasMatch(host)) {
       throw const FormatException('LAN peer address is invalid.');
     }
-    return Uri(scheme: 'https', host: host, port: device.port, path: path);
+    return Uri(
+      scheme: 'https',
+      host: host,
+      port: device.controlPort,
+      path: path,
+    );
   }
 
   /// 创建配置为连接一个已配对对端的 HTTP 客户端。
-  Future<HttpClient> createHttpClientForPeer(String peerDeviceId) {
-    return _createHttpClient(peerDeviceId: peerDeviceId);
+  Future<HttpClient> createHttpClientForPeer(
+    String peerDeviceId, {
+    String? expectedFingerprint,
+  }) {
+    return _createHttpClient(
+      peerDeviceId: peerDeviceId,
+      expectedFingerprint: expectedFingerprint,
+    );
   }
 
   /// 读取并限制 JSON 响应大小，不向上层暴露原始服务端细节。
@@ -111,6 +140,8 @@ extension LanTransferClientApi on LanTransferService {
     final requestHash = credential['requestHash'];
     final issuerDeviceId = credential['issuerDeviceId'];
     final recipientDeviceId = credential['recipientDeviceId'];
+    final encodedX25519PublicKey = credential['x25519PubKey'];
+    final encodedNetworkIdentityPublicKey = credential['networkIdentityPubKey'];
     final validForMs = credential['validForMs'];
 
     if (protocolVersion != LanPairingCrypto.protocolVersion ||
@@ -119,12 +150,14 @@ extension LanTransferClientApi on LanTransferService {
         accessToken.length > 256 ||
         fingerprint is! String ||
         !RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(fingerprint) ||
-        (status != 'pending_remote' && status != 'paired') ||
+        status != 'paired' ||
         requestNonce != expectedNonce ||
         handshakeId != expectedHandshakeId ||
         requestHash != expectedRequestHash ||
         issuerDeviceId != expectedIssuerDeviceId ||
         recipientDeviceId != expectedRecipientDeviceId ||
+        encodedX25519PublicKey is! String ||
+        encodedNetworkIdentityPublicKey is! String ||
         validForMs is! int ||
         validForMs <= 0 ||
         validForMs > LanPairingCrypto.credentialTtlMillis ||
@@ -134,10 +167,20 @@ extension LanTransferClientApi on LanTransferService {
       );
     }
 
+    final x25519PublicKey = LanPairingCrypto.decodePublicKey(
+      encodedX25519PublicKey,
+      'peer X25519 public key',
+    );
+    final networkIdentityPublicKey = LanPairingCrypto.decodePublicKey(
+      encodedNetworkIdentityPublicKey,
+      'peer network identity public key',
+    );
     return _ValidatedPairingCredential(
       accessToken: accessToken,
       certFingerprint: fingerprint,
       status: status as String,
+      x25519PublicKey: x25519PublicKey,
+      networkIdentityPublicKey: networkIdentityPublicKey,
     );
   }
 
@@ -168,15 +211,14 @@ extension LanTransferClientApi on LanTransferService {
     }
   }
 
-  /// 发送 v1 握手请求，并校验配对 PIN 响应。
-  Future<NetworkResult<LanHandshakeData>> sendHandshake(
-    LanDevice device,
+  /// 发送 V2 握手请求，并校验配对 PIN 响应。
+  Future<NetworkResult<void>> sendHandshake(
+    LanDiscoveredPeer device,
     String pin,
     String localAlias, {
     bool isInitiator = true,
   }) async {
     Object? lastError;
-    NetworkSuccess<LanHandshakeData>? lastPendingResult;
     for (int attempt = 1; attempt <= 3; attempt++) {
       try {
         final result = await _sendHandshakeAttempt(
@@ -185,25 +227,12 @@ extension LanTransferClientApi on LanTransferService {
           localAlias,
           isInitiator: isInitiator,
         );
-        if (result is NetworkFailure<LanHandshakeData>) {
-          // 有效的 pending 响应已经证明远端 PIN 正确。
-          // 若短确认重试恰好遇到 PIN 轮换，应保留该结果并等待对端，
-          // 不要将其误判为 PIN 不匹配。
-          return lastPendingResult ?? result;
-        }
-        final success = (result as NetworkSuccess<LanHandshakeData>);
-        if (!success.data.pendingRemote) return success;
-
-        // 两端可能几乎同时提交 PIN。此时双方服务端都可能在本地保存相互凭据前
-        // 返回 pending。使用有界退避和新的 SPAKE2 会话重试，让服务端相互校验
-        // 最终收敛，同时不降低配对后的授权强度。
-        lastPendingResult = success;
-        lastError = null;
+        return result;
       } catch (e) {
         lastError = lanNetworkError(
           e,
           operation: NetworkOperation.sendHandshake,
-          peerId: device.id,
+          peerId: device.deviceId,
         );
       }
 
@@ -212,7 +241,6 @@ extension LanTransferClientApi on LanTransferService {
       }
     }
 
-    if (lastPendingResult != null) return lastPendingResult;
     if (lastError is NetworkError) {
       return NetworkFailure(lastError);
     }
@@ -221,14 +249,14 @@ extension LanTransferClientApi on LanTransferService {
         code: NetworkErrorCode.ioError,
         message: 'LAN handshake failed.',
         operation: NetworkOperation.sendHandshake,
-        peerId: device.id,
+        peerId: device.deviceId,
       ),
     );
   }
 
-  /// 执行一次 v1 配对握手尝试。
-  Future<NetworkResult<LanHandshakeData>> _sendHandshakeAttempt(
-    LanDevice device,
+  /// 执行一次 V2 配对握手尝试。
+  Future<NetworkResult<void>> _sendHandshakeAttempt(
+    LanDiscoveredPeer device,
     String pin,
     String localAlias, {
     required bool isInitiator,
@@ -239,7 +267,7 @@ extension LanTransferClientApi on LanTransferService {
           code: NetworkErrorCode.invalidArgument,
           message: 'LAN pairing PIN format is invalid.',
           operation: NetworkOperation.sendHandshake,
-          peerId: device.id,
+          peerId: device.deviceId,
         ),
       );
     }
@@ -249,15 +277,32 @@ extension LanTransferClientApi on LanTransferService {
         (await securityService.getLocalCertificateFingerprint(
           currentDeviceId,
         )).toLowerCase();
+    final localX25519PublicKey = await securityService
+        .getStaticX25519PublicKeyBytes();
+    final providedLocalNetworkIdentityPublicKey =
+        await networkIdentityPublicKeyProvider?.call();
+    if (providedLocalNetworkIdentityPublicKey == null ||
+        providedLocalNetworkIdentityPublicKey.length != 32) {
+      throw StateError('LAN network identity is unavailable.');
+    }
+    final localNetworkIdentityPublicKey = Uint8List.fromList(
+      providedLocalNetworkIdentityPublicKey,
+    );
+    final localInboundAccessToken = securityService.createPairingAccessToken();
     final clientContext = LanPairingCrypto.clientContext(
       senderDeviceId: currentDeviceId,
-      targetDeviceId: device.id,
+      targetDeviceId: device.deviceId,
       nonce: nonce,
       alias: localAlias,
       os: Platform.operatingSystem,
       port: activePort,
       isInitiator: isInitiator,
       senderCertFingerprint: localFingerprint,
+      senderX25519PublicKey: localX25519PublicKey,
+      senderNetworkIdentityPublicKey: localNetworkIdentityPublicKey,
+      senderInboundAccessTokenHash: LanPairingCrypto.accessTokenHash(
+        localInboundAccessToken,
+      ),
     );
     final clientKeys = List<LanPairingEphemeralKeyPair>.generate(
       LanPairingCrypto.maxServerOffers,
@@ -274,8 +319,7 @@ extension LanTransferClientApi on LanTransferService {
     final stopwatch = Stopwatch()..start();
 
     final beginClient = await _createHttpClient(
-      peerDeviceId: device.id,
-      expectedFingerprint: device.certFingerprint,
+      peerDeviceId: device.deviceId,
       allowUntrusted: true,
     );
     late final _AcceptedPairingOffer acceptedOffer;
@@ -290,13 +334,20 @@ extension LanTransferClientApi on LanTransferService {
           'protocolVersion': LanPairingCrypto.protocolVersion,
           'phase': 'begin',
           'deviceId': currentDeviceId,
-          'targetDeviceId': device.id,
+          'targetDeviceId': device.deviceId,
           'alias': localAlias,
           'os': Platform.operatingSystem,
           'port': activePort,
           'isInitiator': isInitiator,
           'nonce': nonce,
           'certFingerprint': localFingerprint,
+          'x25519PubKey': base64UrlEncode(localX25519PublicKey),
+          'networkIdentityPubKey': base64UrlEncode(
+            localNetworkIdentityPublicKey,
+          ),
+          'inboundAccessTokenHash': LanPairingCrypto.accessTokenHash(
+            localInboundAccessToken,
+          ),
           'clientPublicValues': encodedClientPublicValues,
         }),
       );
@@ -309,7 +360,7 @@ extension LanTransferClientApi on LanTransferService {
           statusCode: response.statusCode,
           body: json,
           operation: NetworkOperation.sendHandshake,
-          peerId: device.id,
+          peerId: device.deviceId,
           fallbackMessage: 'LAN pairing challenge was rejected.',
         );
       }
@@ -318,15 +369,19 @@ extension LanTransferClientApi on LanTransferService {
           'LAN pairing challenge protocol is invalid.',
           code: NetworkErrorCode.invalidArgument,
           operation: NetworkOperation.sendHandshake,
-          peerId: device.id,
+          peerId: device.deviceId,
           statusCode: response.statusCode,
         );
       }
       final serverFingerprint = json['certFingerprint'];
+      final encodedServerX25519Key = json['x25519PubKey'];
+      final encodedServerNetworkIdentityKey = json['networkIdentityPubKey'];
       final validForMs = json['validForMs'];
       final offers = json['offers'];
       if (serverFingerprint is! String ||
           !RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(serverFingerprint) ||
+          encodedServerX25519Key is! String ||
+          encodedServerNetworkIdentityKey is! String ||
           validForMs is! int ||
           validForMs <= 0 ||
           validForMs > LanPairingCrypto.credentialTtlMillis ||
@@ -337,7 +392,18 @@ extension LanTransferClientApi on LanTransferService {
         throw const FormatException('Invalid LAN pairing challenge');
       }
       final normalizedFingerprint = serverFingerprint.toLowerCase();
-      final advertisedFingerprint = device.certFingerprint?.toLowerCase();
+      final serverX25519PublicKey = LanPairingCrypto.decodePublicKey(
+        encodedServerX25519Key,
+        'server X25519 public key',
+      );
+      final serverNetworkIdentityPublicKey = LanPairingCrypto.decodePublicKey(
+        encodedServerNetworkIdentityKey,
+        'server network identity public key',
+      );
+      final advertisedFingerprint =
+          (await securityService.getPeerCertificateFingerprint(
+            device.deviceId,
+          ))?.toLowerCase();
       if (advertisedFingerprint != null &&
           advertisedFingerprint.isNotEmpty &&
           advertisedFingerprint != normalizedFingerprint) {
@@ -351,6 +417,8 @@ extension LanTransferClientApi on LanTransferService {
           clientKeys: clientKeys,
           clientContext: clientContext,
           serverFingerprint: normalizedFingerprint,
+          serverX25519PublicKey: serverX25519PublicKey,
+          serverNetworkIdentityPublicKey: serverNetworkIdentityPublicKey,
         );
         if (candidate != null) {
           selected = candidate;
@@ -363,7 +431,7 @@ extension LanTransferClientApi on LanTransferService {
             code: NetworkErrorCode.authenticationFailed,
             message: 'LAN pairing authentication failed.',
             operation: NetworkOperation.sendHandshake,
-            peerId: device.id,
+            peerId: device.deviceId,
           ),
         );
       }
@@ -373,7 +441,7 @@ extension LanTransferClientApi on LanTransferService {
     }
 
     final confirmClient = await _createHttpClient(
-      peerDeviceId: device.id,
+      peerDeviceId: device.deviceId,
       expectedFingerprint: acceptedOffer.certFingerprint,
     );
     try {
@@ -382,14 +450,28 @@ extension LanTransferClientApi on LanTransferService {
           .timeout(const Duration(seconds: 4));
       request.followRedirects = false;
       request.headers.contentType = ContentType.json;
+      final credentialAssociatedData =
+          LanPairingCrypto.credentialAssociatedData(
+            handshakeId: acceptedOffer.handshakeId,
+            nonce: nonce,
+            issuerDeviceId: currentDeviceId,
+            recipientDeviceId: device.deviceId,
+          );
+      final encryptedInboundCredential =
+          await LanPairingCrypto.encryptCredential(
+            {'inboundAccessToken': localInboundAccessToken},
+            acceptedOffer.sessionSecrets.sessionKey,
+            associatedData: credentialAssociatedData,
+          );
       request.write(
         jsonEncode({
           'protocolVersion': LanPairingCrypto.protocolVersion,
           'phase': 'confirm',
           'handshakeId': acceptedOffer.handshakeId,
           'deviceId': currentDeviceId,
-          'targetDeviceId': device.id,
+          'targetDeviceId': device.deviceId,
           'nonce': nonce,
+          'credential': encryptedInboundCredential,
           'clientProof': LanPairingCrypto.createClientProof(
             acceptedOffer.sessionSecrets,
           ),
@@ -404,7 +486,7 @@ extension LanTransferClientApi on LanTransferService {
           statusCode: response.statusCode,
           body: json,
           operation: NetworkOperation.sendHandshake,
-          peerId: device.id,
+          peerId: device.deviceId,
           fallbackMessage: 'LAN pairing confirmation was rejected.',
         );
       }
@@ -417,7 +499,7 @@ extension LanTransferClientApi on LanTransferService {
       final associatedData = LanPairingCrypto.credentialAssociatedData(
         handshakeId: acceptedOffer.handshakeId,
         nonce: nonce,
-        issuerDeviceId: device.id,
+        issuerDeviceId: device.deviceId,
         recipientDeviceId: currentDeviceId,
       );
       final credential = await LanPairingCrypto.decryptCredential(
@@ -431,7 +513,7 @@ extension LanTransferClientApi on LanTransferService {
         expectedNonce: nonce,
         expectedHandshakeId: acceptedOffer.handshakeId,
         expectedRequestHash: requestHash,
-        expectedIssuerDeviceId: device.id,
+        expectedIssuerDeviceId: device.deviceId,
         expectedRecipientDeviceId: currentDeviceId,
         elapsed: stopwatch.elapsed,
       );
@@ -439,25 +521,28 @@ extension LanTransferClientApi on LanTransferService {
           acceptedOffer.certFingerprint) {
         throw const FormatException('LAN pairing certificate changed');
       }
-      await securityService.storeOutboundAccessToken(
-        device.id,
-        validatedCredential.accessToken,
+      if (!_constantTimeBytesEqual(
+            validatedCredential.x25519PublicKey,
+            acceptedOffer.serverX25519PublicKey,
+          ) ||
+          !_constantTimeBytesEqual(
+            validatedCredential.networkIdentityPublicKey,
+            acceptedOffer.serverNetworkIdentityPublicKey,
+          )) {
+        throw const FormatException('LAN pairing identity changed');
+      }
+      // The only durable write in the handshake is one complete V2 trust
+      // record.  In particular, no token or key is persisted before the
+      // remote proof, credential binding, and static identities all pass.
+      await securityService.savePeerTrustRecord(
+        deviceId: device.deviceId,
+        certificateFingerprint: acceptedOffer.certFingerprint,
+        inboundAccessToken: localInboundAccessToken,
+        outboundAccessToken: validatedCredential.accessToken,
+        x25519PublicKey: validatedCredential.x25519PublicKey,
+        networkIdentityPublicKey: validatedCredential.networkIdentityPublicKey,
       );
-      await securityService.storePeerCertificateFingerprint(
-        device.id,
-        acceptedOffer.certFingerprint,
-      );
-      securityService.markFreshOutboundPairProof(
-        deviceId: device.id,
-        peerFingerprint: acceptedOffer.certFingerprint,
-        localFingerprint: localFingerprint,
-        accessToken: validatedCredential.accessToken,
-      );
-      return NetworkSuccess(
-        LanHandshakeData(
-          pendingRemote: validatedCredential.status == 'pending_remote',
-        ),
-      );
+      return const NetworkSuccess<void>(null);
     } finally {
       confirmClient.close();
     }
@@ -470,6 +555,8 @@ extension LanTransferClientApi on LanTransferService {
     required List<LanPairingEphemeralKeyPair> clientKeys,
     required String clientContext,
     required String serverFingerprint,
+    required Uint8List serverX25519PublicKey,
+    required Uint8List serverNetworkIdentityPublicKey,
   }) async {
     final handshakeId = offer['handshakeId'];
     final slot = offer['slot'];
@@ -510,6 +597,8 @@ extension LanTransferClientApi on LanTransferService {
         clientPublicValue: keys.publicValue,
         serverPublicValue: serverPublicValue,
         serverCertFingerprint: serverFingerprint,
+        serverX25519PublicKey: serverX25519PublicKey,
+        serverNetworkIdentityPublicKey: serverNetworkIdentityPublicKey,
       );
       final sessionSecrets = LanPairingCrypto.deriveSessionSecrets(
         localKeyPair: keys,
@@ -523,6 +612,10 @@ extension LanTransferClientApi on LanTransferService {
         handshakeId: handshakeId,
         sessionSecrets: sessionSecrets,
         certFingerprint: serverFingerprint,
+        serverX25519PublicKey: Uint8List.fromList(serverX25519PublicKey),
+        serverNetworkIdentityPublicKey: Uint8List.fromList(
+          serverNetworkIdentityPublicKey,
+        ),
       );
     } catch (_) {
       return null;
@@ -531,14 +624,14 @@ extension LanTransferClientApi on LanTransferService {
 
   /// 在已认证 LAN 通道上发送元数据消息。
   Future<NetworkResult<void>> sendMeta(
-    LanDevice device,
+    LanDiscoveredPeer device,
     LanMessage message, {
     Uint8List? recipientPubKeyBytes,
   }) async {
     return _executeWithRetry(
       () async {
         final url = _lanEndpoint(device, '/api/lan/meta');
-        final client = await _createHttpClient(peerDeviceId: device.id);
+        final client = await _createHttpClient(peerDeviceId: device.deviceId);
 
         try {
           final request = await client
@@ -547,7 +640,7 @@ extension LanTransferClientApi on LanTransferService {
           request.followRedirects = false;
           final authorization = await addPairingAuthorization(
             request.headers,
-            device.id,
+            device.deviceId,
           );
           if (authorization is NetworkFailure<void>) {
             return authorization;
@@ -584,7 +677,7 @@ extension LanTransferClientApi on LanTransferService {
               statusCode: response.statusCode,
               body: json,
               operation: NetworkOperation.sendMeta,
-              peerId: device.id,
+              peerId: device.deviceId,
               fallbackMessage: 'LAN metadata request was rejected.',
             );
           }
@@ -593,7 +686,7 @@ extension LanTransferClientApi on LanTransferService {
               'LAN metadata response is invalid.',
               code: NetworkErrorCode.invalidArgument,
               operation: NetworkOperation.sendMeta,
-              peerId: device.id,
+              peerId: device.deviceId,
               statusCode: response.statusCode,
             );
           }
@@ -602,20 +695,20 @@ extension LanTransferClientApi on LanTransferService {
           client.close();
         }
       },
-      peerId: device.id,
+      peerId: device.deviceId,
       operation: NetworkOperation.sendMeta,
     );
   }
 
   /// 为之前发送的消息发送撤回信号。
   Future<NetworkResult<void>> sendRecall(
-    LanDevice device,
+    LanDiscoveredPeer device,
     String messageId,
   ) async {
     return _executeWithRetry(
       () async {
         final url = _lanEndpoint(device, '/api/lan/recall');
-        final client = await _createHttpClient(peerDeviceId: device.id);
+        final client = await _createHttpClient(peerDeviceId: device.deviceId);
 
         try {
           final request = await client
@@ -624,7 +717,7 @@ extension LanTransferClientApi on LanTransferService {
           request.followRedirects = false;
           final authorization = await addPairingAuthorization(
             request.headers,
-            device.id,
+            device.deviceId,
           );
           if (authorization is NetworkFailure<void>) {
             return authorization;
@@ -644,7 +737,7 @@ extension LanTransferClientApi on LanTransferService {
               statusCode: response.statusCode,
               body: json,
               operation: NetworkOperation.sendRecall,
-              peerId: device.id,
+              peerId: device.deviceId,
               fallbackMessage: 'LAN recall request was rejected.',
             );
           }
@@ -653,7 +746,7 @@ extension LanTransferClientApi on LanTransferService {
               'LAN recall response is invalid.',
               code: NetworkErrorCode.invalidArgument,
               operation: NetworkOperation.sendRecall,
-              peerId: device.id,
+              peerId: device.deviceId,
               statusCode: response.statusCode,
             );
           }
@@ -662,20 +755,22 @@ extension LanTransferClientApi on LanTransferService {
           client.close();
         }
       },
-      peerId: device.id,
+      peerId: device.deviceId,
       operation: NetworkOperation.sendRecall,
     );
   }
 
   /// 广播本机存在，并返回对端端点。
   Future<NetworkResult<LanPairingEndpoint>> sendAnnouncement(
-    LanDevice targetDevice,
+    LanDiscoveredPeer targetDevice,
     String localAlias,
   ) async {
     return _executeWithRetry(
       () async {
         final url = _lanEndpoint(targetDevice, '/api/lan/announce');
-        final client = await _createHttpClient(peerDeviceId: targetDevice.id);
+        final client = await _createHttpClient(
+          peerDeviceId: targetDevice.deviceId,
+        );
 
         try {
           final request = await client
@@ -701,7 +796,7 @@ extension LanTransferClientApi on LanTransferService {
               statusCode: response.statusCode,
               body: json,
               operation: NetworkOperation.sendAnnouncement,
-              peerId: targetDevice.id,
+              peerId: targetDevice.deviceId,
               fallbackMessage: 'LAN announcement was rejected.',
             );
           }
@@ -716,7 +811,7 @@ extension LanTransferClientApi on LanTransferService {
               'LAN announcement response is invalid.',
               code: NetworkErrorCode.invalidArgument,
               operation: NetworkOperation.sendAnnouncement,
-              peerId: targetDevice.id,
+              peerId: targetDevice.deviceId,
               statusCode: response.statusCode,
             );
           }
@@ -730,22 +825,21 @@ extension LanTransferClientApi on LanTransferService {
           client.close();
         }
       },
-      peerId: targetDevice.id,
+      peerId: targetDevice.deviceId,
       operation: NetworkOperation.sendAnnouncement,
     );
   }
 
   /// 邀请对端打开配对页面。PIN 握手仍是独立步骤，只有它可以建立信任。
   Future<NetworkResult<LanPairingEndpoint>> sendPairingInvite(
-    LanDevice targetDevice,
+    LanDiscoveredPeer targetDevice,
     String localAlias, {
     required String sessionId,
     required DateTime expiresAt,
   }) async {
     final url = _lanEndpoint(targetDevice, '/api/lan/pairing_invite');
     final client = await _createHttpClient(
-      peerDeviceId: targetDevice.id,
-      expectedFingerprint: targetDevice.certFingerprint,
+      peerDeviceId: targetDevice.deviceId,
       allowUntrusted: true,
     );
     try {
@@ -777,7 +871,7 @@ extension LanTransferClientApi on LanTransferService {
           statusCode: response.statusCode,
           body: json,
           operation: NetworkOperation.sendPairingInvite,
-          peerId: targetDevice.id,
+          peerId: targetDevice.deviceId,
           fallbackMessage: 'LAN pairing invitation was rejected.',
         );
       }
@@ -801,7 +895,7 @@ extension LanTransferClientApi on LanTransferService {
         lanNetworkError(
           e,
           operation: NetworkOperation.sendPairingInvite,
-          peerId: targetDevice.id,
+          peerId: targetDevice.deviceId,
         ),
       );
     } finally {

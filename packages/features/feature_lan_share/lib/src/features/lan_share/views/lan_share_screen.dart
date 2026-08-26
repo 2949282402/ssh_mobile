@@ -126,7 +126,7 @@ class _LanShareScreenState extends State<LanShareScreen>
                         subtitleWidget: OverflowScrollText(
                           vm.isScanning
                               ? strings.lanShareRadarHint
-                              : (vm.devices.isEmpty
+                              : (vm.peerStates.isEmpty
                                     ? strings.lanShareNoDevicesRefreshHint
                                     : strings.lanShareRadarStoppedHint),
                           selectable: false,
@@ -506,7 +506,8 @@ class _LanShareScreenState extends State<LanShareScreen>
     AppStrings strings,
     LanShareViewModel vm,
   ) {
-    if (vm.devices.isEmpty) {
+    final peers = vm.peerStates;
+    if (peers.isEmpty) {
       if (vm.isScanning) {
         return AppEmptyState(
           icon: Icons.radar_rounded,
@@ -591,75 +592,73 @@ class _LanShareScreenState extends State<LanShareScreen>
 
     return ListView.builder(
       padding: const EdgeInsets.all(16),
-      itemCount: vm.devices.length,
+      itemCount: peers.length,
       itemBuilder: (context, index) {
-        final device = vm.devices[index];
+        final state = peers[index];
+        final device = state.discovery;
         return Padding(
           padding: const EdgeInsets.only(bottom: 12),
           child: AppSectionCard(
-            title: device.alias,
-            subtitle: '${device.ip} · ${device.osName}',
-            icon: device.deviceType == LanDeviceType.mobile
+            title: state.displayAlias,
+            subtitle: device == null
+                ? strings.lanShareOffline
+                : '${device.ip} · ${device.os}',
+            icon: device?.deviceType == LanDeviceType.mobile
                 ? Icons.smartphone_rounded
                 : Icons.desktop_windows_rounded,
-            trailing: FutureBuilder<bool>(
-              future: vm.isDevicePaired(device.id),
-              builder: (context, snapshot) {
-                final isPaired = snapshot.data ?? false;
-                return Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (isPaired) ...[
-                      const Icon(
-                        Icons.shield_rounded,
-                        color: Colors.green,
-                        size: 14,
-                      ),
-                      const SizedBox(width: 4),
-                      const Text(
-                        '已配对',
-                        style: TextStyle(
-                          color: Colors.green,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ] else ...[
-                      const Icon(
-                        Icons.lock_rounded,
-                        color: Colors.grey,
-                        size: 14,
-                      ),
-                      const SizedBox(width: 4),
-                      const Text(
-                        '未配对',
-                        style: TextStyle(
-                          color: Colors.grey,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(width: 8),
-                    Icon(
-                      Icons.chevron_right_rounded,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (state.isTrusted) ...[
+                  const Icon(
+                    Icons.shield_rounded,
+                    color: Colors.green,
+                    size: 14,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    state.isTrustedOffline ? '已配对 · 离线' : '已配对',
+                    style: const TextStyle(
+                      color: Colors.green,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
                     ),
-                  ],
-                );
-              },
+                  ),
+                ] else ...[
+                  const Icon(Icons.lock_rounded, color: Colors.grey, size: 14),
+                  const SizedBox(width: 4),
+                  const Text(
+                    '未配对',
+                    style: TextStyle(
+                      color: Colors.grey,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+                const SizedBox(width: 8),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ],
             ),
             onHeaderTap: () async {
-              final paired = await vm.isDevicePaired(device.id);
+              if (device == null) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(strings.lanShareOffline)),
+                );
+                return;
+              }
               if (!context.mounted) return;
-              if (paired) {
+              if (state.isTrusted) {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (_) => LanShareFeatureScope(
                       child: LanChatScreen(
-                        targetDeviceId: device.id,
-                        initialAlias: device.alias,
+                        targetDeviceId: state.peerId,
+                        initialAlias: state.displayAlias,
                       ),
                     ),
                   ),
@@ -701,20 +700,15 @@ class _LanShareScreenState extends State<LanShareScreen>
       final msgs = entry.value;
       final lastMsg = msgs.first;
 
-      LanDevice? onlineDev;
-      for (final d in vm.devices) {
-        if (d.id == otherId) {
-          onlineDev = d;
-          break;
-        }
-      }
+      final peerState = vm.peerStateFor(otherId);
+      final onlineDev = peerState?.discovery;
       final isOnline = vm.isDeviceConnected(otherId);
 
       String alias = 'Unknown Device';
       String osName = 'Unknown OS';
-      if (onlineDev != null) {
-        alias = onlineDev.alias;
-        osName = onlineDev.osName;
+      if (peerState != null) {
+        alias = peerState.displayAlias;
+        osName = onlineDev?.os ?? osName;
       } else {
         var foundIncoming = false;
         for (final m in msgs) {
@@ -768,13 +762,9 @@ class _LanShareScreenState extends State<LanShareScreen>
                   ),
                 );
               } else {
-                LanDevice? targetDevice;
-                for (final device in vm.devices) {
-                  if (device.id == session.deviceId) {
-                    targetDevice = device;
-                    break;
-                  }
-                }
+                final targetDevice = vm
+                    .peerStateFor(session.deviceId)
+                    ?.discovery;
                 if (targetDevice == null) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(content: Text(strings.lanShareOffline)),

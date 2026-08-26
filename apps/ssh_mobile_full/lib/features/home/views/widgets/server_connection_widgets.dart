@@ -82,89 +82,50 @@ class _ServerEmptyState extends StatelessWidget {
   }
 }
 
-class _ServerSkeletalLoader extends StatelessWidget {
-  const _ServerSkeletalLoader();
+class _ServerSkeletonList extends StatelessWidget {
+  const _ServerSkeletonList();
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final baseColor = isDark
-        ? const Color(0xFF1E293B)
-        : const Color(0xFFE2E8F0);
-    final highlightColor = isDark
-        ? const Color(0xFF334155)
-        : const Color(0xFFF1F5F9);
-
+    final theme = Theme.of(context);
     return ListView.builder(
       physics: const NeverScrollableScrollPhysics(),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       itemCount: 3,
       itemBuilder: (context, index) {
         return Container(
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: baseColor.withValues(alpha: 0.5),
-                borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-                border: Border.all(
-                  color: isDark
-                      ? const Color(0xFF334155)
-                      : const Color(0xFFCBD5E1),
-                  width: 1,
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest.withValues(
+              alpha: 0.3,
+            ),
+            borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+            border: Border.all(
+              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+              width: 1,
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 36,
-                        height: 36,
-                        decoration: BoxDecoration(
-                          color: highlightColor,
-                          borderRadius: BorderRadius.circular(
-                            AppTheme.radiusSmall,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Container(
-                        width: 140,
-                        height: 18,
-                        decoration: BoxDecoration(
-                          color: highlightColor,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                      ),
-                    ],
+                  Bone.square(
+                    size: 36,
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                   ),
-                  const SizedBox(height: 14),
-                  Container(
-                    width: 220,
-                    height: 12,
-                    decoration: BoxDecoration(
-                      color: highlightColor,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Container(
-                    width: 100,
-                    height: 12,
-                    decoration: BoxDecoration(
-                      color: highlightColor,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
+                  const SizedBox(width: 12),
+                  const Bone(width: 140, height: 18),
                 ],
               ),
-            )
-            .animate(onPlay: (controller) => controller.repeat())
-            .shimmer(
-              duration: const Duration(milliseconds: 1200),
-              color: highlightColor.withValues(alpha: 0.35),
-            );
+              const SizedBox(height: 14),
+              const Bone(width: 220, height: 12),
+              const SizedBox(height: 8),
+              const Bone(width: 100, height: 12),
+            ],
+          ),
+        );
       },
     );
   }

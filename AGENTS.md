@@ -1,4 +1,4 @@
-> Last updated: 2026-08-23
+> Last updated: 2026-08-26
 
 # Repository Bootstrap
 
@@ -79,6 +79,21 @@ local contracts; do not replace them with project Memory.
 - Preserve unrelated worktree changes. Avoid destructive Git/file operations and
   do not broaden a diagnosis, review, or docs-only request into implementation.
 
+## Test-first development
+
+- Observable business behavior changes default to test-first development. An
+  automatable bug first gets a failing regression test; a feature starts with
+  one failing externally observable behavior; risky untested code first gets a
+  characterization test. Work in small Red → Green → Refactor increments.
+- Use the lowest reasonable test layer and assert results or invariants, not
+  private structure. Never weaken or skip a new failure to accept incorrect code.
+- Generated/documentation/formatting changes, behavior-free configuration, and
+  pure visual tweaks do not mechanically require Red. Coverage is a merge signal,
+  not the purpose of TDD.
+
+The complete procedure, exceptions, and high-risk owner guidance are canonical in
+[Maintenance Workflow](.agents/skills/ssh-mobile-maintenance/references/workflow.md).
+
 ## Documentation and validation
 
 Every maintained Markdown file places its update marker at the beginning,
@@ -92,15 +107,9 @@ proportional to the touched owner and risk. Package-local commands remain in the
 owning README/AGENTS. Always run `git diff --check`, inspect the final status and
 diff, report checks actually run, and state exact environmental or scope gaps.
 
-Before creating or updating a PR, run `scripts/full_test.sh` and the applicable
-focused checks from WSL. `full_test.sh` is the daily basic regression gate and
-does not collect Flutter coverage by default. For coverage-affecting changes,
-large refactors, new feature review, or release acceptance, run the four
-domain-specific gates: `scripts/front_coverage.sh`,
-`scripts/backend_coverage.sh`, `scripts/client_coverage.sh`, and
-`scripts/sdk_coverage.sh`. Each gate enforces an 80% line/metric threshold on
-its documented owner scope and prints uncovered locations when it fails.
-`scripts/coverage_test.sh` remains a compatibility alias for the client gate.
+日常开发与常规修复优先运行受影响模块的针对性测试与 targeted CI 门禁（例如 `scripts/bash/ci/full_test.sh --no-bootstrap --only <jobs>`），只有在进行重大跨模块架构重构、或者用户明确要求时才执行本地全量 `full_test.sh` / `full_test.ps1`；代码推送后通过 GitHub Actions CI 观察平台构建与全量测试结果。全量本地脚本是重大重构时的验收门禁，默认不收集 Flutter coverage。对于涉及覆盖率变更、大型重构或发布验收，运行 `scripts/bash/coverage/` 下的四大领域门禁或 native Windows 对应门禁。每个领域门禁对其负责范围执行 80% 的行覆盖率/指标阈值，并在失败时打印未覆盖位置。
+`coverage_test.sh`/`coverage_test.ps1` remain compatibility aliases for the
+client gate.
 A stricter new-source rule also applies: every newly added hand-written
 production source file must have corresponding independent tests and at least
 90% file-level line coverage. Generated output, documentation, configuration,
@@ -108,11 +117,13 @@ test-only files, and platform boilerplate without coverable business logic are
 excluded only when the owning validation report records the reason.
 A failing or incomplete check blocks submission unless the user explicitly
 accepts the documented environment gap. When tests, package membership,
-project structure, CI scope, or test-selection rules change, update
-`scripts/full_test.sh` in the same change. The canonical Skill and Project
-Memory define the detailed PR gate and script-maintenance rules. Explicit
-Windows platform checks use native PowerShell 7 (`pwsh.exe`) and a native
-working directory; they never replace the WSL Linux gate.
+project structure, CI scope, or test-selection rules change, update both
+aggregate scripts in the same change. The `scripts/bash/` and
+`scripts/powershell/` trees keep identical functional subdirectory structures.
+Same-relative-path `.sh`/`.ps1` pairs are maintained together, including
+arguments, environment, steps, timeouts, cleanup, exit semantics, and scope.
+Agents choose from the actual host: Linux/WSL runs Bash and native Windows runs
+PowerShell 7; never cross-call the other host toolchain.
 
 `CLAUDE.md` is the Claude-specific thin bootstrap entry. It delegates repository
 entry and memory routing to this `AGENTS.md` and the canonical `.agents` Skill,

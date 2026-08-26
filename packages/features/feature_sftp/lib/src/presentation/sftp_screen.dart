@@ -75,12 +75,33 @@ class _SftpScreenState extends State<SftpScreen> {
     final serversCollapsed = _serversCollapsed && connections.isNotEmpty;
 
     if (!storageReady) {
-      return const AppPageSurface(
-        child: Center(
-          child: SizedBox(
-            width: 28,
-            height: 28,
-            child: CircularProgressIndicator(strokeWidth: 2),
+      return AppPageSurface(
+        child: AppSkeletonizer.zone(
+          enabled: true,
+          semanticsLabel: strings.loadingServerCatalog,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                Bone(
+                  width: double.infinity,
+                  height: 48,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                const SizedBox(height: 12),
+                Bone(
+                  width: double.infinity,
+                  height: 48,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                const SizedBox(height: 12),
+                Bone(
+                  width: double.infinity,
+                  height: 48,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ],
+            ),
           ),
         ),
       );

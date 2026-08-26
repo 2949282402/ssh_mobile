@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-24
+> 最新更新时间：2026-08-25
 
 # 应用启动按需初始化架构 (On-demand Startup Initialization Architecture)
 
@@ -10,7 +10,10 @@
 ### 1. 核心 Bootstrap (`AppBootstrapCoordinator`)
 - `main()` 仅委托给 `AppBootstrap.run()`；`AppRuntimeFactory` 创建唯一的 App Scope 服务，`AppRuntime` 负责其生命周期，并发起 `AppBootstrapCoordinator.ensureBootstrap()`。
 - `AppBootstrapCoordinator` 仅装载核心偏好（语言、主题、色板、SFTP 限制等）；Feature/Module Repository 按各自 Owner 惰性初始化，不再由统一存储门面承载。
-- 剥离 MCP Token 生成、LAN Identity 查找与平台设备名获取等耗时/平台通道 I/O，移至具体功能触发时处理。
+- MCP Token 生成与平台设备名获取仍按具体功能触发；Network V2 的 App-owned
+  `NetworkIdentityBundle` 则必须在 AppRuntime composition root 中先加载/创建，随后
+  exactly-once 配置共享 `NetworkRuntime`/`NetworkFacade`，避免 LAN/SSH/Realtime 各自
+  建立 identity 或 native runtime。
 
 ### 2. ConnectionViewModel 与 SshService 解耦 (`ConnectionRuntimeActions`)
 - `ConnectionViewModel` 构造函数仅依赖 `ConnectionRepository`。
@@ -25,6 +28,9 @@
 
 ### 4. LAN 后台接收器分离 (`LanReceiverCoordinator`)
 - 提取 `LanReceiverCoordinator` 管理全局 HTTPS 接收端口、mDNS 广播及配对邀请处理，保持后台配对功能完备。
+- Coordinator 只借用 AppRuntime 已配置的共享 NetworkFacade；激活、停用和重新激活
+  只改变 LAN HTTP/Discovery/Transfer 资源与订阅，不 start/stop/reconfigure native
+  NetworkRuntime。显式 unpair 才触发 `removePeer`，网络离线不会删除 Trust。
 - `LanShareFeatureScope` 按需取得 Coordinator 持有的唯一共享 `LanShareViewModel`，主页面、全局配对路由与聊天路由复用同一底层运行时，不会重复绑定端口。
 - `LanShareViewModel` 仅在用户进入 LAN Share 页面或收到配对邀请时创建，主动扫描与历史记录数据库 watch 不进入核心启动路径。
 

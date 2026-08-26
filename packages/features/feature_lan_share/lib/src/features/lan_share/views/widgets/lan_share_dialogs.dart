@@ -1,4 +1,4 @@
-// v1 LAN Share 配对、WebShare 与设备地址对话框。
+// LAN Control Protocol V2 配对、WebShare 与设备地址对话框。
 // WebShare 链接只接受 HTTPS，避免从界面入口引入明文降级。
 
 part of '../lan_share_screen.dart';
@@ -21,15 +21,17 @@ extension _LanShareDialogActions on _LanShareScreenState {
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
           ),
-          ...vm.devices.map(
-            (dev) => ListTile(
-              title: Text(dev.alias),
+          ...vm.peerStates.where((state) => state.discovery != null).map((
+            state,
+          ) {
+            final dev = state.discovery!;
+            return ListTile(
+              title: Text(state.displayAlias),
               subtitle: Text(dev.ip),
               onTap: () async {
                 Navigator.pop(ctx);
-                final paired = await vm.isDevicePaired(dev.id);
                 if (!mounted) return;
-                if (!paired) {
+                if (!state.isTrusted) {
                   final pairingResult = await vm.requestPairing(dev);
                   if (!mounted) return;
                   if (pairingResult is NetworkFailure) {
@@ -40,7 +42,11 @@ extension _LanShareDialogActions on _LanShareScreenState {
                   return;
                 }
                 for (final path in filePaths) {
-                  final sendResult = await vm.sendFile(dev, path);
+                  final sendResult = await vm.sendFile(
+                    peerId: dev.deviceId,
+                    filePath: path,
+                    discovery: dev,
+                  );
                   if (sendResult is NetworkFailure && mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(content: Text(strings.lanShareOffline)),
@@ -49,8 +55,8 @@ extension _LanShareDialogActions on _LanShareScreenState {
                   }
                 }
               },
-            ),
-          ),
+            );
+          }),
         ],
       ),
     );
@@ -102,8 +108,8 @@ extension _LanShareDialogActions on _LanShareScreenState {
   ) {
     String ip = '';
     int port = 53317;
+    int? nativePort;
     String? advertisedDeviceId;
-    String? advertisedFingerprint;
 
     // 只有 HTTPS scheme 才能作为 WebShare 链接解析。
     final parsedUri = Uri.tryParse(input);
@@ -117,21 +123,15 @@ extension _LanShareDialogActions on _LanShareScreenState {
       final uri = parsedUri;
       ip = uri.host;
       advertisedDeviceId = uri.queryParameters['deviceId'];
-      final fingerprint = uri.queryParameters['certFingerprint']
-          ?.trim()
-          .toLowerCase();
-      if (fingerprint != null &&
-          RegExp(r'^[0-9a-f]{64}$').hasMatch(fingerprint)) {
-        advertisedFingerprint = fingerprint;
-      }
-      final advertisedPort = int.tryParse(
+      final advertisedLanPort = int.tryParse(
+        uri.queryParameters['lanPort'] ?? '',
+      );
+      final advertisedNativePort = int.tryParse(
         uri.queryParameters['nativePort'] ?? '',
       );
-      port = advertisedPort ?? uri.port;
-      // 兼容未包含 nativePort 的旧二维码链接。
-      if (advertisedPort == null && port == 53319) {
-        port = 53317;
-      }
+      // V2 links carry the control and native data-plane ports separately.
+      port = advertisedLanPort ?? (uri.port > 0 ? uri.port : 53317);
+      nativePort = advertisedNativePort;
     } else {
       // 解析 IP:端口或纯 IP 地址。
       final parts = input.split(':');
@@ -152,14 +152,14 @@ extension _LanShareDialogActions on _LanShareScreenState {
     final deviceId = advertisedDeviceId?.trim().isNotEmpty == true
         ? advertisedDeviceId!.trim()
         : 'manual_${ip}_$port';
-    final device = LanDevice(
-      id: deviceId,
+    final device = LanDiscoveredPeer(
+      deviceId: deviceId,
       alias: ip,
       ip: ip,
-      port: port,
+      controlPort: port,
+      advertisedNativePort: nativePort,
       deviceType: LanDeviceType.mobile,
-      osName: 'Unknown OS',
-      certFingerprint: advertisedFingerprint,
+      os: 'Unknown OS',
       lastSeen: DateTime.now(),
     );
 
@@ -170,7 +170,7 @@ extension _LanShareDialogActions on _LanShareScreenState {
   Future<NetworkResult<void>> _requestPairingWithFeedback(
     BuildContext context,
     LanShareViewModel vm,
-    LanDevice device,
+    LanDiscoveredPeer device,
     AppStrings strings,
   ) async {
     final result = await vm.requestPairing(device);

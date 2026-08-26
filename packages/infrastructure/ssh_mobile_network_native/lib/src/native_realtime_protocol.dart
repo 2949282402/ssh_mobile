@@ -245,6 +245,8 @@ final class NativePeerConfig {
     required Uint8List identityPublicKey,
     required Uint8List e2ePublicKey,
     this.e2eePolicy = NativeE2eePolicy.required,
+    this.allowDirect = true,
+    this.allowRelay = false,
   }) : identityPublicKey = Uint8List.fromList(identityPublicKey),
        e2ePublicKey = Uint8List.fromList(e2ePublicKey);
 
@@ -253,6 +255,8 @@ final class NativePeerConfig {
   final Uint8List identityPublicKey;
   final Uint8List e2ePublicKey;
   final NativeE2eePolicy e2eePolicy;
+  final bool allowDirect;
+  final bool allowRelay;
 }
 
 /// Base class for typed events emitted by [NativeNetworkRuntime.events].
@@ -1157,11 +1161,13 @@ final class _NativeProtocolCommandEncoder {
   }) {
     _values.validateCommandId(commandId);
     _values.validatePeerId(config.peerId);
-    _values.validateIdentifier(
-      config.endpointAddress,
-      'endpointAddress',
-      _maxEventIdBytes,
-    );
+    if (config.endpointAddress.isNotEmpty) {
+      _values.validateIdentifier(
+        config.endpointAddress,
+        'endpointAddress',
+        _maxEventIdBytes,
+      );
+    }
     return _command(
       commandId,
       28,
@@ -1172,7 +1178,9 @@ final class _NativeProtocolCommandEncoder {
                   ..string(2, config.endpointAddress)
                   ..bytesField(3, config.identityPublicKey)
                   ..bytesField(4, config.e2ePublicKey)
-                  ..varint(5, config.e2eePolicy.wireValue))
+                  ..varint(5, config.e2eePolicy.wireValue)
+                  ..varint(6, config.allowDirect ? 1 : 0)
+                  ..varint(7, config.allowRelay ? 1 : 0))
                 .takeBytes(),
           ))
           .takeBytes(),

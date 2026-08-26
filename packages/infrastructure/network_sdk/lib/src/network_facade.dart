@@ -27,14 +27,20 @@ abstract interface class NetworkFacade implements EventStreamClient {
   /// 停止底层 native runtime 数据面。
   Future<SdkResult<void>> stop();
 
+  /// 注册对端传输身份和可选 endpoint，但不发起连接。
+  ///
+  /// Receiver 在每一代 native runtime 启动后用此方法恢复可信对端；入站信任恢复
+  /// 允许 [SdkPeerConfig.endpointAddress] 为空。
+  Future<SdkResult<void>> registerPeer(SdkPeerConfig peer);
+
+  /// 删除 native peer trust/configuration，并关闭其连接与传输。
+  Future<SdkResult<void>> removePeer(String peerId);
+
   /// 连接对端。
   ///
-  /// [peer] 可选：提供时内部先注册对端传输身份（endpoint + 身份密钥）再连接，
-  /// 避免调用方直接调用低层 upsert/connect。可连接类别为除 [CommunicationClass.realtimeMedia]
-  /// 外的数据类别；realtimeMedia 通过 [createRealtimeSession] 建立。
+  /// Peer 必须先通过 [registerPeer] 注册；连接不会隐式修改 trust/configuration。
   Future<SdkResult<void>> connectPeer(
     String peerId, {
-    SdkPeerConfig? peer,
     CommunicationClass communicationClass = CommunicationClass.reliableStream,
   });
 
@@ -120,6 +126,18 @@ final class NetworkFacadeImpl implements NetworkFacade {
   }
 
   @override
+  Future<SdkResult<void>> registerPeer(SdkPeerConfig peer) {
+    _ensureUsable();
+    return _sessions.upsertPeer(peer);
+  }
+
+  @override
+  Future<SdkResult<void>> removePeer(String peerId) {
+    _ensureUsable();
+    return _sessions.removePeer(peerId);
+  }
+
+  @override
   Future<SdkResult<void>> stop() {
     _ensureUsable();
     return _sessions.stop();
@@ -128,20 +146,17 @@ final class NetworkFacadeImpl implements NetworkFacade {
   @override
   Future<SdkResult<void>> connectPeer(
     String peerId, {
-    SdkPeerConfig? peer,
     CommunicationClass communicationClass = CommunicationClass.reliableStream,
-  }) async {
+  }) {
     _ensureUsable();
     if (communicationClass == CommunicationClass.realtimeMedia) {
-      return _invalidClass(
-        communicationClass,
-        'connectPeer',
-        NetworkOperation.connect,
+      return Future.value(
+        _invalidClass(
+          communicationClass,
+          'connectPeer',
+          NetworkOperation.connect,
+        ),
       );
-    }
-    if (peer != null) {
-      final upsert = await _sessions.upsertPeer(peer);
-      if (upsert is SdkFailure<void>) return upsert;
     }
     return _sessions.connect(peerId, communicationClass: communicationClass);
   }

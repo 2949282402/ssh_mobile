@@ -1,4 +1,4 @@
-最新更新时间：2026-08-19
+最新更新时间：2026-08-25
 
 # network_transport Package Guidelines
 
@@ -18,7 +18,8 @@ Feature UI、SSH 会话或 LAN 业务规则。
   `NetworkRuntimeImpl` 负责。
 - `NetworkRuntime.diagnostics` 是只读生命周期观察契约；它只能报告
   `NetworkRuntimeImpl` 直接拥有的 native handle 和已登记的连接/Capability，
-  不得为了填充诊断数字而接管 Feature 协议连接。
+  不得为了填充诊断数字而接管 Feature 协议连接。`boundLocalPort` 只投影 native
+  绑定结果，供 App Shell 适配端点，不转移 Runtime/native handle 所有权。
 - `NetworkCommandGateway` 只是 Runtime-owned Network Protocol V2 handle 的借用型命令/事件
   入口；它不得拥有、复制或关闭 handle，也不得在其中加入业务协议规则。
 - `NetworkRealtimeGateway` 同样是 Runtime-owned handle 的借用型入口；它只能

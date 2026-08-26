@@ -1,4 +1,4 @@
-// v1 LAN 网络结果、错误与事件模型。
+// Network V2 LAN 网络结果、错误与事件模型。
 //
 // 将 LAN 专属数据与传输实现分离，使调用方可以使用类型化结果，
 // 而不依赖 HTTP 细节。
@@ -7,16 +7,7 @@ import 'dart:async';
 
 import 'package:network_sdk/network_sdk.dart';
 
-/// 描述 v1 LAN 配对握手结果。
-final class LanHandshakeData {
-  /// 使用相互验证状态创建配对结果。
-  const LanHandshakeData({required this.pendingRemote});
-
-  /// 远端设备是否仍需完成相互配对。
-  final bool pendingRemote;
-}
-
-/// 描述 v1 LAN 广播或邀请返回的端点。
+/// 描述 V2 LAN 广播或邀请返回的端点。
 final class LanPairingEndpoint {
   /// 创建远端端点描述。
   const LanPairingEndpoint({this.remoteDeviceId, this.remotePort});
@@ -85,7 +76,7 @@ final class LanNetworkException implements Exception {
   String toString() => message;
 }
 
-/// 将 HTTP 状态映射为稳定的 v1 LAN 错误分类。
+/// 将 HTTP 状态映射为稳定的 V2 LAN 错误分类。
 NetworkErrorCode lanHttpErrorCode(int statusCode) {
   if (statusCode == 400 || statusCode == 413) {
     return NetworkErrorCode.invalidArgument;

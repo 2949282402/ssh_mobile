@@ -12,6 +12,8 @@ dependencies:
     sdk: flutter
   app_core:
     path: ../../core/app_core
+  app_ui:
+    path: ../../core/app_ui
   archive: ^4.0.9
   drift: ^2.34.3
   drift_flutter: ^0.3.1

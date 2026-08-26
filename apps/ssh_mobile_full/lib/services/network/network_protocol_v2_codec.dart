@@ -99,6 +99,12 @@ final class NetworkProtocolV2Codec {
     required PeerConfig peer,
   }) => _commands.upsertPeer(commandId: commandId, peer: peer);
 
+  /// 编码显式删除对端 trust/configuration 命令。
+  Uint8List removePeerCommand({
+    required String commandId,
+    required String peerId,
+  }) => _commands.removePeer(commandId: commandId, peerId: peerId);
+
   /// 编码异步对端连接命令。
   ///
   /// 载荷镜像 network_protocol ConnectPeerCommand：peer_id(1)、intent(2)、
@@ -297,6 +303,12 @@ final class NetworkProtocolV2Codec {
           );
         case 27:
           sshStreamClosed = _streamEvents.decodeClosed(
+            eventId,
+            timestampMs,
+            reader.bytes(field.wireType),
+          );
+        case 32:
+          event = _transferEvents.decodePeerTransferProgress(
             eventId,
             timestampMs,
             reader.bytes(field.wireType),
@@ -579,6 +591,7 @@ final class _PeerEventDecoder {
 final class _TransferEventDecoder {
   const _TransferEventDecoder();
 
+  /// 解码通用传输进度事件（wire tag 11：TransferProgressEvent）。
   TransferProgress decodeProgress(
     String eventId,
     int timestampMs,
@@ -588,6 +601,7 @@ final class _TransferEventDecoder {
     var transferId = '';
     var transferred = 0;
     var total = 0;
+    var peerId = '';
     while (!reader.isDone) {
       final field = reader.field();
       switch (field.number) {
@@ -597,6 +611,8 @@ final class _TransferEventDecoder {
           transferred = reader.varint(field.wireType);
         case 3:
           total = reader.varint(field.wireType);
+        case 4:
+          peerId = utf8.decode(reader.bytes(field.wireType));
         default:
           reader.skip(field.wireType);
       }
@@ -607,6 +623,47 @@ final class _TransferEventDecoder {
       transferId: transferId,
       bytesTransferred: transferred,
       totalBytes: total,
+      peerId: peerId.isEmpty ? null : peerId,
+    );
+  }
+
+  /// 解码对端作用域传输进度事件（wire tag 32：PeerTransferProgressEvent）。
+  TransferProgress decodePeerTransferProgress(
+    String eventId,
+    int timestampMs,
+    Uint8List bytes,
+  ) {
+    final reader = _ProtoReader(bytes);
+    var peerId = '';
+    var transferId = '';
+    var confirmedOffset = 0;
+    var totalBytes = 0;
+    var paused = false;
+    while (!reader.isDone) {
+      final field = reader.field();
+      switch (field.number) {
+        case 1:
+          peerId = utf8.decode(reader.bytes(field.wireType));
+        case 2:
+          transferId = utf8.decode(reader.bytes(field.wireType));
+        case 3:
+          confirmedOffset = reader.varint(field.wireType);
+        case 4:
+          totalBytes = reader.varint(field.wireType);
+        case 5:
+          paused = reader.varint(field.wireType) != 0;
+        default:
+          reader.skip(field.wireType);
+      }
+    }
+    final _ = paused;
+    return TransferProgress(
+      eventId: eventId,
+      timestamp: _eventTimestamp(timestampMs),
+      transferId: transferId,
+      bytesTransferred: confirmedOffset,
+      totalBytes: totalBytes,
+      peerId: peerId.isEmpty ? null : peerId,
     );
   }
 
@@ -657,6 +714,7 @@ final class _TransferEventDecoder {
     final reader = _ProtoReader(bytes);
     var transferId = '';
     var localPath = '';
+    var peerId = '';
     while (!reader.isDone) {
       final field = reader.field();
       switch (field.number) {
@@ -664,6 +722,8 @@ final class _TransferEventDecoder {
           transferId = utf8.decode(reader.bytes(field.wireType));
         case 2:
           localPath = utf8.decode(reader.bytes(field.wireType));
+        case 3:
+          peerId = utf8.decode(reader.bytes(field.wireType));
         default:
           reader.skip(field.wireType);
       }
@@ -673,6 +733,7 @@ final class _TransferEventDecoder {
       timestamp: _eventTimestamp(timestampMs),
       transferId: transferId,
       localPath: localPath,
+      peerId: peerId.isEmpty ? null : peerId,
     );
   }
 
@@ -684,6 +745,7 @@ final class _TransferEventDecoder {
     final reader = _ProtoReader(bytes);
     var transferId = '';
     NetworkError? error;
+    var peerId = '';
     while (!reader.isDone) {
       final field = reader.field();
       switch (field.number) {
@@ -691,6 +753,8 @@ final class _TransferEventDecoder {
           transferId = utf8.decode(reader.bytes(field.wireType));
         case 2:
           error = _decodeNetworkError(reader.bytes(field.wireType));
+        case 3:
+          peerId = utf8.decode(reader.bytes(field.wireType));
         default:
           reader.skip(field.wireType);
       }
@@ -705,6 +769,7 @@ final class _TransferEventDecoder {
             code: NetworkErrorCode.unspecified,
             message: 'transfer failed',
           ),
+      peerId: peerId.isEmpty ? null : peerId,
     );
   }
 }
@@ -866,13 +931,22 @@ final class _NetworkCommandEncoder {
   }
 
   Uint8List upsertPeer({required String commandId, required PeerConfig peer}) {
-    final payload = _ProtoWriter()
+    final config = _ProtoWriter()
       ..string(1, peer.peerId)
       ..string(2, peer.endpointAddress)
       ..bytesField(3, peer.identityPublicKey)
-      ..bytesField(4, peer.e2ePublicKey);
-    return _command(commandId, 14, payload.takeBytes());
+      ..bytesField(4, peer.e2ePublicKey)
+      // SdkPeerConfig exposes only the required application E2EE contract;
+      // E2EE_POLICY_REQUIRED is the zero-valued wire enum.
+      ..varint(5, 0)
+      ..varint(6, peer.allowDirect ? 1 : 0)
+      ..varint(7, peer.allowRelay ? 1 : 0);
+    final payload = _ProtoWriter()..message(1, config.takeBytes());
+    return _command(commandId, 28, payload.takeBytes());
   }
+
+  Uint8List removePeer({required String commandId, required String peerId}) =>
+      _command(commandId, 29, (_ProtoWriter()..string(1, peerId)).takeBytes());
 
   Uint8List connectPeer({
     required String commandId,

@@ -8,23 +8,26 @@ void main() {
   const wrongPin = '654321';
   const serverFingerprint =
       '2222222222222222222222222222222222222222222222222222222222222222';
-  const context = '["ssh-mobile-lan-pair",3,"client-device","server-device"]';
 
   String associatedData({
     required LanPairingEphemeralKeyPair client,
     required LanPairingEphemeralKeyPair server,
+    required String clientContext,
     String handshakeId = 'handshake-id-with-enough-entropy',
   }) => LanPairingCrypto.sessionAssociatedData(
-    clientContext: context,
+    clientContext: clientContext,
     handshakeId: handshakeId,
     slot: client.slot,
     salt: client.salt,
     clientPublicValue: client.publicValue,
     serverPublicValue: server.publicValue,
     serverCertFingerprint: serverFingerprint,
+    serverX25519PublicKey: _key(0x33),
+    serverNetworkIdentityPublicKey: _key(0x44),
   );
 
   test('SRP peers derive the same session and confirmation keys', () {
+    final context = _clientContext();
     final client = LanPairingCrypto.generateClientKeyPair(
       pin: correctPin,
       clientContext: context,
@@ -36,7 +39,11 @@ void main() {
       slot: 0,
       clientPublicValue: client.publicValue,
     );
-    final aad = associatedData(client: client, server: server);
+    final aad = associatedData(
+      client: client,
+      server: server,
+      clientContext: context,
+    );
     final clientSecrets = LanPairingCrypto.deriveSessionSecrets(
       localKeyPair: client,
       remotePublicValue: server.publicValue,
@@ -66,6 +73,7 @@ void main() {
   });
 
   test('a wrong PIN cannot verify either confirmation proof', () {
+    final context = _clientContext();
     final client = LanPairingCrypto.generateClientKeyPair(
       pin: wrongPin,
       clientContext: context,
@@ -77,7 +85,11 @@ void main() {
       slot: 0,
       clientPublicValue: client.publicValue,
     );
-    final aad = associatedData(client: client, server: server);
+    final aad = associatedData(
+      client: client,
+      server: server,
+      clientContext: context,
+    );
     final clientSecrets = LanPairingCrypto.deriveSessionSecrets(
       localKeyPair: client,
       remotePublicValue: server.publicValue,
@@ -106,6 +118,7 @@ void main() {
   });
 
   test('rotating PIN slots use independent salts and public values', () {
+    final context = _clientContext();
     final first = LanPairingCrypto.generateClientKeyPair(
       pin: correctPin,
       clientContext: context,
@@ -161,3 +174,21 @@ void main() {
     );
   });
 }
+
+String _clientContext() => LanPairingCrypto.clientContext(
+  senderDeviceId: 'client-device',
+  targetDeviceId: 'server-device',
+  nonce: 'nonce-with-enough-entropy',
+  alias: 'Client Device',
+  os: 'test',
+  port: 53317,
+  isInitiator: true,
+  senderCertFingerprint:
+      '1111111111111111111111111111111111111111111111111111111111111111',
+  senderX25519PublicKey: _key(0x11),
+  senderNetworkIdentityPublicKey: _key(0x22),
+  senderInboundAccessTokenHash:
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+);
+
+Uint8List _key(int value) => Uint8List.fromList(List<int>.filled(32, value));

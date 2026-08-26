@@ -529,6 +529,7 @@ pub(super) async fn receive_relay_chunk(
     active.next_sequence = crypto::next_sequence(active.next_sequence)?;
     emit_transfer_progress(
         &state.event_tx,
+        &active.offer.sender_id,
         &transfer_id,
         active.received_bytes,
         active.offer.manifest.file_size,
@@ -679,6 +680,7 @@ pub(super) async fn complete_relay_incoming(
     if completed {
         emit_transfer_completed(
             &state.event_tx,
+            &active.offer.sender_id,
             &transfer_id,
             &active.final_path.to_string_lossy(),
         );
@@ -1088,6 +1090,7 @@ pub(crate) async fn send_file_over_relay(
                 .await;
             emit_transfer_progress(
                 &state.event_tx,
+                &peer_id,
                 &transfer_id,
                 transferred,
                 manifest.file_size,
@@ -1122,7 +1125,7 @@ pub(crate) async fn send_file_over_relay(
         }
         state.transfer.manager.mark_verifying(&transfer_id).await;
         if state.transfer.manager.mark_completed(&transfer_id).await {
-            emit_transfer_completed(&state.event_tx, &transfer_id, "");
+            emit_transfer_completed(&state.event_tx, &peer_id, &transfer_id, "");
         }
         Ok(())
     }

@@ -1,4 +1,4 @@
-最新更新时间：2026-08-19
+最新更新时间：2026-08-25
 
 # network_transport
 
@@ -19,8 +19,9 @@
   handle 和已登记连接；当前具体协议连接仍由各协议 Service Owner 管理，因此
   `activeConnections` 在尚未登记连接时为零；
 - 原生 handle 的 `create -> start -> stop -> destroy` 由底层 adapter 明确拥有；
-- native 实际绑定端口的查询仅属于 `ssh_mobile_network_native` 的受控测试/诊断能力，
-  不进入 `NetworkRuntime`、Feature 或客户端业务合约；
+- `NetworkRuntime.diagnostics.boundLocalPort` 只读投影 native 实际绑定端口，供
+  App Shell 将独立的可靠传输端点适配给 LAN Share；Feature 不直接读取 native
+  handle，也不据此取得 Runtime 所有权；
 - `TransportEndpoint`、`TransportConnection` 和 metrics 是供上层模块使用的稳定
   基础合约；具体 LAN、SSH、SFTP 业务协议不归本包所有；
 - `NetworkCommandGateway` 是连接 App Scope Runtime 与现有 Network Protocol V2 命令/事件服务的

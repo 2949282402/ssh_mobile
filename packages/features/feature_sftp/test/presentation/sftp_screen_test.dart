@@ -1,4 +1,5 @@
 import 'package:app_core/app_core.dart';
+import 'package:app_ui/app_ui.dart';
 import 'package:drift/native.dart';
 import 'package:feature_sftp/feature_sftp.dart';
 import 'package:flutter/material.dart';
@@ -44,6 +45,66 @@ void main() {
     expect(find.text('deployment-user@prod.example.com:2222'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'renders skeleton loading state when directory is busy and entries are empty',
+    (tester) async {
+      final fixture = await _SftpScreenFixture.create();
+      addTearDown(fixture.dispose);
+      fixture.backend.state = SftpConnectionState.loading;
+      fixture.backend.entries = const [];
+      fixture.backend.isBusy = true;
+      fixture.backend.notifyListeners();
+
+      await tester.pumpWidget(fixture.host());
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(
+        find.byKey(const ValueKey('sftp-directory-loading')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'renders catalog skeleton loading state when storage is not ready',
+    (tester) async {
+      final fixture = await _SftpScreenFixture.create();
+      addTearDown(fixture.dispose);
+      fixture.catalog.isLoading = true;
+      fixture.catalog.notifyListeners();
+
+      await tester.pumpWidget(fixture.host());
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.byType(AppSkeletonizer), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'retains real entries and displays progress indicator when directory refreshes with existing items',
+    (tester) async {
+      final fixture = await _SftpScreenFixture.create();
+      addTearDown(fixture.dispose);
+      fixture.backend.state = SftpConnectionState.loading;
+      fixture.backend.isBusy = true;
+      fixture.backend.notifyListeners();
+
+      await tester.pumpWidget(fixture.host());
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('notes.md'), findsOneWidget);
+      expect(find.text('logs'), findsOneWidget);
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('sftp-directory-loading')),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
 
 final class _SftpScreenFixture {

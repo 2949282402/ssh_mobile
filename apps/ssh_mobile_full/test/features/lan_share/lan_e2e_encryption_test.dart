@@ -11,8 +11,14 @@ void main() {
     late LanSecurityService bobSecurity;
 
     setUp(() {
-      aliceSecurity = LanSecurityService(secureStorage: FakeSecureStorage());
-      bobSecurity = LanSecurityService(secureStorage: FakeSecureStorage());
+      aliceSecurity = LanSecurityService(
+        appOwnedX25519PrivateSeed: Uint8List.fromList(List<int>.filled(32, 1)),
+        secureStorage: FakeSecureStorage(),
+      );
+      bobSecurity = LanSecurityService(
+        appOwnedX25519PrivateSeed: Uint8List.fromList(List<int>.filled(32, 2)),
+        secureStorage: FakeSecureStorage(),
+      );
     });
 
     test('Key generation and exchange', () async {

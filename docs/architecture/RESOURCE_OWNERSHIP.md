@@ -1,4 +1,4 @@
-最新更新时间：2026-08-24
+最新更新时间：2026-08-25
 
 # 资源 Owner 审计
 
@@ -17,6 +17,8 @@
 | Native handle | Network native adapter via `NetworkRuntime` | App/Native | stop isolate, then `destroy` handle |
 | NetworkCommandGateway | `NetworkRuntime` / borrowed by App Shell adapter | App/borrowed Session | cancel adapter subscriptions; never stop or destroy the Runtime/native handle |
 | NetworkRealtimeGateway | `NetworkRuntime` / borrowed by App Shell Realtime adapter | App/borrowed Session | cancel event subscription before Runtime dispose; never stop or destroy the Runtime/native handle |
+| NetworkIdentityBundle | `AppRuntimeFactory` / `NetworkIdentityService` | App | secure-storage-backed identity is reused for the App process; no Feature release or replacement; App shutdown only releases in-memory key material |
+| NetworkFacade | `AppRuntime` | App/borrowed Feature | dispose Feature subscriptions and Facade-owned Session state before Realtime/NetworkRuntime; LAN deactivate only detaches its subscriptions |
 | SDK control-plane HttpClient | `AppSdkRequestExecutor` | Request | read bounded response, then `close(force: true)` on success or error |
 | SshSessionManager | `AppRuntime` | App | `close` Session Pool and runtime |
 | SSH Session | `SshSessionManager` / `SshSessionPool` | Lease/Session | Lease `release`; idle session `close` |
@@ -33,7 +35,10 @@
 | SystemAdminService | `AppSystemAdminModuleScope` → `SystemAdminModule` | Route Module | cancel commands, then `dispose` |
 | WebViewService | `AppRuntime` → `ClientWebViewService` | App | `dispose` chat sessions and controllers |
 | MCP HTTP Server | `McpModule` → `McpServerController` | App Module | `stop` server and pending approvals |
-| LAN Receiver | `LanShareModule` → `LanReceiverCoordinator` | App Module | deactivate receiver, close HTTP/WS/native resources |
+| LAN Receiver | `LanShareModule` → `LanReceiverCoordinator` | App Module | deactivate receiver, close HTTP/WS/Discovery/Transfer resources and borrowed Facade subscriptions; never stop/destroy App NetworkRuntime/native handle |
+| LAN incoming transfer offer stream | `LanReceiverCoordinator` | App Module | cancel the current Facade subscription on every runtime replacement; close the stable broadcast controller during final Receiver release |
+| LAN PeerTrustStore | `LanShareModule` / LAN security boundary | App Module | serialize secure-storage writes, close change stream; explicit unpair deletes one record, deactivate does not clear trust |
+| LAN Native Peer Registry | `LanShareModule` → `LanReceiverCoordinator` | App Module/borrowed Facade | restore/register trusted peers and detach endpoint/event subscriptions; only explicit unpair calls `NetworkFacade.removePeer` |
 | RAG cache | `RagModule` → `RagService` | App Module | `dispose` cache store and service |
 | AI chat runtime | Route Provider → `AiChatRuntimeFactory` | Route | cancel streams and `dispose` controllers |
 | ViewModel | owning Route Provider/Scope | Route | Provider/Scope `dispose` |
@@ -49,8 +54,13 @@
 - AppRuntime 的释放顺序是 Module → Realtime → SFTP → SSH → Network →
   database/repository → Logger；Realtime adapter 只借用 NetworkRuntime handle，
   必须在其之前释放；每组释放失败仍继续后续组，并重新抛出第一个错误。
-- Feature 不创建或关闭 App Scope SSH/Network；SSH 通过 Lease，网络通过
-  `NetworkRuntime` Capability，Route Module 只关闭自己的数据库和 Service。
+- AppRuntimeFactory 是 NetworkIdentityBundle、NetworkRuntime 和共享 NetworkFacade
+  的唯一创建/configure owner；Feature 不创建或关闭 App Scope SSH/Network。SSH 通过
+  Lease，网络通过 `NetworkRuntime` Capability/Facade，Route Module 只关闭自己的
+  数据库、HTTP/Discovery/Transfer Service 和订阅。
+- LAN Trust、Discovery endpoint、Route availability 和 Relay enrollment/authorization
+  不共享一个生命周期状态。Discovery/route loss 只失效动态 endpoint；只有显式
+  unpair 才删除 Trust 并调用 `NetworkFacade.removePeer`。
 - Drift Repository 不关闭数据库；数据库只由表中对应 Module 或 AppRuntime 关闭。
 - Route Scope 的异步 Module dispose 必须在 Scope 销毁路径触发；ViewModel、
   Controller、Timer 和 Subscription 不得逃逸到 AppRuntime。
@@ -61,6 +71,10 @@
 
 新增数据库、网络连接、SSH Session、Timer、Stream、Controller、Isolate 或
 Native handle 时，先在本表增加 Owner/Scope/Release，再补生命周期测试。自动检查：
+
+LAN Control V2 的 Trust/Discovery/Route/Relay 分离与 NetworkRuntime 共享规则见
+[ADR-032](../adr/ADR-032-lan-control-v2-breaking-refactor.md)；本表只定义资源
+Owner，不替代该 ADR 的 pairing、route 或 binary transfer 验收。
 
 ```bash
 dart run tool/check_resource_owners.dart

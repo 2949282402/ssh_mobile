@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:app_core/app_core.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,6 +14,7 @@ import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import 'package:feature_webview/feature_webview.dart' as feature_webview;
 import 'package:network_sdk/network_sdk.dart';
 import 'package:network_transport/network_transport.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../core/services/data_protection_service.dart';
 import '../services/app_bootstrap_coordinator.dart';
@@ -20,6 +22,7 @@ import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
 import '../services/display_mode_service.dart';
 import '../services/network/network_identity_service.dart';
+import '../services/network/network_service.dart';
 import '../services/sftp_service.dart';
 import '../services/terminal_session_metadata_store.dart';
 import '../services/shortcut_command_service.dart';
@@ -62,6 +65,7 @@ final class AppRuntimeFactory {
     connection_core.CredentialRepository? credentialRepository,
     connection_core.HostKeyRepository? hostKeyRepository,
     NetworkRuntime? networkRuntime,
+    NetworkIdentityService? networkIdentityService,
     feature_lan_share.LanShareDatabaseFactory? lanShareDatabaseFactory,
     feature_ai.AiModuleDatabaseFactory? aiDatabaseFactory,
     feature_playbook.PlaybookModuleDatabaseFactory? playbookDatabaseFactory,
@@ -104,6 +108,13 @@ final class AppRuntimeFactory {
         supplied: hostKeyRepository,
         connectionRepository: runtimeConnectionRepository,
       );
+      // Network identity is App Scope state. Load it before creating the
+      // native runtime so every later consumer (Facade and LAN Feature) uses
+      // the same Ed25519/X25519 bundle.
+      final runtimeNetworkIdentityService =
+          networkIdentityService ?? NetworkIdentityService();
+      final networkIdentity = await runtimeNetworkIdentityService
+          .loadOrCreate();
       final runtimeNetworkRuntime = networkRuntime ?? NetworkRuntimeImpl();
       cleanup.add(
         runtimeNetworkRuntime.dispose,
@@ -387,6 +398,36 @@ final class AppRuntimeFactory {
         lanShareSettingsAdapter.dispose,
         priority: _CleanupPriority.adapter,
       );
+      await appSettings.ensureLanIdentity();
+      final supportDirectory = await getApplicationSupportDirectory();
+      final networkReceiveDirectory = Directory(
+        '${supportDirectory.path}${Platform.pathSeparator}network_receive',
+      );
+      await networkReceiveDirectory.create(recursive: true);
+      await runtimeNetworkRuntime.ensureCapability(NetworkCapability.runtime);
+      final networkSessions = NativeNetworkService.fromGateway(
+        await runtimeNetworkRuntime.openCommandGateway(),
+      );
+      final networkFacade = NetworkFacadeImpl(
+        sessions: networkSessions,
+        realtime: runtimeRealtimeClient,
+      );
+      cleanup.add(networkFacade.dispose, priority: _CleanupPriority.realtime);
+      final configured = await networkFacade.start(
+        NetworkRuntimeConfig(
+          deviceId: appSettings.lanDeviceId,
+          identityPrivateKey: networkIdentity.ed25519PrivateSeed,
+          e2ePrivateKey: networkIdentity.x25519PrivateSeed,
+          listenAddress: '0.0.0.0:0',
+          receiveDirectory: networkReceiveDirectory.path,
+        ),
+      );
+      if (configured is NetworkFailure<void>) {
+        throw StateError(
+          'App network runtime configuration failed: '
+          '${configured.error.code.name}',
+        );
+      }
       final lanShareModule = feature_lan_share.LanShareModule(
         receiverEnabled: lanShareReceiverEnabled,
         databaseFactory: lanShareDatabaseFactory,
@@ -401,10 +442,10 @@ final class AppRuntimeFactory {
           feature_lan_share.LanShareDataProtectionPort:
               AppLanShareDataProtectionAdapter(DataProtectionService.instance),
           feature_lan_share.LanShareNetworkIdentityPort:
-              AppLanShareNetworkIdentityAdapter(NetworkIdentityService()),
+              AppLanShareNetworkIdentityAdapter(runtimeNetworkIdentityService),
           feature_lan_share.LanShareNetworkFactory: AppLanShareNetworkFactory(
             runtimeNetworkRuntime,
-            runtimeRealtimeClient,
+            networkFacade,
           ),
           BootstrapClient: bootstrapClient,
           NetworkRuntime: runtimeNetworkRuntime,
@@ -486,7 +527,9 @@ final class AppRuntimeFactory {
         connectionRepository: runtimeConnectionRepository,
         credentialRepository: runtimeCredentialRepository,
         hostKeyRepository: runtimeHostKeyRepository,
+        networkIdentityService: runtimeNetworkIdentityService,
         networkRuntime: runtimeNetworkRuntime,
+        networkFacade: networkFacade,
         realtimeClient: runtimeRealtimeClient,
         bootstrapCoordinator: bootstrapCoordinator,
         shortcutCommandService: shortcutCommandService,

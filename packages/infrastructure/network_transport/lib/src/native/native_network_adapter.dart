@@ -21,6 +21,9 @@ abstract interface class NativeNetworkHandle implements Disposable {
   /// helper isolate 发布的原始事件流。
   Stream<Uint8List> get rawEvents;
 
+  /// 原生可靠传输监听器实际绑定的端口；配置前返回 null。
+  int? get boundLocalPort;
+
   /// 向 native 运行时提交一帧已编码命令。
   TransportOperationStatus sendCommand(Uint8List command);
 
@@ -50,6 +53,9 @@ final class _SshMobileNativeNetworkHandle implements NativeNetworkHandle {
 
   @override
   Stream<Uint8List> get rawEvents => _runtime.rawEvents;
+
+  @override
+  int? get boundLocalPort => _closed ? null : _runtime.boundLocalPort;
 
   @override
   TransportOperationStatus sendCommand(Uint8List command) {

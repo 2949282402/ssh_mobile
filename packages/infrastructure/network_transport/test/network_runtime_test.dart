@@ -49,6 +49,7 @@ void main() {
 
       expect(runtime.state, NetworkRuntimeState.ready);
       expect(runtime.diagnostics.nativeHandles, 1);
+      expect(runtime.diagnostics.boundLocalPort, 43123);
       expect(runtime.diagnostics.activeConnections, 0);
       expect(
         runtime.diagnostics.readyCapabilities,
@@ -67,6 +68,7 @@ void main() {
       await runtime.dispose();
       expect(handle.closeCalls, 1);
       expect(runtime.diagnostics.nativeHandles, 0);
+      expect(runtime.diagnostics.boundLocalPort, isNull);
       expect(runtime.diagnostics.state, NetworkRuntimeState.disposed);
     },
   );
@@ -359,6 +361,9 @@ final class _FakeNativeNetworkHandle implements NativeNetworkHandle {
 
   @override
   Stream<Uint8List> get rawEvents => _events.stream;
+
+  @override
+  int? get boundLocalPort => _closed ? null : 43123;
 
   @override
   TransportOperationStatus sendCommand(Uint8List command) => _closed

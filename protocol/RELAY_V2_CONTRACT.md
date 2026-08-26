@@ -1,4 +1,4 @@
-> Last updated: 2026-08-19
+> Last updated: 2026-08-25
 
 # Relay Protocol V2 — Frozen Wire Contract
 
@@ -23,7 +23,7 @@ Authoritative files:
 
 - Wire schema: `protocol/proto/relay/v2/relay_v2.proto` (package `relay.v2`)
 - Golden fixtures + manifest: `protocol/relay_v2_testdata/`
-- Contract gate: `scripts/relay_v2_contract.sh`
+- Contract gate: `scripts/bash/contracts/relay_v2_contract.sh`
 
 ## 2. Frame envelope (both routes)
 
@@ -225,7 +225,7 @@ The fixtures are produced deterministically by
 `protocol/relay_v2_testdata/generate_fixtures.py` (minimal protobuf wire
 encoding, no external deps). Regenerate with
 `python3 protocol/relay_v2_testdata/generate_fixtures.py --regenerate`, or run
-`scripts/relay_v2_contract.sh`, which checks the committed files without
+`scripts/bash/contracts/relay_v2_contract.sh`, which checks the committed files without
 mutating the worktree.
 
 Cross-language tests (WS-P-R Rust, WS-P-G Go): decode each fixture → assert the

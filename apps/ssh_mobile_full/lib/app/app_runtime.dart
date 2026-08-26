@@ -25,6 +25,7 @@ import 'developer_feature_adapters.dart';
 import '../services/app_bootstrap_coordinator.dart';
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
+import '../services/network/network_identity_service.dart';
 import '../services/sftp_service.dart';
 import '../services/shortcut_command_service.dart';
 import '../services/ssh_service.dart';
@@ -44,7 +45,9 @@ final class AppRuntime implements Disposable {
     required this.connectionRepository,
     required this.credentialRepository,
     required this.hostKeyRepository,
+    required this.networkIdentityService,
     required this.networkRuntime,
+    required this.networkFacade,
     required this.realtimeClient,
     required this.bootstrapCoordinator,
     required this.shortcutCommandService,
@@ -111,14 +114,20 @@ final class AppRuntime implements Disposable {
   /// App Scope 唯一的网络运行时；其 native handle 只按 Capability 延迟创建。
   final NetworkRuntime networkRuntime;
 
+  /// App Scope 唯一的 Network V2 身份 Owner。
+  ///
+  /// Ed25519（native transport）和 X25519（E2E）材料由同一个服务加载并
+  /// 缓存；Feature 通过 Port 借用它，不自行生成或持久化本机身份。
+  final NetworkIdentityService networkIdentityService;
+
   /// App Scope Realtime SDK owner; its backend borrows the NetworkRuntime handle.
   final RealtimeClient realtimeClient;
 
-  /// 当前业务网络门面；由 App 组合根装配并在 LAN 接收器激活后可用。
+  /// App Scope 唯一业务网络门面；由组合根在 Feature 激活前装配。
   ///
-  /// 未激活时为 null；激活后返回包装共享 NetworkRuntime/RealtimeClient 的
-  /// [NetworkFacade]。业务只消费该门面，不直接操作底层 Session/Runtime。
-  NetworkFacade? get networkFacade => lanShareModule.coordinator.networkFacade;
+  /// LAN、SSH、Realtime 和 Relay 只借用该门面/底层 Runtime，不能重新
+  /// configure、stop 或 dispose native runtime。
+  final NetworkFacade networkFacade;
 
   /// 启动协调器属于 App Shell，负责首帧前后的核心初始化状态。
   final AppBootstrapCoordinator bootstrapCoordinator;
@@ -350,6 +359,9 @@ final class AppRuntime implements Disposable {
     await attempt('monitoring-service.assert-stopped', () {
       assert(!monitoringService.isRunning);
     });
+
+    // Feature borrowers 已停止后，先释放共享 Facade 的 Session/event 订阅。
+    await attempt('network-facade.dispose', networkFacade.dispose);
 
     // Realtime adapter 先取消命令和事件订阅；它只借用 NetworkRuntime。
     await attempt('realtime.dispose', realtimeClient.dispose);

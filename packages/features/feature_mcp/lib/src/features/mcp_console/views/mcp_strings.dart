@@ -12,6 +12,8 @@ final class McpStrings {
   String get close => isEnglish ? 'Close' : '关闭';
   String get clear => isEnglish ? 'Clear' : '清空';
   String get reject => isEnglish ? 'Reject' : '拒绝';
+  String get loadingConsole =>
+      isEnglish ? 'Loading MCP console...' : '正在加载 MCP 控制台...';
 
   String get mcpServer => 'MCP Server';
   String get mcpServerHint => isEnglish

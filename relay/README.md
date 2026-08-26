@@ -1,4 +1,4 @@
-> Last updated: 2026-08-24
+> Last updated: 2026-08-26
 
 # SSH Mobile Control and Relay Server
 
@@ -382,11 +382,17 @@ endpoints; `/v1/connect` is not registered:
   the durable enrollment is absent; delayed old-generation events cannot reset
   the current enrollment's budget.
 
-Run `bash scripts/relay_v2_contract.sh` to check the 22 frozen fixtures without
+Run `bash scripts/bash/contracts/relay_v2_contract.sh` to check the 22 frozen fixtures without
 mutating the worktree. If `protoc` is unavailable, the script prints `NOT RUN` for descriptor
 equality; that local result does not claim the complete descriptor gate passed.
 
 ## Validation
+
+HTTP/WebSocket contracts, enrollment/credential/revoke, authentication,
+anti-replay/timestamp checks, reservations/rate limits, MySQL/Redis semantics,
+multi-instance behavior, and administrator sessions use test-first changes:
+first reproduce or define the behavior with the lowest reasonable failing Go or
+contract test, then run the broader storage/race/contract layer after Green.
 
 ```sh
 go fmt ./...
@@ -396,7 +402,7 @@ go vet ./...
 go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 ```
 
-From the repository root, run `bash scripts/admin_api_contract.sh` to verify
+From the repository root, run `bash scripts/bash/contracts/admin_api_contract.sh` to verify
 that responses emitted by the real Go administrator handlers still satisfy the
 production Front request client and Zod schemas. The runtime fixture is written
 only to a private temporary directory, redacts credentials, and is never
@@ -408,14 +414,14 @@ From the repository root, run the non-mutating characterization matrix for
 the committed Relay v2 fixtures and cross-owner evidence inventory:
 
 ```sh
-bash scripts/network_v2_acceptance.sh baseline
+bash scripts/bash/contracts/network_v2_acceptance.sh baseline
 ```
 
 The strict entry point additionally runs the owning Rust and Go selectors and
 fails while any matrix case is still `characterized` or `gap`:
 
 ```sh
-bash scripts/network_v2_acceptance.sh strict
+bash scripts/bash/contracts/network_v2_acceptance.sh strict
 ```
 
 The baseline is not a claim that final acceptance is complete; the open cases
@@ -433,9 +439,9 @@ device-network run remains a separate physical-device validation.
 From the repository root, use the WSL/Linux entry point:
 
 ```sh
-bash scripts/client_backend_e2e.sh smoke
-bash scripts/client_backend_e2e.sh strict
-bash scripts/full_test.sh --with-client-backend-smoke --no-bootstrap
+bash scripts/bash/e2e/client_backend_e2e.sh smoke
+bash scripts/bash/e2e/client_backend_e2e.sh strict
+bash scripts/bash/ci/full_test.sh --with-client-backend-smoke --no-bootstrap
 ```
 
 `smoke` covers enrollment and refresh, two authenticated control clients,

@@ -54,7 +54,11 @@ class _ServerListPaneState extends State<ServerListPane> {
             Expanded(
               child: storageReady
                   ? _ServerEmptyState(strings: strings)
-                  : const _ServerSkeletalLoader(),
+                  : AppSkeletonizer.zone(
+                      enabled: true,
+                      semanticsLabel: strings.loadingServers,
+                      child: const _ServerSkeletonList(),
+                    ),
             ),
           ],
         );

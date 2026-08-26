@@ -180,51 +180,35 @@ class _SftpDirectoryLoadingState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    return Semantics(
+    return AppSkeletonizer.zone(
       key: const ValueKey('sftp-directory-loading'),
-      container: true,
-      liveRegion: true,
-      label: strings.loadingDirectory,
-      child: ExcludeSemantics(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 360),
-            child: Card(
-              margin: const EdgeInsets.all(AppTheme.compactPagePadding),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 26,
-                  vertical: 24,
+      enabled: true,
+      semanticsLabel: strings.loadingDirectory,
+      child: ListView.builder(
+        physics: const NeverScrollableScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        itemCount: 7,
+        itemBuilder: (context, index) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Row(
+              children: [
+                Bone.square(size: 36, borderRadius: BorderRadius.circular(8)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Bone(width: index.isEven ? 160 : 220, height: 16),
+                      const SizedBox(height: 6),
+                      const Bone(width: 90, height: 12),
+                    ],
+                  ),
                 ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    RepaintBoundary(
-                      child: SizedBox.square(
-                        dimension: 48,
-                        child: CircularProgressIndicator(
-                          key: const ValueKey('sftp-directory-loading-spinner'),
-                          color: colors.primary,
-                          strokeWidth: 2.4,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      strings.loadingDirectory,
-                      textAlign: TextAlign.center,
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              ],
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }

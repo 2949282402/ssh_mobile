@@ -35,6 +35,7 @@ class AppStrings {
 
   String get servers => _en ? 'Servers' : '服务器';
   String get server => _en ? 'Server' : '服务器';
+  String get loadingServers => _en ? 'Loading servers...' : '正在加载服务器...';
   String get windows => _en ? 'Windows' : '窗口';
   String get window => _en ? 'Window' : '窗口';
   String get active => _en ? 'Active' : '活跃';

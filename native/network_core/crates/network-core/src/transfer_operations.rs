@@ -284,7 +284,7 @@ pub(super) async fn send_file(
                 TransferAttemptError::stale_attempt(TransferFailureReason::Protocol).into(),
             );
         }
-        emit_transfer_completed(&state.event_tx, &transfer_id, "");
+        emit_transfer_completed(&state.event_tx, &peer_id, &transfer_id, "");
         Ok(())
     }
     .await;
@@ -626,7 +626,12 @@ pub(crate) async fn handle_incoming_file_after_offer(
                 .manager
                 .remove_transfer(&manifest.transfer_id)
                 .await;
-            emit_transfer_completed(&state.event_tx, &manifest.transfer_id, &local_path);
+            emit_transfer_completed(
+                &state.event_tx,
+                &peer_id,
+                &manifest.transfer_id,
+                &local_path,
+            );
             return Ok(());
         }
         if !state
@@ -702,7 +707,12 @@ pub(crate) async fn handle_incoming_file_after_offer(
             .manager
             .remove_transfer(&manifest.transfer_id)
             .await;
-        emit_transfer_completed(&state.event_tx, &manifest.transfer_id, &local_path);
+        emit_transfer_completed(
+            &state.event_tx,
+            &peer_id,
+            &manifest.transfer_id,
+            &local_path,
+        );
         Ok(())
     }
     .await;
@@ -873,6 +883,19 @@ pub(crate) async fn dispatch_transfer_command(
                 .cancel_transfer(&cancel.transfer_id)
                 .await
             {
+                // A direct receiver may still be waiting for the UI decision.
+                // Wake that exact waiter so CancelTransfer is observable on
+                // the wire instead of leaving the sender blocked until the
+                // approval timeout.
+                if let Some(decision) = state
+                    .transfer
+                    .incoming_decisions
+                    .write()
+                    .await
+                    .remove(&cancel.transfer_id)
+                {
+                    let _ = decision.send(false);
+                }
                 state.cancel_relay_transfer(&cancel.transfer_id).await;
                 Ok(())
             } else {

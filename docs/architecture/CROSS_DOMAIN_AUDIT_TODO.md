@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-24
+> 最新更新时间：2026-08-25
 
 # 跨域项目审查 TODO
 
@@ -38,8 +38,8 @@ npm run lint
 npm run test:run
 npm run build
 cd ..
-bash scripts/front_coverage.sh
-bash scripts/full_test.sh --only front-quality --no-bootstrap
+bash scripts/bash/coverage/front_coverage.sh
+bash scripts/bash/ci/full_test.sh --only front-quality --no-bootstrap
 ```
 
 ## Backend（已完成）
@@ -99,10 +99,10 @@ go test ./...
 go test -race ./...
 go vet ./...
 cd ..
-bash scripts/backend_coverage.sh
-bash scripts/admin_api_contract.sh
-bash scripts/relay_v2_contract.sh
-bash -n scripts/backend_coverage.sh scripts/admin_api_contract.sh scripts/relay_v2_contract.sh
+bash scripts/bash/coverage/backend_coverage.sh
+bash scripts/bash/contracts/admin_api_contract.sh
+bash scripts/bash/contracts/relay_v2_contract.sh
+bash -n scripts/bash/coverage/backend_coverage.sh scripts/bash/contracts/admin_api_contract.sh scripts/bash/contracts/relay_v2_contract.sh
 # 仅为 Compose 解析在子 shell 生成临时值；不要把这些值复用到部署环境。
 (
 export RELAY_PUBLIC_URL=http://127.0.0.1:18080
@@ -205,7 +205,7 @@ Rust public SDK crates 95.68%，均高于 80% 门禁。文件规模复扫仍将
 - [x] 复核所有 TODO、架构边界、文件规模报告和未提交用户改动；所有 Domain
   TODO 均已关闭，逻辑解耦报告覆盖全部大文件，用户原有未跟踪
   `packages/features/feature_webview/coverage/` 保持未修改、未纳入提交。
-- [x] 运行 `scripts/full_test.sh --serial --no-bootstrap`：13 个 WSL 可运行门禁全部
+- [x] 运行 `scripts/bash/ci/full_test.sh --serial --no-bootstrap`：13 个 WSL 可运行门禁全部
   通过，总计 730 秒；平台专属 Windows/macOS/iOS 作业按脚本声明跳过。Front / Backend /
   Client / SDK 覆盖率分别为 96.01% / 90.4% / 92.6% / Dart 90.88% + Rust
   95.68%，全部通过 80% Domain 门禁。

@@ -130,6 +130,10 @@ final class NativeNetworkService implements NetworkService {
   Future<NetworkResult<void>> upsertPeer(PeerConfig peer) =>
       _peerAdapter.upsertPeer(peer);
 
+  @override
+  Future<NetworkResult<void>> removePeer(String peerId) =>
+      _peerAdapter.removePeer(peerId);
+
   /// 接受对端连接任务，并等待最终的 connected/failed 状态。
   @override
   Future<NetworkResult<void>> connect(

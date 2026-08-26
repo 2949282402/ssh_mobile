@@ -9,11 +9,12 @@ use network_protocol::{
     DeliveryAckedEvent, DeliveryPolicyCode, NetworkCommand, NetworkError as ProtocolError,
     NetworkErrorCode, PeerConnectionState, RespondIncomingTransferCommand, RouteTransport,
     RouteType, SendFileCommand, SendMessageCommand, SshStreamCloseCommand, SshStreamDataCommand,
-    SshStreamOpenCommand, StreamHandle, UpsertPeerCommand, NETWORK_PROTOCOL_VERSION,
+    SshStreamOpenCommand, StreamHandle, NETWORK_PROTOCOL_VERSION,
 };
 use network_relay::v2::proto::*;
 use network_relay::v2::{DataEvent, RelayDataClient};
 use network_transfer::build_file_manifest;
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::net::SocketAddr;
@@ -26,6 +27,8 @@ use tokio_tungstenite::{accept_hdr_async, tungstenite::Message};
 
 #[path = "relay_transfer_integration.rs"]
 mod relay_transfer_integration;
+
+mod network_v2_route_auth;
 
 /// 构造一个合法的 /v2/relay/{32-hex} 数据面地址（测试用 loopback）。
 pub(crate) fn v2_relay_data_endpoint(address: SocketAddr, reservation_id: &str) -> String {
@@ -854,6 +857,574 @@ fn two_runtimes_authenticate_and_transfer_a_verified_file() {
         fs::read(receive_b.join("payload.txt")).expect("received file"),
         source_data
     );
+    fs::remove_dir_all(test_root).ok();
+}
+
+/// Exercise the native runtime data plane with the boundary sizes used by the
+/// V2 acceptance contract.  This deliberately uses one live pair of
+/// `NetworkRuntime`s and the command/event boundary for every case; a direct
+/// QUIC stream or a transfer-manager mock would not cover the runtime wiring.
+#[test]
+fn two_runtimes_transfer_binary_boundary_matrix_is_verified_end_to_end() {
+    let runtime_a = NetworkRuntime::new().expect("runtime A");
+    let runtime_b = NetworkRuntime::new().expect("runtime B");
+    runtime_a.start().expect("start runtime A");
+    runtime_b.start().expect("start runtime B");
+
+    let test_root = std::env::temp_dir().join(format!(
+        "ssh-mobile-native-transfer-boundaries-{}",
+        rand::random::<u64>()
+    ));
+    let source_root = test_root.join("source");
+    let receive_root = test_root.join("receive");
+    fs::create_dir_all(&source_root).expect("source root");
+
+    let identity_seed_a = [171u8; 32];
+    let identity_seed_b = [172u8; 32];
+    let e2e_seed_a = [181u8; 32];
+    let e2e_seed_b = [182u8; 32];
+    let public_key_a =
+        DeviceIdentity::from_private_keys("boundary-a".into(), identity_seed_a, e2e_seed_a)
+            .public_identity_key()
+            .to_bytes();
+    let public_key_b =
+        DeviceIdentity::from_private_keys("boundary-b".into(), identity_seed_b, e2e_seed_b)
+            .public_identity_key()
+            .to_bytes();
+    let address_a = configure_runtime_for_test(
+        &runtime_a,
+        "boundary-a",
+        identity_seed_a,
+        e2e_seed_a,
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-a"),
+    );
+    let address_b = configure_runtime_for_test(
+        &runtime_b,
+        "boundary-b",
+        identity_seed_b,
+        e2e_seed_b,
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        receive_root.clone(),
+    );
+
+    // This matrix is intentionally local-only: relay authorization must not
+    // be needed for a direct QUIC transfer.
+    send_and_expect_accepted(
+        &runtime_a,
+        upsert_command_with_routes(
+            "boundary-upsert-b",
+            "boundary-b",
+            address_b,
+            public_key_b,
+            e2e_seed_b,
+            true,
+            false,
+        ),
+    );
+    send_and_expect_accepted(
+        &runtime_b,
+        upsert_command_with_routes(
+            "boundary-upsert-a",
+            "boundary-a",
+            address_a,
+            public_key_a,
+            e2e_seed_a,
+            true,
+            false,
+        ),
+    );
+    send_and_expect_accepted(
+        &runtime_a,
+        NetworkCommand {
+            command_id: "boundary-connect-b".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
+                peer_id: "boundary-b".into(),
+                intent: 0,
+                communication_class: 0,
+            })),
+        },
+    );
+    assert!(
+        poll_until(&runtime_a, Duration::from_secs(20), |event| {
+            matches!(
+                &event.payload,
+                Some(network_event::Payload::PeerState(state))
+                    if state.peer_id == "boundary-b"
+                        && state.state == PeerConnectionState::Connected as i32
+                        && state.route_type == RouteType::QuicDirect as i32
+            )
+        })
+        .is_some(),
+        "sender never reached a direct connected state"
+    );
+    assert!(
+        poll_until(&runtime_b, Duration::from_secs(20), |event| {
+            matches!(
+                &event.payload,
+                Some(network_event::Payload::PeerState(state))
+                    if state.peer_id == "boundary-a"
+                        && state.state == PeerConnectionState::Connected as i32
+                        && state.route_type == RouteType::QuicDirect as i32
+            )
+        })
+        .is_some(),
+        "receiver never reached a direct connected state"
+    );
+
+    let cases = [
+        (1usize, "image.jpg", 0x11u8),
+        (512 * 1024 - 1, "video.mp4", 0x22u8),
+        (512 * 1024, "archive.zip", 0x33u8),
+        (512 * 1024 + 1, "image.jpg", 0x44u8),
+        (2 * 1024 * 1024, "video.mp4", 0x55u8),
+    ];
+    for (index, (size, file_name, seed)) in cases.into_iter().enumerate() {
+        let source_data: Vec<u8> = (0..size)
+            .map(|offset| (offset as u8).wrapping_mul(31).wrapping_add(seed))
+            .collect();
+        let source_directory = source_root.join(format!("case-{index}"));
+        fs::create_dir_all(&source_directory).expect("case source directory");
+        let source_path = source_directory.join(file_name);
+        fs::write(&source_path, &source_data).expect("source payload");
+        let destination_path = receive_root.join(file_name);
+        // The acceptance matrix intentionally reuses the three public labels;
+        // remove the verified previous case before the next same-name case.
+        if destination_path.exists() {
+            fs::remove_file(&destination_path).expect("remove previous verified label");
+        }
+
+        let transfer_id = format!("boundary-transfer-{index}");
+        send_and_expect_accepted(
+            &runtime_a,
+            NetworkCommand {
+                command_id: format!("boundary-send-{index}"),
+                protocol_version: NETWORK_PROTOCOL_VERSION,
+                payload: Some(network_command::Payload::SendFile(SendFileCommand {
+                    transfer_id: transfer_id.clone(),
+                    peer_id: "boundary-b".into(),
+                    file_path: source_path.to_string_lossy().into_owned(),
+                })),
+            },
+        );
+
+        let offer = poll_until(&runtime_b, Duration::from_secs(30), |event| {
+            matches!(
+                &event.payload,
+                Some(network_event::Payload::IncomingTransferOffer(offer))
+                    if offer.transfer_id == transfer_id
+                        && offer.file_name == file_name
+                        && offer.file_size == size as u64
+                        && offer.route_type == Some(RouteType::QuicDirect as i32)
+            )
+        })
+        .unwrap_or_else(|| panic!("receiver did not offer {file_name} ({size} bytes)"));
+        assert!(matches!(
+            offer.payload,
+            Some(network_event::Payload::IncomingTransferOffer(_))
+        ));
+
+        send_and_expect_accepted(
+            &runtime_b,
+            NetworkCommand {
+                command_id: format!("boundary-accept-{index}"),
+                protocol_version: NETWORK_PROTOCOL_VERSION,
+                payload: Some(network_command::Payload::RespondIncomingTransfer(
+                    RespondIncomingTransferCommand {
+                        transfer_id: transfer_id.clone(),
+                        accept: true,
+                    },
+                )),
+            },
+        );
+
+        let receiver_completed = poll_until(&runtime_b, Duration::from_secs(30), |event| {
+            matches!(
+                &event.payload,
+                Some(network_event::Payload::TransferCompleted(completed))
+                    if completed.transfer_id == transfer_id
+                        && completed.peer_id == "boundary-a"
+                        && completed.local_path == destination_path.to_string_lossy()
+            )
+        })
+        .unwrap_or_else(|| panic!("receiver did not complete {file_name} ({size} bytes)"));
+        assert!(matches!(
+            receiver_completed.payload,
+            Some(network_event::Payload::TransferCompleted(_))
+        ));
+
+        let sender_completed = poll_until(&runtime_a, Duration::from_secs(30), |event| {
+            matches!(
+                &event.payload,
+                Some(network_event::Payload::TransferCompleted(completed))
+                    if completed.transfer_id == transfer_id
+                        && completed.peer_id == "boundary-b"
+                        && completed.local_path.is_empty()
+            )
+        })
+        .unwrap_or_else(|| panic!("sender did not complete {file_name} ({size} bytes)"));
+        assert!(matches!(
+            sender_completed.payload,
+            Some(network_event::Payload::TransferCompleted(_))
+        ));
+
+        let received_data = fs::read(&destination_path).expect("received payload");
+        assert_eq!(
+            received_data, source_data,
+            "byte mismatch for {file_name} ({size})"
+        );
+        let source_hash = hex::encode(Sha256::digest(&source_data));
+        let received_hash = hex::encode(Sha256::digest(&received_data));
+        assert_eq!(
+            received_hash, source_hash,
+            "SHA-256 mismatch for {file_name} ({size})"
+        );
+    }
+
+    runtime_a.stop().expect("stop runtime A");
+    runtime_b.stop().expect("stop runtime B");
+    fs::remove_dir_all(test_root).ok();
+}
+
+/// Restart the receiver runtime with the same identity/trust material on a
+/// different UDP port.  The sender updates only the explicit peer endpoint
+/// and connects again; no pairing exchange or relay path is involved.
+#[test]
+fn receiver_runtime_restart_restores_direct_trust_without_repairing() {
+    let runtime_a = NetworkRuntime::new().expect("runtime A");
+    let runtime_b1 = NetworkRuntime::new().expect("runtime B1");
+    runtime_a.start().expect("start runtime A");
+    runtime_b1.start().expect("start runtime B1");
+
+    let test_root = std::env::temp_dir().join(format!(
+        "ssh-mobile-native-receiver-restart-{}",
+        rand::random::<u64>()
+    ));
+    let receive_root = test_root.join("receive-b");
+    fs::create_dir_all(&test_root).expect("test root");
+
+    let identity_seed_a = [191u8; 32];
+    let identity_seed_b = [192u8; 32];
+    let e2e_seed_a = [201u8; 32];
+    let e2e_seed_b = [202u8; 32];
+    let public_key_a =
+        DeviceIdentity::from_private_keys("receiver-restart-a".into(), identity_seed_a, e2e_seed_a)
+            .public_identity_key()
+            .to_bytes();
+    let public_key_b =
+        DeviceIdentity::from_private_keys("receiver-restart-b".into(), identity_seed_b, e2e_seed_b)
+            .public_identity_key()
+            .to_bytes();
+    let address_a = configure_runtime_for_test(
+        &runtime_a,
+        "receiver-restart-a",
+        identity_seed_a,
+        e2e_seed_a,
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-a"),
+    );
+    let address_b1 = configure_runtime_for_test(
+        &runtime_b1,
+        "receiver-restart-b",
+        identity_seed_b,
+        e2e_seed_b,
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        receive_root.clone(),
+    );
+    send_and_expect_accepted(
+        &runtime_a,
+        upsert_command_with_routes(
+            "receiver-restart-upsert-b1",
+            "receiver-restart-b",
+            address_b1,
+            public_key_b,
+            e2e_seed_b,
+            true,
+            false,
+        ),
+    );
+    send_and_expect_accepted(
+        &runtime_b1,
+        upsert_command_with_routes(
+            "receiver-restart-upsert-a1",
+            "receiver-restart-a",
+            address_a,
+            public_key_a,
+            e2e_seed_a,
+            true,
+            false,
+        ),
+    );
+    send_and_expect_accepted(
+        &runtime_a,
+        NetworkCommand {
+            command_id: "receiver-restart-connect-b1".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
+                peer_id: "receiver-restart-b".into(),
+                intent: 0,
+                communication_class: 0,
+            })),
+        },
+    );
+    assert!(wait_for_session_connected(
+        &runtime_a,
+        "receiver-restart-b",
+        Duration::from_secs(20)
+    ));
+    assert!(wait_for_session_connected(
+        &runtime_b1,
+        "receiver-restart-a",
+        Duration::from_secs(20)
+    ));
+
+    let old_port = address_b1.port();
+    runtime_b1.stop().expect("stop receiver B1");
+    drop(runtime_b1);
+    assert!(
+        poll_until(&runtime_a, Duration::from_secs(15), |event| {
+            matches!(
+                &event.payload,
+                Some(network_event::Payload::PeerState(state))
+                    if state.peer_id == "receiver-restart-b"
+                        && state.state == PeerConnectionState::Disconnected as i32
+            )
+        })
+        .is_some(),
+        "sender never observed receiver runtime shutdown"
+    );
+
+    // Reserve a known-unused port different from B1 before configuring B2 so
+    // this assertion does not depend on the OS ephemeral-port allocator.
+    let new_port = loop {
+        let guard = std::net::UdpSocket::bind(("127.0.0.1", 0)).expect("reserve new UDP port");
+        let candidate = guard.local_addr().expect("reserved UDP address").port();
+        if candidate != old_port {
+            drop(guard);
+            break candidate;
+        }
+    };
+    let runtime_b2 = NetworkRuntime::new().expect("runtime B2");
+    runtime_b2.start().expect("start receiver B2");
+    let address_b2 = configure_runtime_for_test(
+        &runtime_b2,
+        "receiver-restart-b",
+        identity_seed_b,
+        e2e_seed_b,
+        SocketAddr::from(([127, 0, 0, 1], new_port)),
+        receive_root.clone(),
+    );
+    assert_ne!(address_b2.port(), old_port, "receiver must bind a new port");
+
+    // Reinstall the same static peer keys on the new runtime. This is trust
+    // restoration from local configuration, not a new pairing ceremony.
+    send_and_expect_accepted(
+        &runtime_b2,
+        upsert_command_with_routes(
+            "receiver-restart-upsert-a2",
+            "receiver-restart-a",
+            address_a,
+            public_key_a,
+            e2e_seed_a,
+            true,
+            false,
+        ),
+    );
+    send_and_expect_accepted(
+        &runtime_a,
+        upsert_command_with_routes(
+            "receiver-restart-upsert-b2",
+            "receiver-restart-b",
+            address_b2,
+            public_key_b,
+            e2e_seed_b,
+            true,
+            false,
+        ),
+    );
+    send_and_expect_accepted(
+        &runtime_a,
+        NetworkCommand {
+            command_id: "receiver-restart-connect-b2".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
+                peer_id: "receiver-restart-b".into(),
+                intent: 0,
+                communication_class: 0,
+            })),
+        },
+    );
+    assert!(wait_for_session_connected(
+        &runtime_a,
+        "receiver-restart-b",
+        Duration::from_secs(20)
+    ));
+    assert!(wait_for_session_connected(
+        &runtime_b2,
+        "receiver-restart-a",
+        Duration::from_secs(20)
+    ));
+
+    let source_path = test_root.join("image.jpg");
+    let source_data = vec![0xA5u8];
+    fs::write(&source_path, &source_data).expect("restart source payload");
+    let transfer_id = "receiver-restart-transfer";
+    send_and_expect_accepted(
+        &runtime_a,
+        NetworkCommand {
+            command_id: "receiver-restart-send".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::SendFile(SendFileCommand {
+                transfer_id: transfer_id.into(),
+                peer_id: "receiver-restart-b".into(),
+                file_path: source_path.to_string_lossy().into_owned(),
+            })),
+        },
+    );
+    let destination_path = receive_root.join("image.jpg");
+    let offer = poll_until(&runtime_b2, Duration::from_secs(30), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::IncomingTransferOffer(offer))
+                if offer.transfer_id == transfer_id
+                    && offer.file_name == "image.jpg"
+                    && offer.file_size == 1
+                    && offer.route_type == Some(RouteType::QuicDirect as i32)
+        )
+    });
+    assert!(
+        offer.is_some(),
+        "receiver B2 did not emit the direct transfer offer"
+    );
+    send_and_expect_accepted(
+        &runtime_b2,
+        NetworkCommand {
+            command_id: "receiver-restart-accept".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::RespondIncomingTransfer(
+                RespondIncomingTransferCommand {
+                    transfer_id: transfer_id.into(),
+                    accept: true,
+                },
+            )),
+        },
+    );
+    assert!(
+        poll_until(&runtime_b2, Duration::from_secs(30), |event| {
+            matches!(
+                &event.payload,
+                Some(network_event::Payload::TransferCompleted(completed))
+                    if completed.transfer_id == transfer_id
+                        && completed.peer_id == "receiver-restart-a"
+                        && completed.local_path == destination_path.to_string_lossy()
+            )
+        })
+        .is_some(),
+        "receiver B2 did not complete the transfer"
+    );
+    assert!(
+        poll_until(&runtime_a, Duration::from_secs(30), |event| {
+            matches!(
+                &event.payload,
+                Some(network_event::Payload::TransferCompleted(completed))
+                    if completed.transfer_id == transfer_id
+                        && completed.peer_id == "receiver-restart-b"
+                        && completed.local_path.is_empty()
+            )
+        })
+        .is_some(),
+        "sender did not complete the post-restart transfer"
+    );
+    let received_data = fs::read(&destination_path).expect("restart received payload");
+    assert_eq!(received_data, source_data);
+    assert_eq!(
+        hex::encode(Sha256::digest(&received_data)),
+        hex::encode(Sha256::digest(&source_data))
+    );
+
+    runtime_a.stop().expect("stop runtime A");
+    runtime_b2.stop().expect("stop receiver B2");
+    fs::remove_dir_all(test_root).ok();
+}
+
+/// Receiver admission is fail-closed: an authenticated sender must already be
+/// present in the receiver's native peer registry.
+#[test]
+fn receiver_missing_peer_registration_rejects_inbound_connection() {
+    let runtime_a = NetworkRuntime::new().expect("runtime A");
+    let runtime_b = NetworkRuntime::new().expect("runtime B");
+    runtime_a.start().expect("start runtime A");
+    runtime_b.start().expect("start runtime B");
+    let identity_seed_a = [13u8; 32];
+    let identity_seed_b = [23u8; 32];
+    let public_key_b =
+        DeviceIdentity::from_private_keys("missing-b".into(), identity_seed_b, [33u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let test_root =
+        std::env::temp_dir().join(format!("ssh-mobile-missing-peer-{}", rand::random::<u64>()));
+    let _address_a = configure_runtime_for_test(
+        &runtime_a,
+        "missing-a",
+        identity_seed_a,
+        [34u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-a"),
+    );
+    let address_b = configure_runtime_for_test(
+        &runtime_b,
+        "missing-b",
+        identity_seed_b,
+        [33u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-b"),
+    );
+    send_and_expect_accepted(
+        &runtime_a,
+        upsert_command("peer-b", "missing-b", address_b, public_key_b, [33u8; 32]),
+    );
+    // Deliberately do not register missing-a in runtime_b.
+    let command_id = "connect-missing-receiver";
+    runtime_a
+        .send_command(NetworkCommand {
+            command_id: command_id.into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
+                peer_id: "missing-b".into(),
+                intent: 0,
+                communication_class: 0,
+            })),
+        })
+        .expect("queue connect command");
+
+    let result = poll_until(&runtime_a, Duration::from_secs(15), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::CommandResultV2(result))
+                if result.command_id == command_id
+        )
+    })
+    .expect("connect command result");
+    let Some(network_event::Payload::CommandResultV2(result)) = result.payload else {
+        panic!("expected command result");
+    };
+    assert_eq!(result.state, CommandResultState::Failed as i32);
+    assert!(
+        poll_until(&runtime_b, Duration::from_millis(500), |event| {
+            matches!(
+                &event.payload,
+                Some(network_event::Payload::PeerState(state))
+                    if state.peer_id == "missing-a"
+                        && state.state == PeerConnectionState::Connected as i32
+            )
+        })
+        .is_none(),
+        "unregistered sender must not be admitted"
+    );
+
+    runtime_a.stop().expect("stop runtime A");
+    runtime_b.stop().expect("stop runtime B");
     fs::remove_dir_all(test_root).ok();
 }
 
@@ -3053,13 +3624,33 @@ fn configure_runtime_for_test(
     SocketAddr::new(address.ip(), port)
 }
 
-/// 为当前 v1 线协议契约创建对端 upsert 命令。
+/// 为当前 Network Protocol V2 契约创建显式对端注册命令。
 fn upsert_command(
     command_id: &str,
     peer_id: &str,
     endpoint: SocketAddr,
     public_key: [u8; 32],
     e2e_private_key: [u8; 32],
+) -> NetworkCommand {
+    upsert_command_with_routes(
+        command_id,
+        peer_id,
+        endpoint,
+        public_key,
+        e2e_private_key,
+        true,
+        true,
+    )
+}
+
+fn upsert_command_with_routes(
+    command_id: &str,
+    peer_id: &str,
+    endpoint: SocketAddr,
+    public_key: [u8; 32],
+    e2e_private_key: [u8; 32],
+    allow_direct: bool,
+    allow_relay: bool,
 ) -> NetworkCommand {
     let e2e_public_key =
         DeviceIdentity::from_private_keys(peer_id.to_string(), [1u8; 32], e2e_private_key)
@@ -3068,12 +3659,19 @@ fn upsert_command(
     NetworkCommand {
         command_id: command_id.into(),
         protocol_version: NETWORK_PROTOCOL_VERSION,
-        payload: Some(network_command::Payload::UpsertPeer(UpsertPeerCommand {
-            peer_id: peer_id.into(),
-            endpoint_address: endpoint.to_string(),
-            identity_public_key: public_key.to_vec(),
-            e2e_public_key: e2e_public_key.to_vec(),
-        })),
+        payload: Some(network_command::Payload::UpsertPeerV2(
+            network_protocol::UpsertPeerV2Command {
+                config: Some(network_protocol::PeerConfig {
+                    peer_id: peer_id.into(),
+                    endpoint_address: endpoint.to_string(),
+                    identity_public_key: public_key.to_vec(),
+                    e2e_public_key: e2e_public_key.to_vec(),
+                    e2ee_policy: network_protocol::E2eePolicy::Required as i32,
+                    allow_direct,
+                    allow_relay,
+                }),
+            },
+        )),
     }
 }
 

@@ -1,4 +1,4 @@
-> Last updated: 2026-08-24
+> Last updated: 2026-08-25
 
 # SSH Mobile Relay Admin
 
@@ -34,7 +34,7 @@ npm run test:run
 npm run build
 ```
 
-From the repository root, run `bash scripts/admin_api_contract.sh` to replay
+From the repository root, run `bash scripts/bash/contracts/admin_api_contract.sh` to replay
 responses emitted by the real Go administrator handlers through the production
 Front request client and Zod schemas. The fixture is generated in a private
 temporary directory for each run, redacts credentials, and is never committed.

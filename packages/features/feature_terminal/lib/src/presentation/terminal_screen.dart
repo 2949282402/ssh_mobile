@@ -487,6 +487,12 @@ class _TerminalScreenState extends State<TerminalScreen>
                         ),
                 ),
                 if (viewModel.loadingBufferedOutput && isConnected)
+                  Positioned.fill(
+                    child: AppTerminalSkeleton(
+                      backgroundColor: terminalBackground,
+                    ),
+                  ),
+                if (viewModel.loadingBufferedOutput && isConnected)
                   TerminalBufferedOutputIndicator(strings: strings),
                 if (!isConnected || viewModel.reconnectInProgress)
                   TerminalConnectionOverlay(

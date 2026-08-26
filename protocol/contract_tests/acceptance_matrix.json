@@ -5,7 +5,7 @@
   "evidence_policy": {
     "source_markers": "inventory_only",
     "covered_requires": "owner_behavior_test",
-    "strict_entrypoint": "scripts/network_v2_acceptance.sh strict"
+    "strict_entrypoint": "scripts/bash/contracts/network_v2_acceptance.sh strict"
   },
   "cases": [
     {

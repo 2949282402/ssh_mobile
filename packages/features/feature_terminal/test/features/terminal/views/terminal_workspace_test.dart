@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -295,5 +297,127 @@ void main() {
         expect(tester.takeException(), isNull);
       },
     );
+
+    testWidgets('TerminalScreen keeps terminal mounted while history loads', (
+      tester,
+    ) async {
+      useViewport(tester, physicalSize: const Size(1280, 800));
+      final history = Completer<String>();
+      final terminal = FakeTerminalCapability(
+        sessions: [_terminalSession(SshConnectionState.connected)],
+      )..historyLoader = (_) => history.future;
+      addTearDown(terminal.close);
+
+      await tester.pumpWidget(_terminalScreenHost(terminal));
+      await tester.pump();
+
+      expect(find.byType(TerminalViewArea), findsOneWidget);
+      expect(find.byType(AppTerminalSkeleton), findsOneWidget);
+      expect(find.byType(TerminalBufferedOutputIndicator), findsOneWidget);
+
+      history.complete('ready');
+      await tester.pump();
+    });
+
+    testWidgets('TerminalScreen reconnect overlay does not replace terminal', (
+      tester,
+    ) async {
+      useViewport(tester, physicalSize: const Size(1280, 800));
+      final reconnect = Completer<bool>();
+      final terminal = FakeTerminalCapability(
+        sessions: [_terminalSession(SshConnectionState.disconnected)],
+      )..ensureSessionConnectedHandler = (_, _) => reconnect.future;
+      addTearDown(terminal.close);
+
+      await tester.pumpWidget(_terminalScreenHost(terminal));
+      await tester.pump();
+      await tester.pump();
+      final context = tester.element(find.byType(TerminalViewArea));
+      final viewModel = Provider.of<TerminalSessionViewModel>(
+        context,
+        listen: false,
+      );
+
+      unawaited(viewModel.reconnect());
+      await tester.pump();
+
+      expect(find.byType(TerminalViewArea), findsOneWidget);
+      expect(find.byType(TerminalConnectionOverlay), findsOneWidget);
+      expect(find.byType(AppTerminalSkeleton), findsNothing);
+
+      reconnect.complete(false);
+      await tester.pump();
+    });
   });
+}
+
+Widget _terminalScreenHost(FakeTerminalCapability terminal) {
+  return TerminalFeatureScope(
+    sshSessionManager: FakeSshSessionManager(terminal),
+    settings: FakeTerminalSettings(language: 'en'),
+    shortcuts: FakeTerminalShortcuts(),
+    connections: _TerminalConnections(),
+    logger: FakeTerminalLogger(),
+    historyRepository: _TerminalHistoryRepository(),
+    child: MaterialApp(
+      theme: AppTheme.lightThemeFor(),
+      home: const TerminalScreen(
+        connectionId: 'conn-1',
+        sessionId: 'session-1',
+      ),
+    ),
+  );
+}
+
+SshTerminalSession _terminalSession(SshConnectionState state) {
+  return SshTerminalSession(
+    id: 'session-1',
+    connectionId: 'conn-1',
+    connectionName: 'Server',
+    displayName: 'Shell',
+    tmuxSessionName: null,
+    tmuxAutoDeleteSeconds: null,
+    fontSize: 13,
+    state: state,
+    errorMessage: null,
+    createdAt: DateTime(2026),
+    updatedAt: DateTime(2026),
+    output: const Stream<String>.empty(),
+    outputText: '',
+    estimatedMemoryBytes: 0,
+  );
+}
+
+final class _TerminalConnections implements TerminalConnectionPort {
+  @override
+  TerminalConnectionInfo? getConnection(String connectionId) => null;
+
+  @override
+  String defaultDisplayNameForConnection(String connectionId) => connectionId;
+
+  @override
+  Future<String?> openSession(
+    String connectionId, {
+    String? displayName,
+  }) async => null;
+
+  @override
+  Future<void> openConnectionEditor(
+    String connectionId, {
+    bool isNew = false,
+  }) async {}
+}
+
+final class _TerminalHistoryRepository implements TerminalHistoryRepository {
+  @override
+  Future<List<TerminalHistoryRecord>> loadRecords() async => const [];
+
+  @override
+  Future<void> removeRecord(String sessionId) async {}
+
+  @override
+  Future<void> replaceAll(Iterable<TerminalHistoryRecord> records) async {}
+
+  @override
+  Future<void> saveRecord(TerminalHistoryRecord record) async {}
 }

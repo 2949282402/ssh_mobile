@@ -1,8 +1,8 @@
-// 从传输服务拆出的 v1 LAN 配对 HTTP 端点处理逻辑。
+// 从传输服务拆出的 LAN Control Protocol V2 配对 HTTP 端点处理逻辑。
 
 part of 'lan_transfer_service.dart';
 
-/// 保存一个 v1 配对挑战的服务端状态。
+/// 保存一个 V2 配对挑战的服务端状态。
 class _PendingPairingHandshake {
   final String handshakeId;
   final String senderDeviceId;
@@ -12,7 +12,12 @@ class _PendingPairingHandshake {
   final int port;
   final bool isInitiator;
   final String senderCertFingerprint;
+  final Uint8List senderX25519PublicKey;
+  final Uint8List senderNetworkIdentityPublicKey;
+  final String senderInboundAccessTokenHash;
   final String serverCertFingerprint;
+  final Uint8List serverX25519PublicKey;
+  final Uint8List serverNetworkIdentityPublicKey;
   final String clientContext;
   final LanPairingSessionSecrets sessionSecrets;
   final String remoteAddress;
@@ -28,7 +33,12 @@ class _PendingPairingHandshake {
     required this.port,
     required this.isInitiator,
     required this.senderCertFingerprint,
+    required this.senderX25519PublicKey,
+    required this.senderNetworkIdentityPublicKey,
+    required this.senderInboundAccessTokenHash,
     required this.serverCertFingerprint,
+    required this.serverX25519PublicKey,
+    required this.serverNetworkIdentityPublicKey,
     required this.clientContext,
     required this.sessionSecrets,
     required this.remoteAddress,
@@ -40,7 +50,7 @@ class _PendingPairingHandshake {
 }
 
 extension _LanPairingServerOperations on LanTransferService {
-  /// 将 v1 配对请求路由到 begin 或 confirm 阶段。
+  /// 将 V2 配对请求路由到 begin 或 confirm 阶段。
   Future<void> _handleSecureHandshakeRequest(HttpRequest request) async {
     final json = await _protocolGuard.readJson(request);
     if (json['protocolVersion'] != LanPairingCrypto.protocolVersion) {
@@ -77,6 +87,15 @@ extension _LanPairingServerOperations on LanTransferService {
     final senderFingerprint = _trimmedPairingField(
       json,
       'certFingerprint',
+    ).toLowerCase();
+    final encodedSenderX25519Key = _trimmedPairingField(json, 'x25519PubKey');
+    final encodedSenderNetworkIdentityKey = _trimmedPairingField(
+      json,
+      'networkIdentityPubKey',
+    );
+    final senderInboundAccessTokenHash = _trimmedPairingField(
+      json,
+      'inboundAccessTokenHash',
     ).toLowerCase();
     final encodedClientPublicValues = json['clientPublicValues'];
     final port =
@@ -122,10 +141,29 @@ extension _LanPairingServerOperations on LanTransferService {
         port > 65535 ||
         nonce.length < 16 ||
         nonce.length > 128 ||
-        !RegExp(r'^[0-9a-f]{64}$').hasMatch(senderFingerprint)) {
+        !RegExp(r'^[0-9a-f]{64}$').hasMatch(senderFingerprint) ||
+        !RegExp(r'^[0-9a-f]{64}$').hasMatch(senderInboundAccessTokenHash)) {
       throw const LanHttpException(
         HttpStatus.badRequest,
         'Invalid LAN pairing request.',
+      );
+    }
+
+    late final Uint8List senderX25519PublicKey;
+    late final Uint8List senderNetworkIdentityPublicKey;
+    try {
+      senderX25519PublicKey = LanPairingCrypto.decodePublicKey(
+        encodedSenderX25519Key,
+        'sender X25519 public key',
+      );
+      senderNetworkIdentityPublicKey = LanPairingCrypto.decodePublicKey(
+        encodedSenderNetworkIdentityKey,
+        'sender network identity public key',
+      );
+    } catch (_) {
+      throw const LanHttpException(
+        HttpStatus.badRequest,
+        'Invalid LAN pairing identity keys.',
       );
     }
 
@@ -160,6 +198,20 @@ extension _LanPairingServerOperations on LanTransferService {
         (await securityService.getLocalCertificateFingerprint(
           currentDeviceId,
         )).toLowerCase();
+    final serverX25519PublicKey = await securityService
+        .getStaticX25519PublicKeyBytes();
+    final providedServerNetworkIdentityPublicKey =
+        await networkIdentityPublicKeyProvider?.call();
+    if (providedServerNetworkIdentityPublicKey == null ||
+        providedServerNetworkIdentityPublicKey.length != 32) {
+      throw const LanHttpException(
+        HttpStatus.serviceUnavailable,
+        'LAN network identity is unavailable.',
+      );
+    }
+    final serverNetworkIdentityPublicKey = Uint8List.fromList(
+      providedServerNetworkIdentityPublicKey,
+    );
     final clientContext = LanPairingCrypto.clientContext(
       senderDeviceId: senderDeviceId,
       targetDeviceId: targetDeviceId,
@@ -169,6 +221,9 @@ extension _LanPairingServerOperations on LanTransferService {
       port: port,
       isInitiator: isInitiator,
       senderCertFingerprint: senderFingerprint,
+      senderX25519PublicKey: senderX25519PublicKey,
+      senderNetworkIdentityPublicKey: senderNetworkIdentityPublicKey,
+      senderInboundAccessTokenHash: senderInboundAccessTokenHash,
     );
     final offers = <Map<String, dynamic>>[];
     final offeredPins = pins.take(LanPairingCrypto.maxServerOffers).toList();
@@ -191,6 +246,8 @@ extension _LanPairingServerOperations on LanTransferService {
           clientPublicValue: clientPublicValue,
           serverPublicValue: serverKeys.publicValue,
           serverCertFingerprint: serverFingerprint,
+          serverX25519PublicKey: serverX25519PublicKey,
+          serverNetworkIdentityPublicKey: serverNetworkIdentityPublicKey,
         );
         final sessionSecrets = LanPairingCrypto.deriveSessionSecrets(
           localKeyPair: serverKeys,
@@ -206,7 +263,12 @@ extension _LanPairingServerOperations on LanTransferService {
           port: port,
           isInitiator: isInitiator,
           senderCertFingerprint: senderFingerprint,
+          senderX25519PublicKey: senderX25519PublicKey,
+          senderNetworkIdentityPublicKey: senderNetworkIdentityPublicKey,
+          senderInboundAccessTokenHash: senderInboundAccessTokenHash,
           serverCertFingerprint: serverFingerprint,
+          serverX25519PublicKey: serverX25519PublicKey,
+          serverNetworkIdentityPublicKey: serverNetworkIdentityPublicKey,
           clientContext: clientContext,
           sessionSecrets: sessionSecrets,
           remoteAddress: remoteAddress,
@@ -240,6 +302,10 @@ extension _LanPairingServerOperations on LanTransferService {
         'protocolVersion': LanPairingCrypto.protocolVersion,
         'status': 'challenge',
         'certFingerprint': serverFingerprint,
+        'x25519PubKey': base64UrlEncode(serverX25519PublicKey),
+        'networkIdentityPubKey': base64UrlEncode(
+          serverNetworkIdentityPublicKey,
+        ),
         'validForMs': LanPairingCrypto.credentialTtlMillis,
         'offers': offers,
       }),
@@ -257,6 +323,7 @@ extension _LanPairingServerOperations on LanTransferService {
     final targetDeviceId = _trimmedPairingField(json, 'targetDeviceId');
     final nonce = _trimmedPairingField(json, 'nonce');
     final clientProof = _trimmedPairingField(json, 'clientProof');
+    final encryptedInboundCredential = _trimmedPairingField(json, 'credential');
     if (handshakeId.length < 16 ||
         handshakeId.length > 128 ||
         senderDeviceId.isEmpty ||
@@ -265,7 +332,9 @@ extension _LanPairingServerOperations on LanTransferService {
         nonce.length < 16 ||
         nonce.length > 128 ||
         clientProof.isEmpty ||
-        clientProof.length > 256) {
+        clientProof.length > 256 ||
+        encryptedInboundCredential.isEmpty ||
+        encryptedInboundCredential.length > 4096) {
       throw const LanHttpException(
         HttpStatus.badRequest,
         'Invalid LAN pairing confirmation.',
@@ -296,52 +365,44 @@ extension _LanPairingServerOperations on LanTransferService {
       );
     }
 
-    _protocolGuard.checkPairingNonce(senderDeviceId, nonce);
+    final credentialAssociatedData = LanPairingCrypto.credentialAssociatedData(
+      handshakeId: handshakeId,
+      nonce: nonce,
+      issuerDeviceId: senderDeviceId,
+      recipientDeviceId: currentDeviceId,
+    );
+    late final String senderInboundAccessToken;
     try {
-      await securityService.storePeerCertificateFingerprint(
-        senderDeviceId,
-        pending.senderCertFingerprint,
+      final decodedCredential = await LanPairingCrypto.decryptCredential(
+        encryptedInboundCredential,
+        pending.sessionSecrets.sessionKey,
+        associatedData: credentialAssociatedData,
       );
-    } on StateError {
+      final token = decodedCredential['inboundAccessToken'];
+      if (token is! String || token.isEmpty || token.length > 256) {
+        throw const FormatException();
+      }
+      senderInboundAccessToken = token;
+    } catch (_) {
       throw const LanHttpException(
-        HttpStatus.conflict,
-        'The device certificate changed. Unpair it before pairing again.',
+        HttpStatus.unauthorized,
+        'LAN pairing authentication failed.',
       );
     }
-    final accessToken = await securityService.issueInboundAccessToken(
-      senderDeviceId,
-    );
-    final device = LanDevice(
-      id: senderDeviceId,
-      alias: pending.alias,
-      ip: remoteAddress,
-      port: pending.port,
-      deviceType: _guessDeviceType(pending.os),
-      osName: pending.os,
-      certFingerprint: pending.senderCertFingerprint,
-      lastSeen: DateTime.now(),
-      isTrusted: true,
-    );
 
-    final reciprocalReady =
-        await securityService.hasCompleteOutboundPairCredential(
-          senderDeviceId,
-        ) &&
-        await securityService.consumeFreshOutboundPinProof(
-          deviceId: senderDeviceId,
-          peerFingerprint: pending.senderCertFingerprint,
-          localFingerprint: pending.serverCertFingerprint,
-        );
-    final String status;
-    if (!reciprocalReady) {
-      status = 'pending_remote';
-      _emit(_handshakePendingController, device);
-    } else {
-      status = 'paired';
-      await securityService.confirmDevicePairing(senderDeviceId);
-      _emit(_handshakeSuccessController, device);
+    if (!LanPairingCrypto.verifyAccessTokenHash(
+      senderInboundAccessToken,
+      pending.senderInboundAccessTokenHash,
+    )) {
+      throw const LanHttpException(
+        HttpStatus.unauthorized,
+        'LAN pairing authentication failed.',
+      );
     }
 
+    _protocolGuard.checkPairingNonce(senderDeviceId, nonce);
+    final accessToken = securityService.createPairingAccessToken();
+    const status = 'paired';
     final requestHash = LanPairingCrypto.requestHash(pending.clientContext);
     final associatedData = LanPairingCrypto.credentialAssociatedData(
       handshakeId: handshakeId,
@@ -360,11 +421,44 @@ extension _LanPairingServerOperations on LanTransferService {
         'requestHash': requestHash,
         'issuerDeviceId': currentDeviceId,
         'recipientDeviceId': senderDeviceId,
+        'x25519PubKey': base64UrlEncode(pending.serverX25519PublicKey),
+        'networkIdentityPubKey': base64UrlEncode(
+          pending.serverNetworkIdentityPublicKey,
+        ),
         'validForMs': LanPairingCrypto.credentialTtlMillis,
       },
       pending.sessionSecrets.sessionKey,
       associatedData: associatedData,
     );
+
+    // Persist only after every authenticated input and the response credential
+    // have been prepared successfully.  A rejected/failed handshake cannot
+    // leave a half-paired token or key behind.
+    try {
+      await securityService.savePeerTrustRecord(
+        deviceId: senderDeviceId,
+        certificateFingerprint: pending.senderCertFingerprint,
+        inboundAccessToken: accessToken,
+        outboundAccessToken: senderInboundAccessToken,
+        x25519PublicKey: pending.senderX25519PublicKey,
+        networkIdentityPublicKey: pending.senderNetworkIdentityPublicKey,
+      );
+    } on StateError {
+      throw const LanHttpException(
+        HttpStatus.conflict,
+        'The device certificate changed. Unpair the device before re-pairing.',
+      );
+    }
+    final peer = LanDiscoveredPeer(
+      deviceId: senderDeviceId,
+      alias: pending.alias,
+      ip: remoteAddress,
+      controlPort: pending.port,
+      deviceType: _guessDeviceType(pending.os),
+      os: pending.os,
+      lastSeen: DateTime.now(),
+    );
+    _emit(_handshakeSuccessController, peer);
 
     request.response.statusCode = HttpStatus.ok;
     request.response.headers.contentType = ContentType.json;

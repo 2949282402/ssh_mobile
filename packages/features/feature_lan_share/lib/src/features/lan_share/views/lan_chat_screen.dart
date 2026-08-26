@@ -31,7 +31,6 @@ class _LanChatScreenState extends State<LanChatScreen> {
 
   bool _isPaired = false;
   bool _isCheckingPairing = true;
-  bool _isEncrypted = false;
 
   @override
   void initState() {
@@ -80,7 +79,8 @@ class _LanChatScreenState extends State<LanChatScreen> {
     BuildContext context,
     AppStrings strings,
     LanShareViewModel vm,
-    LanDevice device,
+    String peerId,
+    LanDiscoveredPeer? device,
   ) {
     showModalBottomSheet(
       context: context,
@@ -96,16 +96,26 @@ class _LanChatScreenState extends State<LanChatScreen> {
                 final file = await FilePicker.pickFile(type: FileType.image);
                 if (file != null && file.path != null) {
                   final result = await vm.sendFile(
-                    device,
-                    file.path!,
-                    encrypted: _isEncrypted,
+                    peerId: peerId,
+                    filePath: file.path!,
+                    discovery: device,
                   );
-                  if (_isEncrypted &&
-                      result is NetworkFailure<TransferSession> &&
-                      result.error.code ==
-                          NetworkErrorCode.authenticationFailed &&
+                  if (result is NetworkFailure<TransferSession> &&
                       context.mounted) {
-                    _showE2ENotSupportedError(context, strings);
+                    if (result.error.code ==
+                        NetworkErrorCode.authenticationFailed) {
+                      _showE2ENotSupportedError(context, strings);
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            strings.isEnglish
+                                ? 'Failed to send image: ${result.error.message}'
+                                : '发送图片失败：${result.error.message}',
+                          ),
+                        ),
+                      );
+                    }
                   }
                 }
               },
@@ -119,16 +129,26 @@ class _LanChatScreenState extends State<LanChatScreen> {
                 final file = await FilePicker.pickFile(type: FileType.video);
                 if (file != null && file.path != null) {
                   final result = await vm.sendFile(
-                    device,
-                    file.path!,
-                    encrypted: _isEncrypted,
+                    peerId: peerId,
+                    filePath: file.path!,
+                    discovery: device,
                   );
-                  if (_isEncrypted &&
-                      result is NetworkFailure<TransferSession> &&
-                      result.error.code ==
-                          NetworkErrorCode.authenticationFailed &&
+                  if (result is NetworkFailure<TransferSession> &&
                       context.mounted) {
-                    _showE2ENotSupportedError(context, strings);
+                    if (result.error.code ==
+                        NetworkErrorCode.authenticationFailed) {
+                      _showE2ENotSupportedError(context, strings);
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            strings.isEnglish
+                                ? 'Failed to send video: ${result.error.message}'
+                                : '发送视频失败：${result.error.message}',
+                          ),
+                        ),
+                      );
+                    }
                   }
                 }
               },
@@ -142,16 +162,26 @@ class _LanChatScreenState extends State<LanChatScreen> {
                 final file = await FilePicker.pickFile();
                 if (file != null && file.path != null) {
                   final result = await vm.sendFile(
-                    device,
-                    file.path!,
-                    encrypted: _isEncrypted,
+                    peerId: peerId,
+                    filePath: file.path!,
+                    discovery: device,
                   );
-                  if (_isEncrypted &&
-                      result is NetworkFailure<TransferSession> &&
-                      result.error.code ==
-                          NetworkErrorCode.authenticationFailed &&
+                  if (result is NetworkFailure<TransferSession> &&
                       context.mounted) {
-                    _showE2ENotSupportedError(context, strings);
+                    if (result.error.code ==
+                        NetworkErrorCode.authenticationFailed) {
+                      _showE2ENotSupportedError(context, strings);
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            strings.isEnglish
+                                ? 'Failed to send file: ${result.error.message}'
+                                : '发送文件失败：${result.error.message}',
+                          ),
+                        ),
+                      );
+                    }
                   }
                 }
               },
@@ -162,17 +192,24 @@ class _LanChatScreenState extends State<LanChatScreen> {
               title: Text(strings.lanShareClipboard),
               onTap: () async {
                 Navigator.pop(ctx);
+                if (device == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        strings.isEnglish
+                            ? 'Clipboard sync requires direct local network.'
+                            : '剪贴板同步暂不支持中继传输，需处于同一局域网。',
+                      ),
+                    ),
+                  );
+                  return;
+                }
                 final data = await Clipboard.getData(Clipboard.kTextPlain);
                 if (data != null &&
                     data.text != null &&
                     data.text!.isNotEmpty) {
-                  final result = await vm.sendClipboard(
-                    device,
-                    data.text!,
-                    encrypted: _isEncrypted,
-                  );
-                  if (_isEncrypted &&
-                      result is NetworkFailure<void> &&
+                  final result = await vm.sendClipboard(device, data.text!);
+                  if (result is NetworkFailure<void> &&
                       result.error.code ==
                           NetworkErrorCode.authenticationFailed &&
                       context.mounted) {
@@ -220,19 +257,14 @@ class _LanChatScreenState extends State<LanChatScreen> {
         )
         .toList(); // sorted DESC from vm.history, perfect for ListView reverse: true
 
-    LanDevice? onlineDevice;
-    for (final d in vm.devices) {
-      if (d.id == widget.targetDeviceId) {
-        onlineDevice = d;
-        break;
-      }
-    }
-    final isOnline = onlineDevice != null;
+    final peerState = vm.peerStateFor(widget.targetDeviceId);
+    final onlineDevice = peerState?.discovery;
+    final isOnline = peerState?.isOnline == true;
     final isConnected = vm.isDeviceConnected(widget.targetDeviceId);
-    final deviceAlias = onlineDevice?.alias ?? widget.initialAlias;
+    final deviceAlias = peerState?.displayAlias ?? widget.initialAlias;
     final deviceSub = onlineDevice != null
         ? (isConnected
-              ? '${strings.lanShareOnline} · ${onlineDevice.osName}'
+              ? '${strings.lanShareOnline} · ${onlineDevice.os}'
               : (strings.isEnglish ? 'Connecting…' : '连接中…'))
         : strings.lanShareOffline;
 
@@ -276,14 +308,12 @@ class _LanChatScreenState extends State<LanChatScreen> {
                                 const SizedBox(height: 2),
                                 Row(
                                   children: [
-                                    if (_isEncrypted) ...[
-                                      const Icon(
-                                        Icons.shield_rounded,
-                                        size: 12,
-                                        color: Color(0xFF29B6F6),
-                                      ),
-                                      const SizedBox(width: 3),
-                                    ],
+                                    const Icon(
+                                      Icons.shield_rounded,
+                                      size: 12,
+                                      color: Color(0xFF29B6F6),
+                                    ),
+                                    const SizedBox(width: 3),
                                     Flexible(
                                       child: Text(
                                         deviceSub,
@@ -312,7 +342,31 @@ class _LanChatScreenState extends State<LanChatScreen> {
                           PopupMenuButton<String>(
                             icon: const Icon(Icons.more_vert_rounded),
                             onSelected: (action) async {
-                              if (action == 'forget') {
+                              final messenger = ScaffoldMessenger.of(context);
+                              if (action == 'toggle_relay') {
+                                final peerState = vm.peerStateFor(
+                                  widget.targetDeviceId,
+                                );
+                                final isRelayAllowed =
+                                    peerState?.trust?.authorization.relay ??
+                                    false;
+                                final result = await vm.setRelayAuthorization(
+                                  widget.targetDeviceId,
+                                  !isRelayAllowed,
+                                );
+                                if (context.mounted &&
+                                    result is NetworkFailure<void>) {
+                                  messenger.showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        strings.isEnglish
+                                            ? 'Failed to update Relay authorization: ${result.error.message}'
+                                            : '更新中继授权失败：${result.error.message}',
+                                      ),
+                                    ),
+                                  );
+                                }
+                              } else if (action == 'forget') {
                                 final confirm = await showDialog<bool>(
                                   context: context,
                                   builder: (ctx) => AlertDialog(
@@ -337,9 +391,23 @@ class _LanChatScreenState extends State<LanChatScreen> {
                                   ),
                                 );
                                 if (confirm == true) {
-                                  await vm.forgetDevice(widget.targetDeviceId);
-                                  if (mounted) {
-                                    _refreshPairing(vm);
+                                  final result = await vm.forgetDevice(
+                                    widget.targetDeviceId,
+                                  );
+                                  if (context.mounted) {
+                                    if (result is NetworkFailure<void>) {
+                                      messenger.showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            strings.isEnglish
+                                                ? 'Failed to forget device: ${result.error.message}'
+                                                : '解除设备配对失败：${result.error.message}',
+                                          ),
+                                        ),
+                                      );
+                                    } else {
+                                      _refreshPairing(vm);
+                                    }
                                   }
                                 }
                               } else if (action == 'clear') {
@@ -373,16 +441,34 @@ class _LanChatScreenState extends State<LanChatScreen> {
                                 }
                               }
                             },
-                            itemBuilder: (context) => [
-                              PopupMenuItem(
-                                value: 'forget',
-                                child: Text(strings.lanShareForgetDevice),
-                              ),
-                              PopupMenuItem(
-                                value: 'clear',
-                                child: Text(strings.lanShareClearChatHistory),
-                              ),
-                            ],
+                            itemBuilder: (context) {
+                              final peerState = vm.peerStateFor(
+                                widget.targetDeviceId,
+                              );
+                              final isRelayAllowed =
+                                  peerState?.trust?.authorization.relay ??
+                                  false;
+                              return [
+                                if (peerState?.isTrusted == true)
+                                  CheckedPopupMenuItem<String>(
+                                    value: 'toggle_relay',
+                                    checked: isRelayAllowed,
+                                    child: Text(
+                                      strings.isEnglish
+                                          ? 'Allow Relay for this device'
+                                          : '允许中继传输',
+                                    ),
+                                  ),
+                                PopupMenuItem(
+                                  value: 'forget',
+                                  child: Text(strings.lanShareForgetDevice),
+                                ),
+                                PopupMenuItem(
+                                  value: 'clear',
+                                  child: Text(strings.lanShareClearChatHistory),
+                                ),
+                              ];
+                            },
                           ),
                         ],
                       ),
@@ -427,39 +513,62 @@ class _LanChatScreenState extends State<LanChatScreen> {
 
                     // Offline Warn Banner
                     if (!isOnline)
-                      Container(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest
-                            .withValues(alpha: 0.5),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16.0,
-                          vertical: 8.0,
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.info_outline_rounded,
-                              size: 18,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurfaceVariant,
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                strings.lanShareDeviceOfflineHint,
-                                style: Theme.of(context).textTheme.bodySmall
-                                    ?.copyWith(
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.onSurfaceVariant,
-                                    ),
+                      () {
+                        final relayAuthorized =
+                            peerState?.trust?.authorization.relay == true;
+                        final relayAvailable =
+                            peerState?.route.relayAvailable == true;
+                        final String offlineMessage;
+                        final IconData offlineIcon;
+                        if (relayAvailable) {
+                          offlineIcon = Icons.cloud_done_rounded;
+                          offlineMessage = strings.isEnglish
+                              ? 'Device is offline on LAN. Relay is currently available.'
+                              : '设备当前不在局域网，Relay 当前可用。';
+                        } else if (relayAuthorized) {
+                          offlineIcon = Icons.cloud_queue_rounded;
+                          offlineMessage = strings.isEnglish
+                              ? 'Device is offline on LAN. Relay authorized, will attempt on send.'
+                              : '设备当前不在局域网，已授权中继，发送时将尝试 Relay。';
+                        } else {
+                          offlineIcon = Icons.info_outline_rounded;
+                          offlineMessage = strings.lanShareDeviceOfflineHint;
+                        }
+
+                        return Container(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHighest
+                              .withValues(alpha: 0.5),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16.0,
+                            vertical: 8.0,
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                offlineIcon,
+                                size: 18,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
                               ),
-                            ),
-                          ],
-                        ),
-                      ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  offlineMessage,
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.onSurfaceVariant,
+                                      ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }(),
 
                     // Bottom Input Bar
                     if (!_isPaired)
@@ -502,7 +611,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
                           ),
                         ),
                       )
-                    else if (isOnline)
+                    else
                       Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 8.0,
@@ -527,45 +636,21 @@ class _LanChatScreenState extends State<LanChatScreen> {
                                   Icons.add_circle_outline_rounded,
                                 ),
                                 color: Theme.of(context).colorScheme.primary,
-                                onPressed: () => _showAttachmentOptions(
-                                  context,
-                                  strings,
-                                  vm,
-                                  onlineDevice!,
-                                ),
-                              ),
-                              // E2E encryption toggle
-                              Tooltip(
-                                message: _isEncrypted ? '关闭端对端加密' : '开启端对端加密',
-                                child: IconButton(
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(
-                                    minWidth: 36,
-                                    minHeight: 36,
-                                  ),
-                                  icon: Icon(
-                                    _isEncrypted
-                                        ? Icons.shield_rounded
-                                        : Icons.lock_open_rounded,
-                                    size: 20,
-                                    color: _isEncrypted
-                                        ? const Color(0xFF29B6F6)
-                                        : Theme.of(
-                                            context,
-                                          ).colorScheme.onSurfaceVariant,
-                                  ),
-                                  onPressed: () {
-                                    setState(
-                                      () => _isEncrypted = !_isEncrypted,
-                                    );
-                                    if (_isEncrypted && onlineDevice != null) {
-                                      // Pre-fetch capabilities to detect support early
-                                      vm.fetchRecipientE2ECapabilities(
+                                onPressed:
+                                    (isOnline ||
+                                        (peerState
+                                                ?.trust
+                                                ?.authorization
+                                                .relay ==
+                                            true))
+                                    ? () => _showAttachmentOptions(
+                                        context,
+                                        strings,
+                                        vm,
+                                        widget.targetDeviceId,
                                         onlineDevice,
-                                      );
-                                    }
-                                  },
-                                ),
+                                      )
+                                    : null,
                               ),
                               Expanded(
                                 child: Container(
@@ -581,12 +666,17 @@ class _LanChatScreenState extends State<LanChatScreen> {
                                   ),
                                   child: TextField(
                                     controller: _textController,
+                                    enabled: isOnline,
                                     minLines: 1,
                                     maxLines: 4,
                                     keyboardType: TextInputType.multiline,
                                     textInputAction: TextInputAction.newline,
                                     decoration: InputDecoration(
-                                      hintText: strings.lanShareChatInputHint,
+                                      hintText: isOnline
+                                          ? strings.lanShareChatInputHint
+                                          : (strings.isEnglish
+                                                ? 'Text unavailable offline'
+                                                : '文本消息仅局域网内可用'),
                                       filled: false,
                                       fillColor: Colors.transparent,
                                       border: InputBorder.none,
@@ -603,29 +693,31 @@ class _LanChatScreenState extends State<LanChatScreen> {
                               ),
                               IconButton(
                                 icon: const Icon(Icons.send_rounded),
-                                color: Theme.of(context).colorScheme.primary,
-                                onPressed: () async {
-                                  final val = _textController.text.trim();
-                                  if (val.isNotEmpty) {
-                                    _textController.clear();
-                                    final result = await vm.sendText(
-                                      onlineDevice!,
-                                      val,
-                                      encrypted: _isEncrypted,
-                                    );
-                                    if (_isEncrypted &&
-                                        result is NetworkFailure<void> &&
-                                        result.error.code ==
-                                            NetworkErrorCode
-                                                .authenticationFailed &&
-                                        context.mounted) {
-                                      _showE2ENotSupportedError(
-                                        context,
-                                        strings,
-                                      );
-                                    }
-                                  }
-                                },
+                                color: isOnline
+                                    ? Theme.of(context).colorScheme.primary
+                                    : Theme.of(context).disabledColor,
+                                onPressed: isOnline && onlineDevice != null
+                                    ? () async {
+                                        final val = _textController.text.trim();
+                                        if (val.isNotEmpty) {
+                                          _textController.clear();
+                                          final result = await vm.sendText(
+                                            onlineDevice,
+                                            val,
+                                          );
+                                          if (result is NetworkFailure<void> &&
+                                              result.error.code ==
+                                                  NetworkErrorCode
+                                                      .authenticationFailed &&
+                                              context.mounted) {
+                                            _showE2ENotSupportedError(
+                                              context,
+                                              strings,
+                                            );
+                                          }
+                                        }
+                                      }
+                                    : null,
                               ),
                             ],
                           ),
@@ -644,7 +736,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
     LanShareViewModel vm,
     LanMessage msg,
     bool isMe,
-    LanDevice? device,
+    LanDiscoveredPeer? device,
   ) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
@@ -797,7 +889,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
     LanShareViewModel vm,
     LanMessage msg,
     bool isMe,
-    LanDevice? device,
+    LanDiscoveredPeer? device,
   ) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
@@ -925,7 +1017,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
     LanShareViewModel vm,
     LanMessage msg,
     bool isMe,
-    LanDevice? device,
+    LanDiscoveredPeer? device,
   ) {
     showModalBottomSheet(
       context: context,

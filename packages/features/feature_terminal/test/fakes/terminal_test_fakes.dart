@@ -112,6 +112,8 @@ final class FakeTerminalCapability implements SshTerminalCapability {
   final List<String> sentData = <String>[];
   final List<String> disconnectedSessionIds = <String>[];
   bool ensureSessionConnectedResult = false;
+  Future<bool> Function(String sessionId, String connectionId)?
+  ensureSessionConnectedHandler;
   String? lastOpenedConnectionId;
   Future<String> Function(String sessionId)? historyLoader;
 
@@ -143,7 +145,9 @@ final class FakeTerminalCapability implements SshTerminalCapability {
   Future<bool> ensureSessionConnected(
     String sessionId,
     String connectionId,
-  ) async => ensureSessionConnectedResult;
+  ) async => ensureSessionConnectedHandler != null
+      ? ensureSessionConnectedHandler!(sessionId, connectionId)
+      : ensureSessionConnectedResult;
 
   @override
   void setSessionFontSize(String sessionId, double fontSize) {}

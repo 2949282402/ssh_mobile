@@ -1,6 +1,22 @@
-最新更新时间：2026-08-24
+最新更新时间：2026-08-25
 
 # ssh_mobile_full 维护约束
+
+## Network V2 composition-root contract
+
+- `AppRuntimeFactory` 是本机 Network V2 identity、`NetworkRuntime`、native command
+  gateway 和共享 `NetworkFacade` 的唯一 App Scope composition root。每个 App process
+  只允许完成一次 `ConfigureRuntime`；LAN、SSH、SFTP、Realtime 和 Relay 只能借用
+  已配置的 runtime/facade。
+- `NetworkIdentityBundle`（Ed25519 private/public 与 X25519 private/public）属于
+  App Scope/infrastructure owner；Feature 不得创建、持久化或替换本机 native
+  identity。LAN adapter 只把它映射到 Feature Port。
+- `AppRuntime.dispose()` 必须先停止 Feature/Module 使用和 facade/realtime 订阅，
+  再停止并销毁 NetworkRuntime/native handle。Feature deactivate/reactivate 不能
+  start/stop/dispose/reconfigure 共享 runtime。
+- LAN Control Protocol V2 与 Native Network Protocol V2 是独立 breaking-only
+  版本域。App Shell 不得恢复旧 LAN pairing/upload fallback，也不得为了 LAN 变更
+  native Network V2 wire version。
 
 ## 允许修改范围
 
@@ -52,3 +68,14 @@ dart format --output=none --set-exit-if-changed lib test tool
 flutter analyze
 flutter test
 ```
+
+网络重构还必须执行：
+
+```bash
+flutter test test/services/network/network_protocol_v2_codec_test.dart
+```
+
+并由成对的 Bash/PowerShell `lan-network-v2-targeted` job 选择 App adapter、
+Feature trust/route/runtime ownership 与 SDK contract 测试。AppRuntime owner 变更
+至少应验证 configure/activate/deactivate/reactivate/dispose 的 exactly-once 计数，
+以及 SSH/SFTP/Realtime/Relay 继续共享同一 runtime。

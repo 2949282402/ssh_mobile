@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -208,6 +209,90 @@ void main() {
       },
     );
   }
+
+  testWidgets(
+    'displays empty state when storage is ready and connections are empty',
+    (tester) async {
+      await tester.pumpWidget(host(onSettings: (_) {}));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AppSkeletonizer), findsNothing);
+      expect(find.byType(AppEmptyState), findsOneWidget);
+    },
+  );
+
+  testWidgets('displays skeleton during initial connection loading', (
+    tester,
+  ) async {
+    final delayedRepo = _DelayedConnectionRepository();
+    final loadingVm = feature.ConnectionViewModel(
+      connectionRepository: delayedRepo,
+      credentialRepository: storageService.credentialRepository,
+      hostKeyRepository: storageService.hostKeyRepository,
+      runtimePort: AppConnectionRuntimeAdapter(
+        sshServiceFactory: () => sshService,
+        sftpServiceFactory: () => sftpService,
+        monitoringServiceFactory: () => performanceService,
+      ),
+      verificationPort: AppConnectionVerificationAdapter(
+        credentialRepository: storageService.credentialRepository,
+        hostKeyRepository: storageService.hostKeyRepository,
+        logger: AppLogService.instance,
+      ),
+    );
+    unawaited(loadingVm.fetchConnections());
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<AppSettings>.value(value: appSettings),
+          ChangeNotifierProvider<SshService>.value(value: sshService),
+          ChangeNotifierProvider<monitoring.MonitoringService>.value(
+            value: performanceService,
+          ),
+          ChangeNotifierProvider<feature.ConnectionViewModel>.value(
+            value: loadingVm,
+          ),
+        ],
+        child: MaterialApp(
+          theme: AppTheme.lightThemeFor(),
+          home: const Scaffold(body: ServerListPane()),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.byType(AppSkeletonizer), findsOneWidget);
+    expect(find.byType(AppEmptyState), findsNothing);
+
+    delayedRepo.completer.complete([]);
+    await tester.pumpAndSettle();
+    expect(find.byType(AppSkeletonizer), findsNothing);
+    expect(find.byType(AppEmptyState), findsOneWidget);
+  });
+
+  testWidgets(
+    'retains real server cards and does not skeletonize when connections exist',
+    (tester) async {
+      await tester.runAsync(() async {
+        await storageService.addConnection(
+          ConnectionConfig(
+            id: 'server-stale',
+            name: 'Stale Server',
+            host: '10.0.0.99',
+            port: 22,
+            username: 'deployment-user',
+            authMethod: AuthMethod.password,
+          ),
+        );
+        await connectionViewModel.fetchConnections();
+      });
+      await tester.pumpWidget(host(onSettings: (_) {}));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Stale Server'), findsOneWidget);
+      expect(find.byType(AppSkeletonizer), findsNothing);
+    },
+  );
 }
 
 class _TestSshService extends SshService {
@@ -228,4 +313,16 @@ class _TestSshService extends SshService {
     _overview = value;
     notifyListeners();
   }
+}
+
+class _DelayedConnectionRepository extends Fake
+    implements ConnectionRepository {
+  final Completer<List<ConnectionConfig>> completer =
+      Completer<List<ConnectionConfig>>();
+
+  @override
+  List<ConnectionConfig> get connections => const [];
+
+  @override
+  Future<List<ConnectionConfig>> loadConnections() => completer.future;
 }

@@ -200,9 +200,10 @@ pub(crate) async fn dispatch_command(
         Some(network_command::Payload::ConfigureRuntime(config)) => {
             peer::configure_runtime(state, config).await
         }
-        Some(network_command::Payload::UpsertPeer(peer_command)) => {
-            peer::upsert_peer(&state, peer_command).await
-        }
+        Some(network_command::Payload::UpsertPeer(_)) => Err(protocol_error(
+            NetworkErrorCode::InvalidArgument,
+            "legacy peer registration is not supported",
+        )),
         Some(network_command::Payload::UpsertPeerV2(command)) => {
             let config = command.config.ok_or_else(|| {
                 protocol_error(NetworkErrorCode::InvalidArgument, "peer config is required")
@@ -211,6 +212,25 @@ pub(crate) async fn dispatch_command(
                 network_protocol::E2eePolicy::try_from(config.e2ee_policy).map_err(|_| {
                     protocol_error(NetworkErrorCode::InvalidArgument, "unknown E2EE policy")
                 })?;
+            if !config.allow_direct && config.allow_relay {
+                return Err(protocol_error(
+                    NetworkErrorCode::InvalidArgument,
+                    "relay-only peers are not supported",
+                ));
+            }
+            if !config.allow_direct && !config.allow_relay {
+                return Err(protocol_error(
+                    NetworkErrorCode::InvalidArgument,
+                    "peer must authorize at least one route",
+                ));
+            }
+            let peer_id = config.peer_id.clone();
+            let previous = state
+                .peer_route_authorizations
+                .read()
+                .await
+                .get(&peer_id)
+                .copied();
             let result = peer::upsert_peer_with_policy(
                 &state,
                 network_protocol::UpsertPeerCommand {
@@ -222,6 +242,22 @@ pub(crate) async fn dispatch_command(
                 e2ee_policy,
             )
             .await;
+            if result.is_ok() {
+                state.peer_route_authorizations.write().await.insert(
+                    peer_id.clone(),
+                    crate::runtime::PeerRouteAuthorization {
+                        direct: config.allow_direct,
+                        relay: config.allow_relay,
+                    },
+                );
+                if previous.is_some_and(|authorization| authorization.relay) && !config.allow_relay
+                {
+                    // Revoking Relay authorization must retire a live Relay
+                    // carrier, but it must not tear down an independent
+                    // Direct path that remains authorized.
+                    close_peer_relay_path(&state, &peer_id).await;
+                }
+            }
             result
         }
         Some(network_command::Payload::ConnectPeer(connect)) => {
@@ -353,6 +389,11 @@ async fn remove_peer_v2(state: &RuntimeState, peer_id: String) -> Result<(), Pro
     state.delivery.close_peer(&peer_id).await;
     close_peer_streams(state, &peer_id).await;
     state.peers.write().await.remove(&peer_id);
+    state
+        .peer_route_authorizations
+        .write()
+        .await
+        .remove(&peer_id);
     state.trusted_peer_keys.write().await.remove(&peer_id);
     state.remote_candidate_cache.write().await.remove(&peer_id);
     state.ready_session_index.unregister(&peer_id);
@@ -458,6 +499,15 @@ async fn close_peer_connection(state: &RuntimeState, peer_id: &str) {
     }
     state.ready_session_index.unregister(peer_id);
 
+    state.relay.relay_path_ready.write().await.remove(peer_id);
+    clear_peer_relay_crypto(state, peer_id).await;
+}
+
+/// Retire only the Relay-owned carrier when a peer loses Relay authorization.
+/// Direct trust and a live Direct path are independent state and remain
+/// usable after this operation.
+async fn close_peer_relay_path(state: &RuntimeState, peer_id: &str) {
+    let _ = state.close_relay_path(peer_id, None).await;
     state.relay.relay_path_ready.write().await.remove(peer_id);
     clear_peer_relay_crypto(state, peer_id).await;
 }

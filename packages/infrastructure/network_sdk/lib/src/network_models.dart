@@ -101,6 +101,7 @@ enum NetworkOperation {
   start('start'),
   stop('stop'),
   upsertPeer('upsert_peer'),
+  removePeer('remove_peer'),
   connect('connect'),
   disconnect('disconnect'),
   configureRelay('configure_relay'),
@@ -361,12 +362,16 @@ final class SdkPeerConfig {
     required this.endpointAddress,
     required this.identityPublicKey,
     required this.e2ePublicKey,
+    this.allowDirect = true,
+    this.allowRelay = false,
   });
 
   final String peerId;
   final String endpointAddress;
   final Uint8List identityPublicKey;
   final Uint8List e2ePublicKey;
+  final bool allowDirect;
+  final bool allowRelay;
 }
 
 final class SdkRelayConfig {
@@ -450,11 +455,13 @@ final class TransferProgress extends SdkEvent {
     required this.transferId,
     required this.bytesTransferred,
     required this.totalBytes,
+    this.peerId,
   });
 
   final String transferId;
   final int bytesTransferred;
   final int totalBytes;
+  final String? peerId;
 }
 
 final class TransferCompleted extends SdkEvent {
@@ -463,10 +470,12 @@ final class TransferCompleted extends SdkEvent {
     required super.timestamp,
     required this.transferId,
     required this.localPath,
+    this.peerId,
   });
 
   final String transferId;
   final String localPath;
+  final String? peerId;
 }
 
 final class TransferFailed extends SdkEvent {
@@ -475,10 +484,12 @@ final class TransferFailed extends SdkEvent {
     required super.timestamp,
     required this.transferId,
     required this.error,
+    this.peerId,
   });
 
   final String transferId;
   final NetworkError error;
+  final String? peerId;
 }
 
 final class IncomingTransferOffer extends SdkEvent {

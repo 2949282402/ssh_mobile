@@ -26,7 +26,10 @@ void main() {
         child: const MaterialApp(home: LanShareSettingsScreen()),
       ),
     );
-    await tester.pumpAndSettle();
+    // Avoid waiting on the app-wide frame scheduler.  The settings screen is
+    // intentionally mounted without activating the receiver, so one initial
+    // frame plus a bounded transition interval is all this test needs.
+    await _pumpSettingsRoute(tester);
 
     expect(find.byType(LanShareSettingsScreen), findsOneWidget);
     expect(find.byType(Scaffold), findsOneWidget);
@@ -50,8 +53,11 @@ void main() {
       networkRuntime: FakeLanShareNetworkRuntime(),
       initializeNetwork: false,
     );
+    var coordinatorClosed = false;
     addTearDown(() async {
-      await coordinator.close();
+      if (!coordinatorClosed) {
+        await coordinator.close().timeout(const Duration(seconds: 2));
+      }
       await database.dispose();
       viewModel.dispose();
       settings.dispose();
@@ -69,14 +75,28 @@ void main() {
         child: const MaterialApp(home: LanShareSettingsScreen()),
       ),
     );
-    await tester.pumpAndSettle();
+    await _pumpSettingsRoute(tester);
 
     await tester.tap(find.byIcon(Icons.hub_outlined));
-    await tester.pumpAndSettle();
+    await _pumpSettingsRoute(tester);
 
     expect(find.byType(TextField), findsNWidgets(3));
     expect(tester.takeException(), isNull);
+
+    // Close the route before teardown so its controllers and listeners are
+    // detached before the shared coordinator/database are released.
+    await tester.tap(find.byType(TextButton).last);
+    await _pumpSettingsRoute(tester);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await coordinator.close().timeout(const Duration(seconds: 2));
+    coordinatorClosed = true;
   });
+}
+
+Future<void> _pumpSettingsRoute(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 500));
 }
 
 LanShareViewModel _createViewModel(FakeLanShareSettings settings) =>

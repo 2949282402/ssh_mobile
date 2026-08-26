@@ -1,4 +1,4 @@
-> Last updated: 2026-08-23
+> Last updated: 2026-08-25
 
 # Client Current State
 
@@ -31,7 +31,7 @@ The daily App regression gate runs from the repository root and intentionally
 does not collect Flutter coverage:
 
 ```bash
-bash scripts/full_test.sh --no-bootstrap
+bash scripts/bash/ci/full_test.sh --no-bootstrap
 ```
 
 For App-local checks, run the required commands from the Full App directory:
@@ -45,7 +45,7 @@ flutter test
 The periodic client Network V2 boundary gate is separate:
 
 ```bash
-bash scripts/client_coverage.sh --no-bootstrap
+bash scripts/bash/coverage/client_coverage.sh --no-bootstrap
 ```
 
 It covers the App-owned Network V2 service boundary, not every unrelated Full
@@ -65,7 +65,7 @@ result as Windows evidence and keep the WSL gap visible.
 
 Windows must use the same repository pins as CI: Flutter 3.47.0 with Dart
 3.13.0 and Rust 1.97.1 MSVC. Configure the selected SDK through
-[`scripts/configure_windows_toolchain.ps1`](../../scripts/configure_windows_toolchain.ps1)
+[`scripts/powershell/platform/configure_windows_toolchain.ps1`](../../scripts/powershell/platform/configure_windows_toolchain.ps1)
 from native PowerShell 7 (`pwsh.exe`). The script rejects Windows PowerShell
 5.1 and WSL UNC working directories, keeps PATH/TEMP/TMP/Rust overrides
 process-scoped unless `-PersistUserPath` is explicitly supplied, and refuses to
@@ -92,7 +92,7 @@ is a native Windows temporary directory.
 
    ```powershell
    Set-Location '<native-repo>'
-   . .\scripts\configure_windows_toolchain.ps1 `
+   . .\scripts\powershell\platform\configure_windows_toolchain.ps1 `
      -FlutterRoot '<flutter-root>' `
      -TempRoot '<native-temp>'
    & '<flutter-root>\bin\flutter.bat' pub get
@@ -120,7 +120,7 @@ is a native Windows temporary directory.
      --include=lib/services/network/
    ```
 
-   This is the Windows counterpart of `scripts/client_coverage.sh` and covers
+   This is the Windows counterpart of `scripts/bash/coverage/client_coverage.sh` and covers
    the App-owned Network V2 boundary. The owner gate remains 80%; every new
    hand-written production file must also meet the repository's 90% file-level
    coverage requirement with an independent test file.
@@ -129,7 +129,7 @@ is a native Windows temporary directory.
 
    ```powershell
    Set-Location '<native-repo>'
-   & .\scripts\build_windows_msi.ps1 `
+   & .\scripts\powershell\platform\build_windows_msi.ps1 `
      -Flutter '<flutter-root>\bin\flutter.bat' `
      -Version '1.0.0'
    ```

@@ -2,7 +2,10 @@
 //
 // This is intentionally an integration test, not a contract test: the
 // executor and JsonBootstrapClient are production implementations and the
-// endpoint/token are supplied by scripts/client_backend_e2e.sh.
+// endpoint/token are supplied by scripts/bash/e2e/client_backend_e2e.sh.
+
+@Tags(['client-backend'])
+library;
 
 import 'dart:convert';
 import 'dart:io';

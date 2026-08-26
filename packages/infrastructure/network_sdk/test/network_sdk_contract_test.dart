@@ -558,26 +558,45 @@ void main() {
   });
 
   test(
-    'facade connectPeer registers peer transport identity before connect',
+    'facade registerPeer registers identity without initiating connection',
     () async {
       final sessions = _RecordingSessionClient();
       final facade = NetworkFacadeImpl(sessions: sessions);
-
-      final result = await facade.connectPeer(
-        'peer-1',
-        peer: SdkPeerConfig(
-          peerId: 'peer-1',
-          endpointAddress: '192.168.1.2:5432',
-          identityPublicKey: _identityKey,
-          e2ePublicKey: _identityKey,
-        ),
+      final peer = SdkPeerConfig(
+        peerId: 'peer-1',
+        endpointAddress: '',
+        identityPublicKey: _identityKey,
+        e2ePublicKey: _identityKey,
       );
 
+      final result = await facade.registerPeer(peer);
+
       expect(result, isA<SdkSuccess<void>>());
-      expect(sessions.upsertedPeer?.peerId, 'peer-1');
-      expect(sessions.connectedPeers, <String>['peer-1']);
+      expect(sessions.upsertedPeer, same(peer));
+      expect(sessions.connectedPeers, isEmpty);
     },
   );
+
+  test('facade connectPeer never implicitly registers a peer', () async {
+    final sessions = _RecordingSessionClient();
+    final facade = NetworkFacadeImpl(sessions: sessions);
+
+    final result = await facade.connectPeer('peer-1');
+
+    expect(result, isA<SdkSuccess<void>>());
+    expect(sessions.upsertedPeer, isNull);
+    expect(sessions.connectedPeers, <String>['peer-1']);
+  });
+
+  test('facade removePeer delegates explicit trust removal', () async {
+    final sessions = _RecordingSessionClient();
+    final facade = NetworkFacadeImpl(sessions: sessions);
+
+    final result = await facade.removePeer('peer-1');
+
+    expect(result, isA<SdkSuccess<void>>());
+    expect(sessions.removedPeers, <String>['peer-1']);
+  });
 
   test(
     'facade connectPeer forwards the requested CommunicationClass',
@@ -909,6 +928,7 @@ final class _RecordingSessionClient implements SessionClient {
       StreamController<SdkEvent>.broadcast();
   SdkPeerConfig? upsertedPeer;
   final List<String> connectedPeers = <String>[];
+  final List<String> removedPeers = <String>[];
   final List<CommunicationClass> connectClasses = <CommunicationClass>[];
   String? sentTransferId;
   bool disposed = false;
@@ -926,6 +946,12 @@ final class _RecordingSessionClient implements SessionClient {
   @override
   Future<SdkResult<void>> upsertPeer(SdkPeerConfig peer) async {
     upsertedPeer = peer;
+    return const SdkSuccess<void>(null);
+  }
+
+  @override
+  Future<SdkResult<void>> removePeer(String peerId) async {
+    removedPeers.add(peerId);
     return const SdkSuccess<void>(null);
   }
 
@@ -1010,6 +1036,10 @@ final class _FakeSessionClient implements SessionClient {
 
   @override
   Future<SdkResult<void>> upsertPeer(SdkPeerConfig peer) async =>
+      const SdkSuccess(null);
+
+  @override
+  Future<SdkResult<void>> removePeer(String peerId) async =>
       const SdkSuccess(null);
 
   @override

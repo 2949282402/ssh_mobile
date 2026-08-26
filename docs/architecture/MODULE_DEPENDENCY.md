@@ -1,4 +1,4 @@
-最新更新时间：2026-08-23
+最新更新时间：2026-08-25
 
 # 模块依赖审计
 
@@ -51,7 +51,7 @@ Feature。Feature 之间默认禁止直接依赖，当前唯一登记的例外�
 | Feature | `feature_ai` | `app_core`, `app_ui`, `connection_core`, `feature_playbook`, `ssh_core` | AI 通过公开 Playbook Automation Capability 调用 Playbook |
 | Feature | `feature_connection` | `app_core`, `connection_core` | Connection 编辑器和路由状态 |
 | Feature | `feature_developer` | `app_core`, `app_ui` | Developer Log、诊断和浮动面板 |
-| Feature | `feature_lan_share` | `app_core`, `app_ui`, `network_sdk`, `network_transport` | LAN 传输消费 Network SDK 客户端和 Network Capability |
+| Feature | `feature_lan_share` | `app_core`, `app_ui`, `network_sdk`, `network_transport` | LAN Control V2 只消费公共 Network SDK/Capability；App Shell 注入共享 NetworkFacade、NetworkIdentity 和 Runtime，Feature 不创建 native socket/FFI/runtime |
 | Feature | `feature_mcp` | `app_core`, `app_ui` | MCP 服务、审批和活动记录 |
 | Feature | `feature_monitoring` | `app_core`, `connection_core`, `ssh_core` | 监控业务代码不依赖共享 UI；展示由调用方组合 |
 | Feature | `feature_playbook` | `app_core`, `app_ui`, `connection_core`, `ssh_core` | Playbook 执行、审批和运行记录 |

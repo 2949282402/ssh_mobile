@@ -150,3 +150,76 @@ fn peer_diagnostics_preserves_authoritative_owner_counts() {
     assert_eq!(diagnostics.active_stream_count, 7);
     assert_eq!(diagnostics.active_transfer_count, 11);
 }
+
+#[test]
+fn transfer_completed_event_preserves_peer_ownership() {
+    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    let event_sender = EventSender::from(sender);
+    emit_transfer_completed(&event_sender, "peer-a", "tx-1", "/tmp/file.bin");
+
+    let Some(network_event::Payload::TransferCompleted(completed)) =
+        receiver.try_recv().expect("completed event").payload
+    else {
+        panic!("expected TransferCompleted");
+    };
+    assert_eq!(completed.peer_id, "peer-a");
+    assert_eq!(completed.transfer_id, "tx-1");
+    assert_eq!(completed.local_path, "/tmp/file.bin");
+}
+
+#[test]
+fn transfer_progress_events_preserve_peer_ownership() {
+    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    let event_sender = EventSender::from(sender);
+
+    // Tag 11: TransferProgressEvent
+    emit_transfer_progress(&event_sender, "peer-b", "tx-relay-1", 1024, 4096);
+    let Some(network_event::Payload::TransferProgress(progress)) =
+        receiver.try_recv().expect("progress event").payload
+    else {
+        panic!("expected TransferProgress");
+    };
+    assert_eq!(progress.peer_id, "peer-b");
+    assert_eq!(progress.transfer_id, "tx-relay-1");
+    assert_eq!(progress.bytes_transferred, 1024);
+    assert_eq!(progress.total_bytes, 4096);
+
+    // Tag 32: PeerTransferProgressEvent
+    emit_transfer_progress_for_peer(&event_sender, "peer-c", "tx-direct-1", 2048, 8192, false);
+    let Some(network_event::Payload::PeerTransferProgress(peer_progress)) =
+        receiver.try_recv().expect("peer progress event").payload
+    else {
+        panic!("expected PeerTransferProgress");
+    };
+    assert_eq!(peer_progress.peer_id, "peer-c");
+    assert_eq!(peer_progress.transfer_id, "tx-direct-1");
+    assert_eq!(peer_progress.confirmed_offset, 2048);
+    assert_eq!(peer_progress.total_bytes, 8192);
+    assert!(!peer_progress.paused);
+}
+
+#[test]
+fn transfer_failed_event_preserves_peer_ownership() {
+    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    let event_sender = EventSender::from(sender);
+
+    emit_transfer_error(
+        &event_sender,
+        "tx-err-1",
+        NetworkErrorCode::IoError,
+        "disk error".into(),
+        "receive",
+        Some("peer-d"),
+    );
+    let Some(network_event::Payload::TransferFailed(failed)) =
+        receiver.try_recv().expect("failed event").payload
+    else {
+        panic!("expected TransferFailed");
+    };
+    assert_eq!(failed.peer_id, "peer-d");
+    assert_eq!(failed.transfer_id, "tx-err-1");
+    assert_eq!(
+        failed.error.expect("error").code,
+        NetworkErrorCode::IoError as i32
+    );
+}

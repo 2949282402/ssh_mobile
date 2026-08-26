@@ -49,9 +49,33 @@ class _AiSkillsScreenState extends State<AiSkillsScreen> {
           ),
         ],
       ),
-      body: viewModel.loading
-          ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
-          : _buildSkillList(viewModel, strings, colorScheme),
+      body: viewModel.loading && viewModel.skills.isEmpty
+          ? AppSkeletonizer.zone(
+              enabled: true,
+              semanticsLabel: strings.loadingSkills,
+              child: ListView.separated(
+                physics: const NeverScrollableScrollPhysics(),
+                padding: const EdgeInsets.all(8),
+                itemCount: 4,
+                separatorBuilder: (_, _) => const SizedBox(height: 4),
+                itemBuilder: (context, index) {
+                  return Card(
+                    child: ListTile(
+                      leading: const Bone.circle(size: 32),
+                      title: const Bone(width: 140, height: 16),
+                      subtitle: const Bone(width: 220, height: 12),
+                    ),
+                  );
+                },
+              ),
+            )
+          : Stack(
+              children: [
+                _buildSkillList(viewModel, strings, colorScheme),
+                if (viewModel.loading && viewModel.skills.isNotEmpty)
+                  const LinearProgressIndicator(minHeight: 2),
+              ],
+            ),
     );
   }
 
@@ -143,6 +167,7 @@ class _SkillStrings {
   bool get _en => language == AppLanguage.en;
 
   String get title => _en ? 'AI Skills' : 'AI Skills';
+  String get loadingSkills => _en ? 'Loading skills...' : '正在加载 Skills...';
   String get newSkill => _en ? 'New skill' : '新增 Skill';
   String get emptyTitle => _en ? 'No custom skills yet' : '还没有自定义 Skills';
   String get emptyHint => _en

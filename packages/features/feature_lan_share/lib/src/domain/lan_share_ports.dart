@@ -200,6 +200,8 @@ final class LanShareNetworkIdentityMaterial {
   const LanShareNetworkIdentityMaterial({
     required this.privateSeed,
     required this.publicKey,
+    required this.x25519PrivateSeed,
+    required this.x25519PublicKey,
   });
 
   /// Ed25519 私钥种子。
@@ -207,6 +209,8 @@ final class LanShareNetworkIdentityMaterial {
 
   /// Ed25519 公钥。
   final Uint8List publicKey;
+  final Uint8List x25519PrivateSeed;
+  final Uint8List x25519PublicKey;
 }
 
 /// App Scope 网络身份加载端口。
@@ -221,6 +225,9 @@ abstract interface class LanShareNetworkIdentityPort {
 /// Realtime 协调器和 native runtime）由 App 组合根注入，避免 Feature 直接依赖
 /// FFI 或平台实现。
 abstract interface class LanShareNetworkFactory {
+  /// 原生运行时配置后实际绑定的文件传输端口。
+  int? get boundLocalPort;
+
   /// 按当前监听器和密钥配置创建可选的 LAN [NetworkFacade]。
   Future<NetworkFacade?> create({
     required String deviceId,

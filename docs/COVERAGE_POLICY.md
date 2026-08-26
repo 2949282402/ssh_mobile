@@ -1,24 +1,34 @@
-> Last updated: 2026-08-23
+> Last updated: 2026-08-26
 
 # Coverage policy
 
 Coverage is a periodic review gate, not part of the ordinary local regression
-loop. `bash scripts/full_test.sh --no-bootstrap` checks that the daily tests
+loop. `bash scripts/bash/ci/full_test.sh --no-bootstrap` checks that the daily tests
 pass without paying the Flutter instrumentation cost. After a refactor, a new
 feature, or before review, run the four independent gates:
 
 ```bash
-bash scripts/front_coverage.sh
-bash scripts/backend_coverage.sh
-bash scripts/client_coverage.sh
-bash scripts/sdk_coverage.sh
+bash scripts/bash/coverage/front_coverage.sh
+bash scripts/bash/coverage/backend_coverage.sh
+bash scripts/bash/coverage/client_coverage.sh
+bash scripts/bash/coverage/sdk_coverage.sh
 ```
+
+Native Windows PowerShell 7 uses the same-relative-path counterparts under
+`scripts\powershell\coverage\`. Agents select the tree from the actual host
+and update every `.sh`/`.ps1` pair together.
 
 Every gate requires at least 80% in its owner scope. A failure prints the
 uncovered files/lines or functions so the next change can add a behavior test
 for the missing boundary, error path, extreme value, or state transition.
 Tests that only execute a line without checking an observable result are not
 an acceptable way to satisfy this policy.
+
+Coverage is evidence about exercised code, not the goal of TDD. Meet these
+thresholds with tests that protect business contracts and meaningful boundaries;
+do not add low-value getter, constructor, mock-interaction, or branch-only tests
+solely to raise a percentage. The test-first development procedure is owned by
+the [Maintenance Workflow](../.agents/skills/ssh-mobile-maintenance/references/workflow.md).
 
 ## New-file requirement
 
@@ -61,7 +71,7 @@ patched source-toolchain workaround can be used when available:
 ```bash
 CLIENT_FLUTTER_BIN="$FLUTTER_SDK_ROOT/bin/flutter-dev" \
 SSH_MOBILE_DISABLE_DART_PROFILING=1 \
-bash scripts/client_coverage.sh --no-bootstrap
+bash scripts/bash/coverage/client_coverage.sh --no-bootstrap
 ```
 
 Set `FLUTTER_SDK_ROOT` to the local source Flutter checkout before running the
@@ -75,7 +85,7 @@ For the native Windows fallback, start a native Windows PowerShell 7 (`pwsh.exe`
 configure the pinned SDK before running the client gate:
 
 ```powershell
-. .\scripts\configure_windows_toolchain.ps1 `
+. .\scripts\powershell\platform\configure_windows_toolchain.ps1 `
   -FlutterRoot 'D:\toolchains\flutter_windows_3.47.0\flutter'
 $env:CLIENT_COVERAGE_MINIMUM = '90'
 ```
@@ -87,7 +97,7 @@ launcher from WSL, mix Windows and Linux package caches, or treat Windows
 coverage as a Linux validation pass.
 
 Build the Windows MSI from the same native PowerShell 7 session with
-[`scripts/build_windows_msi.ps1`](../scripts/build_windows_msi.ps1). The builder
+[`scripts/powershell/platform/build_windows_msi.ps1`](../scripts/powershell/platform/build_windows_msi.ps1). The builder
 requires a native Windows working directory, selects the installed Windows SDK,
 and moves MSBuild temporary files off any inherited WSL path. If WiX reports
 LGHT0217 because the host cannot execute Windows Installer ICE actions, use the

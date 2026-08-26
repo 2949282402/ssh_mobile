@@ -134,6 +134,22 @@ enum DeliveryPolicyCode {
   DELIVERY_POLICY_CODE_RESUMABLE_TRANSFER = 5;
 }
 
+enum CommunicationClass {
+  COMMUNICATION_CLASS_UNSPECIFIED = 0;
+  COMMUNICATION_CLASS_RELIABLE_STREAM = 1;
+  COMMUNICATION_CLASS_RELIABLE_MESSAGE = 2;
+  COMMUNICATION_CLASS_BULK_TRANSFER = 3;
+  COMMUNICATION_CLASS_UNRELIABLE_DATAGRAM = 4;
+  COMMUNICATION_CLASS_REALTIME_MEDIA = 5;
+}
+
+enum PeerPresenceState {
+  PEER_PRESENCE_STATE_UNSPECIFIED = 0;
+  PEER_PRESENCE_STATE_ONLINE = 1;
+  PEER_PRESENCE_STATE_UPDATED = 2;
+  PEER_PRESENCE_STATE_OFFLINE = 3;
+}
+
 message NetworkError {
   NetworkErrorCode code = 1;
   string message = 2;
@@ -146,6 +162,7 @@ message NetworkError {
 message ConnectPeerCommand {
   string peer_id = 1;
   uint32 intent = 2;
+  CommunicationClass communication_class = 3;
 }
 
 message DisconnectPeerCommand {
@@ -188,6 +205,8 @@ message PeerConfig {
   bytes identity_public_key = 3;
   bytes e2e_public_key = 4;
   E2eePolicy e2ee_policy = 5;
+  bool allow_direct = 6;
+  bool allow_relay = 7;
 }
 
 message UpsertPeerV2Command {
@@ -226,6 +245,20 @@ message NetworkEnvironmentChangedCommand {
   bool is_metered = 4;
 }
 
+message SendMessageCommand {
+  string peer_id = 1;
+  string channel_id = 2;
+  bytes payload = 3;
+  DeliveryPolicyCode policy = 4;
+}
+
+message AcknowledgeMessageCommand {
+  string peer_id = 1;
+  string session_id = 2;
+  string channel_id = 3;
+  bytes message_id = 4;
+}
+
 message ConfigureRelayCommand {
   string relay_url = 1;
   string relay_credential = 2;
@@ -251,6 +284,28 @@ message SendRealtimeSignalCommand {
   bytes payload = 5;
 }
 
+message StreamHandle {
+  string opener_device_id = 1;
+  uint32 stream_id = 2;
+}
+
+message SshStreamOpenCommand {
+  string peer_id = 1;
+  StreamHandle handle = 2;
+  string service = 3;
+}
+
+message SshStreamDataCommand {
+  string peer_id = 1;
+  StreamHandle handle = 2;
+  bytes data = 3;
+}
+
+message SshStreamCloseCommand {
+  string peer_id = 1;
+  StreamHandle handle = 2;
+}
+
 message NetworkCommand {
   string command_id = 1;
   uint32 protocol_version = 2;
@@ -264,9 +319,14 @@ message NetworkCommand {
     ConfigureRelayCommand configure_relay = 16;
     DisconnectPeerCommand disconnect_peer = 17;
     DisconnectRelayCommand disconnect_relay = 18;
+    SendMessageCommand send_message = 19;
+    AcknowledgeMessageCommand acknowledge_message = 20;
     StartRealtimeSessionCommand start_realtime_session = 21;
     StopRealtimeSessionCommand stop_realtime_session = 22;
     SendRealtimeSignalCommand send_realtime_signal = 23;
+    SshStreamOpenCommand ssh_stream_open = 25;
+    SshStreamDataCommand ssh_stream_data = 26;
+    SshStreamCloseCommand ssh_stream_close = 27;
     UpsertPeerV2Command upsert_peer_v2 = 28;
     RemovePeerCommand remove_peer = 29;
     SendMessageV2Command send_message_v2 = 30;
@@ -274,6 +334,26 @@ message NetworkCommand {
     PeerDiagnosticsCommand peer_diagnostics = 32;
     NetworkEnvironmentChangedCommand network_environment_changed = 33;
   }
+}
+
+message DataMessage {
+  string session_id = 1;
+  string channel_id = 2;
+  bytes message_id = 3;
+  uint64 sequence = 4;
+  uint64 recovery_epoch = 5;
+  DeliveryPolicyCode policy = 6;
+  bytes payload = 7;
+}
+
+message DeliveryAck {
+  string session_id = 1;
+  bytes message_id = 2;
+  uint64 recovery_epoch = 3;
+}
+
+message NetworkErrorEnvelope {
+  NetworkError error = 1;
 }
 
 message PeerStateChangedEvent {
@@ -290,9 +370,10 @@ message TransferProgressEvent {
   string transfer_id = 1;
   uint64 bytes_transferred = 2;
   uint64 total_bytes = 3;
+  string peer_id = 4;
 }
 
-  // 由 Dart 服务消费，用于完成待处理 NetworkResult，不作为公开 NetworkEvent 暴露。
+// 由 Dart 服务消费，用于完成待处理 NetworkResult，不作为公开 NetworkEvent 暴露。
 message CommandResultEvent {
   string command_id = 1;
   bool accepted = 2;
@@ -344,16 +425,19 @@ message IncomingTransferOfferEvent {
   string peer_id = 2;
   string file_name = 3;
   uint64 file_size = 4;
+  RouteType route_type = 5;
 }
 
 message TransferCompletedEvent {
   string transfer_id = 1;
   string local_path = 2;
+  string peer_id = 3;
 }
 
 message TransferFailedEvent {
   string transfer_id = 1;
   NetworkError error = 2;
+  string peer_id = 3;
 }
 
 message RouteChangedEvent {
@@ -369,6 +453,16 @@ message RouteChangedEvent {
 message RelayStateChangedEvent {
   RelayConnectionState state = 1;
   NetworkError error = 2;
+}
+
+message PeerPresenceChangedEvent {
+  string peer_id = 1;
+  uint64 generation = 2;
+  PeerPresenceState state = 3;
+}
+
+message PeerPresenceSnapshotEvent {
+  repeated PeerPresenceChangedEvent peers = 1;
 }
 
 message RealtimeStateChangedEvent {
@@ -396,6 +490,34 @@ message RealtimeSnapshotEvent {
   NetworkError error = 5;
 }
 
+message ChannelMessageEvent {
+  string peer_id = 1;
+  string session_id = 2;
+  string channel_id = 3;
+  bytes message_id = 4;
+  uint64 sequence = 5;
+  DeliveryPolicyCode policy = 6;
+  bytes payload = 7;
+}
+
+message DeliveryAckedEvent {
+  string peer_id = 1;
+  string session_id = 2;
+  bytes message_id = 3;
+  uint64 recovery_epoch = 4;
+}
+
+message SshStreamDataReceivedEvent {
+  string peer_id = 1;
+  StreamHandle handle = 2;
+  bytes data = 3;
+}
+
+message SshStreamClosedEvent {
+  string peer_id = 1;
+  StreamHandle handle = 2;
+}
+
 message NetworkEvent {
   string event_id = 1;
   int64 timestamp_ms = 2;
@@ -409,9 +531,15 @@ message NetworkEvent {
     TransferFailedEvent transfer_failed = 16;
     RouteChangedEvent route_changed = 17;
     RelayStateChangedEvent relay_state_changed = 18;
+    ChannelMessageEvent channel_message = 19;
+    DeliveryAckedEvent delivery_acked = 20;
     RealtimeStateChangedEvent realtime_state = 21;
     RealtimeSignalEvent realtime_signal = 22;
     RealtimeSnapshotEvent realtime_snapshot = 23;
+    PeerPresenceChangedEvent peer_presence_changed = 24;
+    PeerPresenceSnapshotEvent peer_presence_snapshot = 25;
+    SshStreamDataReceivedEvent ssh_stream_data_received = 26;
+    SshStreamClosedEvent ssh_stream_closed = 27;
     PeerLifecycleEvent peer_lifecycle = 28;
     CommandResult command_result_v2 = 29;
     PeerDiagnostics peer_diagnostics = 30;

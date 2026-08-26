@@ -122,11 +122,28 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
         _maybeScheduleActivationForSelectionChange(viewModelRead);
 
         if (!snapshot.storageReady) {
-          return const Center(
-            child: SizedBox(
-              width: 28,
-              height: 28,
-              child: CircularProgressIndicator(strokeWidth: 2),
+          return Center(
+            child: AppSkeletonizer.zone(
+              enabled: true,
+              semanticsLabel: strings.connectingEllipsis,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    Bone(
+                      width: double.infinity,
+                      height: 48,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    const SizedBox(height: 12),
+                    Bone(
+                      width: double.infinity,
+                      height: 48,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ],
+                ),
+              ),
             ),
           );
         }

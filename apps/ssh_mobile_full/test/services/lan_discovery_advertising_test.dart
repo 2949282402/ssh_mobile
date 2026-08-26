@@ -7,6 +7,7 @@ import 'package:network_sdk/network_sdk.dart';
 
 class _RecordingLanDiscoveryService extends LanDiscoveryService {
   final List<int> startedPorts = [];
+  final List<int?> startedNativePorts = [];
   int stopCount = 0;
 
   _RecordingLanDiscoveryService()
@@ -16,8 +17,9 @@ class _RecordingLanDiscoveryService extends LanDiscoveryService {
       );
 
   @override
-  Future<void> performStartAdvertising(int port) async {
+  Future<void> performStartAdvertising(int port, {int? nativePort}) async {
     startedPorts.add(port);
+    startedNativePorts.add(nativePort);
   }
 
   @override
@@ -80,17 +82,19 @@ Future<void> _waitUntil(bool Function() predicate) async {
 
 void main() {
   test(
-    'alias re-registration preserves the active native HTTPS port',
+    'alias re-registration preserves HTTPS and native transfer ports',
     () async {
       final discovery = _RecordingLanDiscoveryService();
 
-      await discovery.startAdvertising(port: 61443);
+      await discovery.startAdvertising(port: 61443, nativePort: 61444);
       await discovery.updateDeviceAlias('Renamed device');
 
       expect(discovery.currentDeviceAlias, 'Renamed device');
       expect(discovery.startedPorts, [61443, 61443]);
+      expect(discovery.startedNativePorts, [61444, 61444]);
       expect(discovery.stopCount, 1);
       expect(discovery.advertisedPort, 61443);
+      expect(discovery.advertisedNativePort, 61444);
 
       discovery.dispose();
     },
@@ -110,12 +114,13 @@ void main() {
     expect(discovery.stopCount, 2);
   });
 
-  test('UDP PING advertises the native HTTPS port', () {
+  test('UDP PING separates HTTPS and native transfer ports', () {
     final payload = LanDiscoveryService.createUdpPingPayload(
       deviceId: 'local-device',
       alias: 'Desktop',
       os: 'windows',
       port: 62001,
+      nativePort: 62002,
     );
 
     expect(payload, {
@@ -123,6 +128,7 @@ void main() {
       'id': 'local-device',
       'alias': 'Desktop',
       'port': 62001,
+      'nativePort': 62002,
       'os': 'windows',
     });
   });
@@ -130,31 +136,33 @@ void main() {
   test('stale devices expire while recently seen devices remain', () {
     final discovery = _RecordingLanDiscoveryService();
     final now = DateTime(2026, 7, 18, 12);
-    discovery.registerManualDevice(
-      LanDevice(
-        id: 'stale-peer',
+    discovery.registerDiscoveredPeer(
+      LanDiscoveredPeer(
+        deviceId: 'stale-peer',
         alias: 'Stale',
         ip: '192.168.1.10',
-        port: 53317,
+        controlPort: 53317,
+        advertisedNativePort: null,
         deviceType: LanDeviceType.desktop,
-        osName: 'windows',
+        os: 'windows',
         lastSeen: now.subtract(const Duration(seconds: 91)),
       ),
     );
-    discovery.registerManualDevice(
-      LanDevice(
-        id: 'fresh-peer',
+    discovery.registerDiscoveredPeer(
+      LanDiscoveredPeer(
+        deviceId: 'fresh-peer',
         alias: 'Fresh',
         ip: '192.168.1.11',
-        port: 53317,
+        controlPort: 53317,
+        advertisedNativePort: null,
         deviceType: LanDeviceType.mobile,
-        osName: 'android',
+        os: 'android',
         lastSeen: now.subtract(const Duration(seconds: 5)),
       ),
     );
 
     expect(discovery.removeStaleDevices(now: now), 1);
-    expect(discovery.currentDiscoveredDevices.map((device) => device.id), [
+    expect(discovery.currentDiscoveredPeers.map((device) => device.deviceId), [
       'fresh-peer',
     ]);
 

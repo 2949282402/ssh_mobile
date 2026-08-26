@@ -46,6 +46,7 @@ final class NetworkRuntimeImpl implements NetworkRuntime {
     // 具体协议连接由 Feature/Service Owner 管理，当前 Facade 不登记它们。
     activeConnections: 0,
     nativeHandles: _nativeHandle == null ? 0 : 1,
+    boundLocalPort: _nativeHandle?.boundLocalPort,
     readyCapabilities: _readyCapabilities,
   );
 

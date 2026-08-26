@@ -1,4 +1,4 @@
-> Last updated: 2026-08-23
+> Last updated: 2026-08-26
 
 # Validation Matrix
 
@@ -8,19 +8,15 @@ generated artifacts, or shared behavior changes.
 
 ## Environment
 
-This repository is developed and validated inside the WSL Linux environment.
-Run every build, test, analyze, format, lint, and validation command with the
-Linux toolchain inside WSL — never with Windows-hosted toolchains or launchers:
-Windows `dart`/`flutter`/`go`/`cargo`/`node`, `.bat`/`.cmd` launchers,
-`powershell.exe`, `cmd.exe`, or any Windows binary reached through a mounted
-Windows drive. Prefer the Linux `go`/`cargo`/`flutter`/`dart`/`node` on the WSL
-PATH. When a required check cannot run under the WSL Linux toolchain, report the
-exact command and reason instead of falling back to a Windows binary.
+Select validation from the actual host. Linux and WSL run
+`scripts/bash/**/*.sh`; native Windows runs `scripts/powershell/**/*.ps1` in
+PowerShell 7. Never cross-launch Windows tools from WSL or require Bash from
+native Windows. Keep platform caches and temporary directories isolated.
 
 Windows-native validation is a separate, explicit environment rather than a
 WSL escape hatch:
 
-- Keep WSL as the source of truth for Linux CI, `full_test.sh`, and ordinary
+- Keep WSL as the source of truth for Linux CI and ordinary
   format/analyze/test/build checks. Do not invoke `powershell.exe`, `cmd.exe`,
   Windows `.bat`/`.cmd` launchers, or Windows `dart`/`flutter`/`cargo`/`go`/`node`
   binaries from those WSL checks.
@@ -30,7 +26,7 @@ WSL escape hatch:
   Windows check; it does not turn a skipped WSL check into a Linux pass.
 - Keep the Windows toolchain aligned with the repository pins (currently
   Flutter 3.47.0/Dart 3.13.0 and Rust 1.97.1 MSVC). Run
-  [`scripts/configure_windows_toolchain.ps1`](../../../../scripts/configure_windows_toolchain.ps1)
+  [`scripts/powershell/platform/configure_windows_toolchain.ps1`](../../../../scripts/powershell/platform/configure_windows_toolchain.ps1)
   from native PowerShell 7 with an explicit `-FlutterRoot`; its default is
   process-scoped and `-PersistUserPath` is the only option that changes the
   user PATH.
@@ -61,12 +57,17 @@ change is incomplete.
 
 ## Repository local CI
 
-Use [`scripts/full_test.sh`](../../../../scripts/full_test.sh) as the WSL entry
-point for the Linux-runnable CI gates spanning the Front, SDK/native/protocol,
-Relay, architecture, Core/Feature, Full App, and Android owners:
+Run the aggregate only during major cross-module refactorings or when explicitly
+requested by the user. For routine bug fixes and scoped feature work, run focused
+package tests and targeted gates (`--only`/`-Only`), then monitor GitHub Actions CI
+after pushing.
+
+Use the aggregate for the actual host:
 
 ```bash
-bash scripts/full_test.sh
+bash scripts/bash/ci/full_test.sh
+# Native Windows PowerShell 7:
+# & .\scripts\powershell\ci\full_test.ps1
 ```
 
 For repeat runs with unchanged dependencies, `--no-bootstrap` avoids redundant
@@ -74,8 +75,9 @@ dependency installation. The script's default WSL profile keeps known
 platform/toolchain gaps explicit; a `GAP` is incomplete validation, not a
 passing check. When tests, package membership, project structure, CI jobs,
 generated checks, exclusions, timeouts, or Linux environment assumptions
-change, update `scripts/full_test.sh` in the same change and run the affected
-jobs with `--only` before broader validation.
+change, update both aggregate scripts in the same change and run the affected
+jobs with `--only`/`-Only` before broader validation. Same-relative-path
+`.sh`/`.ps1` pairs must keep behavior and exit semantics aligned.
 
 ## Formatting
 
@@ -116,6 +118,19 @@ dart run test/tool/ci_workflow_test.dart
 
 Docs-only facts also require the owning package or Domain source to be checked;
 a Markdown link check cannot establish semantic correctness.
+
+## Test-first evidence
+
+For behavior changes, run the new focused test before production edits and keep
+the failure output long enough to verify that Red corresponds to the intended
+contract. After Green, rerun that test and the owning package suite. Add the
+existing contract, integration, acceptance, race, storage, or platform gate
+when the behavior crosses an owner boundary; a mocked unit test does not replace
+that evidence. The procedure and exceptions are canonical in
+[Maintenance Workflow](workflow.md).
+
+Documentation-only workflow changes do not fabricate Red/Green evidence. They
+use the Agent knowledge checks above plus the always-required final diff checks.
 
 ## Flutter/Dart Workspace Member
 

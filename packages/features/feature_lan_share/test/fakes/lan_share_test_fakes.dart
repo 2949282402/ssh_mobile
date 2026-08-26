@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,12 +8,28 @@ import 'package:network_sdk/network_sdk.dart';
 import 'package:network_transport/network_transport.dart';
 
 final class FakeLanShareStrings extends Fake implements LanShareStrings {
-  FakeLanShareStrings({this.english = false});
+  FakeLanShareStrings({this.english = true});
 
   final bool english;
 
   @override
   bool get isEnglish => english;
+
+  @override
+  String get accept => 'Accept';
+
+  @override
+  String get reject => 'Reject';
+
+  @override
+  String get networkIncomingTransferTitle => 'Incoming Transfer';
+
+  @override
+  String networkIncomingTransferDescription(
+    String sender,
+    String fileName,
+    String size,
+  ) => 'From $sender: $fileName ($size)';
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>
@@ -105,21 +122,36 @@ final class FakeLanShareDataProtection implements LanShareDataProtectionPort {
 }
 
 final class FakeLanShareIdentity implements LanShareNetworkIdentityPort {
+  int loadCalls = 0;
+
   @override
-  Future<LanShareNetworkIdentityMaterial> loadOrCreate() async =>
-      LanShareNetworkIdentityMaterial(
-        privateSeed: Uint8List(32),
-        publicKey: Uint8List(32),
-      );
+  Future<LanShareNetworkIdentityMaterial> loadOrCreate() async {
+    loadCalls++;
+    return LanShareNetworkIdentityMaterial(
+      privateSeed: Uint8List(32),
+      publicKey: Uint8List(32),
+      x25519PrivateSeed: Uint8List(32),
+      x25519PublicKey: Uint8List(32),
+    );
+  }
 }
 
 final class FakeLanShareNetworkFactory implements LanShareNetworkFactory {
-  FakeLanShareNetworkFactory({this.networkFacade});
+  FakeLanShareNetworkFactory({
+    this.networkFacade,
+    this.networkFacades = const <NetworkFacade>[],
+    this.boundLocalPort = 43123,
+  });
 
   int createCalls = 0;
+  String? lastListenAddress;
 
   /// 返回给协调器的 NetworkFacade；null 模拟 App Shell 未创建原生门面。
   final NetworkFacade? networkFacade;
+  final List<NetworkFacade> networkFacades;
+
+  @override
+  final int? boundLocalPort;
 
   @override
   Future<NetworkFacade?> create({
@@ -130,6 +162,10 @@ final class FakeLanShareNetworkFactory implements LanShareNetworkFactory {
     required String receiveDirectory,
   }) async {
     createCalls++;
+    lastListenAddress = listenAddress;
+    if (createCalls <= networkFacades.length) {
+      return networkFacades[createCalls - 1];
+    }
     return networkFacade;
   }
 }
@@ -196,9 +232,15 @@ final class FakeLanShareNetworkService implements NetworkFacade {
   int configureRelayCalls = 0;
   int disconnectRelayCalls = 0;
   int connectPeerCalls = 0;
+  int registerPeerCalls = 0;
+  int removePeerCalls = 0;
   int transferFileCalls = 0;
+  SdkPeerConfig? lastPeerConfig;
+  SdkPeerConfig? lastRegisteredPeerConfig;
   int _eventSequence = 0;
   bool disposed = false;
+
+  void emitEvent(NetworkEvent event) => _events.add(event);
 
   @override
   Stream<NetworkEvent> get events => _events.stream;
@@ -242,10 +284,23 @@ final class FakeLanShareNetworkService implements NetworkFacade {
   @override
   Future<SdkResult<void>> connectPeer(
     String peerId, {
-    SdkPeerConfig? peer,
     CommunicationClass communicationClass = CommunicationClass.reliableStream,
   }) async {
     connectPeerCalls++;
+    return const SdkSuccess<void>(null);
+  }
+
+  @override
+  Future<SdkResult<void>> registerPeer(SdkPeerConfig peer) async {
+    registerPeerCalls++;
+    lastPeerConfig = peer;
+    lastRegisteredPeerConfig = peer;
+    return const SdkSuccess<void>(null);
+  }
+
+  @override
+  Future<SdkResult<void>> removePeer(String peerId) async {
+    removePeerCalls++;
     return const SdkSuccess<void>(null);
   }
 
@@ -271,6 +326,10 @@ final class FakeLanShareNetworkService implements NetworkFacade {
     );
   }
 
+  int respondToIncomingTransferCalls = 0;
+  final List<(String, bool)> incomingResponses = <(String, bool)>[];
+  bool failRespond = false;
+
   @override
   Future<SdkResult<void>> cancelTransfer(String transferId) async =>
       const SdkSuccess<void>(null);
@@ -279,7 +338,20 @@ final class FakeLanShareNetworkService implements NetworkFacade {
   Future<SdkResult<void>> respondToIncomingTransfer({
     required String transferId,
     required bool accept,
-  }) async => const SdkSuccess<void>(null);
+  }) async {
+    respondToIncomingTransferCalls++;
+    incomingResponses.add((transferId, accept));
+    if (failRespond) {
+      return NetworkFailure<void>(
+        const NetworkError(
+          code: NetworkErrorCode.ioError,
+          message: 'respond failed',
+          operation: NetworkOperation.respondToIncoming,
+        ),
+      );
+    }
+    return const SdkSuccess<void>(null);
+  }
 
   @override
   Future<SdkResult<void>> sendMessage({
@@ -357,8 +429,6 @@ final class FakeLanShareBootstrapClient implements BootstrapClient {
 }
 
 final class FakeLanSecurityService extends Fake implements LanSecurityService {
-  String? unpairedDeviceId;
-
   @override
   String? get activePin => '123456';
 
@@ -367,11 +437,6 @@ final class FakeLanSecurityService extends Fake implements LanSecurityService {
 
   @override
   String getOrGenerate6DigitPin() => activePin!;
-
-  @override
-  Future<void> unpairDevice(String deviceId) async {
-    unpairedDeviceId = deviceId;
-  }
 }
 
 final class FakeLanDiscoveryService extends Fake
@@ -381,9 +446,26 @@ final class FakeLanDiscoveryService extends Fake
   final bool activeWebShare;
   final String? shareUrl;
   bool disposed = false;
+  final List<(int, int?)> advertisedEndpoints = <(int, int?)>[];
+  final StreamController<List<LanDiscoveredPeer>> _discoveredPeersController =
+      StreamController<List<LanDiscoveredPeer>>.broadcast();
+  List<LanDiscoveredPeer> _currentDiscoveredPeers = <LanDiscoveredPeer>[];
 
   @override
   bool get isScanning => false;
+
+  @override
+  Stream<List<LanDiscoveredPeer>> get discoveredPeersStream =>
+      _discoveredPeersController.stream;
+
+  @override
+  List<LanDiscoveredPeer> get currentDiscoveredPeers =>
+      List<LanDiscoveredPeer>.unmodifiable(_currentDiscoveredPeers);
+
+  void emitDiscoveredPeers(List<LanDiscoveredPeer> peers) {
+    _currentDiscoveredPeers = List<LanDiscoveredPeer>.from(peers);
+    _discoveredPeersController.add(peers);
+  }
 
   @override
   String get currentDeviceId => 'test-device';
@@ -404,7 +486,11 @@ final class FakeLanDiscoveryService extends Fake
   @override
   Future<NetworkResult<void>> startAdvertising({
     int port = LanDiscoveryService.defaultPort,
-  }) async => const NetworkSuccess<void>(null);
+    int? nativePort,
+  }) async {
+    advertisedEndpoints.add((port, nativePort));
+    return const NetworkSuccess<void>(null);
+  }
 
   @override
   Future<NetworkResult<void>> stopDiscovery() async =>
@@ -421,6 +507,9 @@ final class FakeLanDiscoveryService extends Fake
   @override
   Future<void> close() async {
     disposed = true;
+    if (!_discoveredPeersController.isClosed) {
+      await _discoveredPeersController.close();
+    }
   }
 
   @override
@@ -435,28 +524,56 @@ final class FakeLanDiscoveryService extends Fake
 /// 让 Coordinator 在 `initializeNetwork: true` 时能走到 native runtime
 /// Capability 请求路径，而不会触发真实 HTTPS 绑定或 TLS 证书生成。
 final class FakeLanTransferService extends Fake implements LanTransferService {
+  FakeLanTransferService({this.startListeningResult});
+
   final StreamController<LanPairingRequest> _pairingInviteController =
       StreamController<LanPairingRequest>.broadcast();
-  final StreamController<LanDevice> _announcedDeviceController =
-      StreamController<LanDevice>.broadcast();
-  final StreamController<LanDevice> _handshakePendingController =
-      StreamController<LanDevice>.broadcast();
+  final StreamController<LanDiscoveredPeer> _announcedPeerController =
+      StreamController<LanDiscoveredPeer>.broadcast();
+  final StreamController<LanDiscoveredPeer> _handshakeSuccessController =
+      StreamController<LanDiscoveredPeer>.broadcast();
   int _port = LanTransferService.defaultHttpPort;
   bool _listening = false;
+  final NetworkResult<int>? startListeningResult;
   int stopListeningCalls = 0;
   bool disposed = false;
+  final List<LanMessage> messages = <LanMessage>[];
+
+  @override
+  String get currentDeviceId => 'test-device';
+
+  @override
+  void handleIncomingMessageFromWeb(LanMessage message) {
+    messages.add(message);
+  }
 
   @override
   Stream<LanPairingRequest> get pairingInviteStream =>
       _pairingInviteController.stream;
 
   @override
-  Stream<LanDevice> get announcedDeviceStream =>
-      _announcedDeviceController.stream;
+  Stream<LanDiscoveredPeer> get announcedPeerStream =>
+      _announcedPeerController.stream;
 
   @override
-  Stream<LanDevice> get handshakePendingStream =>
-      _handshakePendingController.stream;
+  Stream<LanDiscoveredPeer> get handshakeSuccessPeerStream =>
+      _handshakeSuccessController.stream;
+
+  @override
+  Stream<LanMessage> get incomingMessageStream => const Stream.empty();
+
+  @override
+  Stream<LanMessage> get messageProgressStream => const Stream.empty();
+
+  @override
+  Stream<LanRecallRequest> get recalledMessageIdStream => const Stream.empty();
+
+  @override
+  Stream<LanConnectionStateChanged> get connectionStateStream =>
+      const Stream.empty();
+
+  void emitHandshakeSuccess(LanDiscoveredPeer device) =>
+      _handshakeSuccessController.add(device);
 
   @override
   bool get isListening => _listening;
@@ -468,6 +585,12 @@ final class FakeLanTransferService extends Fake implements LanTransferService {
   Future<NetworkResult<int>> startListening({
     int port = LanTransferService.defaultHttpPort,
   }) async {
+    final result = startListeningResult;
+    if (result != null) {
+      _listening = result is NetworkSuccess<int>;
+      if (_listening) _port = (result as NetworkSuccess<int>).data;
+      return result;
+    }
     _listening = true;
     _port = port;
     return NetworkSuccess<int>(port);
@@ -486,10 +609,9 @@ final class FakeLanTransferService extends Fake implements LanTransferService {
     disposed = true;
     await Future.wait([
       if (!_pairingInviteController.isClosed) _pairingInviteController.close(),
-      if (!_announcedDeviceController.isClosed)
-        _announcedDeviceController.close(),
-      if (!_handshakePendingController.isClosed)
-        _handshakePendingController.close(),
+      if (!_announcedPeerController.isClosed) _announcedPeerController.close(),
+      if (!_handshakeSuccessController.isClosed)
+        _handshakeSuccessController.close(),
     ]);
   }
 
@@ -499,6 +621,46 @@ final class FakeLanTransferService extends Fake implements LanTransferService {
   }
 }
 
-final class FakeLanStorageService extends Fake implements LanStorageService {}
+final class FakeLanStorageService extends Fake implements LanStorageService {
+  bool hasSpace = true;
 
-final class FakeLanHistoryDao extends Fake implements LanHistoryDao {}
+  @override
+  Future<bool> hasSufficientSpace(int requiredBytes) async => hasSpace;
+
+  @override
+  Future<bool> deleteSandboxFile(String localPath) async => true;
+
+  @override
+  Future<Directory> getSandboxDirectory() async =>
+      Directory('/tmp/lan_sandbox_fake');
+
+  @override
+  Future<int> perform7DayGarbageCollection({
+    Duration ttl = const Duration(days: 7),
+  }) async => 0;
+}
+
+final class FakeLanHistoryDao extends Fake implements LanHistoryDao {
+  @override
+  Stream<List<LanTransferRecord>> watchAllRecords() => const Stream.empty();
+
+  @override
+  Future<List<LanTransferRecord>> getAllRecords() async => const [];
+
+  @override
+  Future<int> insertRecord(LanTransferRecordsCompanion record) async => 1;
+
+  @override
+  Future<bool> updateRecordStatus(
+    String id,
+    String status, {
+    int? bytesTransferred,
+    bool? isRecalled,
+    String? localPath,
+    String? transport,
+    String? routeType,
+    int? avgRtt,
+    int? bytesTotal,
+    String? failureReason,
+  }) async => true;
+}

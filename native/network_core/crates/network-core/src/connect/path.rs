@@ -1347,17 +1347,32 @@ impl PeerPathManager {
     /// Select Direct immediately when compatible. If it is unavailable, an
     /// already Ready Relay is usable while Direct probing continues.
     pub(crate) fn select(&self, required_capabilities: u8) -> Option<PathSelection> {
-        if self
-            .direct_path
-            .as_ref()
-            .is_some_and(|path| path.is_acquirable(required_capabilities))
+        self.select_with_authorization(required_capabilities, true, true)
+    }
+
+    /// Select a ready path after applying the peer's explicit route
+    /// authorization.  The unrestricted [select] form is retained for the
+    /// native path-manager unit seams; RuntimeState uses this policy-aware
+    /// form for all production business selection.
+    pub(crate) fn select_with_authorization(
+        &self,
+        required_capabilities: u8,
+        allow_direct: bool,
+        allow_relay: bool,
+    ) -> Option<PathSelection> {
+        if allow_direct
+            && self
+                .direct_path
+                .as_ref()
+                .is_some_and(|path| path.is_acquirable(required_capabilities))
         {
             return Some(PathSelection::Direct);
         }
-        if self
-            .relay_path
-            .as_ref()
-            .is_some_and(|path| path.is_acquirable(required_capabilities))
+        if allow_relay
+            && self
+                .relay_path
+                .as_ref()
+                .is_some_and(|path| path.is_acquirable(required_capabilities))
         {
             return Some(PathSelection::Relay);
         }
@@ -1368,29 +1383,44 @@ impl PeerPathManager {
         &self,
         required_capabilities: u8,
     ) -> Result<(PathSelection, PathLease), CoreNetworkError> {
-        if let Some(path) = self.direct_path.as_ref() {
-            if path.is_acquirable(required_capabilities) {
-                match path.try_acquire() {
-                    Ok(lease) => return Ok((PathSelection::Direct, lease)),
-                    Err(CoreNetworkError::StaleAttempt) => {}
-                    Err(error) => return Err(error),
+        self.acquire_with_authorization(required_capabilities, true, true)
+    }
+
+    /// Acquire a path only from the route topologies authorized for this
+    /// peer.  Filtering is performed while the path owner is locked, before a
+    /// borrower lease can be created, so an unauthorized route is never
+    /// exposed to business code as a selectable candidate.
+    pub(crate) fn acquire_with_authorization(
+        &self,
+        required_capabilities: u8,
+        allow_direct: bool,
+        allow_relay: bool,
+    ) -> Result<(PathSelection, PathLease), CoreNetworkError> {
+        if allow_direct {
+            if let Some(path) = self.direct_path.as_ref() {
+                if path.is_acquirable(required_capabilities) {
+                    match path.try_acquire() {
+                        Ok(lease) => return Ok((PathSelection::Direct, lease)),
+                        Err(CoreNetworkError::StaleAttempt) => {}
+                        Err(error) => return Err(error),
+                    }
                 }
             }
         }
-        if let Some(path) = self.relay_path.as_ref() {
-            if path.is_acquirable(required_capabilities) {
-                match path.try_acquire() {
-                    Ok(lease) => return Ok((PathSelection::Relay, lease)),
-                    Err(CoreNetworkError::StaleAttempt) => {}
-                    Err(error) => return Err(error),
+        if allow_relay {
+            if let Some(path) = self.relay_path.as_ref() {
+                if path.is_acquirable(required_capabilities) {
+                    match path.try_acquire() {
+                        Ok(lease) => return Ok((PathSelection::Relay, lease)),
+                        Err(CoreNetworkError::StaleAttempt) => {}
+                        Err(error) => return Err(error),
+                    }
                 }
             }
         }
         Err(CoreNetworkError::NoRoute)
     }
 
-    /// Acquire only the current Relay topology. Relay-specific control I/O
-    /// must not accidentally borrow a preferred Direct path.
     pub(crate) fn acquire_relay(
         &self,
         required_capabilities: u8,
