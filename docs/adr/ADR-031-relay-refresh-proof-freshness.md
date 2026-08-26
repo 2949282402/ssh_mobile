@@ -1,10 +1,13 @@
-> 最新更新时间：2026-08-24
+> 最新更新时间：2026-08-27
 
 # ADR-031：Relay 设备签名证明时效性
 
 ## Status
 
-Accepted。
+Superseded for Relay Bootstrap by Relay Bootstrap V2 (2026-08-26/27)：
+- 证明时效性机制与防重放规则仍然有效并完全保留。
+- 刷新端点与 Transcript 路径已升级为 `POST /v2/devices/refresh`，完整契约见 [RELAY_BOOTSTRAP_V2_CONTRACT.md](../../protocol/RELAY_BOOTSTRAP_V2_CONTRACT.md)。
+- 历史 `/v1/devices/*` 路径已退出运行时代码。
 
 ## 背景
 
@@ -24,8 +27,8 @@ Accepted。
   `X-Relay-Timestamp`、`X-Relay-Nonce` 与 `X-Relay-Signature`。时间戳必须是
   正整数 Unix 秒的规范十进制文本；缺失、非法、非规范、过时或超前时均返回
   HTTP 401 / `authenticationFailed`，不区分具体原因。
-- Ed25519 签名 transcript 是精确字节串
-  `POST\n/v1/devices/refresh\n<timestamp>\n<nonce>`，末尾没有换行。
+- Ed25519 签名 transcript（V2）：
+  `POST\n/v2/devices/refresh\n<timestamp>\n<nonce>`，末尾没有换行。
   v2 WebSocket transcript 是
   `GET\n<path>\n<timestamp>\n<nonce>`，其中 `<path>` 是实际 Control 或
   RelayData 路径；同样没有末尾换行。时间戳按规范十进制整数文本编码。

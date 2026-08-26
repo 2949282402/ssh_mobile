@@ -1,15 +1,13 @@
-> 最新更新时间：2026-08-24
+> 最新更新时间：2026-08-27
 
 # ADR-029：v1 协议契约消费（Relay refresh、重试策略、Realtime 快照）
 
 ## Status
 
-Superseded on 2026-08-15：本 ADR 记录的是 **v1 协议契约**的消费 wire shapes
-（`NetworkErrorCode` 12/13、`RetryDisposition`、`NetworkError` 字段 5/6、
-Realtime revision 快照、`POST /v1/devices/refresh`）。transport-network v2 以
-[ADR-RELAY-DATA-PLANE-V2](ADR-RELAY-DATA-PLANE-V2.md) 的 Relay Protocol V2
-（Protobuf Binary over WebSocket、`request_id` + `attempt_id` 关联）取代 v1 wire
-契约；本 ADR 的 v1 错误码/重试/refresh/revision 形态不再作为当前契约权威。
+Superseded by Relay Bootstrap V2 and Transport Network V2 (2026-08-26/27)：
+- 传输数据面由 [ADR-RELAY-DATA-PLANE-V2](ADR-RELAY-DATA-PLANE-V2.md)（Protobuf RelayFrame/RelayDataFrame）取代。
+- 设备 Bootstrap 契约（`/v1/devices/enroll`、`/v1/devices/refresh`）已全面清退，由 [RELAY_BOOTSTRAP_V2_CONTRACT.md](../../protocol/RELAY_BOOTSTRAP_V2_CONTRACT.md)（`POST /v2/devices/enroll`、`POST /v2/devices/refresh`，`protocol_version=2`）取代。
+- 管理面拆分为独立的 Admin Backend 服务。
 
 ## Historical note
 
@@ -18,11 +16,6 @@ Realtime revision 快照、`POST /v1/devices/refresh`）。transport-network v2 
 表中仍作为「Realtime 快照版本」保留（见
 [ADR-TRANSPORT-NETWORK-V2](ADR-TRANSPORT-NETWORK-V2.md) 命名方案）；其余 v1
 wire 形态随 v2 迁移删除。
-
-`POST /v1/devices/refresh` 作为当前 Bootstrap HTTP API 仍然保留；其现行签名
-时效性与硬切换契约由
-[ADR-031-relay-refresh-proof-freshness.md](ADR-031-relay-refresh-proof-freshness.md)
-统一定义，本 ADR 中无时间戳的历史请求形状不再可用。
 
 ## Context
 

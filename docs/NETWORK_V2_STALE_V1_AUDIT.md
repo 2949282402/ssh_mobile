@@ -1,6 +1,8 @@
-最新更新时间：2026-08-22
+最新更新时间：2026-08-27
 
 # Transport Network V2 文档与验证审计（历史记录）
+
+> 注（2026-08-27）：Relay Bootstrap 已完成 V2 升级（`POST /v2/devices/enroll`、`POST /v2/devices/refresh`，`protocol_version=2`），且 Backend 已拆分为独立 Relay 与 Admin 两个 Go 服务。历史 Bootstrap V1 边界已完全清退。
 
 ## 审计范围
 

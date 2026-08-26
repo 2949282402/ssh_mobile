@@ -1,25 +1,25 @@
-> Last updated: 2026-08-14
+> Last updated: 2026-08-27
 
 # Backend Overview
 
-`relay/` is the Go control-plane and WebSocket Relay service. It owns device
-enrollment, authenticated device connections, the administrator API, device and
-session state (memory by default; `RELAY_STORAGE_MODE=mysql` persists enrollment
-and revocation), Relay routing, and the production Compose/Caddy topology.
+`relay/` contains the Go Backend services for SSH Mobile, structured as two independent services:
 
-It does not own:
+1. **Relay Backend** (`cmd/relay`, `internal/relay`):
+   - Owns V2 device bootstrap (`/v2/devices/enroll`, `/v2/devices/refresh`).
+   - Owns long-lived V2 control plane (`/v2/control`) and data plane (`/v2/relay/*`).
+   - Owns device lifecycle, credentials, presence, and durable MySQL/Redis state.
+   - Exposes authenticated internal management API (`/internal/v2/*`).
 
-- the React console in `front/`;
-- Flutter or Rust Session, Delivery, or cryptographic state;
-- persistent transfer storage;
-- interpretation of opaque application-E2EE payloads.
+2. **Admin Backend** (`cmd/admin`, `internal/admin`):
+   - Owns administrator authentication, session store, rate limiter, and public REST API (`/api/admin/v1/*`).
+   - Communicates with Relay via `RelayManagementClient` over private HTTP (`/internal/v2/*`).
+   - Holds no database, Redis, or signing keys.
 
 Canonical operational and API documentation:
 
 - [Relay README](../../relay/README.md)
-- [Relay Compose topology](../../relay/compose.yaml)
+- [Root Compose topology](../../compose.yaml)
+- [Root Caddyfile](../../Caddyfile)
 - [Backend current state](current-state.md)
-
-Changes to the device wire contract, opaque handshake forwarding, or Session
-route behavior also require the [SDK Memory](../sdk/overview.md) and the
-relevant ADR.
+- [Relay Bootstrap Protocol V2 Contract](../../protocol/RELAY_BOOTSTRAP_V2_CONTRACT.md)
+- [Relay Protocol V2 Wire Contract](../../protocol/RELAY_V2_CONTRACT.md)
