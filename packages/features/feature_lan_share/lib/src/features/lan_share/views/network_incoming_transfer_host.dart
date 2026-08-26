@@ -47,12 +47,8 @@ class _NetworkIncomingTransferHostState
           fileName: offer.fileName,
           totalBytes: offer.fileSize,
           expiresAt: DateTime.now().add(const Duration(seconds: 25)),
-          accept: () async {
-            await coordinator.acceptNativeIncomingTransfer(offer);
-          },
-          reject: () async {
-            await coordinator.rejectNativeIncomingTransfer(offer);
-          },
+          accept: () => coordinator.acceptNativeIncomingTransfer(offer),
+          reject: () => coordinator.rejectNativeIncomingTransfer(offer),
         ),
       );
     });
@@ -125,9 +121,35 @@ class _NetworkIncomingTransferHostState
     if (_coordinator != null) {
       try {
         if (accepted == true && !request.isExpired) {
-          await request.accept();
+          final result = await request.accept();
+          if (result is NetworkFailure<void> && mounted) {
+            final strings = context.read<AppSettings>().strings;
+            final message = switch (result.error.code) {
+              NetworkErrorCode.resourceLimit =>
+                strings.isEnglish
+                    ? 'Insufficient storage space for incoming transfer.'
+                    : '存储空间不足，无法接收文件。',
+              NetworkErrorCode.authenticationFailed =>
+                strings.isEnglish
+                    ? 'Transfer peer is not trusted or route unauthorized.'
+                    : '设备未通过信任校验或未授权传输路由。',
+              _ =>
+                strings.isEnglish
+                    ? 'Incoming transfer failed: ${result.error.message}'
+                    : '接收文件失败：${result.error.message}',
+            };
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text(message)));
+          }
         } else {
-          await request.reject();
+          final result = await request.reject();
+          if (result is NetworkFailure<void> && mounted) {
+            logger.warning(
+              'Network incoming rejection returned failure',
+              details: result.error.toString(),
+            );
+          }
         }
       } on Object catch (error, stackTrace) {
         logger.warning(
@@ -144,7 +166,13 @@ class _NetworkIncomingTransferHostState
   Future<void> _rejectExpired(_IncomingApproval request) async {
     final logger = context.read<LanShareLoggerPort>();
     try {
-      await request.reject();
+      final result = await request.reject();
+      if (result is NetworkFailure<void>) {
+        logger.warning(
+          'Expired network offer rejection returned failure',
+          details: result.error.toString(),
+        );
+      }
     } on Object catch (error, stackTrace) {
       logger.warning(
         'Expired network offer rejection failed',
@@ -183,22 +211,21 @@ class _IncomingApproval {
   final String fileName;
   final int totalBytes;
   final DateTime expiresAt;
-  final Future<void> Function() accept;
-  final Future<void> Function() reject;
+  final Future<NetworkResult<void>> Function() accept;
+  final Future<NetworkResult<void>> Function() reject;
 
   /// 此审批请求是否已过期。
-  bool get isExpired => !DateTime.now().isBefore(expiresAt);
+  bool get isExpired => DateTime.now().isAfter(expiresAt);
 }
 
-/// 为传入传输对话框格式化字节数量。
 String _formatByteCount(int bytes) {
-  if (bytes < 1024) return '$bytes B';
-  const units = ['KB', 'MB', 'GB', 'TB'];
-  var value = bytes / 1024;
-  var unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit++;
+  if (bytes <= 0) return '0 B';
+  const suffixes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  var i = 0;
+  double doubleBytes = bytes.toDouble();
+  while (doubleBytes >= 1024 && i < suffixes.length - 1) {
+    doubleBytes /= 1024;
+    i++;
   }
-  return '${value.toStringAsFixed(value >= 10 ? 1 : 2)} ${units[unit]}';
+  return '${doubleBytes.toStringAsFixed(1)} ${suffixes[i]}';
 }
