@@ -5,21 +5,22 @@ import react from '@vitejs/plugin-react';
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const relayApiOrigin = env.RELAY_DEV_API_ORIGIN;
+  const adminApiOrigin = env.ADMIN_DEV_API_ORIGIN || relayApiOrigin;
   const devPort = Number(env.FRONT_DEV_PORT);
 
   return {
     plugins: [react()],
     server: {
       ...(Number.isInteger(devPort) && devPort > 0 ? { port: devPort } : {}),
-      ...(relayApiOrigin
-        ? {
-            proxy: {
-              '/api/admin/v1': relayApiOrigin,
+      proxy: {
+        ...(adminApiOrigin ? { '/api/admin/v1': adminApiOrigin } : {}),
+        ...(relayApiOrigin
+          ? {
               '/healthz': relayApiOrigin,
               '/v2': relayApiOrigin,
-            },
-          }
-        : {}),
+            }
+          : {}),
+      },
     },
     test: {
       environment: 'jsdom',
