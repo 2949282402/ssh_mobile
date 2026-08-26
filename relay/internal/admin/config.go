@@ -16,23 +16,23 @@ import (
 )
 
 const (
-	defaultAddress                 = ":8081"
-	defaultSessionTTL              = 24 * time.Hour
-	defaultMaxSessions             = 32
-	defaultLoginMaxAttempts        = 5
-	defaultLoginWindow             = time.Minute
-	defaultLoginBlockDuration      = 5 * time.Minute
-	defaultMaxLoginEntries         = 4096
-	defaultHTTPReadTimeout         = 15 * time.Second
-	defaultHTTPWriteTimeout        = 15 * time.Second
-	defaultHTTPIdleTimeout         = 60 * time.Second
-	defaultHTTPMaxHeaderBytes      = 16 * 1024
-	defaultRelayURL                = "http://relay:8080"
+	defaultAddress            = ":8081"
+	defaultSessionTTL         = 24 * time.Hour
+	defaultMaxSessions        = 32
+	defaultLoginMaxAttempts   = 5
+	defaultLoginWindow        = time.Minute
+	defaultLoginBlockDuration = 5 * time.Minute
+	defaultMaxLoginEntries    = 4096
+	defaultHTTPReadTimeout    = 15 * time.Second
+	defaultHTTPWriteTimeout   = 15 * time.Second
+	defaultHTTPIdleTimeout    = 60 * time.Second
+	defaultHTTPMaxHeaderBytes = 16 * 1024
+	defaultRelayURL           = "http://relay:8080"
 
-	publishedExampleAdminUser      = "replace-with-an-admin-username"
-	publishedExampleAdminPassword  = "replace-with-a-random-password-of-at-least-12-characters"
-	publishedExampleAdminAuthKey   = "replace-with-a-32-byte-base64url-random-auth-key"
-	publishedExampleInternalToken  = "replace-with-a-32-byte-random-internal-token"
+	publishedExampleAdminUser     = "replace-with-an-admin-username"
+	publishedExampleAdminPassword = "replace-with-a-random-password-of-at-least-12-characters"
+	publishedExampleAdminAuthKey  = "replace-with-a-32-byte-base64url-random-auth-key"
+	publishedExampleInternalToken = "replace-with-a-32-byte-random-internal-token"
 )
 
 // Config holds the configuration for the standalone Admin backend service.

@@ -31,6 +31,8 @@ The React + Vite + TypeScript administration console is in `../front/` and is se
 - `GET /v2/control` — Long-lived WebSocket control plane (`RelayFrame` protobuf).
 - `GET /v2/relay/{reservation_id}` — Reservation-scoped WebSocket data plane (`RelayDataFrame` protobuf).
 
+There is no `/v1/connect` route; only the V2 control and relay data routes are supported.
+
 ### Relay Internal Endpoints (`Authorization: Bearer <RELAY_INTERNAL_TOKEN>`)
 - `GET /internal/v2/status` — Point-in-time runtime snapshot (goroutines, memory, active transfers, device count).
 - `GET /internal/v2/devices` — List of enrolled devices with presence status.

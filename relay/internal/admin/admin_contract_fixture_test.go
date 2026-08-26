@@ -86,11 +86,11 @@ func TestExportAdminAPIContractFixture(t *testing.T) {
 
 	fakeClient := &fakeRelayManagementClient{
 		status: RelayStatus{
-			ServerTime:    time.Now().Unix(),
-			UptimeSeconds: 3600,
-			Devices:       RelayDeviceStat{Enrolled: 1, Online: 1},
-			Relay:         RelayStat{ActiveTransfers: 0},
-			Runtime:       RelayRuntimeStat{AllocatedMemMB: 4.5, Goroutines: 12},
+			ServerTime:        time.Now().Unix(),
+			UptimeSeconds:     3600,
+			Devices:           RelayDeviceStat{Enrolled: 1, Online: 1},
+			Relay:             RelayStat{ActiveTransfers: 0},
+			Runtime:           RelayRuntimeStat{AllocatedMemMB: 4.5, Goroutines: 12},
 			PresenceAvailable: true,
 		},
 		devices: RelayDevices{

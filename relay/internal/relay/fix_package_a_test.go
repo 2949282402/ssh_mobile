@@ -179,10 +179,10 @@ func TestAuthenticatedDeviceAdmissionRechecksRevocation(t *testing.T) {
 	}
 }
 
-// TestRevokeReturnsErrorWhenRevokeFails verifies the internal revoke surfaces
+// TestAdminRevokeReturnsErrorWhenRevokeFails verifies the internal revoke surfaces
 // the store failure so operators know the revocation did not fully land, instead
 // of a false success when the atomic revoke fails.
-func TestRevokeReturnsErrorWhenRevokeFails(t *testing.T) {
+func TestAdminRevokeReturnsErrorWhenRevokeFails(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte(mysqlTestCredentialKey),
 		EnrollmentToken: "test-token",
