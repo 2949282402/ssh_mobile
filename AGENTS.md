@@ -107,16 +107,7 @@ proportional to the touched owner and risk. Package-local commands remain in the
 owning README/AGENTS. Always run `git diff --check`, inspect the final status and
 diff, report checks actually run, and state exact environmental or scope gaps.
 
-Before creating or updating a PR, run the environment-native aggregate:
-`scripts/bash/ci/full_test.sh` on Linux/WSL or
-`scripts/powershell/ci/full_test.ps1` on native Windows, plus applicable focused
-checks. The aggregate is the daily basic regression gate and
-does not collect Flutter coverage by default. For coverage-affecting changes,
-large refactors, new feature review, or release acceptance, run the four
-domain-specific gates under `scripts/bash/coverage/` or their same-named native
-Windows counterparts under `scripts/powershell/coverage/`. Each gate enforces
-an 80% line/metric threshold on
-its documented owner scope and prints uncovered locations when it fails.
+日常开发与常规修复优先运行受影响模块的针对性测试与 targeted CI 门禁（例如 `scripts/bash/ci/full_test.sh --no-bootstrap --only <jobs>`），只有在进行重大跨模块架构重构、或者用户明确要求时才执行本地全量 `full_test.sh` / `full_test.ps1`；代码推送后通过 GitHub Actions CI 观察平台构建与全量测试结果。全量本地脚本是重大重构时的验收门禁，默认不收集 Flutter coverage。对于涉及覆盖率变更、大型重构或发布验收，运行 `scripts/bash/coverage/` 下的四大领域门禁或 native Windows 对应门禁。每个领域门禁对其负责范围执行 80% 的行覆盖率/指标阈值，并在失败时打印未覆盖位置。
 `coverage_test.sh`/`coverage_test.ps1` remain compatibility aliases for the
 client gate.
 A stricter new-source rule also applies: every newly added hand-written

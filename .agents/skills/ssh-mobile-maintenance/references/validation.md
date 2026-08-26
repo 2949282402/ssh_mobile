@@ -57,6 +57,11 @@ change is incomplete.
 
 ## Repository local CI
 
+Run the aggregate only during major cross-module refactorings or when explicitly
+requested by the user. For routine bug fixes and scoped feature work, run focused
+package tests and targeted gates (`--only`/`-Only`), then monitor GitHub Actions CI
+after pushing.
+
 Use the aggregate for the actual host:
 
 ```bash
