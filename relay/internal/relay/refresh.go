@@ -38,11 +38,36 @@ func refreshProofTimestampIsFresh(timestamp int64, now time.Time) bool {
 	return timestamp >= nowSeconds-windowSeconds && timestamp <= nowSeconds+windowSeconds
 }
 
+// refreshProofPayload 构造 v1 refresh transcript。
 func refreshProofPayload(timestamp int64, nonce string) string {
-	return "POST\n/v1/devices/refresh\n" + strconv.FormatInt(timestamp, 10) + "\n" + nonce
+	return refreshProofPayloadForPath("/v1/devices/refresh", timestamp, nonce)
 }
 
+// refreshProofPayloadForPath 构造指定路径的 refresh transcript。V1 与 V2 路由的
+// transcript 以路径为界互相独立：签名绑定到的路径必须与请求路径一致，否则认证失败。
+func refreshProofPayloadForPath(path string, timestamp int64, nonce string) string {
+	return "POST\n" + path + "\n" + strconv.FormatInt(timestamp, 10) + "\n" + nonce
+}
+
+// expectedRefreshTranscriptPath binds a refresh route to one exact transcript
+// path so a request signed for the other route cannot authenticate.
+type expectedRefreshTranscriptPath string
+
+// refresh 是 /v1 路由的兼容别名：直接调用时等价于 refreshV1（转录绑定到
+// /v1/devices/refresh）。
 func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
+	s.refreshV1(w, r)
+}
+
+func (s *Server) refreshV1(w http.ResponseWriter, r *http.Request) {
+	s.refreshWithExpectedTranscriptPath(w, r, expectedRefreshTranscriptPath("/v1/devices/refresh"))
+}
+
+func (s *Server) refreshV2(w http.ResponseWriter, r *http.Request) {
+	s.refreshWithExpectedTranscriptPath(w, r, expectedRefreshTranscriptPath("/v2/devices/refresh"))
+}
+
+func (s *Server) refreshWithExpectedTranscriptPath(w http.ResponseWriter, r *http.Request, expectedPath expectedRefreshTranscriptPath) {
 	defer r.Body.Close()
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	var request refreshRequest
@@ -120,7 +145,7 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
 		writeNetworkError(w, http.StatusUnauthorized, relayErrorAuthenticationFailed, "Relay device authentication failed.", "refresh_credential", request.DeviceID)
 		return
 	}
-	proofPayload := refreshProofPayload(request.Timestamp, request.Nonce)
+	proofPayload := refreshProofPayloadForPath(string(expectedPath), request.Timestamp, request.Nonce)
 	if err := verifyDeviceProof(storedKey, proofPayload, request.Signature); err != nil {
 		writeNetworkError(w, http.StatusUnauthorized, relayErrorAuthenticationFailed, "Relay device authentication failed.", "refresh_credential", request.DeviceID)
 		return

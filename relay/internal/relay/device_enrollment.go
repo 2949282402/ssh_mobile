@@ -99,7 +99,26 @@ func writeNetworkErrorRetry(w http.ResponseWriter, status int, code relayErrorCo
 	})
 }
 
+// expectedProtocolVersion binds an enroll route to one exact device protocol
+// version. The dual /v1 and /v2 bootstrap routes are intentionally distinct:
+// each accepts only its own protocol version so a client cannot silently
+// downgrade the enrollment contract.
+type expectedProtocolVersion uint32
+
+// enroll 是 /v1 路由的兼容别名：直接调用时等价于 enrollV1（仅允许协议版本 1）。
 func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
+	s.enrollV1(w, r)
+}
+
+func (s *Server) enrollV1(w http.ResponseWriter, r *http.Request) {
+	s.enrollWithExpectedProtocolVersion(w, r, expectedProtocolVersion(1))
+}
+
+func (s *Server) enrollV2(w http.ResponseWriter, r *http.Request) {
+	s.enrollWithExpectedProtocolVersion(w, r, expectedProtocolVersion(2))
+}
+
+func (s *Server) enrollWithExpectedProtocolVersion(w http.ResponseWriter, r *http.Request, expected expectedProtocolVersion) {
 	defer r.Body.Close()
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	var request enrollRequest
@@ -115,7 +134,7 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		writeNetworkError(w, http.StatusBadRequest, relayErrorInvalidArgument, "Device identity is invalid.", "enroll_relay", request.DeviceID)
 		return
 	}
-	if request.ProtocolVersion != 1 {
+	if request.ProtocolVersion != uint32(expected) {
 		writeNetworkError(w, http.StatusBadRequest, relayErrorProtocolError, "Relay protocol version is unsupported.", "enroll_relay", request.DeviceID)
 		return
 	}

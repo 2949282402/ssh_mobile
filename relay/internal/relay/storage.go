@@ -139,6 +139,12 @@ func (m *memoryStore) PutEnrollment(_ context.Context, device *EnrolledDevice) (
 		if existing.PublicKey != device.PublicKey {
 			return enrollmentIdentityConflict, nil
 		}
+		// Protocol downgrade protection: a device that already enrolled at a
+		// higher protocol version must not silently re-enroll at a lower one.
+		// Re-enrollment upgrades are allowed; downgrades are rejected.
+		if device.ProtocolVersion < existing.ProtocolVersion {
+			return enrollmentIdentityConflict, nil
+		}
 	} else if len(m.enrolledDevices) >= m.maxEnrolled {
 		return enrollmentResourceLimit, nil
 	}

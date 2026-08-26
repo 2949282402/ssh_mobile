@@ -292,13 +292,20 @@ func (m *mysqlStore) putEnrollment(ctx context.Context, device *EnrolledDevice) 
 	// inserted row.
 	var storedKey string
 	var storedEnrolledAt time.Time
+	var storedProtocolVersion uint32
 	err = tx.QueryRowContext(ctx,
-		`SELECT public_key, enrolled_at FROM devices WHERE device_id = ? FOR UPDATE`, device.DeviceID,
-	).Scan(&storedKey, &storedEnrolledAt)
+		`SELECT public_key, enrolled_at, protocol_version FROM devices WHERE device_id = ? FOR UPDATE`, device.DeviceID,
+	).Scan(&storedKey, &storedEnrolledAt, &storedProtocolVersion)
 	isNewDevice := false
 	switch {
 	case err == nil:
 		if storedKey != device.PublicKey {
+			return enrollmentIdentityConflict, nil
+		}
+		// Protocol downgrade protection: a device that already enrolled at a
+		// higher protocol version must not silently re-enroll at a lower one.
+		// Re-enrollment upgrades are allowed; downgrades are rejected.
+		if device.ProtocolVersion < storedProtocolVersion {
 			return enrollmentIdentityConflict, nil
 		}
 		device.EnrolledAt = nextEnrollmentTime(device.EnrolledAt, &EnrolledDevice{EnrolledAt: storedEnrolledAt})

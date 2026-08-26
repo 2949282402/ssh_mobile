@@ -310,9 +310,12 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/v1/access/enrollment-token", adminAuth(s.adminToken))
 	mux.HandleFunc("POST /api/admin/v1/access/enrollment-token/rotate", adminAuthStateChange(s.adminRotateToken))
 
-	// Device credential endpoints（仍为 v2 控制面签发 Bearer 凭据）。
-	mux.HandleFunc("POST /v1/devices/enroll", s.enroll)
-	mux.HandleFunc("POST /v1/devices/refresh", s.refresh)
+	// Device credential endpoints（仍为 v2 控制面签发 Bearer 凭据）。Bootstrap
+	// 同时支持 /v1 与 /v2：协议版本升级允许、降级拒绝（见 storage 协议降级保护）。
+	mux.HandleFunc("POST /v1/devices/enroll", s.enrollV1)
+	mux.HandleFunc("POST /v1/devices/refresh", s.refreshV1)
+	mux.HandleFunc("POST /v2/devices/enroll", s.enrollV2)
+	mux.HandleFunc("POST /v2/devices/refresh", s.refreshV2)
 
 	// Transport Network V2（设计 §24）：控制面与数据面物理拆开。
 	// GET /v2/control —— 长期存活的控制面，只走 RelayFrame（protobuf）。

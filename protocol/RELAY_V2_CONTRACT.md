@@ -1,4 +1,4 @@
-> Last updated: 2026-08-25
+> Last updated: 2026-08-26
 
 # Relay Protocol V2 — Frozen Wire Contract
 
@@ -14,9 +14,9 @@ fixtures:
 - WS-C — network-relay split (RelayControlClient / RelayDataClient)
 - Phase 4 — network-core (DiscoveryManager, ConnectivityAttemptCoordinator, RealtimeManager)
 
-Relay Protocol V2 remains additive to the Relay Bootstrap/WebSocket V1 boundary:
-the `/v1/devices/*` enrollment and `/v1/connect` data route remain explicitly
-separate. The retired Network SDK/Data Protocol V1 package and codec are not a
+Device bootstrap and credential issuance are specified separately in
+`protocol/RELAY_BOOTSTRAP_V2_CONTRACT.md` (`/v2/devices/enroll` and `/v2/devices/refresh`).
+The retired Network SDK/Data Protocol V1 package and codec are not a
 compatibility target for this contract.
 
 Authoritative files:
