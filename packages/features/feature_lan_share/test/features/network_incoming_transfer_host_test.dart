@@ -22,7 +22,13 @@ void main() {
         ListenableProvider<AppSettings>.value(value: settings),
         Provider<LanShareLoggerPort>.value(value: logger),
       ],
-      child: MaterialApp(home: Scaffold(body: dialog)),
+      child: MaterialApp(
+        theme: ThemeData(
+          useMaterial3: false,
+          splashFactory: InkRipple.splashFactory,
+        ),
+        home: Scaffold(body: dialog),
+      ),
     );
   }
 
