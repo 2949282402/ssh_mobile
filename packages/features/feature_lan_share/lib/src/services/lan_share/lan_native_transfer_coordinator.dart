@@ -6,43 +6,31 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:network_sdk/network_sdk.dart';
-import 'package:uuid/uuid.dart';
 
 import 'lan_peer_trust.dart';
 import 'lan_network_models.dart';
 import 'lan_share_models.dart';
+import 'lan_storage_service.dart';
 import 'lan_transfer_protocol.dart';
 import 'lan_transfer_service.dart';
 
 /// Owns the complete Network V2 binary-transfer orchestration for LAN Share.
 ///
 /// The coordinator is intentionally the only feature object that knows how to
-/// turn an authenticated LAN capability snapshot into a native peer endpoint.
-/// View models receive a result and an event stream; they never hold a facade,
-/// peer configuration, capability cache, or native-port cache.
+/// turn an authenticated LAN capability snapshot or persistent Relay authorization
+/// into native peer connectivity. View models receive a result and an event stream;
+/// they never hold a facade, peer configuration, capability cache, or native-port cache.
 final class LanNativeTransferCoordinator {
   LanNativeTransferCoordinator({
     required LanTransferService transferService,
     required NetworkFacade networkFacade,
-    required LanPeerTrustStore trustStore,
-    required Future<NetworkResult<void>> Function(
-      String deviceId,
-      String endpoint,
-    )
-    updateDirectEndpoint,
-    required Future<NetworkResult<void>> Function(String deviceId)
-    invalidateDirectEndpoint,
-    Future<NetworkResult<void>> Function(String deviceId)? removeTrust,
-    Future<NetworkResult<void>> Function(String deviceId, bool enabled)?
-    setRelayAuthorization,
+    required LanNativePeerPolicyPort policyPort,
+    LanStorageService? storageService,
     this.offerTimeout = const Duration(seconds: 25),
   }) : _transferService = transferService,
        _networkFacade = networkFacade,
-       _trustStore = trustStore,
-       _updateDirectEndpoint = updateDirectEndpoint,
-       _invalidateDirectEndpoint = invalidateDirectEndpoint,
-       _removeTrust = removeTrust,
-       _setRelayAuthorization = setRelayAuthorization {
+       _policyPort = policyPort,
+       _storageService = storageService {
     _networkSubscription = _networkFacade.events.listen(
       _handleNetworkEvent,
       onError: (Object error, StackTrace stackTrace) {
@@ -57,36 +45,26 @@ final class LanNativeTransferCoordinator {
   /// App-scope Network V2 facade borrowed for the coordinator lifetime.
   final NetworkFacade _networkFacade;
 
-  /// Atomic peer trust source. No trust means no binary transfer.
-  final LanPeerTrustStore _trustStore;
+  /// Authority port for native peer policy and trust reconciliation.
+  final LanNativePeerPolicyPort _policyPort;
 
-  /// Updates the runtime-generation-scoped direct endpoint in the peer registry.
-  final Future<NetworkResult<void>> Function(String deviceId, String endpoint)
-  _updateDirectEndpoint;
-
-  /// Invalidates a stale endpoint after a capability or connect failure.
-  final Future<NetworkResult<void>> Function(String deviceId)
-  _invalidateDirectEndpoint;
-
-  /// Explicit trust revoke hook, normally backed by LanNativePeerRegistry.
-  ///
-  /// When omitted, the coordinator performs the same operation directly so
-  /// callers that do not use the registry still fail closed.
-  final Future<NetworkResult<void>> Function(String deviceId)? _removeTrust;
-
-  /// Sets the persistent and native Relay authorization for a trusted peer.
-  final Future<NetworkResult<void>> Function(String deviceId, bool enabled)?
-  _setRelayAuthorization;
+  /// Optional storage service for disk space pre-flight validation.
+  final LanStorageService? _storageService;
 
   /// Time after which an unanswered incoming offer is rejected.
   final Duration offerTimeout;
 
   final _incomingOffers = StreamController<IncomingTransferOffer>.broadcast();
   final _events = StreamController<SdkEvent>.broadcast();
+  final _routeStateController =
+      StreamController<Map<String, LanPeerRouteState>>.broadcast();
+
   final Map<String, IncomingTransferOffer> _pendingOffers = {};
   final Map<String, Timer> _offerTimers = {};
   final Map<String, bool> _committedDecisions = {};
   final Map<String, _IncomingDecisionOperation> _decisionOperations = {};
+  final Map<String, LanPeerRouteState> _routeStates = {};
+
   StreamSubscription<SdkEvent>? _networkSubscription;
   bool _disposed = false;
 
@@ -96,128 +74,176 @@ final class LanNativeTransferCoordinator {
   /// Native transfer progress/completion/failure and other V2 events.
   Stream<SdkEvent> get events => _events.stream;
 
+  /// Stream of projected route states for trusted peers.
+  Stream<Map<String, LanPeerRouteState>> get routeStates =>
+      _routeStateController.stream;
+
+  /// Current snapshot of route states.
+  Map<String, LanPeerRouteState> get currentRouteStates =>
+      Map<String, LanPeerRouteState>.unmodifiable(_routeStates);
+
   /// Sends one regular file through Network V2 only.
   ///
-  /// Directories and multi-file manifests are intentionally rejected until a
-  /// corresponding native V2 protocol exists; no HTTPS binary fallback exists.
-  Future<NetworkResult<TransferSession>> sendFile(
-    LanDiscoveredPeer device,
-    String filePath,
-  ) async {
+  /// Supports both direct LAN connections (when [discovery] is present) and
+  /// offline Relay transfers (when [discovery] is null and Relay is authorized).
+  Future<NetworkResult<TransferSession>> sendFile({
+    required String peerId,
+    required String transferId,
+    required String filePath,
+    LanDiscoveredPeer? discovery,
+  }) async {
     if (_disposed) {
       return _failure(
         code: NetworkErrorCode.cancelled,
         message: 'Native transfer coordinator is disposed.',
         operation: NetworkOperation.sendFile,
-        peerId: device.deviceId,
+        peerId: peerId,
       );
     }
 
     final file = File(filePath);
-    final validation = await _validateSourceFile(file, device.deviceId);
+    final validation = await _validateSourceFile(file, peerId);
     if (validation != null) return validation;
 
-    LanPeerTrustRecord? trust;
-    try {
-      trust = await _trustStore.read(device.deviceId);
-    } catch (error) {
-      return NetworkFailure(
-        lanNetworkError(
-          error,
-          operation: NetworkOperation.sendFile,
-          peerId: device.deviceId,
-        ),
-      );
+    final policyResult = await _policyPort.getPeerPolicy(peerId);
+    if (policyResult is NetworkFailure<LanPeerPolicySnapshot>) {
+      return NetworkFailure<TransferSession>(policyResult.error);
     }
-    if (trust == null) {
+    final policy = (policyResult as NetworkSuccess<LanPeerPolicySnapshot>).data;
+    if (!policy.isTrusted) {
       return _failure(
         code: NetworkErrorCode.authenticationFailed,
-        message: 'Peer trust is unavailable.',
+        message: policy.runtimeBlocked
+            ? 'Peer is runtime-blocked due to inconsistent native state.'
+            : 'Peer trust is unavailable.',
         operation: NetworkOperation.sendFile,
-        peerId: device.deviceId,
+        peerId: peerId,
       );
     }
-    final capability = await _fetchCapabilities(device, trust);
-    if (capability is NetworkFailure<_NativeCapability>) {
-      final invalidation = await _invalidate(device.deviceId);
-      if (trust.authorization.relay &&
-          invalidation is NetworkSuccess<void> &&
-          _canFallbackToRelay(capability.error.code)) {
-        return _connectAndTransfer(device, file);
+    final trust = policy.trust!;
+
+    if (discovery != null) {
+      final capability = await _fetchCapabilities(discovery, trust);
+      if (capability is NetworkFailure<_NativeCapability>) {
+        await _policyPort.invalidateDirectEndpoint(peerId);
+        if (trust.authorization.relay &&
+            _canFallbackToRelay(capability.error.code)) {
+          return _connectAndTransfer(
+            peerId: peerId,
+            transferId: transferId,
+            file: file,
+          );
+        }
+        return NetworkFailure<TransferSession>(capability.error);
       }
-      return NetworkFailure<TransferSession>(capability.error);
-    }
-    final snapshot = (capability as NetworkSuccess<_NativeCapability>).data;
-    final endpoint = _formatEndpoint(device.ip, snapshot.nativePort);
 
-    late final NetworkResult<void> registerResult;
-    try {
-      registerResult = await _updateDirectEndpoint(device.deviceId, endpoint);
-    } catch (error) {
-      await _invalidateQuietly(device.deviceId);
-      return NetworkFailure(
-        lanNetworkError(
-          error,
-          operation: NetworkOperation.upsertPeer,
-          peerId: device.deviceId,
-        ),
+      final snapshot = (capability as NetworkSuccess<_NativeCapability>).data;
+      final endpoint = _formatEndpoint(discovery.ip, snapshot.nativePort);
+
+      final registerResult = await _policyPort.updateDirectEndpoint(
+        peerId,
+        endpoint,
+      );
+      if (registerResult is NetworkFailure<void>) {
+        await _policyPort.invalidateDirectEndpoint(peerId);
+        if (trust.authorization.relay &&
+            _canFallbackToRelay(registerResult.error.code)) {
+          return _connectAndTransfer(
+            peerId: peerId,
+            transferId: transferId,
+            file: file,
+          );
+        }
+        return NetworkFailure<TransferSession>(registerResult.error);
+      }
+
+      final connectResult = await _connect(peerId);
+      if (connectResult is NetworkFailure<void>) {
+        await _policyPort.invalidateDirectEndpoint(peerId);
+        if (trust.authorization.relay &&
+            _canFallbackToRelay(connectResult.error.code)) {
+          return _connectAndTransfer(
+            peerId: peerId,
+            transferId: transferId,
+            file: file,
+          );
+        }
+        return NetworkFailure<TransferSession>(connectResult.error);
+      }
+
+      return _transfer(peerId: peerId, transferId: transferId, file: file);
+    } else {
+      // Offline send path (no discovery candidate)
+      if (!trust.authorization.relay) {
+        return _failure(
+          code: NetworkErrorCode.noRoute,
+          message: 'Peer is not in local network and Relay is not authorized.',
+          operation: NetworkOperation.sendFile,
+          peerId: peerId,
+        );
+      }
+      await _policyPort.invalidateDirectEndpoint(peerId);
+      return _connectAndTransfer(
+        peerId: peerId,
+        transferId: transferId,
+        file: file,
       );
     }
-    if (registerResult is NetworkFailure<void>) {
-      // The registry updates its generation-scoped endpoint before asking the
-      // facade to register it.  Clear that candidate when registration fails
-      // so a later transfer cannot accidentally reuse a rejected endpoint.
-      await _invalidateQuietly(device.deviceId);
-      return NetworkFailure<TransferSession>(registerResult.error);
-    }
-
-    return _connectAndTransfer(device, file);
   }
 
-  Future<NetworkResult<TransferSession>> _connectAndTransfer(
-    LanDiscoveredPeer device,
-    File file,
-  ) async {
-    late final NetworkResult<void> connectResult;
+  Future<NetworkResult<TransferSession>> _connectAndTransfer({
+    required String peerId,
+    required String transferId,
+    required File file,
+  }) async {
+    final connectResult = await _connect(peerId);
+    if (connectResult is NetworkFailure<void>) {
+      return NetworkFailure<TransferSession>(connectResult.error);
+    }
+    return _transfer(peerId: peerId, transferId: transferId, file: file);
+  }
+
+  Future<NetworkResult<void>> _connect(String peerId) async {
     try {
-      connectResult = await _networkFacade.connectPeer(
-        device.deviceId,
+      return await _networkFacade.connectPeer(
+        peerId,
         communicationClass: CommunicationClass.bulkTransfer,
       );
     } catch (error) {
-      await _invalidateQuietly(device.deviceId);
-      return NetworkFailure(
+      return NetworkFailure<void>(
         lanNetworkError(
           error,
           operation: NetworkOperation.connect,
-          peerId: device.deviceId,
+          peerId: peerId,
         ),
       );
     }
-    if (connectResult is NetworkFailure<void>) {
-      await _invalidateQuietly(device.deviceId);
-      return NetworkFailure<TransferSession>(connectResult.error);
-    }
+  }
 
+  Future<NetworkResult<TransferSession>> _transfer({
+    required String peerId,
+    required String transferId,
+    required File file,
+  }) async {
     try {
       return await _networkFacade.transferFile(
-        transferId: const Uuid().v4(),
-        peerId: device.deviceId,
+        transferId: transferId,
+        peerId: peerId,
         filePath: file.absolute.path,
         communicationClass: CommunicationClass.bulkTransfer,
       );
     } catch (error) {
-      return NetworkFailure(
+      return NetworkFailure<TransferSession>(
         lanNetworkError(
           error,
           operation: NetworkOperation.sendFile,
-          peerId: device.deviceId,
+          peerId: peerId,
         ),
       );
     }
   }
 
-  /// Accepts a native offer only when the peer still has complete trust.
+  /// Accepts a native offer only when the peer still has complete trust and route authorization.
   Future<NetworkResult<void>> accept(IncomingTransferOffer offer) =>
       _respond(offer, accept: true);
 
@@ -235,33 +261,8 @@ final class LanNativeTransferCoordinator {
         peerId: deviceId,
       );
     }
-    final callback = _removeTrust;
-    if (callback != null) {
-      try {
-        return await callback(deviceId);
-      } catch (error) {
-        return NetworkFailure(
-          lanNetworkError(
-            error,
-            operation: NetworkOperation.removePeer,
-            peerId: deviceId,
-          ),
-        );
-      }
-    }
     try {
-      await _trustStore.delete(deviceId);
-    } catch (error) {
-      return NetworkFailure(
-        lanNetworkError(
-          error,
-          operation: NetworkOperation.removePeer,
-          peerId: deviceId,
-        ),
-      );
-    }
-    try {
-      return await _networkFacade.removePeer(deviceId);
+      return await _policyPort.removeTrust(deviceId);
     } catch (error) {
       return NetworkFailure(
         lanNetworkError(
@@ -278,48 +279,22 @@ final class LanNativeTransferCoordinator {
     required String peerId,
     required bool enabled,
   }) async {
-    final setAuth = _setRelayAuthorization;
-    if (setAuth != null) {
-      try {
-        return await setAuth(peerId, enabled);
-      } catch (error) {
-        return NetworkFailure<void>(
-          lanNetworkError(
-            error,
-            operation: NetworkOperation.upsertPeer,
-            peerId: peerId,
-          ),
-        );
-      }
-    }
-    if (enabled) {
-      try {
-        await _trustStore.setRelayAuthorization(peerId, true);
-        return const NetworkSuccess<void>(null);
-      } catch (error) {
-        return NetworkFailure<void>(
-          lanNetworkError(
-            error,
-            operation: NetworkOperation.upsertPeer,
-            peerId: peerId,
-          ),
-        );
-      }
-    } else {
-      try {
-        await _trustStore.setRelayAuthorization(peerId, false);
-        return const NetworkSuccess<void>(null);
-      } catch (error) {
-        return NetworkFailure<void>(
-          lanNetworkError(
-            error,
-            operation: NetworkOperation.upsertPeer,
-            peerId: peerId,
-          ),
-        );
-      }
+    try {
+      return await _policyPort.setRelayAuthorization(peerId, enabled);
+    } catch (error) {
+      return NetworkFailure<void>(
+        lanNetworkError(
+          error,
+          operation: NetworkOperation.upsertPeer,
+          peerId: peerId,
+        ),
+      );
     }
   }
+
+  /// Queries the current policy snapshot for a peer.
+  Future<NetworkResult<LanPeerPolicySnapshot>> getPeerPolicy(String peerId) =>
+      _policyPort.getPeerPolicy(peerId);
 
   /// Closes subscriptions and offer timers without disposing the App facade.
   Future<void> dispose() async {
@@ -332,8 +307,10 @@ final class LanNativeTransferCoordinator {
     _pendingOffers.clear();
     _decisionOperations.clear();
     _committedDecisions.clear();
+    _routeStates.clear();
     await _networkSubscription?.cancel();
     await _incomingOffers.close();
+    await _routeStateController.close();
     await _events.close();
   }
 
@@ -554,29 +531,19 @@ final class LanNativeTransferCoordinator {
     IncomingTransferOffer offer, {
     required bool accept,
   }) async {
-    LanPeerTrustRecord? trust;
-    try {
-      trust = await _trustStore.read(offer.peerId);
-    } catch (error) {
+    final policyResult = await _policyPort.getPeerPolicy(offer.peerId);
+    if (policyResult is NetworkFailure<LanPeerPolicySnapshot>) {
       final nativeRes = await _respondNative(offer, accept: false);
       if (nativeRes is NetworkSuccess<void>) {
         _committedDecisions[offer.transferId] = false;
         _pendingOffers.remove(offer.transferId);
         _offerTimers.remove(offer.transferId)?.cancel();
       }
-      return NetworkFailure<void>(
-        lanNetworkError(
-          error,
-          operation: NetworkOperation.respondToIncoming,
-          peerId: offer.peerId,
-        ),
-      );
+      return NetworkFailure<void>(policyResult.error);
     }
-
-    final isAuthorized =
-        trust != null && _isIncomingRouteAuthorized(trust, offer.routeType);
-
-    if (!isAuthorized) {
+    final policy = (policyResult as NetworkSuccess<LanPeerPolicySnapshot>).data;
+    if (!policy.isTrusted ||
+        !_isIncomingRouteAuthorized(policy.trust!, offer.routeType)) {
       final nativeRes = await _respondNative(offer, accept: false);
       if (nativeRes is NetworkSuccess<void>) {
         _committedDecisions[offer.transferId] = false;
@@ -585,10 +552,29 @@ final class LanNativeTransferCoordinator {
       }
       return _failure(
         code: NetworkErrorCode.authenticationFailed,
-        message: 'Incoming transfer peer is not trusted.',
+        message:
+            'Incoming transfer peer is not trusted or route is unauthorized.',
         operation: NetworkOperation.respondToIncoming,
         peerId: offer.peerId,
       );
+    }
+
+    if (accept && _storageService != null) {
+      final hasSpace = await _storageService.hasSufficientSpace(offer.fileSize);
+      if (!hasSpace) {
+        final nativeRes = await _respondNative(offer, accept: false);
+        if (nativeRes is NetworkSuccess<void>) {
+          _committedDecisions[offer.transferId] = false;
+          _pendingOffers.remove(offer.transferId);
+          _offerTimers.remove(offer.transferId)?.cancel();
+        }
+        return _failure(
+          code: NetworkErrorCode.resourceLimit,
+          message: 'Insufficient storage space for incoming transfer.',
+          operation: NetworkOperation.respondToIncoming,
+          peerId: offer.peerId,
+        );
+      }
     }
 
     final nativeResult = await _respondNative(offer, accept: accept);
@@ -638,35 +624,99 @@ final class LanNativeTransferCoordinator {
   void _handleNetworkEvent(SdkEvent event) {
     if (_disposed) return;
     if (event case final IncomingTransferOffer offer) {
-      if (_committedDecisions.containsKey(offer.transferId)) {
-        return;
-      }
-      final isNewOffer = !_pendingOffers.containsKey(offer.transferId);
-      _pendingOffers[offer.transferId] = offer;
-      _offerTimers[offer.transferId] ??= Timer(offerTimeout, () {
-        unawaited(_expireOffer(offer));
-      });
-      if (isNewOffer && !_incomingOffers.isClosed) {
-        _incomingOffers.add(offer);
-      }
+      unawaited(_processIncomingOffer(offer));
     }
+    _updateRouteStateFromEvent(event);
     if (!_events.isClosed) _events.add(event);
   }
 
-  Future<void> _invalidateQuietly(String deviceId) async {
-    await _invalidate(deviceId);
+  Future<void> _processIncomingOffer(IncomingTransferOffer offer) async {
+    if (_disposed) return;
+    final policyResult = await _policyPort.getPeerPolicy(offer.peerId);
+    if (policyResult is NetworkFailure<LanPeerPolicySnapshot>) {
+      await _respondNative(offer, accept: false);
+      return;
+    }
+    final policy = (policyResult as NetworkSuccess<LanPeerPolicySnapshot>).data;
+    if (!policy.isTrusted ||
+        !_isIncomingRouteAuthorized(policy.trust!, offer.routeType)) {
+      await _respondNative(offer, accept: false);
+      return;
+    }
+
+    if (_committedDecisions.containsKey(offer.transferId)) {
+      return;
+    }
+    final isNewOffer = !_pendingOffers.containsKey(offer.transferId);
+    _pendingOffers[offer.transferId] = offer;
+    _offerTimers[offer.transferId] ??= Timer(offerTimeout, () {
+      unawaited(_expireOffer(offer));
+    });
+    if (isNewOffer && !_incomingOffers.isClosed) {
+      _incomingOffers.add(offer);
+    }
   }
 
-  Future<NetworkResult<void>> _invalidate(String deviceId) async {
-    try {
-      return await _invalidateDirectEndpoint(deviceId);
-    } on Object catch (error) {
-      return NetworkFailure(
-        lanNetworkError(
-          error,
-          operation: NetworkOperation.upsertPeer,
-          peerId: deviceId,
-        ),
+  void _updateRouteStateFromEvent(SdkEvent event) {
+    var changed = false;
+    if (event case final PeerStateChanged stateEvent) {
+      final current =
+          _routeStates[stateEvent.peerId] ?? const LanPeerRouteState();
+      final isOnline = stateEvent.state == PeerConnectionState.connected;
+      final activeRoute = isOnline
+          ? stateEvent.routeType
+          : NetworkRouteType.unspecified;
+      final updated = current.copyWith(
+        activeRoute: activeRoute,
+        directAvailable:
+            stateEvent.routeType == NetworkRouteType.quicDirect ||
+                stateEvent.routeType == NetworkRouteType.lan
+            ? isOnline
+            : current.directAvailable,
+        relayAvailable: stateEvent.routeType == NetworkRouteType.relay
+            ? isOnline
+            : current.relayAvailable,
+      );
+      _routeStates[stateEvent.peerId] = updated;
+      changed = true;
+    } else if (event case final RouteChanged routeEvent) {
+      final snap = routeEvent.snapshot;
+      final current = _routeStates[snap.peerId] ?? const LanPeerRouteState();
+      final isDirect =
+          snap.routeType == NetworkRouteType.quicDirect ||
+          snap.routeType == NetworkRouteType.lan;
+      final isRelay = snap.routeType == NetworkRouteType.relay;
+      final updated = current.copyWith(
+        activeRoute: snap.routeType,
+        endpoint: snap.endpoint,
+        directAvailable: isDirect ? true : current.directAvailable,
+        relayAvailable: isRelay ? true : current.relayAvailable,
+      );
+      _routeStates[snap.peerId] = updated;
+      changed = true;
+    } else if (event case final PeerPresenceChanged presenceEvent) {
+      final current =
+          _routeStates[presenceEvent.peerId] ?? const LanPeerRouteState();
+      final isOnline =
+          presenceEvent.state == PeerPresenceState.online ||
+          presenceEvent.state == PeerPresenceState.updated;
+      final updated = current.copyWith(relayAvailable: isOnline);
+      _routeStates[presenceEvent.peerId] = updated;
+      changed = true;
+    } else if (event case final PeerPresenceSnapshot snapshotEvent) {
+      for (final peer in snapshotEvent.peers) {
+        final current = _routeStates[peer.peerId] ?? const LanPeerRouteState();
+        final isOnline =
+            peer.state == PeerPresenceState.online ||
+            peer.state == PeerPresenceState.updated;
+        _routeStates[peer.peerId] = current.copyWith(relayAvailable: isOnline);
+      }
+      changed = true;
+    }
+
+    if (changed && !_routeStateController.isClosed) {
+      _routeStateController.add(
+        Map<String, LanPeerRouteState>.unmodifiable(_routeStates),
       );
     }
   }
@@ -713,10 +763,11 @@ final class LanNativeTransferCoordinator {
 
   static bool _canFallbackToRelay(NetworkErrorCode code) => switch (code) {
     NetworkErrorCode.noRoute ||
-    NetworkErrorCode.timeout ||
     NetworkErrorCode.peerOffline ||
-    NetworkErrorCode.ioError ||
-    NetworkErrorCode.pathLost => true,
+    NetworkErrorCode.timeout ||
+    NetworkErrorCode.pathLost ||
+    NetworkErrorCode.quicError ||
+    NetworkErrorCode.ioError => true,
     _ => false,
   };
 

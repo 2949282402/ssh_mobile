@@ -311,6 +311,53 @@ enum LanPayloadType {
   }
 }
 
+/// Classifies an attachment into a stable [LanPayloadType] (image, video, audio, or file).
+LanPayloadType classifyAttachment({
+  required String fileName,
+  String? mimeType,
+}) {
+  if (mimeType != null && mimeType.isNotEmpty) {
+    final lower = mimeType.toLowerCase();
+    if (lower.startsWith('image/')) return LanPayloadType.image;
+    if (lower.startsWith('video/')) return LanPayloadType.video;
+    if (lower.startsWith('audio/')) return LanPayloadType.audio;
+  }
+  final dotIndex = fileName.lastIndexOf('.');
+  if (dotIndex == -1 || dotIndex == fileName.length - 1) {
+    return LanPayloadType.file;
+  }
+  final ext = fileName.substring(dotIndex + 1).toLowerCase();
+  const imageExts = {
+    'jpg',
+    'jpeg',
+    'png',
+    'gif',
+    'webp',
+    'bmp',
+    'heic',
+    'heif',
+    'svg',
+    'ico',
+  };
+  const videoExts = {
+    'mp4',
+    'mkv',
+    'avi',
+    'mov',
+    'wmv',
+    'flv',
+    'webm',
+    'm4v',
+    '3gp',
+  };
+  const audioExts = {'mp3', 'wav', 'aac', 'flac', 'ogg', 'm4a', 'wma', 'opus'};
+
+  if (imageExts.contains(ext)) return LanPayloadType.image;
+  if (videoExts.contains(ext)) return LanPayloadType.video;
+  if (audioExts.contains(ext)) return LanPayloadType.audio;
+  return LanPayloadType.file;
+}
+
 /// Transfer status state
 enum LanTransferStatus {
   pending,

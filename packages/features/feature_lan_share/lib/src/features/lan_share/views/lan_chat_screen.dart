@@ -79,7 +79,8 @@ class _LanChatScreenState extends State<LanChatScreen> {
     BuildContext context,
     AppStrings strings,
     LanShareViewModel vm,
-    LanDiscoveredPeer device,
+    String peerId,
+    LanDiscoveredPeer? device,
   ) {
     showModalBottomSheet(
       context: context,
@@ -94,12 +95,27 @@ class _LanChatScreenState extends State<LanChatScreen> {
                 Navigator.pop(ctx);
                 final file = await FilePicker.pickFile(type: FileType.image);
                 if (file != null && file.path != null) {
-                  final result = await vm.sendFile(device, file.path!);
+                  final result = await vm.sendFile(
+                    peerId: peerId,
+                    filePath: file.path!,
+                    discovery: device,
+                  );
                   if (result is NetworkFailure<TransferSession> &&
-                      result.error.code ==
-                          NetworkErrorCode.authenticationFailed &&
                       context.mounted) {
-                    _showE2ENotSupportedError(context, strings);
+                    if (result.error.code ==
+                        NetworkErrorCode.authenticationFailed) {
+                      _showE2ENotSupportedError(context, strings);
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            strings.isEnglish
+                                ? 'Failed to send image: ${result.error.message}'
+                                : '发送图片失败：${result.error.message}',
+                          ),
+                        ),
+                      );
+                    }
                   }
                 }
               },
@@ -112,12 +128,27 @@ class _LanChatScreenState extends State<LanChatScreen> {
                 Navigator.pop(ctx);
                 final file = await FilePicker.pickFile(type: FileType.video);
                 if (file != null && file.path != null) {
-                  final result = await vm.sendFile(device, file.path!);
+                  final result = await vm.sendFile(
+                    peerId: peerId,
+                    filePath: file.path!,
+                    discovery: device,
+                  );
                   if (result is NetworkFailure<TransferSession> &&
-                      result.error.code ==
-                          NetworkErrorCode.authenticationFailed &&
                       context.mounted) {
-                    _showE2ENotSupportedError(context, strings);
+                    if (result.error.code ==
+                        NetworkErrorCode.authenticationFailed) {
+                      _showE2ENotSupportedError(context, strings);
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            strings.isEnglish
+                                ? 'Failed to send video: ${result.error.message}'
+                                : '发送视频失败：${result.error.message}',
+                          ),
+                        ),
+                      );
+                    }
                   }
                 }
               },
@@ -130,12 +161,27 @@ class _LanChatScreenState extends State<LanChatScreen> {
                 Navigator.pop(ctx);
                 final file = await FilePicker.pickFile();
                 if (file != null && file.path != null) {
-                  final result = await vm.sendFile(device, file.path!);
+                  final result = await vm.sendFile(
+                    peerId: peerId,
+                    filePath: file.path!,
+                    discovery: device,
+                  );
                   if (result is NetworkFailure<TransferSession> &&
-                      result.error.code ==
-                          NetworkErrorCode.authenticationFailed &&
                       context.mounted) {
-                    _showE2ENotSupportedError(context, strings);
+                    if (result.error.code ==
+                        NetworkErrorCode.authenticationFailed) {
+                      _showE2ENotSupportedError(context, strings);
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            strings.isEnglish
+                                ? 'Failed to send file: ${result.error.message}'
+                                : '发送文件失败：${result.error.message}',
+                          ),
+                        ),
+                      );
+                    }
                   }
                 }
               },
@@ -146,6 +192,18 @@ class _LanChatScreenState extends State<LanChatScreen> {
               title: Text(strings.lanShareClipboard),
               onTap: () async {
                 Navigator.pop(ctx);
+                if (device == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        strings.isEnglish
+                            ? 'Clipboard sync requires direct local network.'
+                            : '剪贴板同步暂不支持中继传输，需处于同一局域网。',
+                      ),
+                    ),
+                  );
+                  return;
+                }
                 final data = await Clipboard.getData(Clipboard.kTextPlain);
                 if (data != null &&
                     data.text != null &&
@@ -332,8 +390,21 @@ class _LanChatScreenState extends State<LanChatScreen> {
                                   ),
                                 );
                                 if (confirm == true) {
-                                  await vm.forgetDevice(widget.targetDeviceId);
-                                  if (mounted) {
+                                  final result = await vm.forgetDevice(
+                                    widget.targetDeviceId,
+                                  );
+                                  if (result is NetworkFailure<void> &&
+                                      mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          strings.isEnglish
+                                              ? 'Failed to forget device: ${result.error.message}'
+                                              : '解除设备配对失败：${result.error.message}',
+                                        ),
+                                      ),
+                                    );
+                                  } else if (mounted) {
                                     _refreshPairing(vm);
                                   }
                                 }
@@ -452,7 +523,9 @@ class _LanChatScreenState extends State<LanChatScreen> {
                         child: Row(
                           children: [
                             Icon(
-                              Icons.info_outline_rounded,
+                              peerState?.trust?.authorization.relay == true
+                                  ? Icons.cloud_done_rounded
+                                  : Icons.info_outline_rounded,
                               size: 18,
                               color: Theme.of(
                                 context,
@@ -461,7 +534,11 @@ class _LanChatScreenState extends State<LanChatScreen> {
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                strings.lanShareDeviceOfflineHint,
+                                peerState?.trust?.authorization.relay == true
+                                    ? (strings.isEnglish
+                                          ? 'Device is offline on LAN. Relay is available for file transfers.'
+                                          : '设备当前不在局域网，已启用中继传输附件。')
+                                    : strings.lanShareDeviceOfflineHint,
                                 style: Theme.of(context).textTheme.bodySmall
                                     ?.copyWith(
                                       color: Theme.of(
@@ -515,7 +592,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
                           ),
                         ),
                       )
-                    else if (isOnline)
+                    else
                       Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 8.0,
@@ -540,12 +617,21 @@ class _LanChatScreenState extends State<LanChatScreen> {
                                   Icons.add_circle_outline_rounded,
                                 ),
                                 color: Theme.of(context).colorScheme.primary,
-                                onPressed: () => _showAttachmentOptions(
-                                  context,
-                                  strings,
-                                  vm,
-                                  onlineDevice!,
-                                ),
+                                onPressed:
+                                    (isOnline ||
+                                        (peerState
+                                                ?.trust
+                                                ?.authorization
+                                                .relay ==
+                                            true))
+                                    ? () => _showAttachmentOptions(
+                                        context,
+                                        strings,
+                                        vm,
+                                        widget.targetDeviceId,
+                                        onlineDevice,
+                                      )
+                                    : null,
                               ),
                               Expanded(
                                 child: Container(
@@ -561,12 +647,17 @@ class _LanChatScreenState extends State<LanChatScreen> {
                                   ),
                                   child: TextField(
                                     controller: _textController,
+                                    enabled: isOnline,
                                     minLines: 1,
                                     maxLines: 4,
                                     keyboardType: TextInputType.multiline,
                                     textInputAction: TextInputAction.newline,
                                     decoration: InputDecoration(
-                                      hintText: strings.lanShareChatInputHint,
+                                      hintText: isOnline
+                                          ? strings.lanShareChatInputHint
+                                          : (strings.isEnglish
+                                                ? 'Text unavailable offline'
+                                                : '文本消息仅局域网内可用'),
                                       filled: false,
                                       fillColor: Colors.transparent,
                                       border: InputBorder.none,
@@ -583,27 +674,31 @@ class _LanChatScreenState extends State<LanChatScreen> {
                               ),
                               IconButton(
                                 icon: const Icon(Icons.send_rounded),
-                                color: Theme.of(context).colorScheme.primary,
-                                onPressed: () async {
-                                  final val = _textController.text.trim();
-                                  if (val.isNotEmpty) {
-                                    _textController.clear();
-                                    final result = await vm.sendText(
-                                      onlineDevice!,
-                                      val,
-                                    );
-                                    if (result is NetworkFailure<void> &&
-                                        result.error.code ==
-                                            NetworkErrorCode
-                                                .authenticationFailed &&
-                                        context.mounted) {
-                                      _showE2ENotSupportedError(
-                                        context,
-                                        strings,
-                                      );
-                                    }
-                                  }
-                                },
+                                color: isOnline
+                                    ? Theme.of(context).colorScheme.primary
+                                    : Theme.of(context).disabledColor,
+                                onPressed: isOnline && onlineDevice != null
+                                    ? () async {
+                                        final val = _textController.text.trim();
+                                        if (val.isNotEmpty) {
+                                          _textController.clear();
+                                          final result = await vm.sendText(
+                                            onlineDevice,
+                                            val,
+                                          );
+                                          if (result is NetworkFailure<void> &&
+                                              result.error.code ==
+                                                  NetworkErrorCode
+                                                      .authenticationFailed &&
+                                              context.mounted) {
+                                            _showE2ENotSupportedError(
+                                              context,
+                                              strings,
+                                            );
+                                          }
+                                        }
+                                      }
+                                    : null,
                               ),
                             ],
                           ),
