@@ -1,6 +1,6 @@
-// Network Protocol V2 Schema Parity Gate
+// Critical Network V2 Wire Contract Parity Gate
 //
-// Automatically verifies tag and field parity among:
+// Automatically verifies tag and field parity of critical commands and events among:
 // 1. protocol/proto/network/v2/network.proto (Canonical schema)
 // 2. native/network_core/crates/network-protocol/src/lib.rs (Rust prost structs)
 // 3. apps/ssh_mobile_full/lib/services/network/network_protocol_v2_codec.dart (Dart hand-written codec)
@@ -52,7 +52,7 @@ void main(List<String> args) {
   }
 
   stdout.writeln(
-    'SUCCESS: Network Protocol V2 Canonical Wire Parity verified across proto, Rust, and Dart.',
+    'SUCCESS: Critical Network V2 wire contracts verified across proto, Rust, and Dart.',
   );
 }
 

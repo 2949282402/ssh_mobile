@@ -112,7 +112,9 @@ void main() {
         appOwnedX25519PrivateSeed: x25519A,
         peerTrustStore: storeA,
       );
-      final storageA = LanStorageService();
+      final storageA = LanStorageService(
+        sandboxDirectoryProvider: () async => sandboxA,
+      );
       final transferServiceA = LanTransferService(
         currentDeviceId: 'device-a',
         securityService: securityA,
@@ -145,7 +147,9 @@ void main() {
         appOwnedX25519PrivateSeed: x25519B,
         peerTrustStore: storeB,
       );
-      final storageB = LanStorageService();
+      final storageB = LanStorageService(
+        sandboxDirectoryProvider: () async => sandboxB,
+      );
       final transferServiceB1 = LanTransferService(
         currentDeviceId: 'device-b',
         securityService: securityB,

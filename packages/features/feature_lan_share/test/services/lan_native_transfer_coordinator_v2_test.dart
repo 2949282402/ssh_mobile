@@ -741,6 +741,7 @@ final class _Fixture {
         peerTrustStore: store,
       ),
       storageService: LanStorageService(
+        sandboxDirectoryProvider: () async => Directory.systemTemp,
         freeDiskSpaceMbProvider: () async => freeDiskSpaceMb,
       ),
     );
@@ -757,6 +758,7 @@ final class _Fixture {
       networkFacade: facade,
       policyPort: policyPort,
       storageService: LanStorageService(
+        sandboxDirectoryProvider: () async => Directory.systemTemp,
         freeDiskSpaceMbProvider: () async => freeDiskSpaceMb,
       ),
       offerTimeout: offerTimeout,

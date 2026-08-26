@@ -13,6 +13,7 @@ void main() {
       'hasSufficientSpace returns true when disk space exceeds required + 100MB buffer',
       () async {
         final storage = LanStorageService(
+          sandboxDirectoryProvider: () async => Directory.systemTemp,
           freeDiskSpaceBytesProvider: () async =>
               1024 * 1024 * 1024, // 1 GiB free
         );
@@ -26,6 +27,7 @@ void main() {
       'hasSufficientSpace returns false when disk space is below required + 100MB buffer',
       () async {
         final storage = LanStorageService(
+          sandboxDirectoryProvider: () async => Directory.systemTemp,
           freeDiskSpaceBytesProvider: () async =>
               150 * 1024 * 1024, // 150 MiB free
         );
@@ -39,6 +41,7 @@ void main() {
       'hasSufficientSpace fails closed when disk space query returns null',
       () async {
         final storage = LanStorageService(
+          sandboxDirectoryProvider: () async => Directory.systemTemp,
           freeDiskSpaceBytesProvider: () async => null,
         );
 
@@ -50,6 +53,7 @@ void main() {
       'hasSufficientSpace fails closed when disk space query throws',
       () async {
         final storage = LanStorageService(
+          sandboxDirectoryProvider: () async => Directory.systemTemp,
           freeDiskSpaceBytesProvider: () async =>
               throw const FileSystemException('Space query error'),
         );
@@ -62,7 +66,10 @@ void main() {
       final mockPort = _MockDiskSpacePort(
         freeBytes: 80 * 1024 * 1024,
       ); // 80 MiB
-      final storage = LanStorageService(diskSpacePort: mockPort);
+      final storage = LanStorageService(
+        sandboxDirectoryProvider: () async => Directory.systemTemp,
+        diskSpacePort: mockPort,
+      );
 
       // 80 MiB is less than 100 MiB buffer -> false even for 1 byte
       expect(await storage.hasSufficientSpace(1), isFalse);
@@ -133,6 +140,18 @@ void main() {
         // Deleting outside file is rejected
         expect(await storage.deleteSandboxFile(outsideFile.path), isFalse);
         expect(outsideFile.existsSync(), isTrue);
+      },
+    );
+
+    test(
+      'canonical sandbox lookup failure throws and does not create systemTemp fallback',
+      () async {
+        final storage = LanStorageService();
+        // In Flutter unit tests without path_provider channel mock,
+        // getApplicationDocumentsDirectory throws MissingPluginException.
+        // It must propagate the error (fail-closed) rather than silently
+        // falling back to Directory.systemTemp.
+        expect(() => storage.getSandboxDirectory(), throwsA(anything));
       },
     );
   });

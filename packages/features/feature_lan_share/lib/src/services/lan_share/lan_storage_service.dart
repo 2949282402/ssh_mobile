@@ -46,22 +46,12 @@ class LanStorageService {
       if (!await directory.exists()) await directory.create(recursive: true);
       return directory;
     }
-    try {
-      final docsDir = await getApplicationDocumentsDirectory();
-      final cacheDir = Directory(p.join(docsDir.path, _cacheFolderName));
-      if (!await cacheDir.exists()) {
-        await cacheDir.create(recursive: true);
-      }
-      return cacheDir;
-    } catch (_) {
-      final tempDir = Directory(
-        p.join(Directory.systemTemp.path, _cacheFolderName),
-      );
-      if (!await tempDir.exists()) {
-        await tempDir.create(recursive: true);
-      }
-      return tempDir;
+    final docsDir = await getApplicationDocumentsDirectory();
+    final cacheDir = Directory(p.join(docsDir.path, _cacheFolderName));
+    if (!await cacheDir.exists()) {
+      await cacheDir.create(recursive: true);
     }
+    return cacheDir;
   }
 
   /// Get target file path inside sandbox for an incoming payload
