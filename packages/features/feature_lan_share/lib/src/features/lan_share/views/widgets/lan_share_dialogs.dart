@@ -42,7 +42,11 @@ extension _LanShareDialogActions on _LanShareScreenState {
                   return;
                 }
                 for (final path in filePaths) {
-                  final sendResult = await vm.sendFile(dev, path);
+                  final sendResult = await vm.sendFile(
+                    peerId: dev.deviceId,
+                    filePath: path,
+                    discovery: dev,
+                  );
                   if (sendResult is NetworkFailure && mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(content: Text(strings.lanShareOffline)),

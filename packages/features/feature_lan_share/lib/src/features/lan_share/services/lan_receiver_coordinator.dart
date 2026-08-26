@@ -534,7 +534,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
       if (_disposed || !identical(_networkFacade, facade)) return;
       final trust = await peerTrustStore.read(peer.deviceId);
       if (trust == null) return;
-      final registerResult = await peerRegistry.registerTrust(trust);
+      final registerResult = await peerRegistry.reconcilePersistedTrust(trust);
       if (registerResult is NetworkFailure<void>) {
         logger.warning(
           'Native paired peer registration failed',
@@ -586,13 +586,8 @@ final class LanReceiverCoordinator extends ChangeNotifier {
             _nativeTransferCoordinator = LanNativeTransferCoordinator(
               transferService: transfer,
               networkFacade: facade,
-              trustStore: peerTrustStore,
-              updateDirectEndpoint: peerRegistry.updateDirectEndpoint,
-              invalidateDirectEndpoint: peerRegistry.invalidateDirectEndpoint,
-              removeTrust: peerRegistry.removeTrust,
-              setRelayAuthorization: (deviceId, enabled) => enabled
-                  ? peerRegistry.authorizeRelayForPeer(deviceId)
-                  : peerRegistry.revokeRelayForPeer(deviceId),
+              policyPort: peerRegistry,
+              storageService: storage,
             );
             await _bindNativeOfferStream(_nativeTransferCoordinator!);
             final discoveredPeers = discovery.currentDiscoveredPeers;

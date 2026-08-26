@@ -2,6 +2,7 @@
 // 网络事件处理位于独立 part 文件。
 
 import 'dart:async';
+import 'dart:io';
 import 'package:drift/drift.dart';
 
 import 'package:flutter/foundation.dart';
@@ -49,6 +50,7 @@ class LanShareViewModel extends ChangeNotifier {
   StreamSubscription? _pairingInviteSubscription;
   StreamSubscription? _connectionStateSubscription;
   StreamSubscription<List<LanPeerTrustRecord>>? _trustSubscription;
+  StreamSubscription? _routeStateSubscription;
   Timer? _keepAliveTimer;
   Future<void>? _keepAliveOperation;
   Future<void> _historyRefreshSerial = Future<void>.value();
@@ -109,8 +111,16 @@ class LanShareViewModel extends ChangeNotifier {
   /// trust record and no current endpoint remains visible as trusted offline.
   List<LanPeerViewState> get peerStates {
     final states = <String, LanPeerViewState>{};
+    final routeStates =
+        nativeTransferCoordinator?.currentRouteStates ?? const {};
     for (final trust in _trustRecords.values) {
-      states[trust.deviceId] = LanPeerViewState(trust: trust);
+      final routeState =
+          routeStates[trust.deviceId] ??
+          LanPeerRouteState(relayAvailable: trust.authorization.relay);
+      states[trust.deviceId] = LanPeerViewState(
+        trust: trust,
+        route: routeState,
+      );
     }
     for (final peer in _devices) {
       final nativePort = peer.advertisedNativePort;
@@ -119,11 +129,16 @@ class LanShareViewModel extends ChangeNotifier {
           nativePort != null &&
           nativePort > 0 &&
           nativePort <= 65535;
+      final existing = states[peer.deviceId];
+      final routeState =
+          routeStates[peer.deviceId] ??
+          existing?.route ??
+          const LanPeerRouteState();
       states[peer.deviceId] = LanPeerViewState(
         peerId: peer.deviceId,
-        trust: _trustRecords[peer.deviceId],
+        trust: existing?.trust ?? _trustRecords[peer.deviceId],
         discovery: peer,
-        route: LanPeerRouteState(directAvailable: directAvailable),
+        route: routeState.copyWith(directAvailable: directAvailable),
       );
     }
     return List<LanPeerViewState>.unmodifiable(states.values);
@@ -271,6 +286,11 @@ class LanShareViewModel extends ChangeNotifier {
     _networkProgressSubscription = nativeTransferCoordinator?.events.listen(
       _handleNetworkEvent,
     );
+    _routeStateSubscription = nativeTransferCoordinator?.routeStates.listen((
+      _,
+    ) {
+      if (!_disposed) notifyListeners();
+    });
     _recallSubscription = transferService.recalledMessageIdStream.listen((
       recall,
     ) {
@@ -379,6 +399,7 @@ class LanShareViewModel extends ChangeNotifier {
       _pairingInviteSubscription,
       _connectionStateSubscription,
       _trustSubscription,
+      _routeStateSubscription,
     ];
     Object? firstError;
     StackTrace? firstStackTrace;
@@ -394,6 +415,7 @@ class LanShareViewModel extends ChangeNotifier {
     _incomingMessageSubscription = null;
     _progressSubscription = null;
     _networkProgressSubscription = null;
+    _routeStateSubscription = null;
     _recallSubscription = null;
     _historyDbSubscription = null;
     _announcedPeerSubscription = null;
@@ -595,23 +617,72 @@ class LanShareViewModel extends ChangeNotifier {
   }
 
   /// Delegates binary transfer orchestration to the Network V2 coordinator.
-  Future<NetworkResult<TransferSession>> sendFile(
-    LanDiscoveredPeer device,
-    String filePath,
-  ) {
+  Future<NetworkResult<TransferSession>> sendFile({
+    required String peerId,
+    required String filePath,
+    LanDiscoveredPeer? discovery,
+  }) async {
+    final file = File(filePath);
+    final stat = await file.stat();
+    final fileName = file.uri.pathSegments.isEmpty
+        ? 'file.bin'
+        : file.uri.pathSegments.last;
+    final payloadType = classifyAttachment(fileName: fileName);
+    final transferId = const Uuid().v4();
+
+    final msg = LanMessage(
+      id: transferId,
+      senderId: discoveryService.currentDeviceId,
+      senderAlias: discoveryService.currentDeviceAlias,
+      receiverId: peerId,
+      payloadType: payloadType,
+      fileName: fileName,
+      fileSize: stat.size,
+      status: LanTransferStatus.transferring,
+      createdAt: DateTime.now(),
+      isIncoming: false,
+    );
+
+    await _saveMessageToDb(msg);
+
     final coordinator = nativeTransferCoordinator;
     if (coordinator == null) {
-      return Future.value(
-        _networkFailure(
-          code: NetworkErrorCode.noRoute,
-          message: 'Native transfer coordinator is unavailable.',
-          operation: NetworkOperation.sendFile,
-          peerId: device.deviceId,
-        ),
+      final error = NetworkError(
+        code: NetworkErrorCode.noRoute,
+        message: 'Native transfer coordinator is unavailable.',
+        operation: NetworkOperation.sendFile,
+        peerId: peerId,
+      );
+      await historyDao.updateRecordStatus(
+        transferId,
+        LanTransferStatus.failed.toJson(),
+        failureReason: error.code.name,
+      );
+      return NetworkFailure<TransferSession>(error);
+    }
+
+    final result = await coordinator.sendFile(
+      peerId: peerId,
+      transferId: transferId,
+      filePath: filePath,
+      discovery: discovery,
+    );
+
+    if (result is NetworkFailure<TransferSession>) {
+      await historyDao.updateRecordStatus(
+        transferId,
+        LanTransferStatus.failed.toJson(),
+        failureReason: result.error.code.name,
       );
     }
-    return coordinator.sendFile(device, filePath);
+    return result;
   }
+
+  /// Convenience method for discovered peers.
+  Future<NetworkResult<TransferSession>> sendFileToDiscoveredPeer(
+    LanDiscoveredPeer device,
+    String filePath,
+  ) => sendFile(peerId: device.deviceId, filePath: filePath, discovery: device);
 
   /// 远端撤回消息，并将本地历史记录标记为已撤回。
   Future<NetworkResult<void>> recallMessage(
@@ -646,21 +717,23 @@ class LanShareViewModel extends ChangeNotifier {
   }
 
   /// 解除设备配对； native peer removal is owned by the transfer coordinator.
-  Future<void> forgetDevice(String deviceId) async {
+  Future<NetworkResult<void>> forgetDevice(String deviceId) async {
     final coordinator = nativeTransferCoordinator;
     if (coordinator == null) {
-      throw StateError(
-        'Cannot unpair a LAN peer without the native transfer coordinator.',
+      return _networkFailure(
+        code: NetworkErrorCode.noRoute,
+        message:
+            'Cannot unpair a LAN peer without the native transfer coordinator.',
+        operation: NetworkOperation.removePeer,
+        peerId: deviceId,
       );
     }
     final result = await coordinator.removeTrustedPeer(deviceId);
-    if (result is NetworkFailure<void>) {
-      throw StateError(
-        'Failed to remove trusted LAN peer: ${result.error.code.name}',
-      );
+    if (result is NetworkSuccess<void>) {
+      _trustRecords.remove(deviceId);
+      if (!_disposed) notifyListeners();
     }
-    _trustRecords.remove(deviceId);
-    if (!_disposed) notifyListeners();
+    return result;
   }
 
   /// 设置对端设备的 Relay 传输授权策略。
