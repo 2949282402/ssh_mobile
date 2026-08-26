@@ -1,4 +1,4 @@
-最新更新时间：2026-08-25
+最新更新时间：2026-08-26
 
 # feature_lan_share
 
@@ -69,7 +69,7 @@ control HTTP、WSS Relay enrollment/编排、Web Share、传输历史和非秘�
 旧 `apps/ssh_mobile_full/lib/features/lan_share/**`、
 `apps/ssh_mobile_full/lib/services/lan_share/**`、V1 pairing/trust helpers 和 Relay
 facade 已删除；App Shell 只保留 `lan_share_feature_adapters.dart`、LAN Control V2
-HTTP/identity adapters 以及 Native Network V2 的共享 facade 创建边界。当前 LAN
+HTTP/identity adapters 以及 Native Network V2 的共享 facade 借用边界。当前 LAN
 Control 只暴露 V2 pairing/upload contract。
 
 ## Package contract

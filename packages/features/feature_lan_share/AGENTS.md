@@ -14,14 +14,20 @@
   通过 `LanShare*Port` 注入。
 - 网络客户端契约统一来自 `network_sdk`；Feature 只消费 `NetworkFacade`，不得
   自行创建 Socket、FFI、HTTP client、native handle 或第二套传输实现。
+  `LanShareNetworkAccessPort` 只允许 borrow AppRuntime-owned `NetworkFacade`，
+  不接受 runtime configuration 参数。
   `BootstrapClient` 和 `NetworkCommandGateway` 只能由 App Shell adapter 注入；
   网络结果、Session、Event 和 Facade 类型必须直接从 `network_sdk` 导入，
   不得恢复本地模型桥接。
+- Network V2 binary transfer lifecycle event（Progress / Completed / Failed）
+  必须携带 authoritative peer identity（`peerId`）；missing 或 mismatch peerId 必须 fail-closed，
+  严禁仅凭 `transferId` 单标识应用传输状态或采纳沙箱文件。
 - `LanShareModule` 是 `lan_share.db`、Repository、Receiver 和 Route Service
   的 Owner；Route Scope 只负责 ViewModel 生命周期。
 - Receiver 只创建/释放 LAN listener、discovery、配对资源和借给 Relay 的
   Feature 资源，借用 AppRuntime 创建的共享 `NetworkFacade`；不得 start/stop/
   dispose/reconfigure App Scope 的 Facade、NetworkRuntime 或 native handle。
+  所有 deactivation、close 与 initialization failure 清理统一执行 detach/release 借用语义。
   `LanRelayCoordinator` 独占 endpoint 观察、enrollment、refresh、Relay 事件订阅
   和有限重连 Timer，只能依赖 `LanRelay*Port`，且不得停止或释放借入的 Facade/Runtime。
 - Trust、Discovery、Reachability、Route Availability 和 Relay Enrollment/Authorization
@@ -104,7 +110,7 @@
 - `test/features/lan_network_v2_acceptance_matrix_test.dart`：端到端 offline relay、direct->relay fallback、
   blocked incoming rejection、re-pair reconciliation、neutral inbox to sandbox adoption、cross-layer outgoing/incoming history lifecycle；
 - `scripts/bash/contracts/check_network_v2_contract.dart`：Protocol V2 schema wire parity 跨 canonical proto、
-  Rust prost structs 与 Dart codecs 的块结构级别自动化门禁；
+  Rust prost structs 与 Dart codecs 的块结构级别自动化门禁（包括 `PeerTransferProgressEvent` tag 32 与 tag 1..5 parity）；
 - `test/services/lan_http_v2_route_test.dart`：旧 `/api/lan/upload` 路径不存在。
 - `test/services/lan_web_share_request_handler_test.dart`：WebShare production
   route handler 的有界正文 drain、早期拒绝、oversize/chunked overrun、加密上传和
