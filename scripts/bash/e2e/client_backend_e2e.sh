@@ -47,7 +47,7 @@ esac
 
 compose() {
   docker compose --project-name "$PROJECT_NAME" --env-file "$ENV_FILE" \
-    --file "$ROOT_DIR/relay/compose.yaml" "${COMPOSE_PROFILE_ARGS[@]}" "$@"
+    --file "$ROOT_DIR/compose.yaml" "${COMPOSE_PROFILE_ARGS[@]}" "$@"
 }
 
 cleanup() {
@@ -154,6 +154,9 @@ start_compose() {
   https_port="$(find_free_port)"
   ENROLLMENT_TOKEN="$(random_hex 24)"
   credential_key="$(random_b64url 32)"
+  local admin_auth_key internal_token
+  admin_auth_key="$(random_b64url 32)"
+  internal_token="$(random_hex 24)"
   ADMIN_USER=e2e-admin
   ADMIN_PASSWORD="$(random_hex 24)"
   mysql_root_password="$(random_hex 24)"
@@ -212,8 +215,25 @@ start_compose() {
     'RELAY_INSTANCE_ID=client-backend-e2e' \
     'RELAY_PRESENCE_TTL=60s' \
     "RELAY_ENROLLMENT_TOKEN=$ENROLLMENT_TOKEN" \
+    "RELAY_INTERNAL_TOKEN=$internal_token" \
     "RELAY_CREDENTIAL_KEY=$credential_key" \
     "RELAY_CREDENTIAL_TTL=$credential_ttl" \
+    "ADMIN_INTERNAL_PORT=8081" \
+    "ADMIN_USER=e2e-admin" \
+    "ADMIN_PASSWORD=$ADMIN_PASSWORD" \
+    "ADMIN_AUTH_KEY=$admin_auth_key" \
+    "ADMIN_RELAY_INTERNAL_TOKEN=$internal_token" \
+    "ADMIN_TRUSTED_PROXY_CIDRS=$caddy_ip/32" \
+    'ADMIN_SESSION_TTL=24h' \
+    'ADMIN_MAX_SESSIONS=32' \
+    'ADMIN_LOGIN_MAX_ATTEMPTS=5' \
+    'ADMIN_LOGIN_WINDOW=1m' \
+    'ADMIN_LOGIN_BLOCK=5m' \
+    'ADMIN_MAX_LOGIN_ENTRIES=4096' \
+    'ADMIN_HTTP_READ_TIMEOUT=15s' \
+    'ADMIN_HTTP_WRITE_TIMEOUT=15s' \
+    'ADMIN_HTTP_IDLE_TIMEOUT=60s' \
+    'ADMIN_HTTP_MAX_HEADER_BYTES=16384' \
     'RELAY_ADMIN_SESSION_TTL=24h' \
     'RELAY_MAX_CONNECTIONS=2048' \
     'RELAY_MAX_ENROLLED_DEVICES=4096' \
