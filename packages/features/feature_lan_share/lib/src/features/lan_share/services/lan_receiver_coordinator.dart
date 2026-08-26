@@ -43,6 +43,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     this.initializeNetwork = true,
     this.transferServiceOverride,
     this.discoveryServiceOverride,
+    this.storageServiceOverride,
   }) : peerTrustStore = peerTrustStore ?? LanPeerTrustStore(),
        _ownsPeerTrustStore = peerTrustStore == null;
 
@@ -91,6 +92,9 @@ final class LanReceiverCoordinator extends ChangeNotifier {
 
   /// 可选的 LAN 发现服务覆盖；缺省时由初始化流程内部构造真实服务。
   final LanDiscoveryService? discoveryServiceOverride;
+
+  /// 可选的 LAN 存储服务覆盖；缺省时由初始化流程内部构造真实服务。
+  final LanStorageService? storageServiceOverride;
 
   LanDiscoveryService? _discoveryService;
   LanSecurityService? _securityService;
@@ -184,7 +188,8 @@ final class LanReceiverCoordinator extends ChangeNotifier {
       );
     }
     final trust = await peerTrustStore.read(offer.peerId);
-    if (trust == null || !_isIncomingRouteAuthorized(trust, offer.routeType)) {
+    if (trust == null ||
+        !isIncomingRouteAuthorized(trust.authorization, offer.routeType)) {
       // Keep the transfer decision inside the generation-scoped native
       // coordinator. It re-checks the complete trust record and performs the
       // one-shot native rejection, so this facade never becomes a second
@@ -199,7 +204,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
         senderId: offer.peerId,
         senderAlias: offer.peerId,
         receiverId: appSettings.lanDeviceId,
-        payloadType: LanPayloadType.file,
+        payloadType: classifyAttachment(fileName: offer.fileName),
         fileName: offer.fileName,
         fileSize: offer.fileSize,
         status: LanTransferStatus.connecting,
@@ -434,7 +439,8 @@ final class LanReceiverCoordinator extends ChangeNotifier {
         appOwnedX25519PrivateSeed: identity.x25519PrivateSeed,
         peerTrustStore: peerTrustStore,
       );
-      final lanStorage = LanStorageService(logger: logger);
+      final lanStorage =
+          storageServiceOverride ?? LanStorageService(logger: logger);
       final relayEnrollmentService = RelayEnrollmentService(
         currentDeviceId: deviceId,
         bootstrapClient: bootstrapClient,
@@ -669,7 +675,8 @@ final class LanReceiverCoordinator extends ChangeNotifier {
   Future<void> _publishTrustedIncomingOffer(IncomingTransferOffer offer) async {
     if (_disposed || _incomingTransferController.isClosed) return;
     final trust = await peerTrustStore.read(offer.peerId);
-    if (trust == null || !_isIncomingRouteAuthorized(trust, offer.routeType)) {
+    if (trust == null ||
+        !isIncomingRouteAuthorized(trust.authorization, offer.routeType)) {
       return;
     }
     if (!_disposed && !_incomingTransferController.isClosed) {
@@ -699,17 +706,6 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     _nativeTransferCoordinator = null;
     await _relayCoordinator?.detachFacade();
   }
-
-  static bool _isIncomingRouteAuthorized(
-    LanPeerTrustRecord trust,
-    NetworkRouteType routeType,
-  ) => switch (routeType) {
-    NetworkRouteType.relay => trust.authorization.relay,
-    NetworkRouteType.lan ||
-    NetworkRouteType.quicDirect => trust.authorization.localDirect,
-    NetworkRouteType.unspecified =>
-      trust.authorization.localDirect || trust.authorization.relay,
-  };
 
   /// 将统一错误构造成稳定的失败结果。
   NetworkFailure<void> _networkFailure(

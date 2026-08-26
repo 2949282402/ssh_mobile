@@ -23,6 +23,19 @@ final class PeerRouteAuthorization {
       );
 }
 
+/// Checks whether an incoming route type is authorized by the peer's trust authorization.
+///
+/// Strictly fail-closed: [NetworkRouteType.unspecified] is never authorized.
+bool isIncomingRouteAuthorized(
+  PeerRouteAuthorization authorization,
+  NetworkRouteType routeType,
+) => switch (routeType) {
+  NetworkRouteType.lan ||
+  NetworkRouteType.quicDirect => authorization.localDirect,
+  NetworkRouteType.relay => authorization.relay,
+  NetworkRouteType.unspecified => false,
+};
+
 final class LanPeerTrustRecord {
   LanPeerTrustRecord({
     required this.deviceId,
