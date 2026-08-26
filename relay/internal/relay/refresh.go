@@ -53,18 +53,13 @@ func refreshProofPayloadForPath(path string, timestamp int64, nonce string) stri
 // path so a request signed for the other route cannot authenticate.
 type expectedRefreshTranscriptPath string
 
-// refresh 是 /v1 路由的兼容别名：直接调用时等价于 refreshV1（转录绑定到
-// /v1/devices/refresh）。
+// refresh 是 V2 设备凭据刷新处理函数（转录绑定到 /v2/devices/refresh）。
 func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
-	s.refreshV1(w, r)
-}
-
-func (s *Server) refreshV1(w http.ResponseWriter, r *http.Request) {
-	s.refreshWithExpectedTranscriptPath(w, r, expectedRefreshTranscriptPath("/v1/devices/refresh"))
+	s.refreshWithExpectedTranscriptPath(w, r, expectedRefreshTranscriptPath(PathRefreshV2))
 }
 
 func (s *Server) refreshV2(w http.ResponseWriter, r *http.Request) {
-	s.refreshWithExpectedTranscriptPath(w, r, expectedRefreshTranscriptPath("/v2/devices/refresh"))
+	s.refreshWithExpectedTranscriptPath(w, r, expectedRefreshTranscriptPath(PathRefreshV2))
 }
 
 func (s *Server) refreshWithExpectedTranscriptPath(w http.ResponseWriter, r *http.Request, expectedPath expectedRefreshTranscriptPath) {
@@ -119,8 +114,8 @@ func (s *Server) refreshWithExpectedTranscriptPath(w http.ResponseWriter, r *htt
 		writeNetworkError(w, http.StatusInternalServerError, relayErrorRelayError, "Relay storage is unavailable.", "refresh_credential", request.DeviceID)
 		return
 	}
-	if device == nil {
-		// relay 重启后 enrollment 丢失：客户端必须重新 enroll，而不是静默循环。
+	if device == nil || device.ProtocolVersion != s.config.ProtocolVersion {
+		// relay 重启后 enrollment 丢失或协议版本不匹配：客户端必须重新 enroll，而不是静默循环。
 		writeNetworkError(w, http.StatusNotFound, relayErrorInvalidArgument, "Relay device is not enrolled; re-enroll with an enrollment token.", "refresh_credential", request.DeviceID)
 		return
 	}

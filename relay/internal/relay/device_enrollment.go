@@ -107,15 +107,11 @@ type expectedProtocolVersion uint32
 
 // enroll 是 /v1 路由的兼容别名：直接调用时等价于 enrollV1（仅允许协议版本 1）。
 func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
-	s.enrollV1(w, r)
-}
-
-func (s *Server) enrollV1(w http.ResponseWriter, r *http.Request) {
-	s.enrollWithExpectedProtocolVersion(w, r, expectedProtocolVersion(1))
+	s.enrollWithExpectedProtocolVersion(w, r, expectedProtocolVersion(s.config.ProtocolVersion))
 }
 
 func (s *Server) enrollV2(w http.ResponseWriter, r *http.Request) {
-	s.enrollWithExpectedProtocolVersion(w, r, expectedProtocolVersion(2))
+	s.enrollWithExpectedProtocolVersion(w, r, expectedProtocolVersion(s.config.ProtocolVersion))
 }
 
 func (s *Server) enrollWithExpectedProtocolVersion(w http.ResponseWriter, r *http.Request, expected expectedProtocolVersion) {
@@ -293,9 +289,10 @@ func (s *Server) authenticatedRequest(r *http.Request) (credentialClaims, []byte
 	device, getErr := s.store.GetEnrollment(ctx, claims.DeviceID)
 	keyMatches := device != nil && device.PublicKey == base64.RawURLEncoding.EncodeToString(publicKey)
 	generationMatches := device != nil && claims.EnrollmentGeneration == device.EnrolledAt.UnixMicro()
+	protocolMatches := device != nil && device.ProtocolVersion == s.config.ProtocolVersion
 	replayed := false
 	var nonceErr error
-	if storeErr == nil && getErr == nil && !revoked && keyMatches && generationMatches {
+	if storeErr == nil && getErr == nil && !revoked && keyMatches && generationMatches && protocolMatches {
 		nonceExpiresAt := time.Unix(timestamp, 0).Add(refreshProofFreshness).Add(refreshNonceSlack)
 		replayed, nonceErr = s.cache.ConsumeNonce(ctx, claims.DeviceID, nonce, nonceExpiresAt)
 	}
@@ -307,7 +304,7 @@ func (s *Server) authenticatedRequest(r *http.Request) (credentialClaims, []byte
 		s.logger.Warn("replay-protection cache unavailable during authentication; rejecting",
 			"device_id", claims.DeviceID, "error", nonceErr)
 	}
-	if storeErr != nil || getErr != nil || nonceErr != nil || revoked || !keyMatches || !generationMatches || replayed {
+	if storeErr != nil || getErr != nil || nonceErr != nil || revoked || !keyMatches || !generationMatches || !protocolMatches || replayed {
 		// 内存实现不返回错误；存储故障时在此 fail closed，与吊销/不匹配同等拒绝。
 		return credentialClaims{}, nil, relayErrorAuthenticationFailed, false
 	}
@@ -376,7 +373,8 @@ func (s *Server) enrollmentClaimsCurrent(ctx context.Context, claims credentialC
 	device, enrollmentErr := s.store.GetEnrollment(ctx, claims.DeviceID)
 	keyMatches := device != nil && device.PublicKey == base64.RawURLEncoding.EncodeToString(publicKey)
 	generationMatches := device != nil && claims.EnrollmentGeneration == device.EnrolledAt.UnixMicro()
-	if revokeErr != nil || enrollmentErr != nil || revoked || !keyMatches || !generationMatches {
+	protocolMatches := device != nil && device.ProtocolVersion == s.config.ProtocolVersion
+	if revokeErr != nil || enrollmentErr != nil || revoked || !keyMatches || !generationMatches || !protocolMatches {
 		return relayErrorAuthenticationFailed, false
 	}
 	return relayErrorUnspecified, true

@@ -186,7 +186,7 @@ func TestRevokeFailsClosedWhenTombstoneStoreSaturated(t *testing.T) {
 
 	now := time.Now()
 	for _, deviceID := range []string{"device-a", "device-b"} {
-		if server.replaceEnrollment(deviceID, "pubkey-"+deviceID, "test", 1, now) != enrollmentOK {
+		if server.replaceEnrollment(deviceID, "pubkey-"+deviceID, "test", RelayBootstrapProtocolVersion, now) != enrollmentOK {
 			t.Fatalf("%s enrollment was rejected", deviceID)
 		}
 	}
@@ -264,7 +264,7 @@ func TestExpiredRevocationTombstoneDoesNotBlockValidCredential(t *testing.T) {
 	defer server.Close()
 
 	now := time.Now()
-	if server.replaceEnrollment("device-a", base64.RawURLEncoding.EncodeToString(publicKey), "test", 1, now) != enrollmentOK {
+	if server.replaceEnrollment("device-a", base64.RawURLEncoding.EncodeToString(publicKey), "test", RelayBootstrapProtocolVersion, now) != enrollmentOK {
 		t.Fatal("device enrollment was rejected")
 	}
 	if recorded, _ := server.store.RecordRevocation(context.Background(), "device-a", now.Add(-time.Minute)); !recorded {

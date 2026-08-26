@@ -35,7 +35,7 @@ var mysqlSchemaStatements = []string{
   device_id        VARCHAR(128) NOT NULL PRIMARY KEY,
   public_key       VARCHAR(128) NOT NULL,
   platform         VARCHAR(64)  NOT NULL DEFAULT '',
-  protocol_version INT          NOT NULL DEFAULT 1,
+  protocol_version INT          NOT NULL DEFAULT 2,
   enrolled_at      DATETIME(6)  NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 	`CREATE TABLE IF NOT EXISTS revocations (
@@ -155,6 +155,8 @@ func openMySQLStore(ctx context.Context, dsn string, maxEnrolled int) (*mysqlSto
 			return nil, err
 		}
 	}
+	// 确保既有表的 column default 为 2（幂等执行）。
+	_, _ = db.ExecContext(ctx, "ALTER TABLE devices ALTER COLUMN protocol_version SET DEFAULT 2")
 	// 启动时初始化容量计数器：serving 前该行必存在，使 RemoveEnrollment 的递减与
 	// putEnrollment 的 FOR UPDATE 都作用于 record lock（而非缺失行 gap lock），且
 	// 升级库（已有设备、无 counter 行）在首个 enroll/remove 前即拿到正确基准。

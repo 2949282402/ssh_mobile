@@ -59,7 +59,7 @@ func TestSameKeyReenrollmentInvalidatesPriorCredentialGeneration(t *testing.T) {
 	defer server.Close()
 	encodedKey := base64.RawURLEncoding.EncodeToString(publicKey)
 	fixedTime := time.Now()
-	if result := server.replaceEnrollment("device-a", encodedKey, "test", 1, fixedTime); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", encodedKey, "test", RelayBootstrapProtocolVersion, fixedTime); result != enrollmentOK {
 		t.Fatalf("initial enrollment=%v", result)
 	}
 	oldGeneration := mustEnrollmentGeneration(t, server, "device-a")
@@ -67,7 +67,7 @@ func TestSameKeyReenrollmentInvalidatesPriorCredentialGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result := server.replaceEnrollment("device-a", encodedKey, "test", 1, fixedTime); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", encodedKey, "test", RelayBootstrapProtocolVersion, fixedTime); result != enrollmentOK {
 		t.Fatalf("re-enrollment=%v", result)
 	}
 	newGeneration := mustEnrollmentGeneration(t, server, "device-a")
@@ -115,11 +115,11 @@ func TestEnrollDevice(t *testing.T) {
 		DeviceID:        "test-device",
 		PublicKey:       base64.RawURLEncoding.EncodeToString(publicKey),
 		EnrollmentToken: "test-token",
-		ProtocolVersion: 1,
+		ProtocolVersion: RelayBootstrapProtocolVersion,
 		Platform:        "windows",
 	})
 
-	req := httptest.NewRequest("POST", "/v1/devices/enroll", bytes.NewReader(body))
+	req := httptest.NewRequest("POST", PathEnrollV2, bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 
 	mux.ServeHTTP(rec, req)
@@ -133,7 +133,7 @@ func TestEnrollDevice(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	if resp.Credential == "" || resp.ProtocolVersion != 1 {
+	if resp.Credential == "" || resp.ProtocolVersion != RelayBootstrapProtocolVersion {
 		t.Fatalf("invalid enroll response: %+v", resp)
 	}
 }
@@ -156,10 +156,10 @@ func TestRelayHTTPErrorUsesStableNetworkShape(t *testing.T) {
 		DeviceID:        "device-a",
 		PublicKey:       base64.RawURLEncoding.EncodeToString(publicKey),
 		EnrollmentToken: "test-token",
-		ProtocolVersion: 2,
+		ProtocolVersion: RelayBootstrapProtocolVersion + 1,
 		Platform:        "windows",
 	})
-	req := httptest.NewRequest("POST", "/v1/devices/enroll", bytes.NewReader(body))
+	req := httptest.NewRequest("POST", PathEnrollV2, bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -196,7 +196,7 @@ func TestDeviceProofRejectsReplayAndRevocation(t *testing.T) {
 	if _, err := server.store.PutEnrollment(context.Background(), &EnrolledDevice{
 		DeviceID:        "device-a",
 		PublicKey:       base64.RawURLEncoding.EncodeToString(publicKey),
-		ProtocolVersion: 1,
+		ProtocolVersion: RelayBootstrapProtocolVersion,
 		EnrolledAt:      time.Now(),
 	}); err != nil {
 		t.Fatal(err)
@@ -410,7 +410,7 @@ func TestAdminOverviewCountsOnlineDevices(t *testing.T) {
 	defer server.Close()
 	ctx := context.Background()
 
-	if result := server.replaceEnrollment("device-a", "key-a", "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", "key-a", "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
 	if _, _, err := server.cache.TakePresence(ctx, "device-a", "conn-1", Presence{InstanceID: "i1"}, time.Minute); err != nil {

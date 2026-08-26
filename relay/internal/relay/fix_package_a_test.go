@@ -37,7 +37,7 @@ func TestRefreshRejectsRevokedButStillEnrolledDevice(t *testing.T) {
 	defer server.Close()
 
 	encodedKey := base64.RawURLEncoding.EncodeToString(publicKey)
-	if result := server.replaceEnrollment("device-a", encodedKey, "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", encodedKey, "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
 	recorded, err := server.store.RecordRevocation(context.Background(), "device-a", time.Now().Add(time.Hour))
@@ -57,12 +57,12 @@ func TestRefreshRejectsRevokedButStillEnrolledDevice(t *testing.T) {
 		Timestamp: timestamp,
 		Nonce:     nonce,
 		Signature: base64.RawURLEncoding.EncodeToString(
-			ed25519.Sign(privateKey, []byte(refreshProofPayload(timestamp, nonce))),
+			ed25519.Sign(privateKey, []byte(refreshProofPayloadForPath(PathRefreshV2, timestamp, nonce))),
 		),
 	})
 	mux := http.NewServeMux()
 	server.RegisterRoutes(mux)
-	request := httptest.NewRequest(http.MethodPost, "/v1/devices/refresh", bytes.NewReader(body))
+	request := httptest.NewRequest(http.MethodPost, PathRefreshV2, bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, request)
 	if rec.Code != http.StatusUnauthorized {
@@ -107,7 +107,7 @@ func TestAuthenticatedRequestFailsClosedWhenNonceCacheUnavailable(t *testing.T) 
 		"device-a",
 		base64.RawURLEncoding.EncodeToString(publicKey),
 		"test",
-		1,
+		RelayBootstrapProtocolVersion,
 		time.Now(),
 	); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
@@ -142,7 +142,7 @@ func TestAuthenticatedDeviceAdmissionRechecksRevocation(t *testing.T) {
 		"device-a",
 		base64.RawURLEncoding.EncodeToString(publicKey),
 		"test",
-		1,
+		RelayBootstrapProtocolVersion,
 		time.Now(),
 	); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
@@ -192,7 +192,7 @@ func TestAdminRevokeReturnsErrorWhenRevokeFails(t *testing.T) {
 		CredentialTTL:   time.Hour,
 	})
 	defer server.Close()
-	if result := server.replaceEnrollment("device-a", "key-a", "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", "key-a", "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
 	server.store = failingRevokeStore{Storage: server.store}
@@ -269,7 +269,7 @@ func TestAdminDeviceSnapshotSourcesRemoteAddrFromLease(t *testing.T) {
 	defer server.Close()
 	ctx := context.Background()
 
-	if result := server.replaceEnrollment("device-a", "key-a", "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", "key-a", "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
 	// The device is connected on another instance: only the lease exists, no
@@ -626,7 +626,7 @@ func TestSameDeviceRevokeReEnrollSerialized(t *testing.T) {
 	})
 	defer server.Close()
 
-	if result := server.replaceEnrollment("device-a", "key-original", "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", "key-original", "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("initial enroll failed: %v", result)
 	}
 
@@ -642,7 +642,7 @@ func TestSameDeviceRevokeReEnrollSerialized(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
-			server.replaceEnrollment("device-a", fmt.Sprintf("key-new-%d", i), "test", 1, time.Now())
+			server.replaceEnrollment("device-a", fmt.Sprintf("key-new-%d", i), "test", RelayBootstrapProtocolVersion, time.Now())
 		}()
 		wg.Wait()
 
@@ -659,7 +659,7 @@ func TestSameDeviceRevokeReEnrollSerialized(t *testing.T) {
 
 		// Reset to a clean enrolled state for the next iteration.
 		_ = server.store.RemoveEnrollment(ctx, "device-a")
-		if result := server.replaceEnrollment("device-a", "key-original", "test", 1, time.Now()); result != enrollmentOK {
+		if result := server.replaceEnrollment("device-a", "key-original", "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 			t.Fatalf("reset enroll failed: %v", result)
 		}
 	}

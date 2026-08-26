@@ -1,5 +1,14 @@
+/// Relay Bootstrap 协议版本与常量定义。
+abstract final class RelayBootstrapProtocol {
+  /// 当前生效的 Relay Bootstrap 协议版本。
+  static const int version = 2;
+}
+
 /// Relay Bootstrap API 规范定义的标准契约路由与常量。
 abstract final class RelayBootstrapRoutes {
+  /// 当前协议版本。
+  static const int protocolVersion = RelayBootstrapProtocol.version;
+
   /// 健康检查/存活探测路径。
   static const String healthz = '/healthz';
 

@@ -116,7 +116,7 @@ func relayDataTestIdentityFor(t *testing.T, baseURL, reservationID, tokenHex str
 		deviceID,
 		base64.RawURLEncoding.EncodeToString(publicKey),
 		"test-data",
-		1,
+		2,
 		time.Now(),
 	); result != enrollmentOK {
 		t.Fatalf("create relay data test enrollment for %s: result=%d", deviceID, result)

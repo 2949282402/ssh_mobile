@@ -31,13 +31,13 @@ func TestEnrolledDeviceLimitAllowsReplacementButRejectsNewDevice(t *testing.T) {
 		t.Fatal(err)
 	}
 	encodedKey := base64.RawURLEncoding.EncodeToString(publicKey)
-	if server.replaceEnrollment("device-a", encodedKey, "test", 1, time.Now()) != enrollmentOK {
+	if server.replaceEnrollment("device-a", encodedKey, "test", RelayBootstrapProtocolVersion, time.Now()) != enrollmentOK {
 		t.Fatal("first enrolled device was rejected")
 	}
-	if server.replaceEnrollment("device-b", encodedKey, "test", 1, time.Now()) != enrollmentResourceLimit {
+	if server.replaceEnrollment("device-b", encodedKey, "test", RelayBootstrapProtocolVersion, time.Now()) != enrollmentResourceLimit {
 		t.Fatal("new device exceeded the enrolled-device limit")
 	}
-	if server.replaceEnrollment("device-a", encodedKey, "test-updated", 1, time.Now()) != enrollmentOK {
+	if server.replaceEnrollment("device-a", encodedKey, "test-updated", RelayBootstrapProtocolVersion, time.Now()) != enrollmentOK {
 		t.Fatal("existing device replacement was rejected at capacity")
 	}
 }
@@ -124,7 +124,7 @@ func TestDiscoveryPublishBudgetReleasesDurablyRevokedDevice(t *testing.T) {
 		t.Fatal(err)
 	}
 	encodedKey := base64.RawURLEncoding.EncodeToString(publicKey)
-	if result := server.replaceEnrollment("device-a", encodedKey, "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", encodedKey, "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll device-a: %v", result)
 	}
 	now := time.Now()
@@ -139,7 +139,7 @@ func TestDiscoveryPublishBudgetReleasesDurablyRevokedDevice(t *testing.T) {
 	if revokeResponse.Code != http.StatusNoContent {
 		t.Fatalf("revoke device-a: status=%d body=%s", revokeResponse.Code, revokeResponse.Body.String())
 	}
-	if result := server.replaceEnrollment("device-b", encodedKey, "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-b", encodedKey, "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll device-b after revoke: %v", result)
 	}
 	if !server.hub.allowDiscoveryPublish("device-b", now) {
@@ -308,7 +308,7 @@ func TestAdminTokenRotationIsProcessLocalAndRestartClearsDevices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server.replaceEnrollment("device-a", base64.RawURLEncoding.EncodeToString(publicKey), "test", 1, time.Now())
+	server.replaceEnrollment("device-a", base64.RawURLEncoding.EncodeToString(publicKey), "test", RelayBootstrapProtocolVersion, time.Now())
 	server.Close()
 
 	restarted := NewServer(Config{

@@ -35,7 +35,7 @@ func callEnrollBoundary(t *testing.T, server *Server, body any) *httptest.Respon
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPost, "/v1/devices/enroll", bytes.NewReader(data))
+	request := httptest.NewRequest(http.MethodPost, PathEnrollV2, bytes.NewReader(data))
 	response := httptest.NewRecorder()
 	server.enroll(response, request)
 	return response
@@ -51,7 +51,7 @@ func TestEnrollEndpointValidationBoundaries(t *testing.T) {
 		DeviceID:        "device-a",
 		PublicKey:       encodedKey,
 		EnrollmentToken: "test-enrollment-token",
-		ProtocolVersion: 1,
+		ProtocolVersion: RelayBootstrapProtocolVersion,
 		Platform:        "linux",
 	}
 	cases := []struct {
@@ -62,7 +62,12 @@ func TestEnrollEndpointValidationBoundaries(t *testing.T) {
 		{name: "invalid token", body: func() enrollRequest { value := valid; value.EnrollmentToken = "wrong"; return value }(), status: http.StatusUnauthorized},
 		{name: "empty device id", body: func() enrollRequest { value := valid; value.DeviceID = ""; return value }(), status: http.StatusBadRequest},
 		{name: "oversized device id", body: func() enrollRequest { value := valid; value.DeviceID = strings.Repeat("d", 129); return value }(), status: http.StatusBadRequest},
-		{name: "unsupported protocol", body: func() enrollRequest { value := valid; value.ProtocolVersion = 2; return value }(), status: http.StatusBadRequest},
+		{name: "unsupported protocol 1", body: func() enrollRequest { value := valid; value.ProtocolVersion = 1; return value }(), status: http.StatusBadRequest},
+		{name: "unsupported protocol 3", body: func() enrollRequest {
+			value := valid
+			value.ProtocolVersion = RelayBootstrapProtocolVersion + 1
+			return value
+		}(), status: http.StatusBadRequest},
 		{name: "oversized platform", body: func() enrollRequest { value := valid; value.Platform = strings.Repeat("p", 65); return value }(), status: http.StatusBadRequest},
 		{name: "invalid public key", body: func() enrollRequest { value := valid; value.PublicKey = "not-base64"; return value }(), status: http.StatusBadRequest},
 	}
@@ -105,7 +110,7 @@ func TestEnrollEndpointValidationBoundaries(t *testing.T) {
 		t.Fatalf("capacity enrollment status = %d, want 429", got)
 	}
 
-	malformed := httptest.NewRequest(http.MethodPost, "/v1/devices/enroll", strings.NewReader("{"))
+	malformed := httptest.NewRequest(http.MethodPost, PathEnrollV2, strings.NewReader("{"))
 	malformedResponse := httptest.NewRecorder()
 	server.enroll(malformedResponse, malformed)
 	if malformedResponse.Code != http.StatusBadRequest {
@@ -119,7 +124,7 @@ func callRefreshBoundary(t *testing.T, server *Server, request any) *httptest.Re
 	if err != nil {
 		t.Fatal(err)
 	}
-	httpRequest := httptest.NewRequest(http.MethodPost, "/v1/devices/refresh", bytes.NewReader(data))
+	httpRequest := httptest.NewRequest(http.MethodPost, PathRefreshV2, bytes.NewReader(data))
 	response := httptest.NewRecorder()
 	server.refresh(response, httpRequest)
 	return response
@@ -133,7 +138,7 @@ func TestRefreshEndpointValidationBoundaries(t *testing.T) {
 	encodedKey := base64.RawURLEncoding.EncodeToString(publicKey)
 	server := newEndpointBoundaryServer(Config{})
 	defer server.Close()
-	if result := server.replaceEnrollment("device-a", encodedKey, "linux", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", encodedKey, "linux", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("seed enrollment result = %v", result)
 	}
 	makeRequest := func(nonce string, timestamp int64, key ed25519.PrivateKey) refreshRequest {
@@ -142,7 +147,7 @@ func TestRefreshEndpointValidationBoundaries(t *testing.T) {
 			PublicKey: encodedKey,
 			Timestamp: timestamp,
 			Nonce:     nonce,
-			Signature: base64.RawURLEncoding.EncodeToString(ed25519.Sign(key, []byte(refreshProofPayload(timestamp, nonce)))),
+			Signature: base64.RawURLEncoding.EncodeToString(ed25519.Sign(key, []byte(refreshProofPayloadForPath(PathRefreshV2, timestamp, nonce)))),
 		}
 	}
 	validNonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))
@@ -221,7 +226,7 @@ func TestRefreshEndpointValidationBoundaries(t *testing.T) {
 		t.Fatalf("revoked refresh status = %d, want 401", got)
 	}
 
-	malformed := httptest.NewRequest(http.MethodPost, "/v1/devices/refresh", strings.NewReader("{"))
+	malformed := httptest.NewRequest(http.MethodPost, PathRefreshV2, strings.NewReader("{"))
 	malformedResponse := httptest.NewRecorder()
 	server.refresh(malformedResponse, malformed)
 	if malformedResponse.Code != http.StatusBadRequest {
@@ -241,7 +246,7 @@ func TestRefreshReplayRemainsConsumedAfterSameKeyReenrollment(t *testing.T) {
 		DeviceID:        "device-a",
 		PublicKey:       encodedKey,
 		EnrollmentToken: "test-enrollment-token",
-		ProtocolVersion: 1,
+		ProtocolVersion: RelayBootstrapProtocolVersion,
 		Platform:        "linux",
 	}
 	if got := callEnrollBoundary(t, server, enrollment).Code; got != http.StatusOK {
@@ -255,7 +260,7 @@ func TestRefreshReplayRemainsConsumedAfterSameKeyReenrollment(t *testing.T) {
 		Timestamp: timestamp,
 		Nonce:     nonce,
 		Signature: base64.RawURLEncoding.EncodeToString(
-			ed25519.Sign(privateKey, []byte(refreshProofPayload(timestamp, nonce))),
+			ed25519.Sign(privateKey, []byte(refreshProofPayloadForPath(PathRefreshV2, timestamp, nonce))),
 		),
 	}
 	if got := callRefreshBoundary(t, server, request).Code; got != http.StatusOK {
@@ -297,7 +302,7 @@ func TestV2WebSocketProofFreshnessAndTranscriptAreHardCut(t *testing.T) {
 	server := newEndpointBoundaryServer(Config{})
 	defer server.Close()
 	encodedKey := base64.RawURLEncoding.EncodeToString(publicKey)
-	if result := server.replaceEnrollment("device-a", encodedKey, "linux", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", encodedKey, "linux", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("seed enrollment result = %v", result)
 	}
 	credential, err := issueCredential(
@@ -380,7 +385,7 @@ func TestRefreshFailsClosedWhenNonceCacheUnavailable(t *testing.T) {
 	server := newEndpointBoundaryServer(Config{})
 	defer server.Close()
 	encodedKey := base64.RawURLEncoding.EncodeToString(publicKey)
-	if result := server.replaceEnrollment("device-a", encodedKey, "linux", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", encodedKey, "linux", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("seed enrollment result = %v", result)
 	}
 	server.cache = failingNonceCache{Cache: server.cache}
@@ -391,7 +396,7 @@ func TestRefreshFailsClosedWhenNonceCacheUnavailable(t *testing.T) {
 		PublicKey: encodedKey,
 		Timestamp: timestamp,
 		Nonce:     nonce,
-		Signature: base64.RawURLEncoding.EncodeToString(ed25519.Sign(privateKey, []byte(refreshProofPayload(timestamp, nonce)))),
+		Signature: base64.RawURLEncoding.EncodeToString(ed25519.Sign(privateKey, []byte(refreshProofPayloadForPath(PathRefreshV2, timestamp, nonce)))),
 	}
 	response := callRefreshBoundary(t, server, request)
 	if response.Code != http.StatusServiceUnavailable {
@@ -438,7 +443,7 @@ func TestRefreshNonceExpiryIsBoundToSignedTimestamp(t *testing.T) {
 	server := newEndpointBoundaryServer(Config{})
 	defer server.Close()
 	encodedKey := base64.RawURLEncoding.EncodeToString(publicKey)
-	if result := server.replaceEnrollment("device-a", encodedKey, "linux", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", encodedKey, "linux", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("seed enrollment result = %v", result)
 	}
 	recorder := &recordingNonceCache{Cache: server.cache}
@@ -451,7 +456,7 @@ func TestRefreshNonceExpiryIsBoundToSignedTimestamp(t *testing.T) {
 		Timestamp: timestamp,
 		Nonce:     nonce,
 		Signature: base64.RawURLEncoding.EncodeToString(
-			ed25519.Sign(privateKey, []byte(refreshProofPayload(timestamp, nonce))),
+			ed25519.Sign(privateKey, []byte(refreshProofPayloadForPath(PathRefreshV2, timestamp, nonce))),
 		),
 	}
 	if got := callRefreshBoundary(t, server, request).Code; got != http.StatusOK {
@@ -471,7 +476,7 @@ func TestV2WebSocketNonceExpiryIsBoundToSignedTimestamp(t *testing.T) {
 	server := newEndpointBoundaryServer(Config{})
 	defer server.Close()
 	encodedKey := base64.RawURLEncoding.EncodeToString(publicKey)
-	if result := server.replaceEnrollment("device-a", encodedKey, "linux", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", encodedKey, "linux", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("seed enrollment result = %v", result)
 	}
 	credential, err := issueCredential(
@@ -509,7 +514,7 @@ func TestV2WebSocketReplayRemainsConsumedAfterSameKeyReenrollment(t *testing.T) 
 	defer server.Close()
 	encodedKey := base64.RawURLEncoding.EncodeToString(publicKey)
 	firstEnrollment := time.Now()
-	if result := server.replaceEnrollment("device-a", encodedKey, "linux", 1, firstEnrollment); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", encodedKey, "linux", RelayBootstrapProtocolVersion, firstEnrollment); result != enrollmentOK {
 		t.Fatalf("seed enrollment result = %v", result)
 	}
 	firstCredential, err := issueCredential(
@@ -531,7 +536,7 @@ func TestV2WebSocketReplayRemainsConsumedAfterSameKeyReenrollment(t *testing.T) 
 		t.Fatalf("initial v2 proof rejected: ok=%v code=%d", ok, code)
 	}
 
-	if result := server.replaceEnrollment("device-a", encodedKey, "linux", 1, firstEnrollment.Add(time.Second)); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", encodedKey, "linux", RelayBootstrapProtocolVersion, firstEnrollment.Add(time.Second)); result != enrollmentOK {
 		t.Fatalf("same-key re-enrollment result = %v", result)
 	}
 	secondCredential, err := issueCredential(

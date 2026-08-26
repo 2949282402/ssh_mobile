@@ -14,8 +14,9 @@ import (
 	"time"
 )
 
-// TestPreSplitCharacterization locks the pre-split baseline invariants for:
-// - V1 device bootstrap (enroll + refresh)
+// TestPreSplitCharacterization locks the baseline invariants for:
+// - V1 device bootstrap retirement (returns 404)
+// - V2 device bootstrap (enroll + refresh) with ProtocolVersion = 2
 // - Admin authentication and overview
 // - Credential verification and control/data admission
 func TestPreSplitCharacterization(t *testing.T) {
@@ -45,37 +46,52 @@ func TestPreSplitCharacterization(t *testing.T) {
 	}
 	pubKeyB64 := base64.RawURLEncoding.EncodeToString(pubKey)
 
-	// 1. Lock V1 Enroll
+	// 1. Verify V1 routes are retired and return 404
+	v1EnrollReq := httptest.NewRequest(http.MethodPost, "/v1/devices/enroll", bytes.NewReader([]byte("{}")))
+	v1EnrollRec := httptest.NewRecorder()
+	mux.ServeHTTP(v1EnrollRec, v1EnrollReq)
+	if v1EnrollRec.Code != http.StatusNotFound {
+		t.Fatalf("Retired /v1/devices/enroll status = %d; want 404", v1EnrollRec.Code)
+	}
+
+	v1RefreshReq := httptest.NewRequest(http.MethodPost, "/v1/devices/refresh", bytes.NewReader([]byte("{}")))
+	v1RefreshRec := httptest.NewRecorder()
+	mux.ServeHTTP(v1RefreshRec, v1RefreshReq)
+	if v1RefreshRec.Code != http.StatusNotFound {
+		t.Fatalf("Retired /v1/devices/refresh status = %d; want 404", v1RefreshRec.Code)
+	}
+
+	// 2. Lock V2 Enroll
 	enrollReq := enrollRequest{
 		DeviceID:        "char-device-1",
 		PublicKey:       pubKeyB64,
 		EnrollmentToken: enrollmentToken,
-		ProtocolVersion: 1,
+		ProtocolVersion: 2,
 		Platform:        "linux",
 	}
 	enrollData, _ := json.Marshal(enrollReq)
-	req := httptest.NewRequest(http.MethodPost, "/v1/devices/enroll", bytes.NewReader(enrollData))
+	req := httptest.NewRequest(http.MethodPost, PathEnrollV2, bytes.NewReader(enrollData))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("V1 enroll status = %d; want %d. Body: %s", rec.Code, http.StatusOK, rec.Body.String())
+		t.Fatalf("V2 enroll status = %d; want %d. Body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
 	var enrollResp enrollResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &enrollResp); err != nil {
 		t.Fatalf("Unmarshal enrollResponse error: %v", err)
 	}
-	if enrollResp.ProtocolVersion != 1 || enrollResp.Credential == "" {
+	if enrollResp.ProtocolVersion != 2 || enrollResp.Credential == "" {
 		t.Fatalf("Unexpected enroll response: %+v", enrollResp)
 	}
 
-	// 2. Lock V1 Refresh
+	// 3. Lock V2 Refresh
 	now := time.Now().Unix()
 	nonceRaw := make([]byte, 32)
 	rand.Read(nonceRaw)
 	nonce := base64.RawURLEncoding.EncodeToString(nonceRaw)
-	transcript := fmt.Sprintf("POST\n/v1/devices/refresh\n%d\n%s", now, nonce)
+	transcript := fmt.Sprintf("POST\n%s\n%d\n%s", PathRefreshV2, now, nonce)
 	sig := ed25519.Sign(privKey, []byte(transcript))
 	sigB64 := base64.RawURLEncoding.EncodeToString(sig)
 
@@ -87,23 +103,23 @@ func TestPreSplitCharacterization(t *testing.T) {
 		Signature: sigB64,
 	}
 	refreshData, _ := json.Marshal(refreshReq)
-	req = httptest.NewRequest(http.MethodPost, "/v1/devices/refresh", bytes.NewReader(refreshData))
+	req = httptest.NewRequest(http.MethodPost, PathRefreshV2, bytes.NewReader(refreshData))
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("V1 refresh status = %d; want %d. Body: %s", rec.Code, http.StatusOK, rec.Body.String())
+		t.Fatalf("V2 refresh status = %d; want %d. Body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
 	var refreshResp enrollResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &refreshResp); err != nil {
 		t.Fatalf("Unmarshal refreshResponse error: %v", err)
 	}
-	if refreshResp.ProtocolVersion != 1 || refreshResp.Credential == "" {
+	if refreshResp.ProtocolVersion != 2 || refreshResp.Credential == "" {
 		t.Fatalf("Unexpected refresh response: %+v", refreshResp)
 	}
 
-	// 3. Lock Admin Auth and Overview
+	// 4. Lock Admin Auth and Overview
 	loginReq := map[string]string{
 		"username": adminUser,
 		"password": adminPass,
@@ -146,12 +162,12 @@ func TestPreSplitCharacterization(t *testing.T) {
 		t.Fatalf("Expected server_time in overview: %+v", overviewResp)
 	}
 
-	// 4. Verify durable enrollment exists in store
+	// 5. Verify durable enrollment exists in store
 	enrollment, err := server.store.GetEnrollment(ctx, "char-device-1")
 	if err != nil || enrollment == nil {
 		t.Fatalf("Expected durable enrollment for char-device-1: %v", err)
 	}
-	if enrollment.ProtocolVersion != 1 {
-		t.Fatalf("Expected ProtocolVersion = 1, got %d", enrollment.ProtocolVersion)
+	if enrollment.ProtocolVersion != 2 {
+		t.Fatalf("Expected ProtocolVersion = 2, got %d", enrollment.ProtocolVersion)
 	}
 }

@@ -285,7 +285,7 @@ func openServerWithStores(config Config, openMySQL mysqlStorageOpener, openRedis
 
 // RegisterRoutes 注册公开、管理端、设备凭证端点和 v2 传输网络端点。
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /healthz", s.health)
+	mux.HandleFunc(RouteHealthz, s.health)
 
 	admin := func(next http.HandlerFunc) http.HandlerFunc {
 		return adminResponseHeaders(next)
@@ -310,19 +310,16 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/v1/access/enrollment-token", adminAuth(s.adminToken))
 	mux.HandleFunc("POST /api/admin/v1/access/enrollment-token/rotate", adminAuthStateChange(s.adminRotateToken))
 
-	// Device credential endpoints（仍为 v2 控制面签发 Bearer 凭据）。Bootstrap
-	// 同时支持 /v1 与 /v2：协议版本升级允许、降级拒绝（见 storage 协议降级保护）。
-	mux.HandleFunc("POST /v1/devices/enroll", s.enrollV1)
-	mux.HandleFunc("POST /v1/devices/refresh", s.refreshV1)
-	mux.HandleFunc("POST /v2/devices/enroll", s.enrollV2)
-	mux.HandleFunc("POST /v2/devices/refresh", s.refreshV2)
+	// Device credential endpoints (V2 only).
+	mux.HandleFunc(RouteEnrollV2, s.enroll)
+	mux.HandleFunc(RouteRefreshV2, s.refresh)
 
 	// Transport Network V2（设计 §24）：控制面与数据面物理拆开。
 	// GET /v2/control —— 长期存活的控制面，只走 RelayFrame（protobuf）。
-	mux.HandleFunc("GET /v2/control", s.connectControlV2)
+	mux.HandleFunc(RouteControlV2, s.connectControlV2)
 	// GET /v2/relay/{reservation_id} —— reservation 作用域的不透明数据面，只走
 	// RelayDataFrame；reservation 由 /v2/control 的 RelayReserveRequest 创建（§25）。
-	mux.HandleFunc("GET /v2/relay/{reservation_id}", s.connectRelayData)
+	mux.HandleFunc(RouteRelayDataV2, s.connectRelayData)
 }
 
 // health 提供无需认证的存活检查端点。

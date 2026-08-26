@@ -31,7 +31,7 @@ func TestConnectExpiredCredentialReturnsCode12(t *testing.T) {
 	if _, err := server.store.PutEnrollment(context.Background(), &EnrolledDevice{
 		DeviceID:        "device-a",
 		PublicKey:       base64.RawURLEncoding.EncodeToString(publicKey),
-		ProtocolVersion: 1,
+		ProtocolVersion: RelayBootstrapProtocolVersion,
 		EnrolledAt:      time.Now(),
 	}); err != nil {
 		t.Fatal(err)
@@ -93,7 +93,7 @@ func TestShortCredentialTTLExpiresBeforeReadyAdmission(t *testing.T) {
 	if _, err := server.store.PutEnrollment(context.Background(), &EnrolledDevice{
 		DeviceID:        "device-a",
 		PublicKey:       base64.RawURLEncoding.EncodeToString(publicKey),
-		ProtocolVersion: 1,
+		ProtocolVersion: RelayBootstrapProtocolVersion,
 		EnrolledAt:      time.Now(),
 	}); err != nil {
 		t.Fatal(err)
@@ -148,7 +148,7 @@ func TestConnectGenericAuthFailureKeepsCode2(t *testing.T) {
 	if _, err := server.store.PutEnrollment(context.Background(), &EnrolledDevice{
 		DeviceID:        "device-a",
 		PublicKey:       base64.RawURLEncoding.EncodeToString(publicKey),
-		ProtocolVersion: 1,
+		ProtocolVersion: RelayBootstrapProtocolVersion,
 		EnrolledAt:      time.Now(),
 	}); err != nil {
 		t.Fatal(err)
@@ -212,10 +212,10 @@ func TestIdentityConflictAtEnrollRejectsDifferentKey(t *testing.T) {
 			DeviceID:        "device-a",
 			PublicKey:       base64.RawURLEncoding.EncodeToString(key),
 			EnrollmentToken: "test-token",
-			ProtocolVersion: 1,
+			ProtocolVersion: RelayBootstrapProtocolVersion,
 			Platform:        "test",
 		})
-		request := httptest.NewRequest("POST", "/v1/devices/enroll", bytes.NewReader(body))
+		request := httptest.NewRequest("POST", PathEnrollV2, bytes.NewReader(body))
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, request)
 		return rec
@@ -275,10 +275,10 @@ func TestEnrollResourceLimitSetsRetryDisposition(t *testing.T) {
 			DeviceID:        deviceID,
 			PublicKey:       base64.RawURLEncoding.EncodeToString(key),
 			EnrollmentToken: "test-token",
-			ProtocolVersion: 1,
+			ProtocolVersion: RelayBootstrapProtocolVersion,
 			Platform:        "test",
 		})
-		request := httptest.NewRequest("POST", "/v1/devices/enroll", bytes.NewReader(body))
+		request := httptest.NewRequest("POST", PathEnrollV2, bytes.NewReader(body))
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, request)
 		return rec
@@ -316,7 +316,7 @@ func TestRefreshCredentialIssuesFreshCredential(t *testing.T) {
 		CredentialTTL: time.Hour,
 	})
 	defer server.Close()
-	if server.replaceEnrollment("device-a", base64.RawURLEncoding.EncodeToString(publicKey), "test", 1, time.Now()) != enrollmentOK {
+	if server.replaceEnrollment("device-a", base64.RawURLEncoding.EncodeToString(publicKey), "test", RelayBootstrapProtocolVersion, time.Now()) != enrollmentOK {
 		t.Fatal("test device enrollment was rejected")
 	}
 	mux := http.NewServeMux()
@@ -330,10 +330,10 @@ func TestRefreshCredentialIssuesFreshCredential(t *testing.T) {
 		Timestamp: timestamp,
 		Nonce:     nonce,
 		Signature: base64.RawURLEncoding.EncodeToString(
-			ed25519.Sign(privateKey, []byte(refreshProofPayload(timestamp, nonce))),
+			ed25519.Sign(privateKey, []byte(refreshProofPayloadForPath(PathRefreshV2, timestamp, nonce))),
 		),
 	})
-	request := httptest.NewRequest("POST", "/v1/devices/refresh", bytes.NewReader(body))
+	request := httptest.NewRequest("POST", PathRefreshV2, bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, request)
 
@@ -344,7 +344,7 @@ func TestRefreshCredentialIssuesFreshCredential(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
-	if resp.Credential == "" || resp.ProtocolVersion != 1 || resp.ExpiresAt <= time.Now().Unix() {
+	if resp.Credential == "" || resp.ProtocolVersion != RelayBootstrapProtocolVersion || resp.ExpiresAt <= time.Now().Unix() {
 		t.Fatalf("unexpected refresh response: %+v", resp)
 	}
 	claims, restored, err := verifyCredential(server.config.CredentialKey, resp.Credential)
@@ -373,7 +373,7 @@ func TestRefreshCredentialUnknownDeviceReturns404(t *testing.T) {
 		Nonce:     nonce,
 		Signature: "x",
 	})
-	request := httptest.NewRequest("POST", "/v1/devices/refresh", bytes.NewReader(body))
+	request := httptest.NewRequest("POST", PathRefreshV2, bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, request)
 
@@ -403,7 +403,7 @@ func TestRefreshCredentialBadSignatureReturns401(t *testing.T) {
 		CredentialTTL: time.Hour,
 	})
 	defer server.Close()
-	if server.replaceEnrollment("device-a", base64.RawURLEncoding.EncodeToString(publicKey), "test", 1, time.Now()) != enrollmentOK {
+	if server.replaceEnrollment("device-a", base64.RawURLEncoding.EncodeToString(publicKey), "test", RelayBootstrapProtocolVersion, time.Now()) != enrollmentOK {
 		t.Fatal("test device enrollment was rejected")
 	}
 	mux := http.NewServeMux()
@@ -417,10 +417,10 @@ func TestRefreshCredentialBadSignatureReturns401(t *testing.T) {
 		Timestamp: timestamp,
 		Nonce:     nonce,
 		Signature: base64.RawURLEncoding.EncodeToString(
-			ed25519.Sign(wrongPrivate, []byte(refreshProofPayload(timestamp, nonce))),
+			ed25519.Sign(wrongPrivate, []byte(refreshProofPayloadForPath(PathRefreshV2, timestamp, nonce))),
 		),
 	})
-	request := httptest.NewRequest("POST", "/v1/devices/refresh", bytes.NewReader(body))
+	request := httptest.NewRequest("POST", PathRefreshV2, bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, request)
 
@@ -446,7 +446,7 @@ func TestRefreshCredentialRejectsReplayedNonce(t *testing.T) {
 		CredentialTTL: time.Hour,
 	})
 	defer server.Close()
-	if server.replaceEnrollment("device-a", base64.RawURLEncoding.EncodeToString(publicKey), "test", 1, time.Now()) != enrollmentOK {
+	if server.replaceEnrollment("device-a", base64.RawURLEncoding.EncodeToString(publicKey), "test", RelayBootstrapProtocolVersion, time.Now()) != enrollmentOK {
 		t.Fatal("test device enrollment was rejected")
 	}
 	mux := http.NewServeMux()
@@ -455,7 +455,7 @@ func TestRefreshCredentialRejectsReplayedNonce(t *testing.T) {
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32))
 	timestamp := time.Now().Unix()
 	signature := base64.RawURLEncoding.EncodeToString(
-		ed25519.Sign(privateKey, []byte(refreshProofPayload(timestamp, nonce))),
+		ed25519.Sign(privateKey, []byte(refreshProofPayloadForPath(PathRefreshV2, timestamp, nonce))),
 	)
 	refresh := func() *httptest.ResponseRecorder {
 		t.Helper()
@@ -466,7 +466,7 @@ func TestRefreshCredentialRejectsReplayedNonce(t *testing.T) {
 			Nonce:     nonce,
 			Signature: signature,
 		})
-		request := httptest.NewRequest("POST", "/v1/devices/refresh", bytes.NewReader(body))
+		request := httptest.NewRequest("POST", PathRefreshV2, bytes.NewReader(body))
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, request)
 		return rec

@@ -69,7 +69,7 @@ func TestReconcileRevocationsDisconnectsRevokedDevice(t *testing.T) {
 	defer server.Close()
 	ctx := context.Background()
 
-	if result := server.replaceEnrollment("device-a", "key-a", "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", "key-a", "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
 	injectPeer(server.hub, "device-a")

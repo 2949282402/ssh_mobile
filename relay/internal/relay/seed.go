@@ -16,6 +16,9 @@ import (
 func (s *Server) SeedEnrollments(ctx context.Context, devices []EnrolledDevice) error {
 	for i := range devices {
 		device := &devices[i]
+		if device.ProtocolVersion != s.config.ProtocolVersion {
+			return fmt.Errorf("seed device %q has unsupported protocol_version %d (expected %d)", device.DeviceID, device.ProtocolVersion, s.config.ProtocolVersion)
+		}
 		unlock, locked := s.lockDeviceContext(ctx, device.DeviceID)
 		if !locked {
 			return ctx.Err()

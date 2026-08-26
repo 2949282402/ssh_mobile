@@ -496,7 +496,7 @@ func TestAuthFailsClosedWhenCacheUnavailable(t *testing.T) {
 	server.cache = erroringCache{Cache: server.cache}
 
 	encodedKey := base64.RawURLEncoding.EncodeToString(publicKey)
-	if result := server.replaceEnrollment("device-a", encodedKey, "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", encodedKey, "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
 	credential, err := issueCredential([]byte(mysqlTestCredentialKey), "device-a", publicKey, mustEnrollmentGeneration(t, server, "device-a"), time.Hour)
@@ -525,7 +525,7 @@ func TestAdminSnapshotFailsOpenWhenPresenceUnavailable(t *testing.T) {
 		AdminPassword:   "test-password-123",
 	})
 	defer server.Close()
-	if result := server.replaceEnrollment("device-a", "key-a", "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", "key-a", "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
 	server.cache = erroringCache{Cache: server.cache}
@@ -579,7 +579,7 @@ func TestAdminOverviewSnapshotFailsOpenWhenPresenceUnavailable(t *testing.T) {
 		AdminPassword:   "test-password-123",
 	})
 	defer server.Close()
-	if result := server.replaceEnrollment("device-a", "key-a", "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", "key-a", "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
 	server.cache = erroringCache{Cache: server.cache}
@@ -616,7 +616,7 @@ func TestMySQLRedisFullStackOnlineStats(t *testing.T) {
 	defer server.Close()
 	resetMySQLTestDB(t, mysqlDSN)
 
-	if result := server.replaceEnrollment("device-a", "key-a", "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", "key-a", "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
 	if server.cache.(*redisStore) == nil {

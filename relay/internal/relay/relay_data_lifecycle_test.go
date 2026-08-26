@@ -9,14 +9,14 @@ import (
 func TestRelayDataReenrollInvalidatesPreUpgradeLease(t *testing.T) {
 	server := NewServer(Config{})
 	defer server.Close()
-	if result := server.replaceEnrollment("device-a", "same-key", "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", "same-key", "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("initial enrollment result=%v", result)
 	}
 	lease, status := server.relayData.beginUpgrade("device-a")
 	if status != relayDataUpgradeAccepted {
 		t.Fatalf("begin upgrade status=%v", status)
 	}
-	if result := server.replaceEnrollment("device-a", "same-key", "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", "same-key", "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("re-enrollment result=%v", result)
 	}
 	if server.relayData.startEndpoint(lease, testRelayDataConnForRegistry("late-reenroll", "device-a", relayDataRoleInitiator)) {
@@ -45,11 +45,11 @@ func TestDelayedKickPreservesCurrentEnrollmentGeneration(t *testing.T) {
 	server := NewServer(Config{})
 	defer server.Close()
 	fixedTime := time.Now()
-	if result := server.replaceEnrollment("device-a", "same-key", "test", 1, fixedTime); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", "same-key", "test", RelayBootstrapProtocolVersion, fixedTime); result != enrollmentOK {
 		t.Fatalf("initial enrollment=%v", result)
 	}
 	oldGeneration := mustEnrollmentGeneration(t, server, "device-a")
-	if result := server.replaceEnrollment("device-a", "same-key", "test", 1, fixedTime); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", "same-key", "test", RelayBootstrapProtocolVersion, fixedTime); result != enrollmentOK {
 		t.Fatalf("re-enrollment=%v", result)
 	}
 	currentGeneration := mustEnrollmentGeneration(t, server, "device-a")
@@ -95,14 +95,14 @@ func TestDelayedRevokePreservesLaterReenrollment(t *testing.T) {
 	server := NewServer(Config{})
 	defer server.Close()
 	fixedTime := time.Now()
-	if result := server.replaceEnrollment("device-a", "same-key", "test", 1, fixedTime); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", "same-key", "test", RelayBootstrapProtocolVersion, fixedTime); result != enrollmentOK {
 		t.Fatalf("initial enrollment=%v", result)
 	}
 	outcome, revokedGeneration, err := server.store.RevokeEnrollment(context.Background(), "device-a", time.Hour)
 	if err != nil || outcome != revokeOK {
 		t.Fatalf("revoke: outcome=%v err=%v", outcome, err)
 	}
-	if result := server.replaceEnrollment("device-a", "same-key", "test", 1, fixedTime); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", "same-key", "test", RelayBootstrapProtocolVersion, fixedTime); result != enrollmentOK {
 		t.Fatalf("re-enrollment=%v", result)
 	}
 	currentGeneration := mustEnrollmentGeneration(t, server, "device-a")
@@ -128,7 +128,7 @@ func TestDelayedRevokePreservesLaterReenrollment(t *testing.T) {
 func TestRelayDataReconciliationIncludesDataOnlyDevices(t *testing.T) {
 	server := NewServer(Config{})
 	defer server.Close()
-	if result := server.replaceEnrollment("device-data-only", "key", "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-data-only", "key", "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("seed enrollment: result=%v", result)
 	}
 	lease, status := server.relayData.beginUpgrade("device-data-only", mustEnrollmentGeneration(t, server, "device-data-only"))

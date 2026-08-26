@@ -72,7 +72,7 @@ func TestMultiInstanceSharedAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result := serverA.replaceEnrollment("device-a", base64.RawURLEncoding.EncodeToString(publicKey), "test", 1, time.Now()); result != enrollmentOK {
+	if result := serverA.replaceEnrollment("device-a", base64.RawURLEncoding.EncodeToString(publicKey), "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
 
@@ -109,7 +109,7 @@ func TestMultiInstanceCrossInstanceRevoke(t *testing.T) {
 	defer serverB.Close()
 	resetMySQLTestDB(t, mysqlDSN)
 
-	if result := serverA.replaceEnrollment("device-x", "key-x", "test", 1, time.Now()); result != enrollmentOK {
+	if result := serverA.replaceEnrollment("device-x", "key-x", "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
 	// The device is connected to instance B only.
@@ -148,10 +148,10 @@ func enrollViaHTTP(t *testing.T, baseURL, deviceID, token string) (string, ed255
 		DeviceID:        deviceID,
 		PublicKey:       base64.RawURLEncoding.EncodeToString(publicKey),
 		EnrollmentToken: token,
-		ProtocolVersion: 1,
+		ProtocolVersion: 2,
 		Platform:        "windows",
 	})
-	response, err := http.Post(baseURL+"/v1/devices/enroll", "application/json", bytes.NewReader(body))
+	response, err := http.Post(baseURL+PathEnrollV2, "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}

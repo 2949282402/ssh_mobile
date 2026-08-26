@@ -610,7 +610,7 @@ func TestAdmitAuthenticatedDeviceFailureBoundaries(t *testing.T) {
 	defer server.Close()
 	key := []byte("admit-key")
 	deviceID := "admit-device"
-	if result := server.replaceEnrollment(deviceID, base64.RawURLEncoding.EncodeToString(key), "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment(deviceID, base64.RawURLEncoding.EncodeToString(key), "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("enrollment failed: %v", result)
 	}
 	enrolled, err := server.store.GetEnrollment(context.Background(), deviceID)

@@ -17,27 +17,29 @@ import (
 )
 
 const (
-	defaultAddress                           = ":8080"
-	defaultCredentialTTL                     = 24 * time.Hour
-	defaultAdminSessionTTL                   = 24 * time.Hour
-	defaultMaxConnections                    = 2048
-	defaultMaxTransferSessions               = 4096
-	defaultMaxEnrolledDevices                = 4096
-	defaultMaxRevokedDevices                 = 4096
-	defaultMaxPendingFramesPerDevice         = 64
-	defaultMaxPendingBytesPerDevice    int64 = 16 * 1024 * 1024
-	defaultMaxFramesPerSecondPerDevice       = 256
-	defaultMaxBytesPerSecondPerDevice  int64 = 64 * 1024 * 1024
-	defaultMaxAdminSessions                  = 32
-	defaultAdminLoginMaxAttempts             = 5
-	defaultAdminLoginWindow                  = time.Minute
-	defaultAdminLoginBlockDuration           = 5 * time.Minute
-	defaultMaxAdminLoginEntries              = 4096
-	defaultHTTPReadTimeout                   = 15 * time.Second
-	defaultHTTPWriteTimeout                  = 15 * time.Second
-	defaultHTTPIdleTimeout                   = 60 * time.Second
-	defaultHTTPMaxHeaderBytes                = 16 * 1024
-	defaultPresenceTTL                       = 60 * time.Second
+	defaultAddress                            = ":8080"
+	defaultCredentialTTL                      = 24 * time.Hour
+	defaultAdminSessionTTL                    = 24 * time.Hour
+	defaultMaxConnections                     = 2048
+	defaultMaxTransferSessions                = 4096
+	defaultMaxEnrolledDevices                 = 4096
+	defaultMaxRevokedDevices                  = 4096
+	defaultMaxPendingFramesPerDevice          = 64
+	defaultMaxPendingBytesPerDevice    int64  = 16 * 1024 * 1024
+	defaultMaxFramesPerSecondPerDevice        = 256
+	defaultMaxBytesPerSecondPerDevice  int64  = 64 * 1024 * 1024
+	defaultMaxAdminSessions                   = 32
+	defaultAdminLoginMaxAttempts              = 5
+	defaultAdminLoginWindow                   = time.Minute
+	defaultAdminLoginBlockDuration            = 5 * time.Minute
+	defaultMaxAdminLoginEntries               = 4096
+	defaultHTTPReadTimeout                    = 15 * time.Second
+	defaultHTTPWriteTimeout                   = 15 * time.Second
+	defaultHTTPIdleTimeout                    = 60 * time.Second
+	defaultHTTPMaxHeaderBytes                 = 16 * 1024
+	defaultPresenceTTL                        = 60 * time.Second
+	RelayBootstrapProtocolVersion      uint32 = 2
+	defaultProtocolVersion             uint32 = RelayBootstrapProtocolVersion
 	// 服务端心跳监视器默认值镜像冻结契约常量：HEARTBEAT_INTERVAL_S=20、
 	// SERVER_HEARTBEAT_MISSES_BEFORE_CLOSE=2（配合 PRESENCE_TTL_S=60：60/20）。
 	defaultServerHeartbeatInterval = 20 * time.Second
@@ -77,6 +79,7 @@ type Config struct {
 	CredentialKey               []byte
 	CredentialTTL               time.Duration
 	AdminSessionTTL             time.Duration
+	ProtocolVersion             uint32
 	MaxConnections              int
 	MaxTransferSessions         int
 	MaxEnrolledDevices          int
@@ -266,6 +269,9 @@ func cidrListEnv(name string) []netip.Prefix {
 func withConfigDefaults(config Config) Config {
 	if config.Address == "" {
 		config.Address = defaultAddress
+	}
+	if config.ProtocolVersion == 0 {
+		config.ProtocolVersion = defaultProtocolVersion
 	}
 	if config.CredentialTTL <= 0 {
 		config.CredentialTTL = defaultCredentialTTL

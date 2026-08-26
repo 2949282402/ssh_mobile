@@ -15,10 +15,14 @@
     Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
   }
 
-  # Keep all device/bootstrap and v2 websocket routes on the Go Relay.  The
-  # catch-all below serves the Front SPA, so omitting a route here silently
-  # turns an API/WebSocket request into a successful HTML response.
-  @relay_api path /api/admin/v1 /api/admin/v1/* /v1 /v1/* /v2 /v2/* /healthz
+  # Block retired v1 and internal routes explicitly
+  @blocked path /v1 /v1/* /internal /internal/*
+  handle @blocked {
+    respond 404
+  }
+
+  # Keep all device/bootstrap and v2 websocket routes on the Go Relay.
+  @relay_api path /api/admin/v1 /api/admin/v1/* /v2 /v2/* /healthz
   handle @relay_api {
     reverse_proxy relay:{$RELAY_INTERNAL_PORT}
   }

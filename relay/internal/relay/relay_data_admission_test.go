@@ -121,7 +121,7 @@ func TestRelayDataPreUpgradeErrorsUseStableJSONContract(t *testing.T) {
 	server := newEndpointBoundaryServer(Config{})
 	defer server.Close()
 	encodedKey := base64.RawURLEncoding.EncodeToString(publicKey)
-	if result := server.replaceEnrollment("device-a", encodedKey, "linux", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", encodedKey, "linux", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("seed enrollment result = %v", result)
 	}
 
