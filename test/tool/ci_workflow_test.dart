@@ -71,6 +71,18 @@ void main() {
         protocolV2Contract.contains('run: flutter pub get'),
     'protocol-v2-contract 必须安装 native Dart package dependencies',
   );
+  _expect(
+    protocolV2Contract.contains(
+      'dart run scripts/bash/contracts/check_network_v2_contract.dart --test',
+    ),
+    'protocol-v2-contract 必须运行 Network V2 parity checker self-tests',
+  );
+  _expect(
+    protocolV2Contract.contains(
+      'dart run scripts/bash/contracts/check_network_v2_contract.dart',
+    ),
+    'protocol-v2-contract 必须运行 Network V2 schema parity check',
+  );
 
   final adminApiContract = _jobSection(workflow, 'admin-api-contract');
   _expect(

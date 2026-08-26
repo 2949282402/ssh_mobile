@@ -266,6 +266,14 @@ List<String> verifySchemaParity({
     dartContent,
     'decodePeerTransferProgress',
   );
+  final rustEventModule = extractBlock(
+    rustContent,
+    RegExp(r'pub\s+mod\s+network_event\b'),
+  );
+  final rustEventPayload = extractBlock(
+    rustEventModule,
+    RegExp(r'pub\s+enum\s+Payload\b'),
+  );
 
   check(
     protoEvent.contains(
@@ -274,10 +282,10 @@ List<String> verifySchemaParity({
     'network.proto: NetworkEvent block missing PeerTransferProgressEvent tag 32',
   );
   check(
-    rustContent.contains(
+    rustEventPayload.contains(
       '#[prost(message, tag = "32")]\n        PeerTransferProgress(PeerTransferProgressEvent),',
     ),
-    'Rust lib.rs: NetworkEvent payload missing PeerTransferProgress tag 32',
+    'Rust lib.rs: network_event::Payload enum missing PeerTransferProgress tag 32',
   );
   check(
     dartDecodeEvent.contains(
@@ -423,13 +431,19 @@ void runSelfTests() {
     '${repoRoot.path}/apps/ssh_mobile_full/lib/services/network/network_protocol_v2_codec.dart',
   ).readAsStringSync();
 
+  void requireSelfTest(bool condition, String message) {
+    if (!condition) {
+      throw StateError(message);
+    }
+  }
+
   // Baseline must pass
   final baselineFailures = verifySchemaParity(
     protoContent: protoContent,
     rustContent: rustContent,
     dartContent: dartContent,
   );
-  assert(
+  requireSelfTest(
     baselineFailures.isEmpty,
     'Baseline self-test failed with errors: $baselineFailures',
   );
@@ -449,7 +463,7 @@ message TransferCompletedEvent {
     rustContent: rustContent,
     dartContent: dartContent,
   );
-  assert(
+  requireSelfTest(
     test1Failures.any(
       (f) => f.contains('TransferCompletedEvent block missing peer_id = 3'),
     ),
@@ -466,7 +480,7 @@ message TransferCompletedEvent {
     rustContent: rustContent,
     dartContent: dartWithoutCase32,
   );
-  assert(
+  requireSelfTest(
     test2Failures.any((f) => f.contains('decodeEvent method missing case 32')),
     'Self-test 2 failed: checker did not detect missing case 32 in decodeEvent!',
   );
@@ -481,7 +495,7 @@ message TransferCompletedEvent {
     rustContent: rustContent,
     dartContent: dartMisplacedCase32,
   );
-  assert(
+  requireSelfTest(
     test3Failures.any((f) => f.contains('decodeEvent method missing case 32')),
     'Self-test 3 failed: checker accepted case 32 in wrong method (decodeOffer)!',
   );
@@ -496,7 +510,7 @@ message TransferCompletedEvent {
     rustContent: rustContent,
     dartContent: dartWrongTagInPeerProgress,
   );
-  assert(
+  requireSelfTest(
     test4Failures.any(
       (f) => f.contains(
         'decodePeerTransferProgress method missing cases for tags 1..5',
@@ -515,15 +529,39 @@ message TransferCompletedEvent {
     rustContent: rustContent,
     dartContent: dartContent,
   );
-  assert(
+  requireSelfTest(
     test5Failures.any(
       (f) => f.contains('PeerTransferProgressEvent block missing fields'),
     ),
     'Self-test 5 failed: checker did not detect missing field in proto PeerTransferProgressEvent!',
   );
 
+  // Test 6: Tag 32 misplaced in wrong Rust enum (outside network_event::Payload)
+  final rustMisplacedTag32 = rustContent
+      .replaceAll(
+        '#[prost(message, tag = "32")]\n        PeerTransferProgress(PeerTransferProgressEvent),',
+        '// removed from Payload',
+      )
+      .replaceAll(
+        'pub enum RealtimeSignalKind {',
+        'pub enum RealtimeSignalKind {\n        #[prost(message, tag = "32")]\n        PeerTransferProgress(PeerTransferProgressEvent),',
+      );
+  final test6Failures = verifySchemaParity(
+    protoContent: protoContent,
+    rustContent: rustMisplacedTag32,
+    dartContent: dartContent,
+  );
+  requireSelfTest(
+    test6Failures.any(
+      (f) => f.contains(
+        'network_event::Payload enum missing PeerTransferProgress tag 32',
+      ),
+    ),
+    'Self-test 6 failed: checker accepted PeerTransferProgress tag 32 outside network_event::Payload!',
+  );
+
   stdout.writeln(
-    'Parity Gate Self-Tests PASSED: All 5 mutation tests verified successfully.',
+    'Parity Gate Self-Tests PASSED: All 6 mutation tests verified successfully.',
   );
 }
 
