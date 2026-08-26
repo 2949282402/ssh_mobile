@@ -65,12 +65,12 @@ async fn real_clients_complete_control_and_reservation_data_flow() {
 
     let (bad_status, _) = http_json(
         &base_url,
-        "/v1/devices/enroll",
+        "/v2/devices/enroll",
         "POST",
         &serde_json::to_vec(&json!({
             "device_id": "e2e-rust-invalid",
             "public_key": URL_SAFE_NO_PAD.encode([0u8; 32]),
-            "protocol_version": 1,
+            "protocol_version": 2,
             "enrollment_token": "deliberately-invalid-token"
         }))
         .expect("encode invalid enrollment"),
@@ -477,12 +477,12 @@ async fn enroll(base_url: &str, token: &str, identity: &Identity) -> Result<Stri
     let body = serde_json::to_vec(&json!({
         "device_id": identity.device_id,
         "public_key": URL_SAFE_NO_PAD.encode(identity.public_key),
-        "protocol_version": 1,
+        "protocol_version": 2,
         "platform": "rust-e2e",
         "enrollment_token": token,
     }))
     .map_err(|error| format!("encode enrollment: {error}"))?;
-    let (status, response) = http_json(base_url, "/v1/devices/enroll", "POST", &body).await?;
+    let (status, response) = http_json(base_url, "/v2/devices/enroll", "POST", &body).await?;
     if status != 200 {
         return Err(format!("enrollment returned HTTP {status}"));
     }
@@ -501,7 +501,7 @@ async fn enroll(base_url: &str, token: &str, identity: &Identity) -> Result<Stri
         .get("server_time")
         .and_then(Value::as_i64)
         .ok_or_else(|| "enrollment response omitted server_time".to_string())?;
-    if payload.get("protocol_version").and_then(Value::as_u64) != Some(1)
+    if payload.get("protocol_version").and_then(Value::as_u64) != Some(2)
         || expires_at <= server_time
     {
         return Err("enrollment response protocol/expiry is invalid".to_string());
@@ -520,7 +520,7 @@ async fn refresh(base_url: &str, identity: &Identity) -> Result<String, String> 
             .as_secs(),
     )
     .map_err(|_| "system clock exceeds signed Unix seconds".to_string())?;
-    let transcript = format!("POST\n/v1/devices/refresh\n{timestamp}\n{nonce}");
+    let transcript = format!("POST\n/v2/devices/refresh\n{timestamp}\n{nonce}");
     let signature = URL_SAFE_NO_PAD.encode(
         SigningKey::from_bytes(&identity.signing_seed)
             .sign(transcript.as_bytes())
@@ -534,7 +534,7 @@ async fn refresh(base_url: &str, identity: &Identity) -> Result<String, String> 
         "signature": signature,
     }))
     .map_err(|error| format!("encode refresh: {error}"))?;
-    let (status, response) = http_json(base_url, "/v1/devices/refresh", "POST", &body).await?;
+    let (status, response) = http_json(base_url, "/v2/devices/refresh", "POST", &body).await?;
     if status != 200 {
         return Err(format!("credential refresh returned HTTP {status}"));
     }

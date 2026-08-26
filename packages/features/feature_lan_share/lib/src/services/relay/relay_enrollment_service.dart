@@ -33,7 +33,7 @@ final class RelayEnrollmentService implements LanRelayEnrollmentPort {
   final BootstrapClient _bootstrapClient;
 
   /// Go 与 Rust Relay 共享的当前开发线协议版本。
-  static const int protocolVersion = 1;
+  static const int protocolVersion = 2;
 
   /// 为设备执行 enrollment，并将凭据写入安全存储。
   ///
@@ -138,7 +138,7 @@ final class RelayEnrollmentService implements LanRelayEnrollmentPort {
       final timestamp =
           DateTime.now().toUtc().millisecondsSinceEpoch ~/
           Duration.millisecondsPerSecond;
-      final transcript = 'POST\n/v1/devices/refresh\n$timestamp\n$nonce';
+      final transcript = 'POST\n/v2/devices/refresh\n$timestamp\n$nonce';
       final signatureBytes = (await Ed25519().sign(
         utf8.encode(transcript),
         keyPair: pair,

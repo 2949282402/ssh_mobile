@@ -16,7 +16,7 @@ npm run dev
 ```
 
 Vite reads `FRONT_DEV_PORT` and `RELAY_DEV_API_ORIGIN` from `.env`, then proxies
-`/api/admin/v1`, `/healthz`, and `/v1` to the configured local Relay origin. Production
+`/api/admin/v1`, `/healthz`, and `/v2` to the configured local Relay origin. Production
 requests use relative paths through Caddy, so the browser keeps the
 HttpOnly administrator session same-origin.
 
