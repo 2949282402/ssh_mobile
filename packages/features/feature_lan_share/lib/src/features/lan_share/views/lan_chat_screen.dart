@@ -342,6 +342,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
                           PopupMenuButton<String>(
                             icon: const Icon(Icons.more_vert_rounded),
                             onSelected: (action) async {
+                              final messenger = ScaffoldMessenger.of(context);
                               if (action == 'toggle_relay') {
                                 final peerState = vm.peerStateFor(
                                   widget.targetDeviceId,
@@ -355,7 +356,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
                                 );
                                 if (context.mounted &&
                                     result is NetworkFailure<void>) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
+                                  messenger.showSnackBar(
                                     SnackBar(
                                       content: Text(
                                         strings.isEnglish
@@ -393,19 +394,20 @@ class _LanChatScreenState extends State<LanChatScreen> {
                                   final result = await vm.forgetDevice(
                                     widget.targetDeviceId,
                                   );
-                                  if (result is NetworkFailure<void> &&
-                                      mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                          strings.isEnglish
-                                              ? 'Failed to forget device: ${result.error.message}'
-                                              : '解除设备配对失败：${result.error.message}',
+                                  if (context.mounted) {
+                                    if (result is NetworkFailure<void>) {
+                                      messenger.showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            strings.isEnglish
+                                                ? 'Failed to forget device: ${result.error.message}'
+                                                : '解除设备配对失败：${result.error.message}',
+                                          ),
                                         ),
-                                      ),
-                                    );
-                                  } else if (mounted) {
-                                    _refreshPairing(vm);
+                                      );
+                                    } else {
+                                      _refreshPairing(vm);
+                                    }
                                   }
                                 }
                               } else if (action == 'clear') {
@@ -511,45 +513,62 @@ class _LanChatScreenState extends State<LanChatScreen> {
 
                     // Offline Warn Banner
                     if (!isOnline)
-                      Container(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest
-                            .withValues(alpha: 0.5),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16.0,
-                          vertical: 8.0,
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              peerState?.trust?.authorization.relay == true
-                                  ? Icons.cloud_done_rounded
-                                  : Icons.info_outline_rounded,
-                              size: 18,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurfaceVariant,
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                peerState?.trust?.authorization.relay == true
-                                    ? (strings.isEnglish
-                                          ? 'Device is offline on LAN. Relay is available for file transfers.'
-                                          : '设备当前不在局域网，已启用中继传输附件。')
-                                    : strings.lanShareDeviceOfflineHint,
-                                style: Theme.of(context).textTheme.bodySmall
-                                    ?.copyWith(
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.onSurfaceVariant,
-                                    ),
+                      () {
+                        final relayAuthorized =
+                            peerState?.trust?.authorization.relay == true;
+                        final relayAvailable =
+                            peerState?.route.relayAvailable == true;
+                        final String offlineMessage;
+                        final IconData offlineIcon;
+                        if (relayAvailable) {
+                          offlineIcon = Icons.cloud_done_rounded;
+                          offlineMessage = strings.isEnglish
+                              ? 'Device is offline on LAN. Relay is currently available.'
+                              : '设备当前不在局域网，Relay 当前可用。';
+                        } else if (relayAuthorized) {
+                          offlineIcon = Icons.cloud_queue_rounded;
+                          offlineMessage = strings.isEnglish
+                              ? 'Device is offline on LAN. Relay authorized, will attempt on send.'
+                              : '设备当前不在局域网，已授权中继，发送时将尝试 Relay。';
+                        } else {
+                          offlineIcon = Icons.info_outline_rounded;
+                          offlineMessage = strings.lanShareDeviceOfflineHint;
+                        }
+
+                        return Container(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHighest
+                              .withValues(alpha: 0.5),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16.0,
+                            vertical: 8.0,
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                offlineIcon,
+                                size: 18,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
                               ),
-                            ),
-                          ],
-                        ),
-                      ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  offlineMessage,
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.onSurfaceVariant,
+                                      ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }(),
 
                     // Bottom Input Bar
                     if (!_isPaired)
