@@ -115,8 +115,7 @@ class LanShareViewModel extends ChangeNotifier {
         nativeTransferCoordinator?.currentRouteStates ?? const {};
     for (final trust in _trustRecords.values) {
       final routeState =
-          routeStates[trust.deviceId] ??
-          LanPeerRouteState(relayAvailable: trust.authorization.relay);
+          routeStates[trust.deviceId] ?? const LanPeerRouteState();
       states[trust.deviceId] = LanPeerViewState(
         trust: trust,
         route: routeState,
@@ -705,15 +704,47 @@ class LanShareViewModel extends ChangeNotifier {
     return result;
   }
 
-  /// 清除全部 LAN 历史记录。
+  /// 清除全部 LAN 历史记录并清理已导入的沙箱文件。
   Future<void> clearHistory() async {
+    try {
+      final records = await historyDao.getAllRecords();
+      for (final r in records) {
+        if (r.localPath != null && r.localPath!.isNotEmpty) {
+          try {
+            await storageService.deleteSandboxFile(r.localPath!);
+          } catch (error, stackTrace) {
+            logger.warning(
+              'Failed to delete sandbox file on clearHistory: ${r.localPath}',
+              details: '$error\n$stackTrace',
+            );
+          }
+        }
+      }
+    } catch (error, stackTrace) {
+      logger.warning(
+        'Failed to query records before clearHistory',
+        details: '$error\n$stackTrace',
+      );
+    }
     await historyDao.clearAllRecords();
     if (!_disposed) notifyListeners();
   }
 
-  /// 删除一条 LAN 历史记录。
+  /// 删除一条 LAN 历史记录并清理对应沙箱文件。
   Future<void> deleteMessage(String messageId) async {
+    try {
+      final record = await historyDao.getRecord(messageId);
+      if (record?.localPath != null && record!.localPath!.isNotEmpty) {
+        await storageService.deleteSandboxFile(record.localPath!);
+      }
+    } catch (error, stackTrace) {
+      logger.warning(
+        'Failed to delete sandbox file on deleteMessage: $messageId',
+        details: '$error\n$stackTrace',
+      );
+    }
     await historyDao.deleteRecord(messageId);
+    if (!_disposed) notifyListeners();
   }
 
   /// 解除设备配对； native peer removal is owned by the transfer coordinator.

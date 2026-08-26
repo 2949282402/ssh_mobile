@@ -8,19 +8,33 @@ import 'package:file_picker/file_picker.dart';
 import '../../domain/lan_share_ports.dart';
 import 'lan_share_models.dart';
 
+/// Port for querying available storage space on a given directory.
+abstract interface class LanDiskSpacePort {
+  Future<int?> getFreeBytes(Directory targetDirectory);
+}
+
 /// Service responsible for sandbox storage management, disk space pre-flight checks,
 /// manual exports to system photo gallery/downloads, and 7-day TTL auto-cleanup (GC).
 class LanStorageService {
   static const String _cacheFolderName = 'lan_share_cache';
+  static const int safetyBufferBytes =
+      100 * 1024 * 1024; // 100 MiB safety buffer
+
   final Future<Directory> Function()? sandboxDirectoryProvider;
+  final Future<int?> Function()? freeDiskSpaceBytesProvider;
   final Future<double?> Function()? freeDiskSpaceMbProvider;
+  final LanDiskSpacePort? diskSpacePort;
   final Future<String?> Function()? desktopExportDirectoryProvider;
+  final Future<File> Function(File source, File target)? renameOverride;
   final LanShareLoggerPort? logger;
 
   LanStorageService({
     this.sandboxDirectoryProvider,
+    this.freeDiskSpaceBytesProvider,
     this.freeDiskSpaceMbProvider,
+    this.diskSpacePort,
     this.desktopExportDirectoryProvider,
+    this.renameOverride,
     this.logger,
   });
 
@@ -32,12 +46,22 @@ class LanStorageService {
       if (!await directory.exists()) await directory.create(recursive: true);
       return directory;
     }
-    final docsDir = await getApplicationDocumentsDirectory();
-    final cacheDir = Directory(p.join(docsDir.path, _cacheFolderName));
-    if (!await cacheDir.exists()) {
-      await cacheDir.create(recursive: true);
+    try {
+      final docsDir = await getApplicationDocumentsDirectory();
+      final cacheDir = Directory(p.join(docsDir.path, _cacheFolderName));
+      if (!await cacheDir.exists()) {
+        await cacheDir.create(recursive: true);
+      }
+      return cacheDir;
+    } catch (_) {
+      final tempDir = Directory(
+        p.join(Directory.systemTemp.path, _cacheFolderName),
+      );
+      if (!await tempDir.exists()) {
+        await tempDir.create(recursive: true);
+      }
+      return tempDir;
     }
-    return cacheDir;
   }
 
   /// Get target file path inside sandbox for an incoming payload
@@ -68,7 +92,9 @@ class LanStorageService {
       // Try rename/move first
       try {
         await targetFile.delete(); // clear the 0-byte reservation placeholder
-        final moved = await sourceFile.rename(targetFile.path);
+        final moved = renameOverride != null
+            ? await renameOverride!(sourceFile, targetFile)
+            : await sourceFile.rename(targetFile.path);
         if (await moved.length() == sourceLength) {
           adopted = true;
           return moved;
@@ -96,7 +122,12 @@ class LanStorageService {
 
       try {
         await sourceFile.delete();
-      } catch (_) {}
+      } catch (error, stackTrace) {
+        logger?.warning(
+          'Failed to delete source incoming file after adoption: $nativePath',
+          details: '$error\n$stackTrace',
+        );
+      }
 
       adopted = true;
       return targetFile;
@@ -162,51 +193,65 @@ class LanStorageService {
     return true;
   }
 
-  /// Disk space pre-flight check before accepting large file downloads
-  Future<bool> hasSufficientSpace(int requiredBytes) async {
-    try {
-      double freeMb = 0.0;
-      final provided = freeDiskSpaceMbProvider;
-      if (provided != null) {
-        freeMb = await provided() ?? 0.0;
-      } else if (Platform.isMacOS || Platform.isLinux) {
-        // macOS / Linux fallback via df -k
-        try {
-          final result = await Process.run('df', ['-k', '.']);
-          if (result.exitCode == 0) {
-            final lines = (result.stdout as String).split('\n');
-            if (lines.length > 1) {
-              final parts = lines[1].split(RegExp(r'\s+'));
-              if (parts.length >= 4) {
-                final availableKb = double.tryParse(parts[3]) ?? 0.0;
-                freeMb = availableKb / 1024.0;
+  Future<int?> _queryFreeDiskBytes(Directory directory) async {
+    final port = diskSpacePort;
+    if (port != null) {
+      return await port.getFreeBytes(directory);
+    }
+    final bytesProvider = freeDiskSpaceBytesProvider;
+    if (bytesProvider != null) {
+      return await bytesProvider();
+    }
+    final mbProvider = freeDiskSpaceMbProvider;
+    if (mbProvider != null) {
+      final mb = await mbProvider();
+      return mb != null ? (mb * 1024 * 1024).toInt() : null;
+    }
+    if (Platform.isMacOS || Platform.isLinux) {
+      try {
+        final result = await Process.run('df', ['-k', directory.path]);
+        if (result.exitCode == 0) {
+          final lines = (result.stdout as String).split('\n');
+          if (lines.length > 1) {
+            final parts = lines[1].split(RegExp(r'\s+'));
+            if (parts.length >= 4) {
+              final availableKb = int.tryParse(parts[3]);
+              if (availableKb != null) {
+                return availableKb * 1024;
               }
             }
           }
-        } catch (_) {
-          freeMb = 10240.0;
         }
-      } else if (Platform.isWindows) {
-        freeMb = 10240.0;
-      } else {
-        try {
-          final free = await DiskSpace.getFreeDiskSpace;
-          if (free != null) {
-            freeMb = free;
-          }
-        } catch (_) {
-          freeMb = 10240.0;
-        }
+      } catch (_) {
+        return null;
       }
+    } else {
+      try {
+        final freeMb = await DiskSpace.getFreeDiskSpace;
+        if (freeMb != null) {
+          return (freeMb * 1024 * 1024).toInt();
+        }
+      } catch (_) {
+        return null;
+      }
+    }
+    return null;
+  }
 
-      final requiredMb = requiredBytes / (1024.0 * 1024.0);
-      // Keep 100MB safety buffer
-      return (freeMb - requiredMb) > 100.0;
-    } catch (e) {
-      logger?.warning(
-        'LAN storage space check failed',
-        details: 'errorType=${e.runtimeType}',
-      );
+  /// Disk space pre-flight check before accepting large file downloads
+  Future<bool> hasSufficientSpace(int requiredBytes) async {
+    try {
+      final dir = await getSandboxDirectory();
+      final freeBytes = await _queryFreeDiskBytes(dir);
+      if (freeBytes == null) {
+        logger?.warning(
+          'LAN storage space check failed: unable to determine free disk space',
+        );
+        return false;
+      }
+      return (freeBytes - requiredBytes) >= safetyBufferBytes;
+    } catch (e, st) {
+      logger?.warning('LAN storage space check failed', details: '$e\n$st');
       return false;
     }
   }
