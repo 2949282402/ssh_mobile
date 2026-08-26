@@ -643,6 +643,105 @@ void main() {
       throwsA(isA<FormatException>()),
     );
   });
+
+  group('Network V2 transfer event peer ownership codec contract', () {
+    test(
+      'tag 32 (PeerTransferProgressEvent) decodes peerId and progress to TransferProgress',
+      () {
+        final frame = codec.decodeEvent(
+          Uint8List.fromList(
+            _frame(32, <int>[
+              ..._bytesField(1, utf8.encode('peer-a')),
+              ..._bytesField(2, utf8.encode('tx-1')),
+              ..._varintField(3, 4096),
+              ..._varintField(4, 8192),
+              ..._varintField(5, 0), // paused = false
+              ..._unknownFields(),
+            ]),
+          ),
+        );
+
+        expect(frame.event, isA<TransferProgress>());
+        final progress = frame.event! as TransferProgress;
+        expect(progress.peerId, 'peer-a');
+        expect(progress.transferId, 'tx-1');
+        expect(progress.bytesTransferred, 4096);
+        expect(progress.totalBytes, 8192);
+      },
+    );
+
+    test(
+      'tag 11 (TransferProgressEvent) preserves peerId in TransferProgress',
+      () {
+        final frame = codec.decodeEvent(
+          Uint8List.fromList(
+            _frame(11, <int>[
+              ..._bytesField(1, utf8.encode('tx-2')),
+              ..._varintField(2, 1024),
+              ..._varintField(3, 2048),
+              ..._bytesField(4, utf8.encode('peer-b')),
+              ..._unknownFields(),
+            ]),
+          ),
+        );
+
+        expect(frame.event, isA<TransferProgress>());
+        final progress = frame.event! as TransferProgress;
+        expect(progress.peerId, 'peer-b');
+        expect(progress.transferId, 'tx-2');
+        expect(progress.bytesTransferred, 1024);
+        expect(progress.totalBytes, 2048);
+      },
+    );
+
+    test(
+      'tag 15 (TransferCompletedEvent) preserves peerId in TransferCompleted',
+      () {
+        final frame = codec.decodeEvent(
+          Uint8List.fromList(
+            _frame(15, <int>[
+              ..._bytesField(1, utf8.encode('tx-3')),
+              ..._bytesField(2, utf8.encode('/tmp/received_file.bin')),
+              ..._bytesField(3, utf8.encode('peer-c')),
+              ..._unknownFields(),
+            ]),
+          ),
+        );
+
+        expect(frame.event, isA<TransferCompleted>());
+        final completed = frame.event! as TransferCompleted;
+        expect(completed.peerId, 'peer-c');
+        expect(completed.transferId, 'tx-3');
+        expect(completed.localPath, '/tmp/received_file.bin');
+      },
+    );
+
+    test('tag 16 (TransferFailedEvent) preserves peerId in TransferFailed', () {
+      final error = <int>[
+        ..._varintField(1, NetworkErrorCode.ioError.wireValue),
+        ..._bytesField(2, utf8.encode('io error')),
+        ..._bytesField(3, utf8.encode(NetworkOperation.send.wireName)),
+        ..._bytesField(4, utf8.encode('peer-d')),
+      ];
+
+      final frame = codec.decodeEvent(
+        Uint8List.fromList(
+          _frame(16, <int>[
+            ..._bytesField(1, utf8.encode('tx-4')),
+            ..._bytesField(2, error),
+            ..._bytesField(3, utf8.encode('peer-d')),
+            ..._unknownFields(),
+          ]),
+        ),
+      );
+
+      expect(frame.event, isA<TransferFailed>());
+      final failed = frame.event! as TransferFailed;
+      expect(failed.peerId, 'peer-d');
+      expect(failed.transferId, 'tx-4');
+      expect(failed.error.code, NetworkErrorCode.ioError);
+    });
+  });
 }
 
 bool _containsSubsequence(List<int> bytes, List<int> needle) {

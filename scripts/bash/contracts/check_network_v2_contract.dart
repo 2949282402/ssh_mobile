@@ -70,7 +70,10 @@ List<String> verifySchemaParity({
   }
 
   // 1. Check TransferProgressEvent block
-  final protoProgress = extractProtoMessage(protoContent, 'TransferProgressEvent');
+  final protoProgress = extractProtoMessage(
+    protoContent,
+    'TransferProgressEvent',
+  );
   final rustProgress = extractRustStruct(rustContent, 'TransferProgressEvent');
   final dartProgress = extractDartMethod(dartContent, 'decodeProgress');
 
@@ -82,17 +85,27 @@ List<String> verifySchemaParity({
     'network.proto: TransferProgressEvent block missing peer_id = 4 or field mismatch',
   );
   check(
-    rustProgress.contains('#[prost(string, tag = "4")]\n    pub peer_id: String,'),
+    rustProgress.contains(
+      '#[prost(string, tag = "4")]\n    pub peer_id: String,',
+    ),
     'Rust lib.rs: TransferProgressEvent struct missing peer_id tag 4',
   );
   check(
-    dartProgress.contains('case 4:\n          peerId = utf8.decode(reader.bytes(field.wireType));'),
+    dartProgress.contains(
+      'case 4:\n          peerId = utf8.decode(reader.bytes(field.wireType));',
+    ),
     'Dart codec: decodeProgress method missing case 4 for peerId',
   );
 
   // 2. Check IncomingTransferOfferEvent block
-  final protoOffer = extractProtoMessage(protoContent, 'IncomingTransferOfferEvent');
-  final rustOffer = extractRustStruct(rustContent, 'IncomingTransferOfferEvent');
+  final protoOffer = extractProtoMessage(
+    protoContent,
+    'IncomingTransferOfferEvent',
+  );
+  final rustOffer = extractRustStruct(
+    rustContent,
+    'IncomingTransferOfferEvent',
+  );
   final dartOffer = extractDartMethod(dartContent, 'decodeOffer');
 
   check(
@@ -104,17 +117,27 @@ List<String> verifySchemaParity({
     'network.proto: IncomingTransferOfferEvent block missing route_type = 5',
   );
   check(
-    rustOffer.contains('#[prost(enumeration = "RouteType", optional, tag = "5")]\n    pub route_type: Option<i32>,'),
+    rustOffer.contains(
+      '#[prost(enumeration = "RouteType", optional, tag = "5")]\n    pub route_type: Option<i32>,',
+    ),
     'Rust lib.rs: IncomingTransferOfferEvent struct missing route_type tag 5',
   );
   check(
-    dartOffer.contains('case 5:\n          route = reader.varint(field.wireType);'),
+    dartOffer.contains(
+      'case 5:\n          route = reader.varint(field.wireType);',
+    ),
     'Dart codec: decodeOffer method missing case 5 for route',
   );
 
   // 3. Check TransferCompletedEvent block
-  final protoCompleted = extractProtoMessage(protoContent, 'TransferCompletedEvent');
-  final rustCompleted = extractRustStruct(rustContent, 'TransferCompletedEvent');
+  final protoCompleted = extractProtoMessage(
+    protoContent,
+    'TransferCompletedEvent',
+  );
+  final rustCompleted = extractRustStruct(
+    rustContent,
+    'TransferCompletedEvent',
+  );
   final dartCompleted = extractDartMethod(dartContent, 'decodeCompleted');
 
   check(
@@ -124,11 +147,15 @@ List<String> verifySchemaParity({
     'network.proto: TransferCompletedEvent block missing peer_id = 3',
   );
   check(
-    rustCompleted.contains('#[prost(string, tag = "3")]\n    pub peer_id: String,'),
+    rustCompleted.contains(
+      '#[prost(string, tag = "3")]\n    pub peer_id: String,',
+    ),
     'Rust lib.rs: TransferCompletedEvent struct missing peer_id tag 3',
   );
   check(
-    dartCompleted.contains('case 3:\n          peerId = utf8.decode(reader.bytes(field.wireType));'),
+    dartCompleted.contains(
+      'case 3:\n          peerId = utf8.decode(reader.bytes(field.wireType));',
+    ),
     'Dart codec: decodeCompleted method missing case 3 for peerId',
   );
 
@@ -144,11 +171,15 @@ List<String> verifySchemaParity({
     'network.proto: TransferFailedEvent block missing peer_id = 3',
   );
   check(
-    rustFailed.contains('#[prost(string, tag = "3")]\n    pub peer_id: String,'),
+    rustFailed.contains(
+      '#[prost(string, tag = "3")]\n    pub peer_id: String,',
+    ),
     'Rust lib.rs: TransferFailedEvent struct missing peer_id tag 3',
   );
   check(
-    dartFailed.contains('case 3:\n          peerId = utf8.decode(reader.bytes(field.wireType));'),
+    dartFailed.contains(
+      'case 3:\n          peerId = utf8.decode(reader.bytes(field.wireType));',
+    ),
     'Dart codec: decodeFailed method missing case 3 for peerId',
   );
 
@@ -164,7 +195,9 @@ List<String> verifySchemaParity({
     'network.proto: ConnectPeerCommand block missing communication_class = 3',
   );
   check(
-    rustConnect.contains('#[prost(enumeration = "CommunicationClass", tag = "3")]\n    pub communication_class: i32,'),
+    rustConnect.contains(
+      '#[prost(enumeration = "CommunicationClass", tag = "3")]\n    pub communication_class: i32,',
+    ),
     'Rust lib.rs: ConnectPeerCommand struct missing communication_class tag 3',
   );
   check(
@@ -184,25 +217,39 @@ List<String> verifySchemaParity({
     'network.proto: NetworkCommand block missing SSH stream command tags (25, 26, 27)',
   );
   check(
-    protoEvent.contains('SshStreamDataReceivedEvent ssh_stream_data_received = 26;') &&
+    protoEvent.contains(
+          'SshStreamDataReceivedEvent ssh_stream_data_received = 26;',
+        ) &&
         protoEvent.contains('SshStreamClosedEvent ssh_stream_closed = 27;'),
     'network.proto: NetworkEvent block missing SSH stream event tags (26, 27)',
   );
   check(
-    dartDecodeEvent.contains('case 26:\n          sshStreamData = _streamEvents.decodeData(') &&
-        dartDecodeEvent.contains('case 27:\n          sshStreamClosed = _streamEvents.decodeClosed('),
+    dartDecodeEvent.contains(
+          'case 26:\n          sshStreamData = _streamEvents.decodeData(',
+        ) &&
+        dartDecodeEvent.contains(
+          'case 27:\n          sshStreamClosed = _streamEvents.decodeClosed(',
+        ),
     'Dart codec: decodeEvent method missing SSH stream cases (26, 27)',
   );
 
   // 7. Check Presence tags in NetworkEvent oneof
   check(
-    protoEvent.contains('PeerPresenceChangedEvent peer_presence_changed = 24;') &&
-        protoEvent.contains('PeerPresenceSnapshotEvent peer_presence_snapshot = 25;'),
+    protoEvent.contains(
+          'PeerPresenceChangedEvent peer_presence_changed = 24;',
+        ) &&
+        protoEvent.contains(
+          'PeerPresenceSnapshotEvent peer_presence_snapshot = 25;',
+        ),
     'network.proto: NetworkEvent block missing Presence event tags (24, 25)',
   );
   check(
-    dartDecodeEvent.contains('case 24:\n          event = _peerEvents.decodePresence(') &&
-        dartDecodeEvent.contains('case 25:\n          event = _peerEvents.decodePresenceSnapshot('),
+    dartDecodeEvent.contains(
+          'case 24:\n          event = _peerEvents.decodePresence(',
+        ) &&
+        dartDecodeEvent.contains(
+          'case 25:\n          event = _peerEvents.decodePresenceSnapshot(',
+        ),
     'Dart codec: decodeEvent method missing Presence cases (24, 25)',
   );
 
@@ -210,11 +257,17 @@ List<String> verifySchemaParity({
 }
 
 String extractProtoMessage(String source, String messageName) {
-  return extractBlock(source, RegExp(r'message\s+' + RegExp.escape(messageName) + r'\b'));
+  return extractBlock(
+    source,
+    RegExp(r'message\s+' + RegExp.escape(messageName) + r'\b'),
+  );
 }
 
 String extractRustStruct(String source, String structName) {
-  return extractBlock(source, RegExp(r'pub\s+struct\s+' + RegExp.escape(structName) + r'\b'));
+  return extractBlock(
+    source,
+    RegExp(r'pub\s+struct\s+' + RegExp.escape(structName) + r'\b'),
+  );
 }
 
 String extractDartMethod(String source, String methodName) {
@@ -313,11 +366,15 @@ SdkTransferCompletedEvent _decodeCompleted(Uint8List payload) {
   );
 
   assert(
-    failures.any((f) => f.contains('TransferCompletedEvent block missing peer_id = 3')),
+    failures.any(
+      (f) => f.contains('TransferCompletedEvent block missing peer_id = 3'),
+    ),
     'Self-test failed: checker accepted peer_id=3 from the wrong message block!',
   );
 
-  stdout.writeln('Parity Gate Self-Tests PASSED: Block extraction prevents false-positive matches.');
+  stdout.writeln(
+    'Parity Gate Self-Tests PASSED: Block extraction prevents false-positive matches.',
+  );
 }
 
 Directory _findRepoRoot() {

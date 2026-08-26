@@ -15,15 +15,16 @@ use network_protocol::{
 use crate::connect::PeerState;
 use crate::connection::{ConnectionProfile, Route, RouteTopology, RouteTransport};
 
-/// 为活跃传输发布类型化进度事件。
+/// 为活跃传输发布类型化进度事件（NetworkEvent tag 11）。
 pub(crate) fn emit_transfer_progress(
     event_tx: &EventSender,
+    peer_id: &str,
     transfer_id: &str,
     bytes_transferred: u64,
     total_bytes: u64,
 ) {
     let _ = event_tx.send(NetworkEvent {
-        event_id: format!("{transfer_id}/progress/{bytes_transferred}"),
+        event_id: format!("{peer_id}/{transfer_id}/progress/{bytes_transferred}"),
         timestamp_ms: unix_timestamp_ms(),
         protocol_version: NETWORK_PROTOCOL_VERSION,
         payload: Some(network_event::Payload::TransferProgress(
@@ -31,7 +32,7 @@ pub(crate) fn emit_transfer_progress(
                 transfer_id: transfer_id.to_string(),
                 bytes_transferred,
                 total_bytes,
-                peer_id: String::new(),
+                peer_id: peer_id.to_string(),
             },
         )),
     });
@@ -501,17 +502,22 @@ pub(crate) fn emit_incoming_offer(
     });
 }
 
-/// 发布传输最终成功事件。
-pub(crate) fn emit_transfer_completed(event_tx: &EventSender, transfer_id: &str, local_path: &str) {
+/// 发布传输最终成功事件（NetworkEvent tag 15）。
+pub(crate) fn emit_transfer_completed(
+    event_tx: &EventSender,
+    peer_id: &str,
+    transfer_id: &str,
+    local_path: &str,
+) {
     let _ = event_tx.send(NetworkEvent {
-        event_id: format!("{transfer_id}/completed"),
+        event_id: format!("{peer_id}/{transfer_id}/completed"),
         timestamp_ms: unix_timestamp_ms(),
         protocol_version: NETWORK_PROTOCOL_VERSION,
         payload: Some(network_event::Payload::TransferCompleted(
             TransferCompletedEvent {
                 transfer_id: transfer_id.to_string(),
                 local_path: local_path.to_string(),
-                peer_id: String::new(),
+                peer_id: peer_id.to_string(),
             },
         )),
     });

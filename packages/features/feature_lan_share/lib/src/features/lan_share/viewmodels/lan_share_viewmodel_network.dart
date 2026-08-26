@@ -9,7 +9,12 @@ extension LanShareViewModelNetworkEvents on LanShareViewModel {
     String transferId,
     String? eventPeerId,
   ) async {
-    if (eventPeerId == null) return true;
+    if (eventPeerId == null || eventPeerId.isEmpty) {
+      logger.warning(
+        'Ignoring transfer event for $transferId: peer identity is missing',
+      );
+      return false;
+    }
     final record = await historyDao.getRecord(transferId);
     if (record == null) {
       logger.warning(
@@ -57,24 +62,9 @@ extension LanShareViewModelNetworkEvents on LanShareViewModel {
       ):
         _trackBackgroundOperation(
           _enqueueMessagePersistence(transferId, () async {
+            if (!await _eventMatchesRecordPeer(transferId, peerId)) return;
             final record = await historyDao.getRecord(transferId);
-            if (record == null) {
-              logger.warning(
-                'Ignoring TransferCompleted event for $transferId: no history record found',
-              );
-              return;
-            }
-            if (peerId != null) {
-              final expectedPeerId = record.isIncoming
-                  ? record.senderId
-                  : record.receiverId;
-              if (expectedPeerId != peerId) {
-                logger.warning(
-                  'Ignoring TransferCompleted event for $transferId due to peer mismatch (expected $expectedPeerId, got $peerId)',
-                );
-                return;
-              }
-            }
+            if (record == null) return;
             if (record.isIncoming && localPath.isNotEmpty) {
               try {
                 final adoptedFile = await storageService

@@ -307,6 +307,12 @@ final class NetworkProtocolV2Codec {
             timestampMs,
             reader.bytes(field.wireType),
           );
+        case 32:
+          event = _transferEvents.decodePeerTransferProgress(
+            eventId,
+            timestampMs,
+            reader.bytes(field.wireType),
+          );
         default:
           reader.skip(field.wireType);
       }
@@ -585,6 +591,7 @@ final class _PeerEventDecoder {
 final class _TransferEventDecoder {
   const _TransferEventDecoder();
 
+  /// 解码通用传输进度事件（wire tag 11：TransferProgressEvent）。
   TransferProgress decodeProgress(
     String eventId,
     int timestampMs,
@@ -616,6 +623,46 @@ final class _TransferEventDecoder {
       transferId: transferId,
       bytesTransferred: transferred,
       totalBytes: total,
+      peerId: peerId.isEmpty ? null : peerId,
+    );
+  }
+
+  /// 解码对端作用域传输进度事件（wire tag 32：PeerTransferProgressEvent）。
+  TransferProgress decodePeerTransferProgress(
+    String eventId,
+    int timestampMs,
+    Uint8List bytes,
+  ) {
+    final reader = _ProtoReader(bytes);
+    var peerId = '';
+    var transferId = '';
+    var confirmedOffset = 0;
+    var totalBytes = 0;
+    var paused = false;
+    while (!reader.isDone) {
+      final field = reader.field();
+      switch (field.number) {
+        case 1:
+          peerId = utf8.decode(reader.bytes(field.wireType));
+        case 2:
+          transferId = utf8.decode(reader.bytes(field.wireType));
+        case 3:
+          confirmedOffset = reader.varint(field.wireType);
+        case 4:
+          totalBytes = reader.varint(field.wireType);
+        case 5:
+          paused = reader.varint(field.wireType) != 0;
+        default:
+          reader.skip(field.wireType);
+      }
+    }
+    final _ = paused;
+    return TransferProgress(
+      eventId: eventId,
+      timestamp: _eventTimestamp(timestampMs),
+      transferId: transferId,
+      bytesTransferred: confirmedOffset,
+      totalBytes: totalBytes,
       peerId: peerId.isEmpty ? null : peerId,
     );
   }

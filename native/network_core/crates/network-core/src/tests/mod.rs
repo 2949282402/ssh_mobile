@@ -1044,6 +1044,7 @@ fn two_runtimes_transfer_binary_boundary_matrix_is_verified_end_to_end() {
                 &event.payload,
                 Some(network_event::Payload::TransferCompleted(completed))
                     if completed.transfer_id == transfer_id
+                        && completed.peer_id == "boundary-a"
                         && completed.local_path == destination_path.to_string_lossy()
             )
         })
@@ -1057,7 +1058,9 @@ fn two_runtimes_transfer_binary_boundary_matrix_is_verified_end_to_end() {
             matches!(
                 &event.payload,
                 Some(network_event::Payload::TransferCompleted(completed))
-                    if completed.transfer_id == transfer_id && completed.local_path.is_empty()
+                    if completed.transfer_id == transfer_id
+                        && completed.peer_id == "boundary-b"
+                        && completed.local_path.is_empty()
             )
         })
         .unwrap_or_else(|| panic!("sender did not complete {file_name} ({size} bytes)"));
@@ -1313,6 +1316,7 @@ fn receiver_runtime_restart_restores_direct_trust_without_repairing() {
                 &event.payload,
                 Some(network_event::Payload::TransferCompleted(completed))
                     if completed.transfer_id == transfer_id
+                        && completed.peer_id == "receiver-restart-a"
                         && completed.local_path == destination_path.to_string_lossy()
             )
         })
@@ -1324,7 +1328,9 @@ fn receiver_runtime_restart_restores_direct_trust_without_repairing() {
             matches!(
                 &event.payload,
                 Some(network_event::Payload::TransferCompleted(completed))
-                    if completed.transfer_id == transfer_id && completed.local_path.is_empty()
+                    if completed.transfer_id == transfer_id
+                        && completed.peer_id == "receiver-restart-b"
+                        && completed.local_path.is_empty()
             )
         })
         .is_some(),

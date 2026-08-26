@@ -732,7 +732,7 @@ async fn outgoing_quic_transfer_completes_and_removes_business_state() {
     assert!(events.iter().any(|event| matches!(
         event.payload,
         Some(network_event::Payload::TransferCompleted(ref completed))
-            if completed.transfer_id == transfer_id
+            if completed.transfer_id == transfer_id && completed.peer_id == "peer-a"
     )));
     let snapshot = state.transfer.manager.snapshot(transfer_id).await;
     assert!(

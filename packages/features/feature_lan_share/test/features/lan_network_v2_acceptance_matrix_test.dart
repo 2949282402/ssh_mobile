@@ -394,6 +394,7 @@ void main() {
             eventId: 'ev-prog-1',
             timestamp: DateTime.now(),
             transferId: session.transferId,
+            peerId: 'peer-out',
             bytesTransferred: 10,
             totalBytes: testFile.lengthSync(),
           ),
@@ -409,6 +410,7 @@ void main() {
             eventId: 'ev-comp-1',
             timestamp: DateTime.now(),
             transferId: session.transferId,
+            peerId: 'peer-out',
             localPath: testFile.path,
           ),
         );
@@ -510,6 +512,7 @@ void main() {
             eventId: 'ev-comp-in',
             timestamp: DateTime.now(),
             transferId: 'tx-incoming-photo',
+            peerId: 'peer-in',
             localPath: inboxFile.path,
           ),
         );
@@ -561,6 +564,7 @@ void main() {
               eventId: 'ev-fast-comp',
               timestamp: DateTime.now(),
               transferId: transferId,
+              peerId: 'peer-fast',
               localPath: inboxFile.path,
             ),
           );
@@ -1229,6 +1233,265 @@ void main() {
         expect(record.localPath, isNotNull);
         expect(record.localPath!, startsWith(sandboxDir.path));
         expect(inboxFile.existsSync(), isFalse);
+      },
+    );
+
+    test(
+      'T. Missing peerId fail-closed: transfer events without peer identity are ignored and leave history/sandbox intact',
+      () async {
+        final store = LanPeerTrustStore();
+        addTearDown(store.dispose);
+        await store.save(_record('peer-t-1', relay: true));
+
+        final database = LanShareDatabase.forTesting(NativeDatabase.memory());
+        addTearDown(database.dispose);
+        final historyDao = database.lanHistoryDao;
+
+        final tempDir = await Directory.systemTemp.createTemp('lan-accept-t-');
+        addTearDown(() => tempDir.delete(recursive: true));
+        final sandboxDir = Directory('${tempDir.path}/sandbox')..createSync();
+        final nativeInboxDir = Directory('${tempDir.path}/inbox')..createSync();
+
+        final storageService = LanStorageService(
+          sandboxDirectoryProvider: () async => sandboxDir,
+          freeDiskSpaceBytesProvider: () async => 1024 * 1024 * 1024,
+        );
+
+        final inboxFile = File('${nativeInboxDir.path}/t_download.bin')
+          ..writeAsStringSync('unadopted-content');
+
+        final facade = _MockAcceptanceFacade();
+        final registry = LanNativePeerRegistry(
+          trustStore: store,
+          networkFacade: facade,
+        );
+
+        final coordinator = LanNativeTransferCoordinator(
+          transferService: FakeLanTransferService(),
+          networkFacade: facade,
+          policyPort: registry,
+          storageService: storageService,
+        );
+        addTearDown(coordinator.dispose);
+
+        final settings = FakeLanShareSettings();
+        addTearDown(settings.dispose);
+
+        final viewModel = LanShareViewModel(
+          discoveryService: FakeLanDiscoveryService(),
+          securityService: LanSecurityService(
+            appOwnedX25519PrivateSeed: Uint8List(32),
+            peerTrustStore: store,
+          ),
+          storageService: storageService,
+          transferService: FakeLanTransferService(),
+          nativeTransferCoordinator: coordinator,
+          historyDao: historyDao,
+          appSettings: settings,
+          dataProtection: FakeLanShareDataProtection(),
+          logger: FakeLanShareLogger(),
+          ownsRuntime: false,
+        );
+        await viewModel.initialize();
+        addTearDown(viewModel.dispose);
+
+        await historyDao.insertRecord(
+          LanTransferRecordsCompanion(
+            id: const Value('tx-t-1'),
+            senderId: const Value('peer-t-1'),
+            senderAlias: const Value('peer-t-1'),
+            receiverId: Value(settings.lanDeviceId),
+            payloadType: const Value('file'),
+            fileName: const Value('doc.pdf'),
+            fileSize: const Value(2048),
+            status: Value(LanTransferStatus.connecting.toJson()),
+            createdAt: Value(DateTime.now().millisecondsSinceEpoch),
+            isIncoming: const Value(true),
+            isRecalled: const Value(false),
+            routeType: Value(NetworkRouteType.quicDirect.name),
+            bytesTotal: const Value(2048),
+            bytesTransferred: const Value(0),
+          ),
+        );
+
+        // Progress without peerId -> ignored
+        facade.emit(
+          TransferProgress(
+            eventId: 'ev-t-prog-missing',
+            timestamp: DateTime.now(),
+            transferId: 'tx-t-1',
+            peerId: null,
+            bytesTransferred: 500,
+            totalBytes: 2048,
+          ),
+        );
+        await pumpEventQueue();
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        var record = await historyDao.getRecord('tx-t-1');
+        expect(record!.bytesTransferred, 0);
+        expect(record.status, LanTransferStatus.connecting.toJson());
+
+        // Failed without peerId -> ignored
+        facade.emit(
+          TransferFailed(
+            eventId: 'ev-t-fail-missing',
+            timestamp: DateTime.now(),
+            transferId: 'tx-t-1',
+            peerId: null,
+            error: const NetworkError(
+              code: NetworkErrorCode.ioError,
+              message: 'dropped error',
+              operation: NetworkOperation.respondToIncoming,
+            ),
+          ),
+        );
+        await pumpEventQueue();
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        record = await historyDao.getRecord('tx-t-1');
+        expect(record!.status, LanTransferStatus.connecting.toJson());
+
+        // Completed without peerId -> ignored, inbox file not adopted
+        facade.emit(
+          TransferCompleted(
+            eventId: 'ev-t-comp-missing',
+            timestamp: DateTime.now(),
+            transferId: 'tx-t-1',
+            peerId: null,
+            localPath: inboxFile.path,
+          ),
+        );
+        await pumpEventQueue();
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        record = await historyDao.getRecord('tx-t-1');
+        expect(record!.status, LanTransferStatus.connecting.toJson());
+        expect(record.localPath, isNull);
+        expect(inboxFile.existsSync(), isTrue);
+      },
+    );
+
+    test(
+      'U. Outgoing transfer peer ownership: events for outgoing records verify receiver peerId uniformly',
+      () async {
+        final store = LanPeerTrustStore();
+        addTearDown(store.dispose);
+        await store.save(_record('peer-u-target', relay: true));
+
+        final database = LanShareDatabase.forTesting(NativeDatabase.memory());
+        addTearDown(database.dispose);
+        final historyDao = database.lanHistoryDao;
+
+        final facade = _MockAcceptanceFacade();
+        final registry = LanNativePeerRegistry(
+          trustStore: store,
+          networkFacade: facade,
+        );
+
+        final settings = FakeLanShareSettings();
+        addTearDown(settings.dispose);
+
+        final storageService = LanStorageService(
+          sandboxDirectoryProvider: () async => Directory.systemTemp,
+          freeDiskSpaceBytesProvider: () async => 1024 * 1024 * 1024,
+        );
+
+        final coordinator = LanNativeTransferCoordinator(
+          transferService: FakeLanTransferService(),
+          networkFacade: facade,
+          policyPort: registry,
+          storageService: storageService,
+        );
+        addTearDown(coordinator.dispose);
+
+        final viewModel = LanShareViewModel(
+          discoveryService: FakeLanDiscoveryService(),
+          securityService: LanSecurityService(
+            appOwnedX25519PrivateSeed: Uint8List(32),
+            peerTrustStore: store,
+          ),
+          storageService: storageService,
+          transferService: FakeLanTransferService(),
+          nativeTransferCoordinator: coordinator,
+          historyDao: historyDao,
+          appSettings: settings,
+          dataProtection: FakeLanShareDataProtection(),
+          logger: FakeLanShareLogger(),
+          ownsRuntime: false,
+        );
+        await viewModel.initialize();
+        addTearDown(viewModel.dispose);
+
+        // Outgoing record: sender = self, receiver = peer-u-target
+        await historyDao.insertRecord(
+          LanTransferRecordsCompanion(
+            id: const Value('tx-u-1'),
+            senderId: Value(settings.lanDeviceId),
+            senderAlias: Value(settings.lanDeviceId),
+            receiverId: const Value('peer-u-target'),
+            payloadType: const Value('file'),
+            fileName: const Value('report.txt'),
+            fileSize: const Value(1000),
+            status: Value(LanTransferStatus.transferring.toJson()),
+            createdAt: Value(DateTime.now().millisecondsSinceEpoch),
+            isIncoming: const Value(false),
+            isRecalled: const Value(false),
+            routeType: Value(NetworkRouteType.quicDirect.name),
+            bytesTotal: const Value(1000),
+            bytesTransferred: const Value(0),
+          ),
+        );
+
+        // Progress from mismatched peer -> ignored
+        facade.emit(
+          TransferProgress(
+            eventId: 'ev-u-prog-wrong',
+            timestamp: DateTime.now(),
+            transferId: 'tx-u-1',
+            peerId: 'peer-u-intruder',
+            bytesTransferred: 500,
+            totalBytes: 1000,
+          ),
+        );
+        await pumpEventQueue();
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        var record = await historyDao.getRecord('tx-u-1');
+        expect(record!.bytesTransferred, 0);
+
+        // Progress from matching receiver peer -> accepted
+        facade.emit(
+          TransferProgress(
+            eventId: 'ev-u-prog-ok',
+            timestamp: DateTime.now(),
+            transferId: 'tx-u-1',
+            peerId: 'peer-u-target',
+            bytesTransferred: 500,
+            totalBytes: 1000,
+          ),
+        );
+        await pumpEventQueue();
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        record = await historyDao.getRecord('tx-u-1');
+        expect(record!.bytesTransferred, 500);
+
+        // Completed from matching receiver peer -> completed
+        facade.emit(
+          TransferCompleted(
+            eventId: 'ev-u-comp-ok',
+            timestamp: DateTime.now(),
+            transferId: 'tx-u-1',
+            peerId: 'peer-u-target',
+            localPath: '/tmp/report.txt',
+          ),
+        );
+        await pumpEventQueue();
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        record = await historyDao.getRecord('tx-u-1');
+        expect(record!.status, LanTransferStatus.completed.toJson());
       },
     );
   });
