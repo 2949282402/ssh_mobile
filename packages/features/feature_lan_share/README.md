@@ -78,7 +78,8 @@ Control 只暴露 V2 pairing/upload contract。
   enrollment/状态、Web Share 和传输历史；二进制数据面只消费 Network V2 Transfer。
 - 不负责：SSH、其他 Feature 实现、App `/src/`、未审批的网络写入或秘密持久化。
 - Public API：`package:feature_lan_share/feature_lan_share.dart`，包括 Module、
-  Receiver 配置、页面和 Port。纯 Dart WebShare route worker 使用
+  Receiver 配置、页面和 Port。不再保留旧 `AppLanguage`、`AppSettings`、`AppStrings` 别名
+  或 `services/*.dart` 兼容导入 shim。纯 Dart WebShare route worker 使用
   `package:feature_lan_share/lan_web_share.dart`；该窄入口只导出生产
   `LanWebShareRequestHandler` 及其 DTO/回调契约，不携带 Flutter 服务或页面。
   worker 只验证真实 TLS listener 与 production route handler；Native Network V2

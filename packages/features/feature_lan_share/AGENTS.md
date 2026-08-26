@@ -11,7 +11,8 @@
   控制面；Native Network V2 负责 peer registry、session、Direct/Relay 数据面、
   E2EE、文件传输和 Realtime。为 LAN 重构不得把 Native Network V2 升为 V3。
 - Package 不得导入 SSH、其他 Feature 实现或 App 的 `/src/`；跨边界能力必须
-  通过 `LanShare*Port` 注入。
+  通过 `LanShare*Port` 注入。不再保留旧 `AppLanguage`、`AppSettings`、`AppStrings` 别名
+  或内部兼容导入 shim；统一直接消费 `domain/lan_share_ports.dart` 定义的契约。
 - 网络客户端契约统一来自 `network_sdk`；Feature 只消费 `NetworkFacade`，不得
   自行创建 Socket、FFI、HTTP client、native handle 或第二套传输实现。
   `LanShareNetworkAccessPort` 只允许 borrow AppRuntime-owned `NetworkFacade`，
