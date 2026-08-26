@@ -1,5 +1,7 @@
-import 'dart:typed_data';
+import 'dart:io';
 
+import 'package:drift/drift.dart' hide isNull;
+import 'package:drift/native.dart';
 import 'package:feature_lan_share/feature_lan_share.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -151,6 +153,7 @@ void main() {
         transferService: transfer,
         networkFacade: facade,
         policyPort: registry,
+        storageService: FakeLanStorageService(),
       );
 
       final viewModel = LanShareViewModel(
@@ -241,6 +244,7 @@ void main() {
         transferService: transfer,
         networkFacade: facade,
         policyPort: registry,
+        storageService: FakeLanStorageService(),
       );
 
       final viewModel = LanShareViewModel(
@@ -287,6 +291,153 @@ void main() {
       await transfer.close();
       await store.dispose();
       settings.dispose();
+    },
+  );
+
+  test(
+    'deleteMessage deletes sandbox file and clears database record',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'lan-vm-delete-msg-',
+      );
+      addTearDown(() => tempDir.delete(recursive: true));
+      final sandboxDir = Directory('${tempDir.path}/sandbox')..createSync();
+      final outsideDir = Directory('${tempDir.path}/outside')..createSync();
+
+      final storage = LanStorageService(
+        sandboxDirectoryProvider: () async => sandboxDir,
+      );
+
+      final database = LanShareDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(database.dispose);
+      final historyDao = database.lanHistoryDao;
+
+      final sandboxFile = File('${sandboxDir.path}/incoming.jpg')
+        ..writeAsStringSync('img');
+      final outsideFile = File('${outsideDir.path}/outgoing.jpg')
+        ..writeAsStringSync('out-img');
+
+      await historyDao.insertRecord(
+        LanTransferRecordsCompanion.insert(
+          id: 'msg-sandbox',
+          senderId: 'peer-1',
+          senderAlias: 'Peer 1',
+          receiverId: 'self',
+          payloadType: 'image',
+          status: 'completed',
+          createdAt: 1000,
+          isIncoming: const Value(true),
+          localPath: Value(sandboxFile.path),
+        ),
+      );
+
+      await historyDao.insertRecord(
+        LanTransferRecordsCompanion.insert(
+          id: 'msg-outside',
+          senderId: 'self',
+          senderAlias: 'Self',
+          receiverId: 'peer-1',
+          payloadType: 'image',
+          status: 'completed',
+          createdAt: 2000,
+          isIncoming: const Value(false),
+          localPath: Value(outsideFile.path),
+        ),
+      );
+
+      final settings = FakeLanShareSettings();
+      addTearDown(settings.dispose);
+      final viewModel = LanShareViewModel(
+        discoveryService: FakeLanDiscoveryService(),
+        securityService: _MissingKeySecurityService(),
+        storageService: storage,
+        transferService: FakeLanTransferService(),
+        historyDao: historyDao,
+        appSettings: settings,
+        dataProtection: FakeLanShareDataProtection(),
+        logger: FakeLanShareLogger(),
+        ownsRuntime: false,
+      );
+
+      // Delete sandbox message -> sandbox file deleted, record deleted
+      await viewModel.deleteMessage('msg-sandbox');
+      expect(sandboxFile.existsSync(), isFalse);
+      expect(await historyDao.getRecord('msg-sandbox'), isNull);
+
+      // Delete outside message -> outside file retained, record deleted
+      await viewModel.deleteMessage('msg-outside');
+      expect(outsideFile.existsSync(), isTrue);
+      expect(await historyDao.getRecord('msg-outside'), isNull);
+    },
+  );
+
+  test(
+    'clearHistory deletes all sandbox files and clears all database records',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'lan-vm-clear-hist-',
+      );
+      addTearDown(() => tempDir.delete(recursive: true));
+      final sandboxDir = Directory('${tempDir.path}/sandbox')..createSync();
+
+      final storage = LanStorageService(
+        sandboxDirectoryProvider: () async => sandboxDir,
+      );
+
+      final database = LanShareDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(database.dispose);
+      final historyDao = database.lanHistoryDao;
+
+      final file1 = File('${sandboxDir.path}/file1.bin')
+        ..writeAsStringSync('f1');
+      final file2 = File('${sandboxDir.path}/file2.bin')
+        ..writeAsStringSync('f2');
+
+      await historyDao.insertRecord(
+        LanTransferRecordsCompanion.insert(
+          id: 'msg-1',
+          senderId: 'peer-1',
+          senderAlias: 'Peer 1',
+          receiverId: 'self',
+          payloadType: 'file',
+          status: 'completed',
+          createdAt: 1000,
+          isIncoming: const Value(true),
+          localPath: Value(file1.path),
+        ),
+      );
+      await historyDao.insertRecord(
+        LanTransferRecordsCompanion.insert(
+          id: 'msg-2',
+          senderId: 'peer-1',
+          senderAlias: 'Peer 1',
+          receiverId: 'self',
+          payloadType: 'file',
+          status: 'completed',
+          createdAt: 2000,
+          isIncoming: const Value(true),
+          localPath: Value(file2.path),
+        ),
+      );
+
+      final settings = FakeLanShareSettings();
+      addTearDown(settings.dispose);
+      final viewModel = LanShareViewModel(
+        discoveryService: FakeLanDiscoveryService(),
+        securityService: _MissingKeySecurityService(),
+        storageService: storage,
+        transferService: FakeLanTransferService(),
+        historyDao: historyDao,
+        appSettings: settings,
+        dataProtection: FakeLanShareDataProtection(),
+        logger: FakeLanShareLogger(),
+        ownsRuntime: false,
+      );
+
+      await viewModel.clearHistory();
+      expect(file1.existsSync(), isFalse);
+      expect(file2.existsSync(), isFalse);
+      expect(await historyDao.getAllRecords(), isEmpty);
     },
   );
 }

@@ -88,7 +88,7 @@
 - `test/services/lan_peer_trust_v2_test.dart`：schema reset、完整原子 trust、
   identity/key 校验和 Relay authorization；
 - `test/features/lan_native_peer_registry_v2_test.dart`：restore、空 endpoint、
-  endpoint invalidation、显式 unpair/remove；
+  endpoint invalidation、显式 unpair/remove、isolated restore；
 - `test/services/lan_pairing_protocol_v2_test.dart`：transcript identity binding、atomic
   commit、旧协议拒绝和 timeout 无持久 half-pair；
 - `test/services/lan_peer_trust_identity_v2_test.dart`：证书/X25519/Network Identity
@@ -96,7 +96,15 @@
 - `test/services/lan_peer_presentation_models_test.dart`：Discovery-only model 与
   trusted-offline aggregate；
 - `test/services/lan_native_transfer_coordinator_v2_test.dart`：Network V2 regular-file
-  transfer、incoming offer decisions 和无 HTTP binary fallback；
+  transfer、incoming offer decisions、fresh policy relay fallback、unspecified route fail-closed；
+- `test/features/network_incoming_transfer_host_test.dart`：incoming approval dialog state machine、
+  retryable error retry、non-retryable failure snackbar、double-submit protection；
+- `test/services/lan_storage_service_test.dart`：real disk space preflight with 100MiB safety buffer、
+  fail-closed on unknown space、stream-copy fallback on cross-filesystem rename failure、sandbox delete security boundary；
+- `test/features/lan_network_v2_acceptance_matrix_test.dart`：端到端 offline relay、direct->relay fallback、
+  blocked incoming rejection、re-pair reconciliation、neutral inbox to sandbox adoption、cross-layer outgoing/incoming history lifecycle；
+- `scripts/bash/contracts/check_network_v2_contract.dart`：Protocol V2 schema wire parity 跨 canonical proto、
+  Rust prost structs 与 Dart codecs 的块结构级别自动化门禁；
 - `test/services/lan_http_v2_route_test.dart`：旧 `/api/lan/upload` 路径不存在。
 - `test/services/lan_web_share_request_handler_test.dart`：WebShare production
   route handler 的有界正文 drain、早期拒绝、oversize/chunked overrun、加密上传和

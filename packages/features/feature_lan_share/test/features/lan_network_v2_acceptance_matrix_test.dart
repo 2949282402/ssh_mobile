@@ -3,10 +3,13 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:drift/native.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:feature_lan_share/feature_lan_share.dart';
 import 'package:network_sdk/network_sdk.dart';
+
+import '../fakes/lan_share_test_fakes.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -38,6 +41,9 @@ void main() {
           transferService: _dummyTransferService(store),
           networkFacade: facade,
           policyPort: registry,
+          storageService: LanStorageService(
+            freeDiskSpaceMbProvider: () async => 1000.0,
+          ),
         );
         addTearDown(coordinator.dispose);
 
@@ -98,6 +104,9 @@ void main() {
           transferService: _dummyTransferService(store),
           networkFacade: facade,
           policyPort: registry,
+          storageService: LanStorageService(
+            freeDiskSpaceMbProvider: () async => 1000.0,
+          ),
         );
         addTearDown(coordinator.dispose);
 
@@ -144,6 +153,9 @@ void main() {
           transferService: _dummyTransferService(store),
           networkFacade: facade,
           policyPort: registry,
+          storageService: LanStorageService(
+            freeDiskSpaceMbProvider: () async => 1000.0,
+          ),
         );
         addTearDown(coordinator.dispose);
 
@@ -290,6 +302,240 @@ void main() {
         expect(registry.isPeerBlocked('peer-2'), isTrue);
         expect(registry.isPeerBlocked('peer-1'), isFalse);
         expect(registry.isPeerBlocked('peer-3'), isFalse);
+      },
+    );
+
+    test(
+      'L. Cross-layer outgoing file transfer: ViewModel -> atomic history -> progress -> completed',
+      () async {
+        final store = LanPeerTrustStore();
+        addTearDown(store.dispose);
+        await store.save(_record('peer-out', relay: true));
+
+        final database = LanShareDatabase.forTesting(NativeDatabase.memory());
+        addTearDown(database.dispose);
+        final historyDao = database.lanHistoryDao;
+
+        final facade = _MockAcceptanceFacade();
+        final registry = LanNativePeerRegistry(
+          trustStore: store,
+          networkFacade: facade,
+        );
+
+        final tempDir = await Directory.systemTemp.createTemp(
+          'lan-accept-out-',
+        );
+        addTearDown(() => tempDir.delete(recursive: true));
+        final testFile = File('${tempDir.path}/vacation.jpg')
+          ..writeAsStringSync('jpeg-image-binary-data');
+
+        final storageService = LanStorageService(
+          sandboxDirectoryProvider: () async => tempDir,
+          freeDiskSpaceBytesProvider: () async => 1024 * 1024 * 1024,
+        );
+
+        final transferService = LanTransferService(
+          currentDeviceId: 'device-self',
+          securityService: LanSecurityService(
+            appOwnedX25519PrivateSeed: Uint8List(32),
+            peerTrustStore: store,
+          ),
+          storageService: storageService,
+        );
+        addTearDown(transferService.dispose);
+
+        final coordinator = LanNativeTransferCoordinator(
+          transferService: transferService,
+          networkFacade: facade,
+          policyPort: registry,
+          storageService: storageService,
+        );
+        addTearDown(coordinator.dispose);
+
+        final settings = FakeLanShareSettings();
+        addTearDown(settings.dispose);
+
+        final viewModel = LanShareViewModel(
+          discoveryService: FakeLanDiscoveryService(),
+          securityService: transferService.securityService,
+          storageService: storageService,
+          transferService: transferService,
+          nativeTransferCoordinator: coordinator,
+          historyDao: historyDao,
+          appSettings: settings,
+          dataProtection: FakeLanShareDataProtection(),
+          logger: FakeLanShareLogger(),
+          ownsRuntime: false,
+        );
+        await viewModel.initialize();
+        addTearDown(viewModel.dispose);
+
+        // 1. ViewModel sends file
+        final result = await viewModel.sendFile(
+          peerId: 'peer-out',
+          filePath: testFile.path,
+        );
+
+        expect(result, isA<NetworkSuccess<TransferSession>>());
+        final session = (result as NetworkSuccess<TransferSession>).data;
+        expect(session.transferId, isNotEmpty);
+
+        // Verify history record was inserted before network transfer
+        var record = await historyDao.getRecord(session.transferId);
+        expect(record, isNotNull);
+        expect(record!.id, session.transferId);
+        expect(record.isIncoming, isFalse);
+        expect(record.payloadType, 'image');
+        expect(record.status, LanTransferStatus.transferring.toJson());
+
+        // 2. Native emits progress
+        facade.emit(
+          TransferProgress(
+            eventId: 'ev-prog-1',
+            timestamp: DateTime.now(),
+            transferId: session.transferId,
+            bytesTransferred: 10,
+            totalBytes: testFile.lengthSync(),
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        record = await historyDao.getRecord(session.transferId);
+        expect(record!.bytesTransferred, 10);
+
+        // 3. Native emits completed
+        facade.emit(
+          TransferCompleted(
+            eventId: 'ev-comp-1',
+            timestamp: DateTime.now(),
+            transferId: session.transferId,
+            localPath: testFile.path,
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        record = await historyDao.getRecord(session.transferId);
+        expect(record!.status, LanTransferStatus.completed.toJson());
+      },
+    );
+
+    test(
+      'M. Cross-layer incoming file transfer: Offer -> classified history -> native download -> sandbox adoption -> completed',
+      () async {
+        final store = LanPeerTrustStore();
+        addTearDown(store.dispose);
+        await store.save(_record('peer-in', relay: true));
+
+        final database = LanShareDatabase.forTesting(NativeDatabase.memory());
+        addTearDown(database.dispose);
+        final historyDao = database.lanHistoryDao;
+
+        final tempDir = await Directory.systemTemp.createTemp('lan-accept-in-');
+        addTearDown(() => tempDir.delete(recursive: true));
+        final sandboxDir = Directory('${tempDir.path}/sandbox')..createSync();
+        final nativeInboxDir = Directory('${tempDir.path}/inbox')..createSync();
+
+        final storageService = LanStorageService(
+          sandboxDirectoryProvider: () async => sandboxDir,
+          freeDiskSpaceBytesProvider: () async => 1024 * 1024 * 1024,
+        );
+
+        final facade = _MockAcceptanceFacade();
+        final registry = LanNativePeerRegistry(
+          trustStore: store,
+          networkFacade: facade,
+        );
+
+        final transferService = LanTransferService(
+          currentDeviceId: 'device-self',
+          securityService: LanSecurityService(
+            appOwnedX25519PrivateSeed: Uint8List(32),
+            peerTrustStore: store,
+          ),
+          storageService: storageService,
+        );
+        addTearDown(transferService.dispose);
+
+        final coordinator = LanNativeTransferCoordinator(
+          transferService: transferService,
+          networkFacade: facade,
+          policyPort: registry,
+          storageService: storageService,
+        );
+        addTearDown(coordinator.dispose);
+
+        final settings = FakeLanShareSettings();
+        addTearDown(settings.dispose);
+
+        final receiver = LanReceiverCoordinator(
+          appSettings: settings,
+          logger: FakeLanShareLogger(),
+          dataProtection: FakeLanShareDataProtection(),
+          networkIdentity: FakeLanShareIdentity(),
+          networkFactory: FakeLanShareNetworkFactory(networkFacade: facade),
+          bootstrapClient: FakeLanShareBootstrapClient(),
+          historyRepository: LanShareHistoryRepository(database),
+          networkRuntime: FakeLanShareNetworkRuntime(),
+          peerTrustStore: store,
+          transferServiceOverride: transferService,
+          discoveryServiceOverride: FakeLanDiscoveryService(),
+          storageServiceOverride: storageService,
+        );
+        await receiver.ensureInitialized();
+        addTearDown(receiver.close);
+
+        final viewModel = await receiver.ensureViewModel();
+        await viewModel.initialize();
+
+        // 1. Native emits IncomingTransferOffer with image
+        final offer = IncomingTransferOffer(
+          eventId: 'ev-offer-in',
+          timestamp: DateTime.now(),
+          transferId: 'tx-incoming-photo',
+          peerId: 'peer-in',
+          fileName: 'landscape.jpg',
+          fileSize: 2048,
+          routeType: NetworkRouteType.quicDirect,
+        );
+
+        // 2. User accepts the incoming offer
+        final acceptResult = await receiver.acceptNativeIncomingTransfer(offer);
+        expect(acceptResult, isA<NetworkSuccess<void>>());
+        expect(facade.responses, contains(('tx-incoming-photo', true)));
+
+        // Verify history record created with classified payloadType: image
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        var record = await historyDao.getRecord('tx-incoming-photo');
+        expect(record, isNotNull);
+        expect(record!.payloadType, 'image');
+        expect(record.isIncoming, isTrue);
+
+        // 3. Native inbox downloads file
+        final inboxFile = File('${nativeInboxDir.path}/download_tmp.bin')
+          ..writeAsStringSync('jpeg-file-content');
+
+        // 4. Native emits TransferCompleted
+        facade.emit(
+          TransferCompleted(
+            eventId: 'ev-comp-in',
+            timestamp: DateTime.now(),
+            transferId: 'tx-incoming-photo',
+            localPath: inboxFile.path,
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        // 5. Verify file was adopted into LAN sandbox cache and history updated
+        record = await historyDao.getRecord('tx-incoming-photo');
+        expect(record!.status, LanTransferStatus.completed.toJson());
+        expect(record.localPath, isNotNull);
+        expect(record.localPath!, startsWith(sandboxDir.path));
+
+        final adoptedFile = File(record.localPath!);
+        expect(adoptedFile.existsSync(), isTrue);
+        expect(adoptedFile.readAsStringSync(), 'jpeg-file-content');
+        // Source in native inbox must be deleted
+        expect(inboxFile.existsSync(), isFalse);
       },
     );
   });

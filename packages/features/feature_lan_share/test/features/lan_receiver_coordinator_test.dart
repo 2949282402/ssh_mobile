@@ -771,6 +771,130 @@ void main() {
     settings.dispose();
     await database.dispose();
   });
+
+  test(
+    'incoming attachment classification creates properly typed LanMessage',
+    () async {
+      final trustStore = LanPeerTrustStore();
+      await trustStore.save(_trustRecord('peer-a'));
+      final database = LanShareDatabase.forTesting(NativeDatabase.memory());
+      final settings = FakeLanShareSettings();
+      final networkService = FakeLanShareNetworkService();
+      final transfer = FakeLanTransferService();
+      final coordinator = LanReceiverCoordinator(
+        appSettings: settings,
+        logger: FakeLanShareLogger(),
+        dataProtection: FakeLanShareDataProtection(),
+        networkIdentity: FakeLanShareIdentity(),
+        networkFactory: FakeLanShareNetworkFactory(
+          networkFacade: networkService,
+        ),
+        bootstrapClient: FakeLanShareBootstrapClient(),
+        historyRepository: LanShareHistoryRepository(database),
+        networkRuntime: FakeLanShareNetworkRuntime(),
+        peerTrustStore: trustStore,
+        transferServiceOverride: transfer,
+        discoveryServiceOverride: FakeLanDiscoveryService(),
+      );
+
+      await coordinator.ensureInitialized();
+
+      final cases = <(String, LanPayloadType)>[
+        ('photo.jpg', LanPayloadType.image),
+        ('video.mp4', LanPayloadType.video),
+        ('voice.mp3', LanPayloadType.audio),
+        ('archive.zip', LanPayloadType.file),
+        ('no_extension_file', LanPayloadType.file),
+      ];
+
+      for (final (fileName, expectedType) in cases) {
+        final offer = IncomingTransferOffer(
+          eventId: 'ev-$fileName',
+          timestamp: DateTime.now(),
+          transferId: 'tx-$fileName',
+          peerId: 'peer-a',
+          fileName: fileName,
+          fileSize: 1024,
+          routeType: NetworkRouteType.quicDirect,
+        );
+
+        final result = await coordinator.acceptNativeIncomingTransfer(offer);
+        expect(result, isA<NetworkSuccess<void>>());
+
+        final handled = transfer.messages.lastWhere(
+          (m) => m.id == 'tx-$fileName',
+        );
+        expect(handled.payloadType, expectedType);
+        expect(handled.fileName, fileName);
+        expect(handled.isIncoming, isTrue);
+      }
+
+      await coordinator.close();
+      await trustStore.dispose();
+      settings.dispose();
+      await database.dispose();
+    },
+  );
+
+  test(
+    'incoming transfer with unspecified route is rejected fail-closed',
+    () async {
+      final trustStore = LanPeerTrustStore();
+      await trustStore.save(_trustRecord('peer-a'));
+      final database = LanShareDatabase.forTesting(NativeDatabase.memory());
+      final settings = FakeLanShareSettings();
+      final networkService = FakeLanShareNetworkService();
+      final transfer = FakeLanTransferService();
+      final coordinator = LanReceiverCoordinator(
+        appSettings: settings,
+        logger: FakeLanShareLogger(),
+        dataProtection: FakeLanShareDataProtection(),
+        networkIdentity: FakeLanShareIdentity(),
+        networkFactory: FakeLanShareNetworkFactory(
+          networkFacade: networkService,
+        ),
+        bootstrapClient: FakeLanShareBootstrapClient(),
+        historyRepository: LanShareHistoryRepository(database),
+        networkRuntime: FakeLanShareNetworkRuntime(),
+        peerTrustStore: trustStore,
+        transferServiceOverride: transfer,
+        discoveryServiceOverride: FakeLanDiscoveryService(),
+      );
+
+      final receivedOffers = <IncomingTransferOffer>[];
+      final sub = coordinator.nativeIncomingTransferOffers.listen(
+        receivedOffers.add,
+      );
+
+      await coordinator.ensureInitialized();
+
+      final unspecifiedOffer = IncomingTransferOffer(
+        eventId: 'ev-unspecified',
+        timestamp: DateTime.now(),
+        transferId: 'tx-unspecified',
+        peerId: 'peer-a',
+        fileName: 'test.txt',
+        fileSize: 100,
+        routeType: NetworkRouteType.unspecified,
+      );
+
+      networkService.emitEvent(unspecifiedOffer);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(receivedOffers, isEmpty);
+
+      final acceptResult = await coordinator.acceptNativeIncomingTransfer(
+        unspecifiedOffer,
+      );
+      expect(acceptResult, isA<NetworkFailure<void>>());
+
+      await sub.cancel();
+      await coordinator.close();
+      await trustStore.dispose();
+      settings.dispose();
+      await database.dispose();
+    },
+  );
 }
 
 /// 构建一个注入 fake 网络、runtime 与 bootstrap 的 Relay 协调器。
@@ -848,4 +972,5 @@ IncomingTransferOffer _offer(String id) => IncomingTransferOffer(
   peerId: 'peer-a',
   fileName: '$id.bin',
   fileSize: 1,
+  routeType: NetworkRouteType.quicDirect,
 );

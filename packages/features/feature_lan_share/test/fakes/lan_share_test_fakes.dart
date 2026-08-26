@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,12 +8,28 @@ import 'package:network_sdk/network_sdk.dart';
 import 'package:network_transport/network_transport.dart';
 
 final class FakeLanShareStrings extends Fake implements LanShareStrings {
-  FakeLanShareStrings({this.english = false});
+  FakeLanShareStrings({this.english = true});
 
   final bool english;
 
   @override
   bool get isEnglish => english;
+
+  @override
+  String get accept => 'Accept';
+
+  @override
+  String get reject => 'Reject';
+
+  @override
+  String get networkIncomingTransferTitle => 'Incoming Transfer';
+
+  @override
+  String networkIncomingTransferDescription(
+    String sender,
+    String fileName,
+    String size,
+  ) => 'From $sender: $fileName ($size)';
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>
@@ -503,6 +520,15 @@ final class FakeLanTransferService extends Fake implements LanTransferService {
   final NetworkResult<int>? startListeningResult;
   int stopListeningCalls = 0;
   bool disposed = false;
+  final List<LanMessage> messages = <LanMessage>[];
+
+  @override
+  String get currentDeviceId => 'test-device';
+
+  @override
+  void handleIncomingMessageFromWeb(LanMessage message) {
+    messages.add(message);
+  }
 
   @override
   Stream<LanPairingRequest> get pairingInviteStream =>
@@ -515,6 +541,19 @@ final class FakeLanTransferService extends Fake implements LanTransferService {
   @override
   Stream<LanDiscoveredPeer> get handshakeSuccessPeerStream =>
       _handshakeSuccessController.stream;
+
+  @override
+  Stream<LanMessage> get incomingMessageStream => const Stream.empty();
+
+  @override
+  Stream<LanMessage> get messageProgressStream => const Stream.empty();
+
+  @override
+  Stream<LanRecallRequest> get recalledMessageIdStream => const Stream.empty();
+
+  @override
+  Stream<LanConnectionStateChanged> get connectionStateStream =>
+      const Stream.empty();
 
   void emitHandshakeSuccess(LanDiscoveredPeer device) =>
       _handshakeSuccessController.add(device);
@@ -566,6 +605,18 @@ final class FakeLanTransferService extends Fake implements LanTransferService {
 }
 
 final class FakeLanStorageService extends Fake implements LanStorageService {
+  bool hasSpace = true;
+
+  @override
+  Future<bool> hasSufficientSpace(int requiredBytes) async => hasSpace;
+
+  @override
+  Future<bool> deleteSandboxFile(String localPath) async => true;
+
+  @override
+  Future<Directory> getSandboxDirectory() async =>
+      Directory('/tmp/lan_sandbox_fake');
+
   @override
   Future<int> perform7DayGarbageCollection({
     Duration ttl = const Duration(days: 7),

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -12,6 +13,11 @@ void main() {
 
   setUp(() {
     FlutterSecureStorage.setMockInitialValues(<String, String>{});
+    HttpOverrides.global = null;
+  });
+
+  tearDown(() {
+    HttpOverrides.global = null;
   });
 
   test(
@@ -427,6 +433,268 @@ void main() {
     expect(result, isA<SdkSuccess<void>>());
     expect(await fixture.store.read('peer-a'), isNull);
   });
+
+  test(
+    'direct connection failure with invalidate failure returns failure and does not connect relay',
+    () async {
+      HttpOverrides.global = _CapabilitiesHttpOverrides(
+        getNativePort: () => 43123,
+        expectedIdentityKey: Uint8List(32),
+        expectedX25519Key: Uint8List(32),
+      );
+
+      final fixture = await _Fixture.create(
+        trusted: true,
+        relayAuthorized: true,
+      );
+      addTearDown(fixture.dispose);
+      fixture.policyPort.failInvalidate = true;
+      fixture.facade.failConnectCount = 1;
+
+      final directory = await Directory.systemTemp.createTemp(
+        'lan-v2-fallback-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final file = File('${directory.path}/payload.bin')
+        ..writeAsStringSync('x');
+
+      final result = await fixture.coordinator.sendFile(
+        peerId: 'peer-a',
+        transferId: 'tx-fallback-inv-fail',
+        filePath: file.path,
+        discovery: _device('peer-a'),
+      );
+
+      expect(result, isA<SdkFailure<SdkTransferSession>>());
+      // Direct connect failed (1 call), fallback aborted at invalidate failure (no second connect)
+      expect(fixture.facade.connectCalls, 1);
+      expect(fixture.facade.transferCalls, 0);
+    },
+  );
+
+  test(
+    'direct connection failure where fresh policy becomes blocked does not connect relay',
+    () async {
+      HttpOverrides.global = _CapabilitiesHttpOverrides(
+        getNativePort: () => 43123,
+        expectedIdentityKey: Uint8List(32),
+        expectedX25519Key: Uint8List(32),
+      );
+
+      final fixture = await _Fixture.create(
+        trusted: true,
+        relayAuthorized: true,
+      );
+      addTearDown(fixture.dispose);
+      fixture.facade.failConnectCount = 1;
+
+      // On direct connect fail, invalidate is called; let's simulate peer becoming blocked
+      fixture.policyPort.onInvalidate = () {
+        fixture.policyPort.blockedPeers.add('peer-a');
+      };
+
+      final directory = await Directory.systemTemp.createTemp(
+        'lan-v2-fallback-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final file = File('${directory.path}/payload.bin')
+        ..writeAsStringSync('x');
+
+      final result = await fixture.coordinator.sendFile(
+        peerId: 'peer-a',
+        transferId: 'tx-fallback-blocked',
+        filePath: file.path,
+        discovery: _device('peer-a'),
+      );
+
+      expect(result, isA<SdkFailure<SdkTransferSession>>());
+      expect(fixture.facade.connectCalls, 1);
+      expect(fixture.facade.transferCalls, 0);
+    },
+  );
+
+  test(
+    'direct connection failure where fresh policy relay=false returns noRoute',
+    () async {
+      HttpOverrides.global = _CapabilitiesHttpOverrides(
+        getNativePort: () => 43123,
+        expectedIdentityKey: Uint8List(32),
+        expectedX25519Key: Uint8List(32),
+      );
+
+      final fixture = await _Fixture.create(
+        trusted: true,
+        relayAuthorized: true,
+      );
+      addTearDown(fixture.dispose);
+      fixture.facade.failConnectCount = 1;
+
+      // On invalidate, revoke relay
+      fixture.policyPort.onInvalidate = () async {
+        await fixture.store.setRelayAuthorization('peer-a', false);
+      };
+
+      final directory = await Directory.systemTemp.createTemp(
+        'lan-v2-fallback-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final file = File('${directory.path}/payload.bin')
+        ..writeAsStringSync('x');
+
+      final result = await fixture.coordinator.sendFile(
+        peerId: 'peer-a',
+        transferId: 'tx-fallback-revoked',
+        filePath: file.path,
+        discovery: _device('peer-a'),
+      );
+
+      expect(result, isA<SdkFailure<SdkTransferSession>>());
+      final failure = result as SdkFailure<SdkTransferSession>;
+      expect(failure.error.code, NetworkErrorCode.noRoute);
+      expect(fixture.facade.connectCalls, 1);
+      expect(fixture.facade.transferCalls, 0);
+    },
+  );
+
+  test(
+    'identityConflict during capability check never enters Relay fallback',
+    () async {
+      HttpOverrides.global = _CapabilitiesHttpOverrides(
+        getNativePort: () => 43123,
+        // Provide conflicting key to trigger identityConflict
+        expectedIdentityKey: Uint8List(32)..fillRange(0, 32, 99),
+        expectedX25519Key: Uint8List(32),
+      );
+
+      final fixture = await _Fixture.create(
+        trusted: true,
+        relayAuthorized: true,
+      );
+      addTearDown(fixture.dispose);
+
+      final directory = await Directory.systemTemp.createTemp(
+        'lan-v2-fallback-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final file = File('${directory.path}/payload.bin')
+        ..writeAsStringSync('x');
+
+      final result = await fixture.coordinator.sendFile(
+        peerId: 'peer-a',
+        transferId: 'tx-fallback-id-conflict',
+        filePath: file.path,
+        discovery: _device('peer-a'),
+      );
+
+      expect(result, isA<SdkFailure<SdkTransferSession>>());
+      final failure = result as SdkFailure<SdkTransferSession>;
+      expect(failure.error.code, NetworkErrorCode.identityConflict);
+      expect(fixture.facade.connectCalls, 0);
+      expect(fixture.facade.transferCalls, 0);
+    },
+  );
+
+  test(
+    'RelayStateChanged disconnected clears relay availability for peers',
+    () async {
+      final fixture = await _Fixture.create(trusted: true);
+      addTearDown(fixture.dispose);
+
+      // Initial presence online
+      fixture.facade.emit(
+        PeerPresenceChanged(
+          eventId: 'pres-1',
+          timestamp: DateTime.now(),
+          peerId: 'peer-a',
+          generation: 1,
+          state: PeerPresenceState.online,
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        fixture.coordinator.currentRouteStates['peer-a']?.relayAvailable,
+        isTrue,
+      );
+
+      // Relay disconnects
+      fixture.facade.emit(
+        RelayStateChanged(
+          eventId: 'relay-disc',
+          timestamp: DateTime.now(),
+          state: RelayConnectionState.disconnected,
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        fixture.coordinator.currentRouteStates['peer-a']?.relayAvailable,
+        isFalse,
+      );
+    },
+  );
+
+  test(
+    'PeerPresenceSnapshot authoritative sync resets missing peers to offline',
+    () async {
+      final fixture = await _Fixture.create(trusted: true);
+      addTearDown(fixture.dispose);
+
+      // peer-a and peer-b are online
+      fixture.facade.emit(
+        PeerPresenceChanged(
+          eventId: 'pres-a',
+          timestamp: DateTime.now(),
+          peerId: 'peer-a',
+          generation: 1,
+          state: PeerPresenceState.online,
+        ),
+      );
+      fixture.facade.emit(
+        PeerPresenceChanged(
+          eventId: 'pres-b',
+          timestamp: DateTime.now(),
+          peerId: 'peer-b',
+          generation: 1,
+          state: PeerPresenceState.online,
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        fixture.coordinator.currentRouteStates['peer-a']?.relayAvailable,
+        isTrue,
+      );
+      expect(
+        fixture.coordinator.currentRouteStates['peer-b']?.relayAvailable,
+        isTrue,
+      );
+
+      // Authoritative snapshot contains ONLY peer-a
+      fixture.facade.emit(
+        PeerPresenceSnapshot(
+          eventId: 'snap-1',
+          timestamp: DateTime.now(),
+          peers: [
+            PeerPresenceChanged(
+              eventId: 'snap-a',
+              timestamp: DateTime.now(),
+              peerId: 'peer-a',
+              generation: 1,
+              state: PeerPresenceState.online,
+            ),
+          ],
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        fixture.coordinator.currentRouteStates['peer-a']?.relayAvailable,
+        isTrue,
+      );
+      // peer-b is missing from authoritative snapshot -> updated to offline (relayAvailable = false)
+      expect(
+        fixture.coordinator.currentRouteStates['peer-b']?.relayAvailable,
+        isFalse,
+      );
+    },
+  );
 }
 
 final class _Fixture {
@@ -526,6 +794,8 @@ final class _RecordingPolicyPort implements LanNativePeerPolicyPort {
   final List<String>? updatedEndpoints;
   final List<String>? invalidatedPeerIds;
   final Set<String> blockedPeers = {};
+  bool failInvalidate = false;
+  FutureOr<void> Function()? onInvalidate;
 
   @override
   Future<NetworkResult<LanPeerPolicySnapshot>> getPeerPolicy(
@@ -554,6 +824,18 @@ final class _RecordingPolicyPort implements LanNativePeerPolicyPort {
   @override
   Future<NetworkResult<void>> invalidateDirectEndpoint(String peerId) async {
     invalidatedPeerIds?.add(peerId);
+    if (onInvalidate != null) {
+      await onInvalidate!();
+    }
+    if (failInvalidate) {
+      return const NetworkFailure<void>(
+        NetworkError(
+          code: NetworkErrorCode.ioError,
+          message: 'Invalidate endpoint failed',
+          operation: NetworkOperation.removePeer,
+        ),
+      );
+    }
     return const NetworkSuccess(null);
   }
 
@@ -586,6 +868,7 @@ final class _RecordingFacade extends Fake implements NetworkFacade {
   final List<(String, bool)> responses = <(String, bool)>[];
   int connectCalls = 0;
   int transferCalls = 0;
+  int? failConnectCount;
   bool failRespond = false;
   int? failRespondCount;
   Completer<void>? respondCompleter;
@@ -601,6 +884,17 @@ final class _RecordingFacade extends Fake implements NetworkFacade {
     CommunicationClass communicationClass = CommunicationClass.reliableStream,
   }) async {
     connectCalls++;
+    final count = failConnectCount;
+    if (count != null && count > 0) {
+      failConnectCount = count - 1;
+      return const SdkFailure<void>(
+        NetworkError(
+          code: NetworkErrorCode.noRoute,
+          message: 'Direct connect simulated failure',
+          operation: NetworkOperation.connect,
+        ),
+      );
+    }
     return const SdkSuccess<void>(null);
   }
 
@@ -686,3 +980,123 @@ LanPeerTrustRecord _trust(String id) => LanPeerTrustRecord(
   authorization: const PeerRouteAuthorization(localDirect: true, relay: false),
   createdAt: DateTime.utc(2026),
 );
+
+class _CapabilitiesHttpOverrides extends HttpOverrides {
+  _CapabilitiesHttpOverrides({
+    required this.getNativePort,
+    required this.expectedIdentityKey,
+    required this.expectedX25519Key,
+  });
+
+  final int Function() getNativePort;
+  final Uint8List expectedIdentityKey;
+  final Uint8List expectedX25519Key;
+
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    return _MockCapabilitiesHttpClient(
+      getNativePort: getNativePort,
+      expectedIdentityKey: expectedIdentityKey,
+      expectedX25519Key: expectedX25519Key,
+    );
+  }
+}
+
+class _MockCapabilitiesHttpClient extends Fake implements HttpClient {
+  _MockCapabilitiesHttpClient({
+    required this.getNativePort,
+    required this.expectedIdentityKey,
+    required this.expectedX25519Key,
+  });
+
+  final int Function() getNativePort;
+  final Uint8List expectedIdentityKey;
+  final Uint8List expectedX25519Key;
+
+  @override
+  Duration? connectionTimeout;
+  @override
+  Duration idleTimeout = const Duration(seconds: 15);
+  @override
+  bool Function(X509Certificate, String, int)? badCertificateCallback;
+  @override
+  String Function(Uri)? findProxy;
+
+  @override
+  Future<HttpClientRequest> getUrl(Uri url) async {
+    return _MockCapabilitiesRequest(
+      nativePort: getNativePort(),
+      expectedIdentityKey: expectedIdentityKey,
+      expectedX25519Key: expectedX25519Key,
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+class _MockCapabilitiesRequest extends Fake implements HttpClientRequest {
+  _MockCapabilitiesRequest({
+    required this.nativePort,
+    required this.expectedIdentityKey,
+    required this.expectedX25519Key,
+  });
+
+  final int nativePort;
+  final Uint8List expectedIdentityKey;
+  final Uint8List expectedX25519Key;
+  final _MockHttpHeaders _headers = _MockHttpHeaders();
+
+  @override
+  HttpHeaders get headers => _headers;
+
+  @override
+  bool followRedirects = false;
+
+  @override
+  Future<HttpClientResponse> close() async {
+    final body = jsonEncode({
+      'protocolVersion': LanControlProtocol.version,
+      'e2eEncryption': true,
+      'quicFileTransfer': true,
+      'x25519PubKey': base64.encode(expectedX25519Key),
+      'networkIdentityPubKey': base64.encode(expectedIdentityKey),
+      'quicPort': nativePort,
+    });
+    return _MockCapabilitiesResponse(body: body);
+  }
+}
+
+class _MockCapabilitiesResponse extends StreamView<List<int>>
+    with Fake
+    implements HttpClientResponse {
+  _MockCapabilitiesResponse({required this.body})
+    : super(Stream<List<int>>.value(utf8.encode(body)));
+
+  final String body;
+
+  @override
+  int get statusCode => HttpStatus.ok;
+
+  @override
+  int get contentLength => utf8.encode(body).length;
+
+  @override
+  HttpHeaders get headers => _MockHttpHeaders();
+
+  @override
+  HttpClientResponseCompressionState get compressionState =>
+      HttpClientResponseCompressionState.notCompressed;
+}
+
+class _MockHttpHeaders extends Fake implements HttpHeaders {
+  final Map<String, String> _map = {};
+
+  @override
+  void set(String name, Object value, {bool preserveHeaderCase = false}) {
+    _map[name.toLowerCase()] = value.toString();
+  }
+
+  @override
+  String? value(String name) => _map[name.toLowerCase()];
+}

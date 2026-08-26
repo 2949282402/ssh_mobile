@@ -1022,6 +1022,8 @@ job_lan_network_v2() {
     test/services/lan_peer_trust_v2_test.dart
     test/features/lan_native_peer_registry_v2_test.dart
     test/features/lan_network_v2_acceptance_matrix_test.dart
+    test/features/network_incoming_transfer_host_test.dart
+    test/services/lan_storage_service_test.dart
     test/services/lan_pairing_protocol_v2_test.dart
     test/services/lan_peer_trust_identity_v2_test.dart
     test/services/lan_peer_presentation_models_test.dart
