@@ -7,7 +7,7 @@ extension _LanShareDialogActions on _LanShareScreenState {
   /// 展示已发现设备并向用户选中的设备发送文件。
   void _showTargetDevicePickerAndSend(List<String> filePaths) {
     final vm = context.read<LanShareViewModel>();
-    final strings = context.read<AppSettings>().strings;
+    final strings = context.read<LanShareSettingsPort>().strings;
 
     showModalBottomSheet(
       context: context,
@@ -65,7 +65,7 @@ extension _LanShareDialogActions on _LanShareScreenState {
   /// 启动固定 HTTPS WebShare，并展示访问二维码和 PIN。
   void _toggleWebShareDialog(
     BuildContext context,
-    AppStrings strings,
+    LanShareStrings strings,
     LanShareViewModel vm,
   ) async {
     if (!vm.isWebShareActive) {
@@ -104,7 +104,7 @@ extension _LanShareDialogActions on _LanShareScreenState {
     BuildContext context,
     String input,
     LanShareViewModel vm,
-    AppStrings strings,
+    LanShareStrings strings,
   ) {
     String ip = '';
     int port = 53317;
@@ -171,7 +171,7 @@ extension _LanShareDialogActions on _LanShareScreenState {
     BuildContext context,
     LanShareViewModel vm,
     LanDiscoveredPeer device,
-    AppStrings strings,
+    LanShareStrings strings,
   ) async {
     final result = await vm.requestPairing(device);
     if (result is NetworkFailure && context.mounted) {
@@ -185,7 +185,7 @@ extension _LanShareDialogActions on _LanShareScreenState {
   /// 展示手动输入设备 IP、端口或 HTTPS WebShare 链接的对话框。
   Future<String?> _showManualAddDialog(
     BuildContext context,
-    AppStrings strings,
+    LanShareStrings strings,
   ) async {
     final controller = TextEditingController();
     final isEn = context.read<LanShareViewModel>().appSettings.isEnglish;
@@ -746,7 +746,7 @@ class _ChatSession {
 /// 展示固定 HTTPS WebShare 地址、PIN 和剩余有效时间。
 class WebShareDialogContent extends StatefulWidget {
   final LanShareViewModel vm;
-  final AppStrings strings;
+  final LanShareStrings strings;
 
   /// 创建 WebShare 对话框内容。
   const WebShareDialogContent({

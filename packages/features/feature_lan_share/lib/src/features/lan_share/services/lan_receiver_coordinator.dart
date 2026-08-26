@@ -50,7 +50,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
        _ownsPeerTrustStore = peerTrustStore == null;
 
   /// App Scope 的 LAN 设置和身份配置。
-  final AppSettings appSettings;
+  final LanShareSettingsPort appSettings;
 
   /// App Scope 的日志适配器。
   final LanShareLoggerPort logger;

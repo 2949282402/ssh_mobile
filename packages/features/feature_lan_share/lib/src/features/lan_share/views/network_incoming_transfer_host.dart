@@ -207,7 +207,7 @@ class _IncomingApprovalDialogState extends State<IncomingApprovalDialog> {
         });
       } else {
         final messenger = ScaffoldMessenger.of(context);
-        final strings = context.read<AppSettings>().strings;
+        final strings = context.read<LanShareSettingsPort>().strings;
         Navigator.of(context).pop();
         _showTerminalFailureSnackBar(messenger, strings, failure.error);
       }
@@ -289,7 +289,7 @@ class _IncomingApprovalDialogState extends State<IncomingApprovalDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final strings = context.watch<AppSettings>().strings;
+    final strings = context.watch<LanShareSettingsPort>().strings;
     final theme = Theme.of(context);
     final inProgress =
         _state == IncomingApprovalUiState.accepting ||

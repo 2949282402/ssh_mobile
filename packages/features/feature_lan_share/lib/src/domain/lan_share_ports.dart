@@ -227,12 +227,3 @@ abstract interface class LanShareNetworkAccessPort {
   /// 借用 App 级单例 [NetworkFacade]。
   Future<NetworkFacade?> borrowFacade();
 }
-
-/// 旧 App 设置类型的包内兼容别名；实现仍必须是 Port。
-typedef AppLanguage = LanShareLanguage;
-
-/// 旧 LAN 页面使用的设置类型兼容别名。
-typedef AppSettings = LanShareSettingsPort;
-
-/// 旧 LAN 页面使用的文案类型兼容别名。
-typedef AppStrings = LanShareStrings;

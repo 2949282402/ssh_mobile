@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../domain/lan_share_ports.dart';
-import '../../services/app_settings.dart';
 import 'services/lan_receiver_coordinator.dart';
 import 'viewmodels/lan_share_viewmodel.dart';
 
@@ -51,7 +50,7 @@ class _LanShareFeatureScopeState extends State<LanShareFeatureScope> {
   @override
   Widget build(BuildContext context) {
     if (_inheritedViewModel != null) return widget.child;
-    final strings = context.select<AppSettings, LanShareStrings>(
+    final strings = context.select<LanShareSettingsPort, LanShareStrings>(
       (settings) => settings.strings,
     );
 

@@ -8,7 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_handler/share_handler.dart';
 
-import 'package:feature_lan_share/src/services/app_settings.dart';
+import '../../../domain/lan_share_ports.dart';
 import 'package:app_ui/app_ui.dart';
 import 'package:feature_lan_share/src/features/lan_share/viewmodels/lan_share_viewmodel.dart';
 import 'package:feature_lan_share/src/services/lan_share/lan_share_models.dart';
@@ -98,7 +98,7 @@ class _LanShareScreenState extends State<LanShareScreen>
 
   @override
   Widget build(BuildContext context) {
-    final settings = context.watch<AppSettings>();
+    final settings = context.watch<LanShareSettingsPort>();
     final strings = settings.strings;
     final vm = context.watch<LanShareViewModel>();
 
@@ -331,7 +331,7 @@ class _LanShareScreenState extends State<LanShareScreen>
   Widget _buildSelfInfoBar(
     BuildContext context,
     LanShareViewModel vm,
-    AppStrings strings,
+    LanShareStrings strings,
   ) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
@@ -503,7 +503,7 @@ class _LanShareScreenState extends State<LanShareScreen>
 
   Widget _buildRadarView(
     BuildContext context,
-    AppStrings strings,
+    LanShareStrings strings,
     LanShareViewModel vm,
   ) {
     final peers = vm.peerStates;
@@ -676,7 +676,7 @@ class _LanShareScreenState extends State<LanShareScreen>
 
   Widget _buildHistoryView(
     BuildContext context,
-    AppStrings strings,
+    LanShareStrings strings,
     LanShareViewModel vm,
   ) {
     if (vm.history.isEmpty) {
@@ -883,7 +883,7 @@ class _LanShareScreenState extends State<LanShareScreen>
     return '$year-$month-$day $hour:$minute';
   }
 
-  String _routeSuffix(AppStrings strings, NetworkRouteType? routeType) {
+  String _routeSuffix(LanShareStrings strings, NetworkRouteType? routeType) {
     final label = switch (routeType) {
       NetworkRouteType.quicDirect => strings.lanRouteDirect,
       NetworkRouteType.relay => strings.lanRouteRelay,

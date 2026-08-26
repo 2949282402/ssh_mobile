@@ -9,7 +9,7 @@ import 'package:gpt_markdown/gpt_markdown.dart';
 import 'package:provider/provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-import '../../../services/app_settings.dart';
+import '../../../domain/lan_share_ports.dart';
 import '../../../services/lan_share/lan_share_models.dart';
 import 'package:app_ui/app_ui.dart';
 import '../utils/lan_preview_safety.dart';
@@ -146,7 +146,7 @@ class _LanPreviewViewerScreenState extends State<LanPreviewViewerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final settings = context.watch<AppSettings>();
+    final settings = context.watch<LanShareSettingsPort>();
     final strings = settings.strings;
 
     return Scaffold(
@@ -198,7 +198,7 @@ class _LanPreviewViewerScreenState extends State<LanPreviewViewerScreen> {
 
   Widget _buildPayload(
     BuildContext context,
-    AppStrings strings,
+    LanShareStrings strings,
     _LanPreviewPayload payload,
   ) {
     switch (_kind) {
@@ -226,7 +226,7 @@ class _LanPreviewViewerScreenState extends State<LanPreviewViewerScreen> {
 
   Widget _buildHtmlPreview(
     BuildContext context,
-    AppStrings strings,
+    LanShareStrings strings,
     String html,
   ) {
     if (!_supportsHtmlPreview) {
@@ -282,7 +282,7 @@ class _LanPreviewViewerScreenState extends State<LanPreviewViewerScreen> {
     );
   }
 
-  Widget _buildError(AppStrings strings, Object error) {
+  Widget _buildError(LanShareStrings strings, Object error) {
     if (error is LanPreviewTooLargeException) {
       return AppEmptyState(
         key: const ValueKey('lan-preview-too-large'),
@@ -315,7 +315,10 @@ class _LanPreviewViewerScreenState extends State<LanPreviewViewerScreen> {
     );
   }
 
-  Future<void> _copyPreview(BuildContext context, AppStrings strings) async {
+  Future<void> _copyPreview(
+    BuildContext context,
+    LanShareStrings strings,
+  ) async {
     try {
       final payload = await _previewFuture;
       final text = payload.text;
@@ -333,7 +336,10 @@ class _LanPreviewViewerScreenState extends State<LanPreviewViewerScreen> {
     }
   }
 
-  Future<void> _exportFile(BuildContext context, AppStrings strings) async {
+  Future<void> _exportFile(
+    BuildContext context,
+    LanShareStrings strings,
+  ) async {
     final path = widget.message.localPath;
     if (path == null) return;
 
@@ -382,7 +388,7 @@ class _LanPreviewMissingException implements Exception {
 class _PreviewLoading extends StatelessWidget {
   const _PreviewLoading({required this.strings});
 
-  final AppStrings strings;
+  final LanShareStrings strings;
 
   @override
   Widget build(BuildContext context) {
@@ -421,7 +427,7 @@ class _LanMarkdownPreview extends StatelessWidget {
   const _LanMarkdownPreview({required this.text, required this.strings});
 
   final String text;
-  final AppStrings strings;
+  final LanShareStrings strings;
 
   @override
   Widget build(BuildContext context) {
@@ -469,7 +475,7 @@ class _LanImagePreview extends StatelessWidget {
 
   final Uint8List bytes;
   final LanPreviewImageMetadata metadata;
-  final AppStrings strings;
+  final LanShareStrings strings;
   final LanPreviewImageProviderBuilder? providerBuilderForTesting;
 
   @override
