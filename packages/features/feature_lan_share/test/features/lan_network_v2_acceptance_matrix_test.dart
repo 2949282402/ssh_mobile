@@ -446,18 +446,8 @@ void main() {
           networkFacade: facade,
         );
 
-        final transferService = LanTransferService(
-          currentDeviceId: 'device-self',
-          securityService: LanSecurityService(
-            appOwnedX25519PrivateSeed: Uint8List(32),
-            peerTrustStore: store,
-          ),
-          storageService: storageService,
-        );
-        addTearDown(transferService.dispose);
-
         final coordinator = LanNativeTransferCoordinator(
-          transferService: transferService,
+          transferService: FakeLanTransferService(),
           networkFacade: facade,
           policyPort: registry,
           storageService: storageService,
@@ -477,7 +467,7 @@ void main() {
           historyRepository: LanShareHistoryRepository(database),
           networkRuntime: FakeLanShareNetworkRuntime(),
           peerTrustStore: store,
-          transferServiceOverride: transferService,
+          transferServiceOverride: FakeLanTransferService(),
           discoveryServiceOverride: FakeLanDiscoveryService(),
           storageServiceOverride: storageService,
         );
@@ -581,18 +571,8 @@ void main() {
           networkFacade: facade,
         );
 
-        final transferService = LanTransferService(
-          currentDeviceId: 'device-self',
-          securityService: LanSecurityService(
-            appOwnedX25519PrivateSeed: Uint8List(32),
-            peerTrustStore: store,
-          ),
-          storageService: storageService,
-        );
-        addTearDown(transferService.dispose);
-
         final coordinator = LanNativeTransferCoordinator(
-          transferService: transferService,
+          transferService: FakeLanTransferService(),
           networkFacade: facade,
           policyPort: registry,
           storageService: storageService,
@@ -612,7 +592,7 @@ void main() {
           historyRepository: LanShareHistoryRepository(database),
           networkRuntime: FakeLanShareNetworkRuntime(),
           peerTrustStore: store,
-          transferServiceOverride: transferService,
+          transferServiceOverride: FakeLanTransferService(),
           discoveryServiceOverride: FakeLanDiscoveryService(),
           storageServiceOverride: storageService,
         );
@@ -635,8 +615,9 @@ void main() {
         final acceptResult = await receiver.acceptNativeIncomingTransfer(offer);
         expect(acceptResult, isA<NetworkSuccess<void>>());
 
-        // Drain asynchronous event loop processing
+        // Drain asynchronous event loop processing and file adoption
         await pumpEventQueue();
+        await Future<void>.delayed(const Duration(milliseconds: 50));
 
         final record = await historyDao.getRecord('tx-fast-photo');
         expect(record, isNotNull);
@@ -679,18 +660,8 @@ void main() {
           networkFacade: facade,
         );
 
-        final transferService = LanTransferService(
-          currentDeviceId: 'device-self',
-          securityService: LanSecurityService(
-            appOwnedX25519PrivateSeed: Uint8List(32),
-            peerTrustStore: store,
-          ),
-          storageService: storageService,
-        );
-        addTearDown(transferService.dispose);
-
         final coordinator = LanNativeTransferCoordinator(
-          transferService: transferService,
+          transferService: FakeLanTransferService(),
           networkFacade: facade,
           policyPort: registry,
           storageService: storageService,
@@ -710,7 +681,7 @@ void main() {
           historyRepository: LanShareHistoryRepository(database),
           networkRuntime: FakeLanShareNetworkRuntime(),
           peerTrustStore: store,
-          transferServiceOverride: transferService,
+          transferServiceOverride: FakeLanTransferService(),
           discoveryServiceOverride: FakeLanDiscoveryService(),
           storageServiceOverride: storageService,
         );
@@ -777,9 +748,31 @@ void main() {
 
         // Pending/connecting record is cleaned up upon reject
         expect(await historyDao.getRecord('tx-reject-me'), isNull);
+      },
+    );
 
-        // Subcase: history insert failure does NOT call native accept
+    test(
+      'O2. History insert failure fails closed and never calls native accept',
+      () async {
+        final store = LanPeerTrustStore();
+        addTearDown(store.dispose);
+        await store.save(_record('peer-fail-db', relay: true));
+
         final failDb = LanShareDatabase.forTesting(_FailingInsertExecutor());
+        addTearDown(failDb.dispose);
+
+        final tempDir = await Directory.systemTemp.createTemp('lan-fail-db-');
+        addTearDown(() => tempDir.delete(recursive: true));
+        final sandboxDir = Directory('${tempDir.path}/sandbox')..createSync();
+
+        final storageService = LanStorageService(
+          sandboxDirectoryProvider: () async => sandboxDir,
+          freeDiskSpaceBytesProvider: () async => 1024 * 1024 * 1024,
+        );
+
+        final facade = _MockAcceptanceFacade();
+        final settings = FakeLanShareSettings();
+        addTearDown(settings.dispose);
 
         final failDbReceiver = LanReceiverCoordinator(
           appSettings: settings,
@@ -791,7 +784,7 @@ void main() {
           historyRepository: LanShareHistoryRepository(failDb),
           networkRuntime: FakeLanShareNetworkRuntime(),
           peerTrustStore: store,
-          transferServiceOverride: transferService,
+          transferServiceOverride: FakeLanTransferService(),
           discoveryServiceOverride: FakeLanDiscoveryService(),
           storageServiceOverride: storageService,
         );
@@ -802,7 +795,7 @@ void main() {
           eventId: 'ev-precommit-fail-db',
           timestamp: DateTime.now(),
           transferId: 'tx-fail-db-insert',
-          peerId: 'peer-precommit',
+          peerId: 'peer-fail-db',
           fileName: 'fail_db.bin',
           fileSize: 100,
           routeType: NetworkRouteType.quicDirect,
@@ -823,6 +816,419 @@ void main() {
             .where((r) => r.$2 == true)
             .length;
         expect(finalAcceptCount, equals(initialAcceptCount));
+      },
+    );
+
+    test(
+      'P. Authorization changes before Accept: revoked trust or route triggers fail-closed native rejection',
+      () async {
+        final store = LanPeerTrustStore();
+        addTearDown(store.dispose);
+        await store.save(_record('peer-p', relay: true));
+
+        final database = LanShareDatabase.forTesting(NativeDatabase.memory());
+        addTearDown(database.dispose);
+
+        final tempDir = await Directory.systemTemp.createTemp('lan-accept-p-');
+        addTearDown(() => tempDir.delete(recursive: true));
+        final sandboxDir = Directory('${tempDir.path}/sandbox')..createSync();
+
+        final storageService = LanStorageService(
+          sandboxDirectoryProvider: () async => sandboxDir,
+          freeDiskSpaceBytesProvider: () async => 1024 * 1024 * 1024,
+        );
+
+        final facade = _MockAcceptanceFacade();
+        final registry = LanNativePeerRegistry(
+          trustStore: store,
+          networkFacade: facade,
+        );
+
+        final settings = FakeLanShareSettings();
+        addTearDown(settings.dispose);
+
+        final receiver = LanReceiverCoordinator(
+          appSettings: settings,
+          logger: FakeLanShareLogger(),
+          dataProtection: FakeLanShareDataProtection(),
+          networkIdentity: FakeLanShareIdentity(),
+          networkFactory: FakeLanShareNetworkFactory(networkFacade: facade),
+          bootstrapClient: FakeLanShareBootstrapClient(),
+          historyRepository: LanShareHistoryRepository(database),
+          networkRuntime: FakeLanShareNetworkRuntime(),
+          peerTrustStore: store,
+          transferServiceOverride: FakeLanTransferService(),
+          discoveryServiceOverride: FakeLanDiscoveryService(),
+          storageServiceOverride: storageService,
+        );
+        await receiver.ensureInitialized();
+        addTearDown(receiver.close);
+
+        final offer = IncomingTransferOffer(
+          eventId: 'ev-offer-p',
+          timestamp: DateTime.now(),
+          transferId: 'tx-p-1',
+          peerId: 'peer-p',
+          fileName: 'p_relay.bin',
+          fileSize: 1024,
+          routeType: NetworkRouteType.relay,
+        );
+
+        // Revoke relay authorization for peer-p
+        await registry.revokeRelayForPeer('peer-p');
+
+        final acceptResult = await receiver.acceptNativeIncomingTransfer(offer);
+        expect(acceptResult, isA<NetworkFailure<void>>());
+        final failure = acceptResult as NetworkFailure<void>;
+        expect(failure.error.code, NetworkErrorCode.authenticationFailed);
+
+        // Native reject was called, never native accept
+        expect(facade.responses, contains(('tx-p-1', false)));
+        expect(
+          facade.responses.where((r) => r.$1 == 'tx-p-1' && r.$2 == true),
+          isEmpty,
+        );
+      },
+    );
+
+    test(
+      'Q. Incoming transferId ownership collision: mismatched peer fails closed without native accept',
+      () async {
+        final store = LanPeerTrustStore();
+        addTearDown(store.dispose);
+        await store.save(_record('peer-q-1', relay: true));
+        await store.save(_record('peer-q-2', relay: true));
+
+        final database = LanShareDatabase.forTesting(NativeDatabase.memory());
+        addTearDown(database.dispose);
+        final historyDao = database.lanHistoryDao;
+
+        final tempDir = await Directory.systemTemp.createTemp('lan-accept-q-');
+        addTearDown(() => tempDir.delete(recursive: true));
+        final sandboxDir = Directory('${tempDir.path}/sandbox')..createSync();
+
+        final storageService = LanStorageService(
+          sandboxDirectoryProvider: () async => sandboxDir,
+          freeDiskSpaceBytesProvider: () async => 1024 * 1024 * 1024,
+        );
+
+        final facade = _MockAcceptanceFacade();
+        final settings = FakeLanShareSettings();
+        addTearDown(settings.dispose);
+
+        final receiver = LanReceiverCoordinator(
+          appSettings: settings,
+          logger: FakeLanShareLogger(),
+          dataProtection: FakeLanShareDataProtection(),
+          networkIdentity: FakeLanShareIdentity(),
+          networkFactory: FakeLanShareNetworkFactory(networkFacade: facade),
+          bootstrapClient: FakeLanShareBootstrapClient(),
+          historyRepository: LanShareHistoryRepository(database),
+          networkRuntime: FakeLanShareNetworkRuntime(),
+          peerTrustStore: store,
+          transferServiceOverride: FakeLanTransferService(),
+          discoveryServiceOverride: FakeLanDiscoveryService(),
+          storageServiceOverride: storageService,
+        );
+        await receiver.ensureInitialized();
+        addTearDown(receiver.close);
+
+        // 1. Insert existing record for peer-q-1
+        await historyDao.insertRecord(
+          LanTransferRecordsCompanion(
+            id: const Value('tx-q-1'),
+            senderId: const Value('peer-q-1'),
+            senderAlias: const Value('peer-q-1'),
+            receiverId: Value(settings.lanDeviceId),
+            payloadType: const Value('file'),
+            fileName: const Value('q1_file.bin'),
+            fileSize: const Value(500),
+            status: Value(LanTransferStatus.connecting.toJson()),
+            createdAt: Value(DateTime.now().millisecondsSinceEpoch),
+            isIncoming: const Value(true),
+            isRecalled: const Value(false),
+            routeType: Value(NetworkRouteType.quicDirect.name),
+            bytesTotal: const Value(500),
+            bytesTransferred: const Value(0),
+          ),
+        );
+
+        // 2. Conflicting offer arrives with SAME transferId from peer-q-2
+        final collidingOffer = IncomingTransferOffer(
+          eventId: 'ev-offer-q2',
+          timestamp: DateTime.now(),
+          transferId: 'tx-q-1',
+          peerId: 'peer-q-2',
+          fileName: 'q2_file.bin',
+          fileSize: 1000,
+          routeType: NetworkRouteType.quicDirect,
+        );
+
+        final acceptResult = await receiver.acceptNativeIncomingTransfer(
+          collidingOffer,
+        );
+        expect(acceptResult, isA<NetworkFailure<void>>());
+        final failure = acceptResult as NetworkFailure<void>;
+        expect(failure.error.code, NetworkErrorCode.identityConflict);
+
+        // Native accept was NEVER called
+        expect(
+          facade.responses.where((r) => r.$1 == 'tx-q-1' && r.$2 == true),
+          isEmpty,
+        );
+        // Native reject was called
+        expect(facade.responses, contains(('tx-q-1', false)));
+
+        // Existing history record from peer-q-1 is untouched
+        final record = await historyDao.getRecord('tx-q-1');
+        expect(record, isNotNull);
+        expect(record!.senderId, 'peer-q-1');
+        expect(record.fileName, 'q1_file.bin');
+      },
+    );
+
+    test(
+      'R. Reject ownership protection: reject from conflicting peer does not delete original peer history',
+      () async {
+        final store = LanPeerTrustStore();
+        addTearDown(store.dispose);
+        await store.save(_record('peer-r-1', relay: true));
+        await store.save(_record('peer-r-2', relay: true));
+
+        final database = LanShareDatabase.forTesting(NativeDatabase.memory());
+        addTearDown(database.dispose);
+        final historyDao = database.lanHistoryDao;
+
+        final tempDir = await Directory.systemTemp.createTemp('lan-accept-r-');
+        addTearDown(() => tempDir.delete(recursive: true));
+        final sandboxDir = Directory('${tempDir.path}/sandbox')..createSync();
+
+        final storageService = LanStorageService(
+          sandboxDirectoryProvider: () async => sandboxDir,
+          freeDiskSpaceBytesProvider: () async => 1024 * 1024 * 1024,
+        );
+
+        final facade = _MockAcceptanceFacade();
+        final settings = FakeLanShareSettings();
+        addTearDown(settings.dispose);
+
+        final receiver = LanReceiverCoordinator(
+          appSettings: settings,
+          logger: FakeLanShareLogger(),
+          dataProtection: FakeLanShareDataProtection(),
+          networkIdentity: FakeLanShareIdentity(),
+          networkFactory: FakeLanShareNetworkFactory(networkFacade: facade),
+          bootstrapClient: FakeLanShareBootstrapClient(),
+          historyRepository: LanShareHistoryRepository(database),
+          networkRuntime: FakeLanShareNetworkRuntime(),
+          peerTrustStore: store,
+          transferServiceOverride: FakeLanTransferService(),
+          discoveryServiceOverride: FakeLanDiscoveryService(),
+          storageServiceOverride: storageService,
+        );
+        await receiver.ensureInitialized();
+        addTearDown(receiver.close);
+
+        // 1. Insert connecting record for peer-r-1
+        await historyDao.insertRecord(
+          LanTransferRecordsCompanion(
+            id: const Value('tx-r-1'),
+            senderId: const Value('peer-r-1'),
+            senderAlias: const Value('peer-r-1'),
+            receiverId: Value(settings.lanDeviceId),
+            payloadType: const Value('file'),
+            fileName: const Value('r1_file.bin'),
+            fileSize: const Value(500),
+            status: Value(LanTransferStatus.connecting.toJson()),
+            createdAt: Value(DateTime.now().millisecondsSinceEpoch),
+            isIncoming: const Value(true),
+            isRecalled: const Value(false),
+            routeType: Value(NetworkRouteType.quicDirect.name),
+            bytesTotal: const Value(500),
+            bytesTransferred: const Value(0),
+          ),
+        );
+
+        // 2. Reject offer with same transferId from peer-r-2
+        final offerFromPeerR2 = IncomingTransferOffer(
+          eventId: 'ev-offer-r2',
+          timestamp: DateTime.now(),
+          transferId: 'tx-r-1',
+          peerId: 'peer-r-2',
+          fileName: 'r2_file.bin',
+          fileSize: 800,
+          routeType: NetworkRouteType.quicDirect,
+        );
+
+        final rejectResult = await receiver.rejectNativeIncomingTransfer(
+          offerFromPeerR2,
+        );
+        expect(rejectResult, isA<NetworkSuccess<void>>());
+
+        // Native reject was performed
+        expect(facade.responses, contains(('tx-r-1', false)));
+
+        // Original record of peer-r-1 was NOT deleted
+        final record = await historyDao.getRecord('tx-r-1');
+        expect(record, isNotNull);
+        expect(record!.senderId, 'peer-r-1');
+      },
+    );
+
+    test(
+      'S. Transfer event peer mismatch protection: events with mismatched peerId do not mutate history or adopt files',
+      () async {
+        final store = LanPeerTrustStore();
+        addTearDown(store.dispose);
+        await store.save(_record('peer-s-1', relay: true));
+
+        final database = LanShareDatabase.forTesting(NativeDatabase.memory());
+        addTearDown(database.dispose);
+        final historyDao = database.lanHistoryDao;
+
+        final tempDir = await Directory.systemTemp.createTemp('lan-accept-s-');
+        addTearDown(() => tempDir.delete(recursive: true));
+        final sandboxDir = Directory('${tempDir.path}/sandbox')..createSync();
+        final nativeInboxDir = Directory('${tempDir.path}/inbox')..createSync();
+
+        final storageService = LanStorageService(
+          sandboxDirectoryProvider: () async => sandboxDir,
+          freeDiskSpaceBytesProvider: () async => 1024 * 1024 * 1024,
+        );
+
+        final inboxFile = File('${nativeInboxDir.path}/s_download.jpg')
+          ..writeAsStringSync('secret-file-content');
+
+        final facade = _MockAcceptanceFacade();
+        final registry = LanNativePeerRegistry(
+          trustStore: store,
+          networkFacade: facade,
+        );
+
+        final coordinator = LanNativeTransferCoordinator(
+          transferService: FakeLanTransferService(),
+          networkFacade: facade,
+          policyPort: registry,
+          storageService: storageService,
+        );
+        addTearDown(coordinator.dispose);
+
+        final settings = FakeLanShareSettings();
+        addTearDown(settings.dispose);
+
+        final viewModel = LanShareViewModel(
+          discoveryService: FakeLanDiscoveryService(),
+          securityService: LanSecurityService(
+            appOwnedX25519PrivateSeed: Uint8List(32),
+            peerTrustStore: store,
+          ),
+          storageService: storageService,
+          transferService: FakeLanTransferService(),
+          nativeTransferCoordinator: coordinator,
+          historyDao: historyDao,
+          appSettings: settings,
+          dataProtection: FakeLanShareDataProtection(),
+          logger: FakeLanShareLogger(),
+          ownsRuntime: false,
+        );
+        await viewModel.initialize();
+        addTearDown(viewModel.dispose);
+
+        // 1. Insert connecting incoming record belonging to peer-s-1
+        await historyDao.insertRecord(
+          LanTransferRecordsCompanion(
+            id: const Value('tx-s-1'),
+            senderId: const Value('peer-s-1'),
+            senderAlias: const Value('peer-s-1'),
+            receiverId: Value(settings.lanDeviceId),
+            payloadType: const Value('image'),
+            fileName: const Value('photo.jpg'),
+            fileSize: const Value(1024),
+            status: Value(LanTransferStatus.connecting.toJson()),
+            createdAt: Value(DateTime.now().millisecondsSinceEpoch),
+            isIncoming: const Value(true),
+            isRecalled: const Value(false),
+            routeType: Value(NetworkRouteType.quicDirect.name),
+            bytesTotal: const Value(1024),
+            bytesTransferred: const Value(0),
+          ),
+        );
+
+        // 2. TransferProgress with mismatched peerId (peer-s-wrong)
+        facade.emit(
+          TransferProgress(
+            eventId: 'ev-s-prog',
+            timestamp: DateTime.now(),
+            transferId: 'tx-s-1',
+            peerId: 'peer-s-wrong',
+            bytesTransferred: 500,
+            totalBytes: 1024,
+          ),
+        );
+        await pumpEventQueue();
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        var record = await historyDao.getRecord('tx-s-1');
+        expect(record!.bytesTransferred, 0);
+        expect(record.status, LanTransferStatus.connecting.toJson());
+
+        // 3. TransferFailed with mismatched peerId (peer-s-wrong)
+        facade.emit(
+          TransferFailed(
+            eventId: 'ev-s-fail',
+            timestamp: DateTime.now(),
+            transferId: 'tx-s-1',
+            peerId: 'peer-s-wrong',
+            error: const NetworkError(
+              code: NetworkErrorCode.quicError,
+              message: 'fake error',
+              operation: NetworkOperation.respondToIncoming,
+            ),
+          ),
+        );
+        await pumpEventQueue();
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        record = await historyDao.getRecord('tx-s-1');
+        expect(record!.status, LanTransferStatus.connecting.toJson());
+
+        // 4. TransferCompleted with mismatched peerId (peer-s-wrong)
+        facade.emit(
+          TransferCompleted(
+            eventId: 'ev-s-comp',
+            timestamp: DateTime.now(),
+            transferId: 'tx-s-1',
+            peerId: 'peer-s-wrong',
+            localPath: inboxFile.path,
+          ),
+        );
+        await pumpEventQueue();
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        record = await historyDao.getRecord('tx-s-1');
+        expect(record!.status, LanTransferStatus.connecting.toJson());
+        expect(record.localPath, isNull);
+        // File in inbox was NOT adopted
+        expect(inboxFile.existsSync(), isTrue);
+
+        // 5. TransferCompleted with matching peerId (peer-s-1) -> succeeds and adopts file
+        facade.emit(
+          TransferCompleted(
+            eventId: 'ev-s-comp-correct',
+            timestamp: DateTime.now(),
+            transferId: 'tx-s-1',
+            peerId: 'peer-s-1',
+            localPath: inboxFile.path,
+          ),
+        );
+        await pumpEventQueue();
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        record = await historyDao.getRecord('tx-s-1');
+        expect(record!.status, LanTransferStatus.completed.toJson());
+        expect(record.localPath, isNotNull);
+        expect(record.localPath!, startsWith(sandboxDir.path));
+        expect(inboxFile.existsSync(), isFalse);
       },
     );
   });
@@ -1115,4 +1521,7 @@ final class _FailingInsertExecutor extends Fake implements QueryExecutor {
   Future<int> runInsert(String statement, List<Object?> args) async {
     throw const FileSystemException('Database disk full');
   }
+
+  @override
+  Future<void> close() async {}
 }

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../domain/lan_share_ports.dart';
+import '../../../services/lan_share/lan_share_models.dart';
 import 'package:network_sdk/network_sdk.dart';
 import '../services/lan_receiver_coordinator.dart';
 
@@ -17,16 +18,6 @@ enum IncomingApprovalUiState {
   retryableFailure,
   retryableRejectFailure,
 }
-
-bool _isRetryableNetworkError(NetworkErrorCode code) => switch (code) {
-  NetworkErrorCode.ioError ||
-  NetworkErrorCode.timeout ||
-  NetworkErrorCode.quicError ||
-  NetworkErrorCode.pathLost ||
-  NetworkErrorCode.peerOffline ||
-  NetworkErrorCode.noRoute => true,
-  _ => false,
-};
 
 /// Presents one root-level approval dialog at a time for current-protocol
 /// QUIC or Relay offers, independently of the selected application route.
@@ -63,7 +54,7 @@ class _NetworkIncomingTransferHostState
           senderId: offer.peerId,
           fileName: offer.fileName,
           totalBytes: offer.fileSize,
-          expiresAt: DateTime.now().add(const Duration(seconds: 25)),
+          expiresAt: DateTime.now().add(coordinator.incomingOfferTimeout),
           accept: () => coordinator.acceptNativeIncomingTransfer(offer),
           reject: () => coordinator.rejectNativeIncomingTransfer(offer),
         ),
@@ -209,7 +200,7 @@ class _IncomingApprovalDialogState extends State<IncomingApprovalDialog> {
       final isExpiredNow = widget.request.isExpired || _expired;
       if (isExpiredNow) {
         await _reject(isTimeout: true);
-      } else if (_isRetryableNetworkError(failure.error.code)) {
+      } else if (isRetryableNetworkError(failure.error.code)) {
         setState(() {
           _state = IncomingApprovalUiState.retryableFailure;
           _errorMessage = failure.error.message;

@@ -170,9 +170,25 @@ final class LanReceiverCoordinator extends ChangeNotifier {
   LanNativeTransferCoordinator? get nativeTransferCoordinator =>
       _nativeTransferCoordinator;
 
+  /// 传入传输申请的超时时间。
+  Duration get incomingOfferTimeout =>
+      _nativeTransferCoordinator?.offerTimeout ?? const Duration(seconds: 25);
+
   /// 接收器初始化后发布原生传入传输申请。
   Stream<IncomingTransferOffer> get nativeIncomingTransferOffers =>
       _incomingTransferController.stream;
+
+  bool _matchesIncomingOffer(
+    LanTransferRecord record,
+    IncomingTransferOffer offer,
+  ) {
+    return record.isIncoming &&
+        record.senderId == offer.peerId &&
+        record.receiverId == appSettings.lanDeviceId &&
+        record.fileName == offer.fileName &&
+        record.fileSize == offer.fileSize &&
+        record.routeType == offer.routeType.name;
+  }
 
   /// 校验设备配对后接受一个原生传入传输。
   Future<NetworkResult<void>> acceptNativeIncomingTransfer(
@@ -188,14 +204,28 @@ final class LanReceiverCoordinator extends ChangeNotifier {
         NetworkOperation.respondToIncoming,
       );
     }
-    final trust = await peerTrustStore.read(offer.peerId);
-    if (trust == null ||
-        !isIncomingRouteAuthorized(trust.authorization, offer.routeType)) {
-      // Keep the transfer decision inside the generation-scoped native
-      // coordinator. It re-checks the complete trust record and performs the
-      // one-shot native rejection, so this facade never becomes a second
-      // incoming-transfer owner.
-      return nativeTransfer.reject(offer);
+    final policyResult = await nativeTransfer.getPeerPolicy(offer.peerId);
+    if (policyResult is NetworkFailure<LanPeerPolicySnapshot>) {
+      return NetworkFailure<void>(policyResult.error);
+    }
+    final policy = (policyResult as NetworkSuccess<LanPeerPolicySnapshot>).data;
+    if (!policy.isTrusted ||
+        policy.runtimeBlocked ||
+        policy.revoked ||
+        !isIncomingRouteAuthorized(
+          policy.trust!.authorization,
+          offer.routeType,
+        )) {
+      final rejectResult = await nativeTransfer.reject(offer);
+      if (rejectResult is NetworkFailure<void>) {
+        return rejectResult;
+      }
+      return _networkFailure(
+        NetworkErrorCode.authenticationFailed,
+        'Incoming transfer peer is no longer trusted or route is unauthorized.',
+        NetworkOperation.respondToIncoming,
+        peerId: offer.peerId,
+      );
     }
 
     // 1. Ensure incoming connecting history record is persisted BEFORE native acceptance.
@@ -222,6 +252,27 @@ final class LanReceiverCoordinator extends ChangeNotifier {
             bytesTransferred: const Value(0),
           ),
         );
+      } else {
+        if (!_matchesIncomingOffer(existing, offer)) {
+          await nativeTransfer.reject(offer);
+          return _networkFailure(
+            NetworkErrorCode.identityConflict,
+            'Incoming transfer ID conflicts with existing history record from another peer or metadata mismatch.',
+            NetworkOperation.respondToIncoming,
+            peerId: offer.peerId,
+          );
+        }
+
+        if (existing.status != LanTransferStatus.connecting.toJson() &&
+            existing.status != LanTransferStatus.pending.toJson()) {
+          await nativeTransfer.reject(offer);
+          return _networkFailure(
+            NetworkErrorCode.invalidState,
+            'Incoming transfer ID already has a terminal status: ${existing.status}',
+            NetworkOperation.respondToIncoming,
+            peerId: offer.peerId,
+          );
+        }
       }
     } catch (error, stackTrace) {
       logger.warning(
@@ -275,6 +326,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     try {
       final record = await historyRepository.dao.getRecord(offer.transferId);
       if (record != null &&
+          _matchesIncomingOffer(record, offer) &&
           (record.status == LanTransferStatus.connecting.toJson() ||
               record.status == LanTransferStatus.pending.toJson())) {
         await historyRepository.dao.deleteRecord(offer.transferId);

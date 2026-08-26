@@ -326,6 +326,10 @@ final class FakeLanShareNetworkService implements NetworkFacade {
     );
   }
 
+  int respondToIncomingTransferCalls = 0;
+  final List<(String, bool)> incomingResponses = <(String, bool)>[];
+  bool failRespond = false;
+
   @override
   Future<SdkResult<void>> cancelTransfer(String transferId) async =>
       const SdkSuccess<void>(null);
@@ -334,7 +338,20 @@ final class FakeLanShareNetworkService implements NetworkFacade {
   Future<SdkResult<void>> respondToIncomingTransfer({
     required String transferId,
     required bool accept,
-  }) async => const SdkSuccess<void>(null);
+  }) async {
+    respondToIncomingTransferCalls++;
+    incomingResponses.add((transferId, accept));
+    if (failRespond) {
+      return NetworkFailure<void>(
+        const NetworkError(
+          code: NetworkErrorCode.ioError,
+          message: 'respond failed',
+          operation: NetworkOperation.respondToIncoming,
+        ),
+      );
+    }
+    return const SdkSuccess<void>(null);
+  }
 
   @override
   Future<SdkResult<void>> sendMessage({
