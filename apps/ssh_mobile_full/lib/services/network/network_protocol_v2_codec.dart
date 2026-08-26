@@ -594,6 +594,7 @@ final class _TransferEventDecoder {
     var transferId = '';
     var transferred = 0;
     var total = 0;
+    var peerId = '';
     while (!reader.isDone) {
       final field = reader.field();
       switch (field.number) {
@@ -603,6 +604,8 @@ final class _TransferEventDecoder {
           transferred = reader.varint(field.wireType);
         case 3:
           total = reader.varint(field.wireType);
+        case 4:
+          peerId = utf8.decode(reader.bytes(field.wireType));
         default:
           reader.skip(field.wireType);
       }
@@ -613,6 +616,7 @@ final class _TransferEventDecoder {
       transferId: transferId,
       bytesTransferred: transferred,
       totalBytes: total,
+      peerId: peerId.isEmpty ? null : peerId,
     );
   }
 
@@ -663,6 +667,7 @@ final class _TransferEventDecoder {
     final reader = _ProtoReader(bytes);
     var transferId = '';
     var localPath = '';
+    var peerId = '';
     while (!reader.isDone) {
       final field = reader.field();
       switch (field.number) {
@@ -670,6 +675,8 @@ final class _TransferEventDecoder {
           transferId = utf8.decode(reader.bytes(field.wireType));
         case 2:
           localPath = utf8.decode(reader.bytes(field.wireType));
+        case 3:
+          peerId = utf8.decode(reader.bytes(field.wireType));
         default:
           reader.skip(field.wireType);
       }
@@ -679,6 +686,7 @@ final class _TransferEventDecoder {
       timestamp: _eventTimestamp(timestampMs),
       transferId: transferId,
       localPath: localPath,
+      peerId: peerId.isEmpty ? null : peerId,
     );
   }
 
@@ -690,6 +698,7 @@ final class _TransferEventDecoder {
     final reader = _ProtoReader(bytes);
     var transferId = '';
     NetworkError? error;
+    var peerId = '';
     while (!reader.isDone) {
       final field = reader.field();
       switch (field.number) {
@@ -697,6 +706,8 @@ final class _TransferEventDecoder {
           transferId = utf8.decode(reader.bytes(field.wireType));
         case 2:
           error = _decodeNetworkError(reader.bytes(field.wireType));
+        case 3:
+          peerId = utf8.decode(reader.bytes(field.wireType));
         default:
           reader.skip(field.wireType);
       }
@@ -711,6 +722,7 @@ final class _TransferEventDecoder {
             code: NetworkErrorCode.unspecified,
             message: 'transfer failed',
           ),
+      peerId: peerId.isEmpty ? null : peerId,
     );
   }
 }

@@ -515,6 +515,36 @@ class FrozenNetworkContractTest(unittest.TestCase):
                         f"behavior test {test['name']!r} is not a test declaration in {path}",
                     )
 
+    def test_network_protocol_v2_canonical_parity(self) -> None:
+        proto = _read("protocol/proto/network/v2/network.proto")
+        rust = _read("native/network_core/crates/network-protocol/src/lib.rs")
+        dart = _read("apps/ssh_mobile_full/lib/services/network/network_protocol_v2_codec.dart")
+
+        # TransferProgressEvent
+        self.assertIn("string peer_id = 4;", proto)
+        self.assertIn('pub peer_id: String,', rust)
+        self.assertIn("peerId = utf8.decode(reader.bytes(field.wireType));", dart)
+
+        # IncomingTransferOfferEvent
+        self.assertIn("RouteType route_type = 5;", proto)
+        self.assertIn('pub route_type: Option<i32>,', rust)
+        self.assertIn("route = reader.varint(field.wireType);", dart)
+
+        # TransferCompletedEvent
+        self.assertIn("string peer_id = 3;", proto)
+        self.assertIn('pub struct TransferCompletedEvent', rust)
+        self.assertIn('pub peer_id: String,', rust)
+
+        # TransferFailedEvent
+        self.assertIn("string peer_id = 3;", proto)
+        self.assertIn('pub struct TransferFailedEvent', rust)
+        self.assertIn('pub peer_id: String,', rust)
+
+        # ConnectPeerCommand
+        self.assertIn("CommunicationClass communication_class = 3;", proto)
+        self.assertIn('pub communication_class: i32,', rust)
+        self.assertIn("communicationClass.wireValue", dart)
+
     def test_forbidden_stale_production_concepts_are_absent(self) -> None:
         """Static drift guard; this does not assert runtime lifecycle behavior."""
         if os.environ.get("SSH_MOBILE_ACCEPTANCE_STRICT") != "1":
