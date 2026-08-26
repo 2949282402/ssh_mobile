@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:network_sdk/network_sdk.dart';
 
 enum PeerTrustOrigin { localPin }
 
@@ -274,4 +275,60 @@ final class LanPeerTrustStore {
     await _writeSerial;
     await _changes.close();
   }
+}
+
+/// Snapshot of a peer's persistent trust and current runtime authorization policy.
+final class LanPeerPolicySnapshot {
+  const LanPeerPolicySnapshot({
+    this.trust,
+    this.runtimeBlocked = false,
+    this.revoked = false,
+  });
+
+  final LanPeerTrustRecord? trust;
+  final bool runtimeBlocked;
+  final bool revoked;
+
+  bool get isTrusted => trust != null && !revoked && !runtimeBlocked;
+  bool get allowDirect =>
+      isTrusted && (trust?.authorization.localDirect ?? false);
+  bool get allowRelay => isTrusted && (trust?.authorization.relay ?? false);
+}
+
+/// Isolated report of trusted peer restoration for a native generation.
+final class LanPeerRestoreReport {
+  const LanPeerRestoreReport({
+    required this.restoredPeerIds,
+    required this.blockedPeerIds,
+    required this.failures,
+  });
+
+  final List<String> restoredPeerIds;
+  final List<String> blockedPeerIds;
+  final Map<String, NetworkError> failures;
+
+  bool get isFullSuccess => failures.isEmpty && blockedPeerIds.isEmpty;
+}
+
+/// Authority port for native peer policy and persisted trust reconciliation.
+abstract interface class LanNativePeerPolicyPort {
+  Future<NetworkResult<LanPeerPolicySnapshot>> getPeerPolicy(String peerId);
+
+  Future<NetworkResult<void>> updateDirectEndpoint(
+    String peerId,
+    String endpoint,
+  );
+
+  Future<NetworkResult<void>> invalidateDirectEndpoint(String peerId);
+
+  Future<NetworkResult<void>> setRelayAuthorization(
+    String peerId,
+    bool enabled,
+  );
+
+  Future<NetworkResult<void>> removeTrust(String peerId);
+
+  Future<NetworkResult<void>> reconcilePersistedTrust(
+    LanPeerTrustRecord record,
+  );
 }

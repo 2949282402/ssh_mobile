@@ -8,7 +8,7 @@ import '../../../services/lan_share/lan_network_models.dart';
 import '../../../services/lan_share/lan_share_models.dart';
 import '../../../services/lan_share/lan_peer_trust.dart';
 
-final class LanNativePeerRegistry {
+final class LanNativePeerRegistry implements LanNativePeerPolicyPort {
   LanNativePeerRegistry({
     required this.trustStore,
     NetworkFacade? networkFacade,
@@ -23,8 +23,11 @@ final class LanNativePeerRegistry {
   final Set<String> _blockedPeerIds = <String>{};
 
   /// Whether the peer is currently blocked in this runtime generation due to
-  /// failed native peer cleanup.
+  /// failed native peer cleanup or failed reconciliation.
   bool isPeerBlocked(String deviceId) => _blockedPeerIds.contains(deviceId);
+
+  /// Whether the peer has been explicitly revoked in this runtime generation.
+  bool isPeerRevoked(String deviceId) => _revokedPeerIds.contains(deviceId);
 
   /// The registry borrows the App-owned facade for the current runtime
   /// generation. It never starts, stops, or disposes that facade.
@@ -45,44 +48,96 @@ final class LanNativePeerRegistry {
     _directEndpoints.clear();
   }
 
-  Future<void> restoreAll() async {
+  /// Restores all persisted trust records into the current native generation
+  /// with peer-isolated failure handling.
+  Future<LanPeerRestoreReport> restoreAll() async {
     _requireFacade();
     // A restore starts a new native generation. Discovery endpoints are
     // ephemeral and must never leak into the trust-only restore snapshot.
     _directEndpoints.clear();
-    for (final record in await trustStore.loadAll()) {
+    final List<LanPeerTrustRecord> records;
+    try {
+      records = await trustStore.loadAll();
+    } catch (error) {
+      throw StateError('Failed to load trust records during restore: $error');
+    }
+
+    final restored = <String>[];
+    final blocked = <String>[];
+    final failures = <String, NetworkError>{};
+
+    for (final record in records) {
       if (_revokedPeerIds.contains(record.deviceId)) continue;
       final result = await _register(record);
-      if (result is NetworkFailure<void>) {
+      if (result is NetworkSuccess<void>) {
+        _blockedPeerIds.remove(record.deviceId);
+        restored.add(record.deviceId);
+      } else if (result is NetworkFailure<void>) {
         _blockedPeerIds.add(record.deviceId);
-        throw StateError(
-          'Failed to restore trusted peer ${record.deviceId}: '
-          '${result.error.code.name}',
-        );
+        blocked.add(record.deviceId);
+        failures[record.deviceId] = result.error;
       }
-      _blockedPeerIds.remove(record.deviceId);
     }
+
+    return LanPeerRestoreReport(
+      restoredPeerIds: restored,
+      blockedPeerIds: blocked,
+      failures: failures,
+    );
   }
 
-  Future<NetworkResult<void>> registerTrust(LanPeerTrustRecord record) {
+  @override
+  Future<NetworkResult<LanPeerPolicySnapshot>> getPeerPolicy(
+    String peerId,
+  ) async {
+    if (_revokedPeerIds.contains(peerId)) {
+      return NetworkSuccess<LanPeerPolicySnapshot>(
+        LanPeerPolicySnapshot(
+          trust: null,
+          runtimeBlocked: _blockedPeerIds.contains(peerId),
+          revoked: true,
+        ),
+      );
+    }
+    final isBlocked = _blockedPeerIds.contains(peerId);
+    final LanPeerTrustRecord? record;
+    try {
+      record = await trustStore.read(peerId);
+    } catch (error) {
+      return NetworkFailure<LanPeerPolicySnapshot>(
+        lanNetworkError(
+          error,
+          operation: NetworkOperation.upsertPeer,
+          peerId: peerId,
+        ),
+      );
+    }
+    return NetworkSuccess<LanPeerPolicySnapshot>(
+      LanPeerPolicySnapshot(
+        trust: record,
+        runtimeBlocked: isBlocked,
+        revoked: false,
+      ),
+    );
+  }
+
+  @override
+  Future<NetworkResult<void>> reconcilePersistedTrust(
+    LanPeerTrustRecord record,
+  ) {
     return _serializePeerMutation(record.deviceId, () async {
-      _revokedPeerIds.remove(record.deviceId);
-      _blockedPeerIds.remove(record.deviceId);
-      try {
-        await trustStore.save(record);
-      } catch (error) {
-        return NetworkFailure<void>(
-          lanNetworkError(
-            error,
-            operation: NetworkOperation.upsertPeer,
-            peerId: record.deviceId,
-          ),
-        );
+      final result = await _register(record);
+      if (result is NetworkSuccess<void>) {
+        _revokedPeerIds.remove(record.deviceId);
+        _blockedPeerIds.remove(record.deviceId);
+      } else {
+        _blockedPeerIds.add(record.deviceId);
       }
-      return _register(record);
+      return result;
     });
   }
 
+  @override
   Future<NetworkResult<void>> updateDirectEndpoint(
     String deviceId,
     String endpoint,
@@ -129,6 +184,7 @@ final class LanNativePeerRegistry {
     });
   }
 
+  @override
   Future<NetworkResult<void>> invalidateDirectEndpoint(String deviceId) {
     return _serializePeerMutation(deviceId, () async {
       if (_revokedPeerIds.contains(deviceId)) return _missingTrust(deviceId);
@@ -154,6 +210,16 @@ final class LanNativePeerRegistry {
       }
       return result;
     });
+  }
+
+  @override
+  Future<NetworkResult<void>> setRelayAuthorization(
+    String deviceId,
+    bool enabled,
+  ) {
+    return enabled
+        ? authorizeRelayForPeer(deviceId)
+        : revokeRelayForPeer(deviceId);
   }
 
   Future<NetworkResult<void>> authorizeRelayForPeer(String deviceId) {
@@ -251,6 +317,7 @@ final class LanNativePeerRegistry {
     });
   }
 
+  @override
   Future<NetworkResult<void>> removeTrust(String deviceId) {
     return _serializePeerMutation(deviceId, () async {
       _revokedPeerIds.add(deviceId);
