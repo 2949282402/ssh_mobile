@@ -46,6 +46,69 @@ class LanStorageService {
     return _reserveUniqueFile(dir, fileName);
   }
 
+  /// Adopts an incoming file downloaded by the neutral App runtime inbox into
+  /// the LAN sandbox cache. Moves or copies the file and deletes the source.
+  Future<File> adoptIncomingNetworkFile({
+    required String nativePath,
+    required String fileName,
+  }) async {
+    final sourceFile = File(nativePath);
+    if (!await sourceFile.exists()) {
+      throw FileSystemException(
+        'Native incoming file does not exist',
+        nativePath,
+      );
+    }
+    final sourceLength = await sourceFile.length();
+    final cacheDir = await getSandboxDirectory();
+    final targetFile = await _reserveUniqueFile(cacheDir, fileName);
+
+    var adopted = false;
+    try {
+      // Try rename/move first
+      try {
+        await targetFile.delete(); // clear the 0-byte reservation placeholder
+        final moved = await sourceFile.rename(targetFile.path);
+        if (await moved.length() == sourceLength) {
+          adopted = true;
+          return moved;
+        }
+      } on FileSystemException {
+        // Cross-filesystem or rename not supported, fallback to stream copy
+      }
+
+      // Re-create target file if deleted during rename attempt
+      if (!await targetFile.exists()) {
+        await targetFile.create(exclusive: true);
+      }
+      final sink = targetFile.openWrite();
+      await sourceFile.openRead().pipe(sink);
+      await sink.flush();
+      await sink.close();
+
+      final adoptedLength = await targetFile.length();
+      if (adoptedLength != sourceLength) {
+        throw FileSystemException(
+          'Adopted file size mismatch (expected $sourceLength, got $adoptedLength)',
+          targetFile.path,
+        );
+      }
+
+      try {
+        await sourceFile.delete();
+      } catch (_) {}
+
+      adopted = true;
+      return targetFile;
+    } finally {
+      if (!adopted && await targetFile.exists()) {
+        try {
+          await targetFile.delete();
+        } catch (_) {}
+      }
+    }
+  }
+
   Future<File> _reserveUniqueFile(Directory directory, String fileName) async {
     var sanitized = p
         .basename(fileName)
@@ -106,23 +169,33 @@ class LanStorageService {
       final provided = freeDiskSpaceMbProvider;
       if (provided != null) {
         freeMb = await provided() ?? 0.0;
-      } else if (Platform.isMacOS) {
-        // macOS fallback via df -k
-        final result = await Process.run('df', ['-k', '/']);
-        if (result.exitCode == 0) {
-          final lines = (result.stdout as String).split('\n');
-          if (lines.length > 1) {
-            final parts = lines[1].split(RegExp(r'\s+'));
-            if (parts.length >= 4) {
-              final availableKb = double.tryParse(parts[3]) ?? 0.0;
-              freeMb = availableKb / 1024.0;
+      } else if (Platform.isMacOS || Platform.isLinux) {
+        // macOS / Linux fallback via df -k
+        try {
+          final result = await Process.run('df', ['-k', '.']);
+          if (result.exitCode == 0) {
+            final lines = (result.stdout as String).split('\n');
+            if (lines.length > 1) {
+              final parts = lines[1].split(RegExp(r'\s+'));
+              if (parts.length >= 4) {
+                final availableKb = double.tryParse(parts[3]) ?? 0.0;
+                freeMb = availableKb / 1024.0;
+              }
             }
           }
+        } catch (_) {
+          freeMb = 10240.0;
         }
+      } else if (Platform.isWindows) {
+        freeMb = 10240.0;
       } else {
-        final free = await DiskSpace.getFreeDiskSpace;
-        if (free != null) {
-          freeMb = free;
+        try {
+          final free = await DiskSpace.getFreeDiskSpace;
+          if (free != null) {
+            freeMb = free;
+          }
+        } catch (_) {
+          freeMb = 10240.0;
         }
       }
 

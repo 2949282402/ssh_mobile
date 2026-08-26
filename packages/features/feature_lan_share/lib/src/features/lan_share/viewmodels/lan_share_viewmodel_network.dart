@@ -27,14 +27,35 @@ extension LanShareViewModelNetworkEvents on LanShareViewModel {
         );
       case TransferCompleted(:final transferId, :final localPath):
         _trackBackgroundOperation(
-          _enqueueMessagePersistence(
-            transferId,
-            () => historyDao.updateRecordStatus(
-              transferId,
-              LanTransferStatus.completed.toJson(),
-              localPath: localPath.isEmpty ? null : localPath,
-            ),
-          ),
+          _enqueueMessagePersistence(transferId, () async {
+            final record = await historyDao.getRecord(transferId);
+            if (record != null && record.isIncoming && localPath.isNotEmpty) {
+              try {
+                final adoptedFile = await storageService
+                    .adoptIncomingNetworkFile(
+                      nativePath: localPath,
+                      fileName: record.fileName ?? 'file.bin',
+                    );
+                await historyDao.updateRecordStatus(
+                  transferId,
+                  LanTransferStatus.completed.toJson(),
+                  localPath: adoptedFile.path,
+                );
+              } catch (error) {
+                await historyDao.updateRecordStatus(
+                  transferId,
+                  LanTransferStatus.failed.toJson(),
+                  failureReason: NetworkErrorCode.ioError.name,
+                );
+              }
+            } else {
+              await historyDao.updateRecordStatus(
+                transferId,
+                LanTransferStatus.completed.toJson(),
+                localPath: localPath.isEmpty ? null : localPath,
+              );
+            }
+          }),
           'LAN transfer completion persistence failed',
         );
       case TransferFailed(:final transferId, :final error):
