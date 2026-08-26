@@ -1,13 +1,11 @@
-// Regression tests for code-review package B fixes: DSN validation, admin
-// snapshot error propagation, and revocation reconciliation.
+// Regression tests for code-review package B fixes: DSN validation, snapshot
+// error propagation, and revocation reconciliation.
 
 package relay
 
 import (
 	"context"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -40,9 +38,10 @@ func (failingListStore) ListEnrollments(context.Context) ([]*EnrolledDevice, err
 	return nil, errors.New("injected storage failure")
 }
 
-// TestAdminOverviewFailsClosedOnStorageError verifies the admin overview
-// reports 500 (not a misleading "0 devices") when storage is unavailable.
-func TestAdminOverviewFailsClosedOnStorageError(t *testing.T) {
+// TestStatusSnapshotFailsClosedOnStorageError verifies the internal status
+// snapshot reports an error (not a misleading "0 devices") when storage is
+// unavailable.
+func TestStatusSnapshotFailsClosedOnStorageError(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte(mysqlTestCredentialKey),
 		EnrollmentToken: "test-token",
@@ -50,11 +49,8 @@ func TestAdminOverviewFailsClosedOnStorageError(t *testing.T) {
 	defer server.Close()
 	server.store = failingListStore{Storage: server.store}
 
-	request := httptest.NewRequest(http.MethodGet, "/api/admin/v1/overview", nil)
-	rec := httptest.NewRecorder()
-	server.adminOverview(rec, request)
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500 on storage failure, got %d", rec.Code)
+	if _, err := server.StatusSnapshot(context.Background()); err == nil {
+		t.Fatal("expected an error on storage failure")
 	}
 }
 
@@ -69,7 +65,7 @@ func TestReconcileRevocationsDisconnectsRevokedDevice(t *testing.T) {
 	defer server.Close()
 	ctx := context.Background()
 
-	if result := server.replaceEnrollment("device-a", "key-a", "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", "key-a", "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
 	injectPeer(server.hub, "device-a")

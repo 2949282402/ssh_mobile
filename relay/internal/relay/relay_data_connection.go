@@ -72,7 +72,7 @@ type relayDataPairOwner interface {
 }
 
 // reservationLeaseStore is the only shared-state capability needed after HTTP
-// admission. It cannot read unrelated presence, enrollment, or admin state.
+// admission. It cannot read unrelated presence or enrollment state.
 type reservationLeaseStore interface {
 	DeleteReservation(context.Context, string) error
 	RenewReservation(context.Context, string, time.Duration) (bool, error)

@@ -3,7 +3,7 @@
 // Phase 0 ships the in-memory implementation, which reproduces the existing
 // per-device nonce map and 128-entry cap exactly. Phase 2 adds the Redis-backed
 // store behind the same contract so nonce state is shared across instances and
-// gained presence, admin-session and transfer-session keys.
+// gained presence and transfer-session keys.
 //
 // As with Storage, individual methods are internally synchronized; composite
 // device operations that span nonce consumption plus enrollment/revocation are
@@ -68,10 +68,6 @@ func (h *proofNonceDeviceExpiryHeap) Pop() any {
 	return entry
 }
 
-// errAdminSessionCapacity reports that the administrator session store is
-// full. Both memory and Redis implementations enforce Config.MaxAdminSessions.
-var errAdminSessionCapacity = errors.New("administrator session capacity reached")
-
 // errDiscoveryNotOwner reports that a discovery write was rejected because the
 // writer is not the device's current presence lease owner. Presence ownership
 // is the single source of truth for which connection may publish discovery
@@ -124,7 +120,7 @@ type Cache interface {
 	// GetPresence 返回 deviceID 的在线状态与存在性。
 	GetPresence(ctx context.Context, deviceID string) (Presence, bool, error)
 	// GetPresences 批量返回多个 deviceID 的在线租约：结果 map 中存在的 key 即在线，
-	// 缺失/已过期的设备不在 map 中；空列表返回空 map。admin 快照用它把 N 次
+	// 缺失/已过期的设备不在 map 中；空列表返回空 map。设备快照用它把 N 次
 	// GetPresence 收敛成一次往返。
 	GetPresences(ctx context.Context, deviceIDs []string) (map[string]Presence, error)
 	// TakeDiscovery 仅当 connID 仍是该设备 presence 租约的当前 owner 时写入
@@ -148,13 +144,6 @@ type Cache interface {
 	// ListOnlinePeers 返回全部在线设备的 discovery（按明确版 §13，presence 与
 	// discovery 均有效的设备才计入）。用于 presence_snapshot 构建与 sweeper 判活。
 	ListOnlinePeers(ctx context.Context) (map[string]Discovery, error)
-	// SetAdminSession 创建 TTL 管理的管理端会话。内存实现在容量耗尽时返回
-	// errAdminSessionCapacity（fail closed）。
-	SetAdminSession(ctx context.Context, token string, ttl time.Duration) error
-	// AdminSessionExists 报告管理端会话是否仍然有效。
-	AdminSessionExists(ctx context.Context, token string) (bool, error)
-	// DeleteAdminSession 删除管理端会话。
-	DeleteAdminSession(ctx context.Context, token string) error
 	// CreateReservation 原子存储一条 relay-data reservation（设计 §25，Redis
 	// relay:reservation:{id}），TTL 到 expires_at_ms。
 	CreateReservation(ctx context.Context, r Reservation) error
@@ -493,43 +482,6 @@ func (m *memoryStore) ListOnlinePeers(_ context.Context) (map[string]Discovery, 
 		result[deviceID] = entry.discovery
 	}
 	return result, nil
-}
-
-func (m *memoryStore) SetAdminSession(_ context.Context, token string, ttl time.Duration) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	now := time.Now()
-	for current, expiresAt := range m.adminSessions {
-		if !now.Before(expiresAt) {
-			delete(m.adminSessions, current)
-		}
-	}
-	if len(m.adminSessions) >= m.maxAdminSession {
-		return errAdminSessionCapacity
-	}
-	m.adminSessions[token] = now.Add(ttl)
-	return nil
-}
-
-func (m *memoryStore) AdminSessionExists(_ context.Context, token string) (bool, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	expiresAt, present := m.adminSessions[token]
-	if !present {
-		return false, nil
-	}
-	if time.Now().After(expiresAt) {
-		delete(m.adminSessions, token)
-		return false, nil
-	}
-	return true, nil
-}
-
-func (m *memoryStore) DeleteAdminSession(_ context.Context, token string) error {
-	m.mu.Lock()
-	delete(m.adminSessions, token)
-	m.mu.Unlock()
-	return nil
 }
 
 // Publish 内存实现为空操作：事件由本地 hub 直接处理，无需跨实例广播。

@@ -1,0 +1,168 @@
+services:
+  relay:
+    build:
+      context: ./relay
+      dockerfile: Dockerfile.relay
+      args:
+        RELAY_INTERNAL_PORT: ${RELAY_INTERNAL_PORT:-8080}
+    restart: unless-stopped
+    stop_grace_period: 30s
+    expose:
+      - "${RELAY_INTERNAL_PORT:-8080}"
+    environment:
+      RELAY_ADDR: ":${RELAY_INTERNAL_PORT:-8080}"
+      RELAY_ENROLLMENT_TOKEN: ${RELAY_ENROLLMENT_TOKEN:?set a one-time enrollment token}
+      RELAY_CREDENTIAL_KEY: ${RELAY_CREDENTIAL_KEY:?set a base64url 32-byte signing key}
+      RELAY_INTERNAL_TOKEN: ${RELAY_INTERNAL_TOKEN:?set a 32-character internal management token}
+      RELAY_CREDENTIAL_TTL: ${RELAY_CREDENTIAL_TTL:-24h}
+      RELAY_MAX_CONNECTIONS: ${RELAY_MAX_CONNECTIONS:-2048}
+      RELAY_MAX_ENROLLED_DEVICES: ${RELAY_MAX_ENROLLED_DEVICES:-4096}
+      RELAY_MAX_REVOKED_DEVICES: ${RELAY_MAX_REVOKED_DEVICES:-4096}
+      RELAY_MAX_TRANSFER_SESSIONS: ${RELAY_MAX_TRANSFER_SESSIONS:-4096}
+      RELAY_MAX_PENDING_FRAMES_PER_DEVICE: ${RELAY_MAX_PENDING_FRAMES_PER_DEVICE:-64}
+      RELAY_MAX_PENDING_BYTES_PER_DEVICE: ${RELAY_MAX_PENDING_BYTES_PER_DEVICE:-16777216}
+      RELAY_MAX_FRAMES_PER_SECOND_PER_DEVICE: ${RELAY_MAX_FRAMES_PER_SECOND_PER_DEVICE:-256}
+      RELAY_MAX_BYTES_PER_SECOND_PER_DEVICE: ${RELAY_MAX_BYTES_PER_SECOND_PER_DEVICE:-67108864}
+      RELAY_HTTP_READ_TIMEOUT: ${RELAY_HTTP_READ_TIMEOUT:-15s}
+      RELAY_HTTP_WRITE_TIMEOUT: ${RELAY_HTTP_WRITE_TIMEOUT:-15s}
+      RELAY_HTTP_IDLE_TIMEOUT: ${RELAY_HTTP_IDLE_TIMEOUT:-60s}
+      RELAY_HTTP_MAX_HEADER_BYTES: ${RELAY_HTTP_MAX_HEADER_BYTES:-16384}
+      RELAY_TRUSTED_PROXY_CIDRS: ${RELAY_TRUSTED_PROXY_CIDRS:-}
+      RELAY_PUBLIC_URL: ${RELAY_PUBLIC_URL:?set the externally reachable Relay origin}
+      # Storage backend: "memory" (default) or "mysql".
+      RELAY_STORAGE_MODE: ${RELAY_STORAGE_MODE:-memory}
+      RELAY_DATABASE_URL: ${RELAY_DATABASE_URL:-}
+      RELAY_REDIS_URL: ${RELAY_REDIS_URL:-}
+      RELAY_REDIS_PASSWORD: ${RELAY_REDIS_PASSWORD:-}
+      RELAY_INSTANCE_ID: ${RELAY_INSTANCE_ID:-}
+      RELAY_PRESENCE_TTL: ${RELAY_PRESENCE_TTL:-60s}
+    networks:
+      - relay_internal
+      - relay_state
+
+  admin-api:
+    build:
+      context: ./relay
+      dockerfile: Dockerfile.admin
+      args:
+        ADMIN_INTERNAL_PORT: ${ADMIN_INTERNAL_PORT:-8081}
+    restart: unless-stopped
+    stop_grace_period: 30s
+    deploy:
+      replicas: 1
+    expose:
+      - "${ADMIN_INTERNAL_PORT:-8081}"
+    environment:
+      ADMIN_ADDR: ":${ADMIN_INTERNAL_PORT:-8081}"
+      ADMIN_USER: ${ADMIN_USER:?set administrator username}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set administrator password with at least 12 characters}
+      ADMIN_AUTH_KEY: ${ADMIN_AUTH_KEY:?set base64url 32-byte administrator auth key}
+      ADMIN_SESSION_TTL: ${ADMIN_SESSION_TTL:-24h}
+      ADMIN_MAX_SESSIONS: ${ADMIN_MAX_SESSIONS:-32}
+      ADMIN_LOGIN_MAX_ATTEMPTS: ${ADMIN_LOGIN_MAX_ATTEMPTS:-5}
+      ADMIN_LOGIN_WINDOW: ${ADMIN_LOGIN_WINDOW:-1m}
+      ADMIN_LOGIN_BLOCK: ${ADMIN_LOGIN_BLOCK:-5m}
+      ADMIN_MAX_LOGIN_ENTRIES: ${ADMIN_MAX_LOGIN_ENTRIES:-4096}
+      ADMIN_HTTP_READ_TIMEOUT: ${ADMIN_HTTP_READ_TIMEOUT:-15s}
+      ADMIN_HTTP_WRITE_TIMEOUT: ${ADMIN_HTTP_WRITE_TIMEOUT:-15s}
+      ADMIN_HTTP_IDLE_TIMEOUT: ${ADMIN_HTTP_IDLE_TIMEOUT:-60s}
+      ADMIN_HTTP_MAX_HEADER_BYTES: ${ADMIN_HTTP_MAX_HEADER_BYTES:-16384}
+      ADMIN_TRUSTED_PROXY_CIDRS: ${ADMIN_TRUSTED_PROXY_CIDRS:-}
+      ADMIN_RELAY_URL: "http://relay:${RELAY_INTERNAL_PORT:-8080}"
+      ADMIN_RELAY_INTERNAL_TOKEN: ${ADMIN_RELAY_INTERNAL_TOKEN:-${RELAY_INTERNAL_TOKEN:?set internal token}}
+    networks:
+      - relay_internal
+
+  # MySQL storage for durable enrollment/revocation (RELAY_STORAGE_MODE=mysql).
+  mysql:
+    image: mysql:8.4
+    profiles: ["storage"]
+    restart: unless-stopped
+    expose:
+      - "3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-relay}
+      MYSQL_USER: ${MYSQL_USER:-relay}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-}
+      TZ: UTC
+    volumes:
+      - relay_mysql_data:/var/lib/mysql
+    networks:
+      - relay_state
+
+  # Redis state layer (shared presence, nonce, events).
+  redis:
+    image: redis:7-alpine
+    profiles: ["storage"]
+    restart: unless-stopped
+    expose:
+      - "6379"
+    environment:
+      REDIS_PASSWORD: ${RELAY_REDIS_PASSWORD:-}
+    command:
+      - sh
+      - -ec
+      - >-
+        if [ "$${#REDIS_PASSWORD}" -lt 16 ]; then
+          echo "RELAY_REDIS_PASSWORD must contain at least 16 characters" >&2;
+          exit 1;
+        fi;
+        exec redis-server --maxmemory 128mb --maxmemory-policy noeviction
+        --requirepass "$$REDIS_PASSWORD"
+    volumes:
+      - relay_redis_data:/data
+    networks:
+      - relay_state
+
+  front:
+    build:
+      context: ./front
+      args:
+        FRONT_INTERNAL_PORT: ${FRONT_INTERNAL_PORT:-80}
+    restart: unless-stopped
+    expose:
+      - "${FRONT_INTERNAL_PORT:-80}"
+    environment:
+      FRONT_INTERNAL_PORT: ${FRONT_INTERNAL_PORT:-80}
+    networks:
+      - relay_internal
+
+  caddy:
+    image: ${RELAY_CADDY_IMAGE:-caddy:2-alpine}
+    restart: unless-stopped
+    depends_on:
+      - relay
+      - admin-api
+      - front
+    ports:
+      - "${RELAY_HTTP_PORT:-80}:${CADDY_HTTP_PORT:-80}"
+      - "${RELAY_HTTPS_PORT:-443}:${CADDY_HTTPS_PORT:-443}"
+    environment:
+      RELAY_PUBLIC_DOMAIN: ${RELAY_PUBLIC_DOMAIN:-localhost}
+      RELAY_INTERNAL_PORT: ${RELAY_INTERNAL_PORT:-8080}
+      ADMIN_INTERNAL_PORT: ${ADMIN_INTERNAL_PORT:-8081}
+      FRONT_INTERNAL_PORT: ${FRONT_INTERNAL_PORT:-80}
+      CADDY_HTTP_PORT: ${CADDY_HTTP_PORT:-80}
+      CADDY_HTTPS_PORT: ${CADDY_HTTPS_PORT:-443}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      relay_internal:
+        ipv4_address: ${RELAY_CADDY_IP:-172.30.0.10}
+
+networks:
+  relay_internal:
+    ipam:
+      config:
+        - subnet: ${RELAY_NETWORK_SUBNET:-172.30.0.0/24}
+  relay_state:
+    internal: true
+
+volumes:
+  relay_mysql_data:
+  relay_redis_data:
+  caddy_data:
+  caddy_config:

@@ -1,8 +1,8 @@
-// Redis-backed Cache: shared nonce, presence, administrator session and event
-// bus. Phase 2 activates this when RELAY_REDIS_URL is set alongside mysql
-// storage; it is the shared-live-state layer. Relay Control and Relay Data are
-// single-instance in this phase; there is no Global Control Routing or Relay
-// Data Node Selection (design §26). Redis carries only rebuildable live state
+// Redis-backed Cache: shared nonce, presence, and event bus. Phase 2 activates
+// this when RELAY_REDIS_URL is set alongside mysql storage; it is the
+// shared-live-state layer. Relay Control and Relay Data are single-instance in
+// this phase; there is no Global Control Routing or Relay Data Node Selection
+// (design §26). Redis carries only rebuildable live state
 // (presence/discovery/nonce/events); MySQL remains the durable truth.
 
 package relay
@@ -32,10 +32,9 @@ const (
 // concurrent-safe, so no internal lock is needed. Key TTLs carry the expiry
 // semantics that the memory store tracks explicitly.
 type redisStore struct {
-	client           *redis.Client
-	logger           *slog.Logger
-	maxReservations  int
-	maxAdminSessions int
+	client          *redis.Client
+	logger          *slog.Logger
+	maxReservations int
 }
 
 // openRedisStore parses RELAY_REDIS_URL (accepting either a redis:// URL or a
@@ -55,10 +54,9 @@ func openRedisStore(ctx context.Context, url string, configs ...Config) (*redisS
 		return nil, err
 	}
 	return &redisStore{
-		client:           client,
-		logger:           slog.Default(),
-		maxReservations:  config.MaxTransferSessions,
-		maxAdminSessions: config.MaxAdminSessions,
+		client:          client,
+		logger:          slog.Default(),
+		maxReservations: config.MaxTransferSessions,
 	}, nil
 }
 
@@ -100,12 +98,6 @@ func (r *redisStore) discoveryKey(deviceID string) string {
 }
 func (r *redisStore) noncesKey(deviceID string) string {
 	return redisKeyPrefix + "nonces:" + deviceID
-}
-func (r *redisStore) adminSessionKey(token string) string {
-	return redisKeyPrefix + "admin:session:" + token
-}
-func (r *redisStore) adminSessionIndexKey() string {
-	return redisKeyPrefix + "admin:sessions"
 }
 
 // consumeNonceScript atomically records a nonce and enforces the per-device
@@ -335,7 +327,7 @@ func (r *redisStore) GetPresences(ctx context.Context, deviceIDs []string) (map[
 		}
 		var p Presence
 		if err := json.Unmarshal([]byte(data), &p); err != nil {
-			// 与单 key GetPresence 不同，损坏条目跳过而非返回 error：admin 调用方
+			// 与单 key GetPresence 不同，损坏条目跳过而非返回 error：快照调用方
 			// 忽略错误，单条损坏不应让全部设备显示离线（保持逐设备 fail-open 粒度）。
 			r.logger.Warn("skipped corrupt presence value in batch query", "device_id", deviceIDs[i], "error", err)
 			continue
@@ -562,47 +554,6 @@ func (r *redisStore) ListOnlinePeers(ctx context.Context) (map[string]Discovery,
 		cursor = next
 	}
 	return result, nil
-}
-
-func (r *redisStore) SetAdminSession(ctx context.Context, token string, ttl time.Duration) error {
-	if ttl <= 0 {
-		return r.DeleteAdminSession(ctx, token)
-	}
-	now := time.Now()
-	expiresAt := now.Add(ttl)
-	result, err := r.client.Eval(ctx, `
-redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
-if redis.call('EXISTS', KEYS[2]) == 0 and redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[2]) then
-  return 0
-end
-redis.call('SET', KEYS[2], '1', 'PX', ARGV[3])
-redis.call('ZADD', KEYS[1], ARGV[4], ARGV[5])
-return 1
-`, []string{r.adminSessionIndexKey(), r.adminSessionKey(token)},
-		now.UnixMilli(), r.maxAdminSessions, ttl.Milliseconds(), expiresAt.UnixMilli(), token).Int()
-	if err != nil {
-		return err
-	}
-	if result != 1 {
-		return errAdminSessionCapacity
-	}
-	return nil
-}
-
-func (r *redisStore) AdminSessionExists(ctx context.Context, token string) (bool, error) {
-	n, err := r.client.Exists(ctx, r.adminSessionKey(token)).Result()
-	if err != nil {
-		return false, err
-	}
-	return n > 0, nil
-}
-
-func (r *redisStore) DeleteAdminSession(ctx context.Context, token string) error {
-	return r.client.Eval(ctx, `
-redis.call('DEL', KEYS[1])
-redis.call('ZREM', KEYS[2], ARGV[1])
-return 1
-`, []string{r.adminSessionKey(token), r.adminSessionIndexKey()}, token).Err()
 }
 
 func (r *redisStore) Publish(ctx context.Context, event RelayEvent) error {

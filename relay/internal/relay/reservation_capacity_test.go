@@ -79,7 +79,7 @@ func TestMemoryReservationCapacityIsAtomicUnderConcurrency(t *testing.T) {
 	}
 }
 
-func TestRedisReservationAndAdminSessionCapacity(t *testing.T) {
+func TestRedisReservationCapacity(t *testing.T) {
 	base, err := url.Parse(requireRedisURL(t))
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +90,6 @@ func TestRedisReservationAndAdminSessionCapacity(t *testing.T) {
 	ctx := context.Background()
 	store, err := openRedisStore(ctx, base.String(), Config{
 		MaxTransferSessions: 2,
-		MaxAdminSessions:    2,
 	})
 	if err != nil {
 		t.Fatalf("open isolated Redis store: %v", err)
@@ -115,21 +114,5 @@ func TestRedisReservationAndAdminSessionCapacity(t *testing.T) {
 	}
 	if err := store.CreateReservation(ctx, Reservation{ReservationID: "three", ExpiresAtMs: expiresAt}); err != nil {
 		t.Fatalf("Redis reservation slot was not reclaimed: %v", err)
-	}
-
-	if err := store.SetAdminSession(ctx, "session-one", time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.SetAdminSession(ctx, "session-two", time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.SetAdminSession(ctx, "session-three", time.Minute); !errors.Is(err, errAdminSessionCapacity) {
-		t.Fatalf("Redis third administrator session error = %v, want capacity", err)
-	}
-	if err := store.DeleteAdminSession(ctx, "session-one"); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.SetAdminSession(ctx, "session-three", time.Minute); err != nil {
-		t.Fatalf("Redis administrator session slot was not reclaimed: %v", err)
 	}
 }

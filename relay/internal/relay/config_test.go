@@ -14,12 +14,11 @@ func setValidConfigEnvironment(t *testing.T) {
 		"RELAY_CREDENTIAL_KEY",
 		"MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE",
 	)
+	t.Setenv("RELAY_INTERNAL_TOKEN", "0123456789abcdef0123456789abcdef")
 	t.Setenv("RELAY_PUBLIC_URL", "wss://relay.example.test")
-	t.Setenv("RELAY_ADMIN_USER", "admin")
-	t.Setenv("RELAY_ADMIN_PASSWORD", "long-random-password")
 }
 
-func TestConfigRequiresExplicitSecretsAndAdministrator(t *testing.T) {
+func TestConfigRequiresExplicitSecrets(t *testing.T) {
 	t.Setenv("RELAY_ADDR", ":9090")
 	t.Setenv("RELAY_ENROLLMENT_TOKEN", "0123456789abcdef")
 	t.Setenv(
@@ -27,21 +26,27 @@ func TestConfigRequiresExplicitSecretsAndAdministrator(t *testing.T) {
 		"MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE",
 	)
 	t.Setenv("RELAY_PUBLIC_URL", "wss://relay.example.test")
-	t.Setenv("RELAY_ADMIN_USER", "")
-	t.Setenv("RELAY_ADMIN_PASSWORD", "")
-	if _, err := ConfigFromEnvironment(); err == nil {
-		t.Fatal("missing administrator credentials were accepted")
-	}
 
-	t.Setenv("RELAY_ADMIN_USER", "admin")
-	t.Setenv("RELAY_ADMIN_PASSWORD", "short")
+	t.Setenv("RELAY_ENROLLMENT_TOKEN", "")
 	if _, err := ConfigFromEnvironment(); err == nil {
-		t.Fatal("short administrator password was accepted")
+		t.Fatal("missing enrollment token was accepted")
 	}
-
-	t.Setenv("RELAY_ADMIN_PASSWORD", "long-random-password")
+	t.Setenv("RELAY_ENROLLMENT_TOKEN", "0123456789abcdef")
+	t.Setenv("RELAY_CREDENTIAL_KEY", "not-base64")
+	if _, err := ConfigFromEnvironment(); err == nil {
+		t.Fatal("malformed credential key was accepted")
+	}
+	t.Setenv("RELAY_CREDENTIAL_KEY", "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE")
+	t.Setenv("RELAY_INTERNAL_TOKEN", "")
+	if _, err := ConfigFromEnvironment(); err == nil {
+		t.Fatal("missing internal token was accepted")
+	}
+	t.Setenv("RELAY_INTERNAL_TOKEN", "short-token")
+	if _, err := ConfigFromEnvironment(); err == nil {
+		t.Fatal("short internal token was accepted")
+	}
+	t.Setenv("RELAY_INTERNAL_TOKEN", "0123456789abcdef0123456789abcdef")
 	t.Setenv("RELAY_CREDENTIAL_TTL", "2h")
-	t.Setenv("RELAY_ADMIN_SESSION_TTL", "6h")
 	t.Setenv("RELAY_MAX_CONNECTIONS", "512")
 	t.Setenv("RELAY_MAX_TRANSFER_SESSIONS", "128")
 	t.Setenv("RELAY_MAX_ENROLLED_DEVICES", "1024")
@@ -49,11 +54,6 @@ func TestConfigRequiresExplicitSecretsAndAdministrator(t *testing.T) {
 	t.Setenv("RELAY_MAX_PENDING_BYTES_PER_DEVICE", "1048576")
 	t.Setenv("RELAY_MAX_FRAMES_PER_SECOND_PER_DEVICE", "128")
 	t.Setenv("RELAY_MAX_BYTES_PER_SECOND_PER_DEVICE", "8388608")
-	t.Setenv("RELAY_MAX_ADMIN_SESSIONS", "8")
-	t.Setenv("RELAY_ADMIN_LOGIN_MAX_ATTEMPTS", "3")
-	t.Setenv("RELAY_ADMIN_LOGIN_WINDOW", "2m")
-	t.Setenv("RELAY_ADMIN_LOGIN_BLOCK", "7m")
-	t.Setenv("RELAY_MAX_ADMIN_LOGIN_ENTRIES", "256")
 	t.Setenv("RELAY_HTTP_READ_TIMEOUT", "20s")
 	t.Setenv("RELAY_HTTP_WRITE_TIMEOUT", "30s")
 	t.Setenv("RELAY_HTTP_IDLE_TIMEOUT", "90s")
@@ -67,8 +67,8 @@ func TestConfigRequiresExplicitSecretsAndAdministrator(t *testing.T) {
 	if config.Address != ":9090" {
 		t.Fatalf("unexpected default address %q", config.Address)
 	}
-	if config.CredentialTTL != 2*time.Hour || config.AdminSessionTTL != 6*time.Hour {
-		t.Fatalf("duration environment values were not loaded: credential=%s admin=%s", config.CredentialTTL, config.AdminSessionTTL)
+	if config.CredentialTTL != 2*time.Hour {
+		t.Fatalf("credential TTL environment value was not loaded: %s", config.CredentialTTL)
 	}
 	if config.MaxConnections != 512 || config.MaxTransferSessions != 128 {
 		t.Fatalf("connection/transfer environment values were not loaded: %+v", config)
@@ -76,9 +76,7 @@ func TestConfigRequiresExplicitSecretsAndAdministrator(t *testing.T) {
 	if config.MaxEnrolledDevices != 1024 ||
 		config.MaxPendingFramesPerDevice != 48 || config.MaxPendingBytesPerDevice != 1048576 ||
 		config.MaxFramesPerSecondPerDevice != 128 || config.MaxBytesPerSecondPerDevice != 8388608 ||
-		config.MaxAdminSessions != 8 || config.AdminLoginMaxAttempts != 3 ||
-		config.AdminLoginWindow != 2*time.Minute || config.AdminLoginBlockDuration != 7*time.Minute ||
-		config.MaxAdminLoginEntries != 256 || config.HTTPReadTimeout != 20*time.Second ||
+		config.HTTPReadTimeout != 20*time.Second ||
 		config.HTTPWriteTimeout != 30*time.Second || config.HTTPIdleTimeout != 90*time.Second ||
 		config.HTTPMaxHeaderBytes != 32768 {
 		t.Fatalf("resource and HTTP environment values were not loaded: %+v", config)
@@ -203,8 +201,6 @@ func TestConfigRejectsPublishedExampleCredentials(t *testing.T) {
 	}{
 		{"RELAY_ENROLLMENT_TOKEN", publishedExampleEnrollmentToken},
 		{"RELAY_CREDENTIAL_KEY", publishedExampleCredentialKey},
-		{"RELAY_ADMIN_USER", publishedExampleAdminUser},
-		{"RELAY_ADMIN_PASSWORD", publishedExampleAdminPassword},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			setValidConfigEnvironment(t)
@@ -225,8 +221,7 @@ func TestEnvironmentExampleLeavesRuntimeSecretsUnset(t *testing.T) {
 	for _, name := range []string{
 		"RELAY_ENROLLMENT_TOKEN",
 		"RELAY_CREDENTIAL_KEY",
-		"RELAY_ADMIN_USER",
-		"RELAY_ADMIN_PASSWORD",
+		"RELAY_INTERNAL_TOKEN",
 		"RELAY_REDIS_PASSWORD",
 	} {
 		prefix := name + "="
@@ -252,7 +247,6 @@ func TestConfigRejectsExplicitInvalidPositiveValues(t *testing.T) {
 	}{
 		{"RELAY_CREDENTIAL_TTL", "not-a-duration"},
 		{"RELAY_HTTP_READ_TIMEOUT", "0s"},
-		{"RELAY_ADMIN_LOGIN_WINDOW", "-1s"},
 		{"RELAY_MAX_CONNECTIONS", "not-an-int"},
 		{"RELAY_MAX_TRANSFER_SESSIONS", "0"},
 		{"RELAY_MAX_PENDING_BYTES_PER_DEVICE", "-1"},

@@ -1,10 +1,12 @@
 // Relay server composition and route registration.
 //
-// The transport network is v2-only: /v2/control is the long-lived control plane
-// (protobuf RelayFrame) and /v2/relay/{reservation_id} is the reservation-scoped
-// opaque data plane (RelayDataFrame). Enrollment/refresh stay under /v1/devices
-// because they issue the bearer credentials both control planes authenticate
-// with. Administrative HTTP handlers live in the admin_* files.
+// The transport network and bootstrap are v2-only: /v2/control is the long-lived control plane
+// (protobuf RelayFrame), /v2/relay/{reservation_id} is the reservation-scoped
+// opaque data plane (RelayDataFrame), and device bootstrap uses /v2/devices/enroll
+// and /v2/devices/refresh. The internal management API (/internal/v2/*) is authenticated
+// with the internal token and serves status, device listing, revocation, and enrollment
+// token rotation. The standalone admin backend (internal/admin) consumes these
+// endpoints on behalf of operators.
 
 package relay
 
@@ -26,7 +28,6 @@ type Server struct {
 	upgrader websocket.Upgrader
 	store    Storage
 	cache    Cache
-	admin    adminAuthState
 	// relayData 是 /v2/relay/{reservation_id} 数据面端点的链接注册表（设计 §25）。
 	// 它与 hub 的 peer 表完全独立：数据面连接没有 presence 租约，只按 reservation 配对。
 	relayData    *relayDataRegistry
@@ -134,27 +135,17 @@ func NewServer(config Config) *Server {
 		config.InstanceID = "relay-" + hex.EncodeToString(randomBytes(6))
 	}
 
-	adminPasswordHash := passwordDigest(config.CredentialKey, config.AdminPassword)
-	adminConfigured := config.AdminUser != "" && len(config.AdminPassword) >= 12
-	config.AdminPassword = ""
-
 	// Phase 0 ships the in-memory store only; RELAY_STORAGE_MODE selects it and
 	// Phase 1/2 add the MySQL/Redis implementations behind the same contract.
 	memory := newMemoryStore(config)
 	eventsCtx, eventsCancel := context.WithCancel(context.Background())
 
 	server := &Server{
-		config:   config,
-		hub:      newHub(config),
-		upgrader: websocket.Upgrader{},
-		store:    memory,
-		cache:    memory,
-		admin: adminAuthState{
-			user:          config.AdminUser,
-			passwordHash:  adminPasswordHash,
-			configured:    adminConfigured,
-			loginAttempts: make(map[string]adminLoginAttempt),
-		},
+		config:       config,
+		hub:          newHub(config),
+		upgrader:     websocket.Upgrader{},
+		store:        memory,
+		cache:        memory,
 		relayData:    newRelayDataRegistry(config.MaxTransferSessions),
 		startedAt:    time.Now(),
 		eventsCtx:    eventsCtx,
@@ -283,43 +274,30 @@ func openServerWithStores(config Config, openMySQL mysqlStorageOpener, openRedis
 	}
 }
 
-// RegisterRoutes 注册公开、管理端、设备凭证端点和 v2 传输网络端点。
+// RegisterRoutes 注册公开端点、内部管理端点、设备凭据端点和 v2 传输网络端点。
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /healthz", s.health)
+	mux.HandleFunc(RouteHealthz, s.health)
 
-	admin := func(next http.HandlerFunc) http.HandlerFunc {
-		return adminResponseHeaders(next)
+	// Relay Internal Management API (/internal/v2/*).
+	internalAuth := func(next http.HandlerFunc) http.HandlerFunc {
+		return s.internalAuthMiddleware(next)
 	}
-	adminStateChange := func(next http.HandlerFunc) http.HandlerFunc {
-		return adminResponseHeaders(s.adminStateChangeMiddleware(next))
-	}
-	adminAuth := func(next http.HandlerFunc) http.HandlerFunc {
-		return adminResponseHeaders(s.adminAuthMiddleware(next))
-	}
-	adminAuthStateChange := func(next http.HandlerFunc) http.HandlerFunc {
-		return adminResponseHeaders(s.adminStateChangeMiddleware(s.adminAuthMiddleware(next)))
-	}
+	mux.HandleFunc(RouteInternalStatusV2, internalAuth(s.internalStatusHandler))
+	mux.HandleFunc(RouteInternalDevicesV2, internalAuth(s.internalDevicesHandler))
+	mux.HandleFunc(RouteInternalRevokeDeviceV2, internalAuth(s.internalRevokeDeviceHandler))
+	mux.HandleFunc(RouteInternalTokenV2, internalAuth(s.internalTokenHandler))
+	mux.HandleFunc(RouteInternalRotateTokenV2, internalAuth(s.internalRotateTokenHandler))
 
-	// Admin Control Plane。
-	mux.HandleFunc("POST /api/admin/v1/auth/login", adminStateChange(s.adminLoginHandler))
-	mux.HandleFunc("POST /api/admin/v1/auth/logout", adminStateChange(s.adminLogoutHandler))
-	mux.HandleFunc("GET /api/admin/v1/auth/session", admin(s.adminSessionHandler))
-	mux.HandleFunc("GET /api/admin/v1/overview", adminAuth(s.adminOverview))
-	mux.HandleFunc("GET /api/admin/v1/devices", adminAuth(s.adminDevices))
-	mux.HandleFunc("POST /api/admin/v1/devices/{deviceId}/revoke", adminAuthStateChange(s.adminRevokeDevice))
-	mux.HandleFunc("GET /api/admin/v1/access/enrollment-token", adminAuth(s.adminToken))
-	mux.HandleFunc("POST /api/admin/v1/access/enrollment-token/rotate", adminAuthStateChange(s.adminRotateToken))
-
-	// Device credential endpoints（仍为 v2 控制面签发 Bearer 凭据）。
-	mux.HandleFunc("POST /v1/devices/enroll", s.enroll)
-	mux.HandleFunc("POST /v1/devices/refresh", s.refresh)
+	// Device credential endpoints (V2 only).
+	mux.HandleFunc(RouteEnrollV2, s.enroll)
+	mux.HandleFunc(RouteRefreshV2, s.refresh)
 
 	// Transport Network V2（设计 §24）：控制面与数据面物理拆开。
 	// GET /v2/control —— 长期存活的控制面，只走 RelayFrame（protobuf）。
-	mux.HandleFunc("GET /v2/control", s.connectControlV2)
+	mux.HandleFunc(RouteControlV2, s.connectControlV2)
 	// GET /v2/relay/{reservation_id} —— reservation 作用域的不透明数据面，只走
 	// RelayDataFrame；reservation 由 /v2/control 的 RelayReserveRequest 创建（§25）。
-	mux.HandleFunc("GET /v2/relay/{reservation_id}", s.connectRelayData)
+	mux.HandleFunc(RouteRelayDataV2, s.connectRelayData)
 }
 
 // health 提供无需认证的存活检查端点。

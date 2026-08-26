@@ -1,11 +1,10 @@
-> Last updated: 2026-08-25
+> Last updated: 2026-08-27
 
 # SDK Current State
 
 The native transport runtime and Relay control/data path implement
-transport-network v2. Any v1 label in the public bootstrap/compatibility surface
-is a boundary label only; it is not a transport fallback and must not reintroduce
-the retired v1 route/session owner model.
+transport-network v2. Relay device bootstrap implements Relay Bootstrap V2
+(`POST /v2/devices/enroll`, `POST /v2/devices/refresh`, `protocol_version=2`).
 
 LAN Control Protocol V2 is a separate breaking-only version domain. It does not
 version or replace Native Network Protocol V2: LAN Control handles pairing,
@@ -19,8 +18,8 @@ start/stop/reconfigure that runtime.
   and Feature-safe Realtime contracts.
 - The bootstrap `RefreshRequest` requires an integer Unix-seconds timestamp.
   LAN Share and the real Dart/Rust E2E callers sign
-  `POST\n/v1/devices/refresh\n<timestamp>\n<nonce>` exactly; the retired
-  timestamp-less transcript has no SDK or Relay compatibility fallback
+  `POST\n/v2/devices/refresh\n<timestamp>\n<nonce>` exactly; the retired
+  V1 transcript has no SDK or Relay compatibility fallback
   ([ADR-031](../../docs/adr/ADR-031-relay-refresh-proof-freshness.md)).
 - The Rust `network-relay` shared WebSocket request builder gives every Control
   and RelayData upgrade an independent positive Unix-seconds

@@ -99,10 +99,9 @@ func cleanupRedisTestKeys(t *testing.T, store *redisStore) {
 	ctx := context.Background()
 	_ = store.forceDeletePresence(ctx, "device-a")
 	_ = store.ClearDeviceNonces(ctx, "device-a")
-	_ = store.DeleteAdminSession(ctx, "tok-1")
 }
 
-func TestRedisStorePresenceNonceAndAdmin(t *testing.T) {
+func TestRedisStorePresenceNonce(t *testing.T) {
 	ctx := context.Background()
 	store, err := openRedisStore(ctx, requireRedisURL(t))
 	if err != nil {
@@ -143,19 +142,6 @@ func TestRedisStorePresenceNonceAndAdmin(t *testing.T) {
 	}
 	if replayed, _ := store.ConsumeNonce(ctx, "device-a", "already-expired", time.Now().Add(-time.Second)); !replayed {
 		t.Fatal("already-expired nonce window failed open")
-	}
-
-	if err := store.SetAdminSession(ctx, "tok-1", time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	if ok, _ := store.AdminSessionExists(ctx, "tok-1"); !ok {
-		t.Fatal("admin session not found")
-	}
-	if err := store.DeleteAdminSession(ctx, "tok-1"); err != nil {
-		t.Fatal(err)
-	}
-	if ok, _ := store.AdminSessionExists(ctx, "tok-1"); ok {
-		t.Fatal("admin session not deleted")
 	}
 }
 
@@ -341,7 +327,7 @@ func TestRedisStorePresenceLegacyEntryNotRenewed(t *testing.T) {
 
 // TestRedisStoreGetPresencesSkipsCorruptEntry pins the batch fail-open
 // granularity: a corrupt (non-JSON) presence value must be skipped rather than
-// surfaced as an error, so one bad key cannot blank the whole admin batch.
+// surfaced as an error, so one bad key cannot blank the whole device batch.
 func TestRedisStoreGetPresencesSkipsCorruptEntry(t *testing.T) {
 	ctx := context.Background()
 	store, err := openRedisStore(ctx, requireRedisURL(t))
@@ -496,7 +482,7 @@ func TestAuthFailsClosedWhenCacheUnavailable(t *testing.T) {
 	server.cache = erroringCache{Cache: server.cache}
 
 	encodedKey := base64.RawURLEncoding.EncodeToString(publicKey)
-	if result := server.replaceEnrollment("device-a", encodedKey, "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", encodedKey, "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
 	credential, err := issueCredential([]byte(mysqlTestCredentialKey), "device-a", publicKey, mustEnrollmentGeneration(t, server, "device-a"), time.Hour)
@@ -504,35 +490,34 @@ func TestAuthFailsClosedWhenCacheUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{5}, 32))
-	request := httptest.NewRequest("GET", "/v2/control", nil)
+	request := httptest.NewRequest(http.MethodGet, PathControlV2, nil)
 	request.Header.Set("Authorization", "Bearer "+credential)
-	setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", privateKey, nonce)
+	setCurrentSignedDeviceProof(request.Header, http.MethodGet, PathControlV2, privateKey, nonce)
 	if _, _, code, ok := server.authenticatedRequest(request); ok || code != relayErrorAuthenticationFailed {
 		t.Fatalf("authentication did not fail closed when the cache was unavailable: ok=%v code=%d", ok, code)
 	}
 }
 
-// TestAdminSnapshotFailsOpenWhenPresenceUnavailable verifies the admin device
-// snapshot stays 200 (fail-open) when the presence cache is unavailable, but
-// surfaces the degraded state explicitly: presence_available=false tells the
+// TestInternalSnapshotFailsOpenWhenPresenceUnavailable verifies the internal
+// device snapshot stays 200 (fail-open) when the presence cache is unavailable,
+// but surfaces the degraded state explicitly: presence_available=false tells the
 // frontend that online status is unknown, NOT that every device is offline —
 // the old code silently mapped "unknown" to "all offline".
-func TestAdminSnapshotFailsOpenWhenPresenceUnavailable(t *testing.T) {
+func TestInternalSnapshotFailsOpenWhenPresenceUnavailable(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte(mysqlTestCredentialKey),
 		EnrollmentToken: "test-token",
-		AdminUser:       "test-admin",
-		AdminPassword:   "test-password-123",
+		InternalToken:   "0123456789abcdef0123456789abcdef",
 	})
 	defer server.Close()
-	if result := server.replaceEnrollment("device-a", "key-a", "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", "key-a", "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
 	server.cache = erroringCache{Cache: server.cache}
 
-	items, presenceAvailable, err := server.adminDeviceSnapshot()
+	items, presenceAvailable, err := server.ListDevices(context.Background())
 	if err != nil {
-		t.Fatalf("admin snapshot should fail open when presence is unavailable: %v", err)
+		t.Fatalf("device snapshot should fail open when presence is unavailable: %v", err)
 	}
 	if presenceAvailable {
 		t.Fatal("snapshot must flag presence as unavailable when the cache errors")
@@ -545,63 +530,68 @@ func TestAdminSnapshotFailsOpenWhenPresenceUnavailable(t *testing.T) {
 	// "unknown" apart from "genuinely offline".
 	mux := http.NewServeMux()
 	server.RegisterRoutes(mux)
-	loginBody, _ := json.Marshal(map[string]string{"username": "test-admin", "password": "test-password-123"})
-	loginRequest := httptest.NewRequest(http.MethodPost, "/api/admin/v1/auth/login", bytes.NewReader(loginBody))
-	loginRequest.Header.Set("Content-Type", "application/json")
-	loginResponse := httptest.NewRecorder()
-	mux.ServeHTTP(loginResponse, loginRequest)
-	if loginResponse.Code != http.StatusOK {
-		t.Fatalf("admin login failed: %d", loginResponse.Code)
-	}
-	cookie := loginResponse.Result().Cookies()[0]
-	request := httptest.NewRequest(http.MethodGet, "/api/admin/v1/devices", nil)
-	request.AddCookie(cookie)
+	request := httptest.NewRequest(http.MethodGet, PathInternalDevicesV2, nil)
+	request.Header.Set("Authorization", "Bearer "+server.config.InternalToken)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, request)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("devices endpoint should stay 200, got %d", rec.Code)
+		t.Fatalf("internal devices endpoint should stay 200, got %d", rec.Code)
 	}
 	if !bytes.Contains(rec.Body.Bytes(), []byte(`"presence_available":false`)) {
 		t.Fatalf("devices response must carry presence_available=false, body=%s", rec.Body.String())
 	}
 }
 
-// TestAdminOverviewSnapshotFailsOpenWhenPresenceUnavailable mirrors the devices
-// snapshot test for the overview endpoint: under a failing presence cache the
+// TestInternalStatusSnapshotFailsOpenWhenPresenceUnavailable mirrors the devices
+// snapshot test for the status endpoint: under a failing presence cache the
 // snapshot still returns 200 (fail-open) with presence_available=false and
-// online=0 — the flag distinguishes "unknown" from "all offline" in the overview
+// online=0 — the flag distinguishes "unknown" from "all offline" in the status
 // path too, not just the devices list.
-func TestAdminOverviewSnapshotFailsOpenWhenPresenceUnavailable(t *testing.T) {
+func TestInternalStatusSnapshotFailsOpenWhenPresenceUnavailable(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte(mysqlTestCredentialKey),
 		EnrollmentToken: "test-token",
-		AdminUser:       "test-admin",
-		AdminPassword:   "test-password-123",
+		InternalToken:   "0123456789abcdef0123456789abcdef",
 	})
 	defer server.Close()
-	if result := server.replaceEnrollment("device-a", "key-a", "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", "key-a", "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
 	server.cache = erroringCache{Cache: server.cache}
 
-	snapshot, err := server.adminOverviewSnapshot()
+	snapshot, err := server.StatusSnapshot(context.Background())
 	if err != nil {
-		t.Fatalf("admin overview should fail open when presence is unavailable: %v", err)
+		t.Fatalf("status snapshot should fail open when presence is unavailable: %v", err)
 	}
 	if snapshot.PresenceAvailable {
-		t.Fatal("overview must flag presence as unavailable when the cache errors")
+		t.Fatal("status must flag presence as unavailable when the cache errors")
 	}
 	if snapshot.Devices.Online != 0 {
-		t.Fatalf("overview should report online=0 with presence_available=false, got %d", snapshot.Devices.Online)
+		t.Fatalf("status should report online=0 with presence_available=false, got %d", snapshot.Devices.Online)
 	}
 	if snapshot.Devices.Enrolled != 1 {
 		t.Fatalf("enrolled count must stay accurate, got %d", snapshot.Devices.Enrolled)
 	}
+
+	// The HTTP status endpoint carries the degraded flag for the management
+	// frontend (authorized via the internal token).
+	mux := http.NewServeMux()
+	server.RegisterRoutes(mux)
+	request := httptest.NewRequest(http.MethodGet, PathInternalStatusV2, nil)
+	request.Header.Set("Authorization", "Bearer "+server.config.InternalToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, request)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("internal status endpoint should stay 200, got %d", rec.Code)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"presence_available":false`)) {
+		t.Fatalf("status response must carry presence_available=false, body=%s", rec.Body.String())
+	}
 }
 
 // TestMySQLRedisFullStackOnlineStats exercises the mysql+redis wiring end to
-// end: enrollment is durable in MySQL, presence lives in Redis, and the admin
-// online stats are driven by presence.
+// end: enrollment is durable in MySQL, presence lives in Redis, and the device
+// snapshot online stats are driven by presence.
 func TestMySQLRedisFullStackOnlineStats(t *testing.T) {
 	mysqlDSN := requireMySQLDSN(t)
 	redisURL := requireRedisURL(t)
@@ -616,7 +606,7 @@ func TestMySQLRedisFullStackOnlineStats(t *testing.T) {
 	defer server.Close()
 	resetMySQLTestDB(t, mysqlDSN)
 
-	if result := server.replaceEnrollment("device-a", "key-a", "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", "key-a", "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
 	if server.cache.(*redisStore) == nil {
@@ -626,15 +616,15 @@ func TestMySQLRedisFullStackOnlineStats(t *testing.T) {
 	if _, _, err := server.cache.TakePresence(ctx, "device-a", "conn-1", Presence{InstanceID: "i1", RemoteAddr: "203.0.113.5:9000"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	items, presenceAvailable, err := server.adminDeviceSnapshot()
+	items, presenceAvailable, err := server.ListDevices(ctx)
 	if err != nil || !presenceAvailable || len(items) != 1 || !items[0].Online || items[0].RemoteAddr != "203.0.113.5:9000" {
-		t.Fatalf("admin snapshot should show the device online with its lease address: err=%v avail=%v items=%+v", err, presenceAvailable, items)
+		t.Fatalf("device snapshot should show the device online with its lease address: err=%v avail=%v items=%+v", err, presenceAvailable, items)
 	}
 	if released, err := server.cache.ReleasePresence(ctx, "device-a", "conn-1"); err != nil || !released {
 		t.Fatalf("release presence: released=%v err=%v", released, err)
 	}
-	items, presenceAvailable, err = server.adminDeviceSnapshot()
+	items, presenceAvailable, err = server.ListDevices(ctx)
 	if err != nil || !presenceAvailable || len(items) != 1 || items[0].Online {
-		t.Fatalf("admin snapshot should show the device offline after presence removal: err=%v avail=%v items=%+v", err, presenceAvailable, items)
+		t.Fatalf("device snapshot should show the device offline after presence removal: err=%v avail=%v items=%+v", err, presenceAvailable, items)
 	}
 }

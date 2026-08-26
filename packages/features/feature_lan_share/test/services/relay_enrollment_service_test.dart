@@ -23,13 +23,13 @@ void main() {
         onEnroll: (requestEndpoint, request) {
           expect(requestEndpoint, endpoint);
           expect(request.deviceId, 'device-a');
-          expect(request.protocolVersion, 1);
+          expect(request.protocolVersion, 2);
           return DeviceEnrollment(
             deviceId: request.deviceId,
             relayCredential: 'signed-credential',
             expiresAt: DateTime.now().add(const Duration(hours: 1)),
             serverTime: DateTime.now(),
-            protocolVersion: 1,
+            protocolVersion: 2,
           );
         },
       ),
@@ -116,7 +116,7 @@ void main() {
             relayCredential: 'signed-credential',
             expiresAt: DateTime.now().add(const Duration(hours: 1)),
             serverTime: DateTime.now(),
-            protocolVersion: 1,
+            protocolVersion: 2,
           ),
           onRefresh: (requestEndpoint, request) {
             expect(requestEndpoint, endpoint);
@@ -127,7 +127,7 @@ void main() {
                 relayCredential: 'refreshed-credential',
                 expiresAt: DateTime.now().add(const Duration(hours: 1)),
                 serverTime: DateTime.now(),
-                protocolVersion: 1,
+                protocolVersion: 2,
               ),
             );
           },
@@ -164,7 +164,7 @@ void main() {
       expect(signatureBytes, hasLength(64));
       final valid = await Ed25519().verify(
         utf8.encode(
-          'POST\n/v1/devices/refresh\n${request.timestamp}\n${request.nonce}',
+          'POST\n/v2/devices/refresh\n${request.timestamp}\n${request.nonce}',
         ),
         signature: Signature(
           signatureBytes,
@@ -175,8 +175,8 @@ void main() {
         ),
       );
       expect(valid, isTrue);
-      final legacyTranscriptValid = await Ed25519().verify(
-        utf8.encode('POST\n/v1/devices/refresh\n${request.nonce}'),
+      final mismatchedTranscriptValid = await Ed25519().verify(
+        utf8.encode('POST\n/v2/devices/invalid\n${request.nonce}'),
         signature: Signature(
           signatureBytes,
           publicKey: SimplePublicKey(
@@ -185,7 +185,7 @@ void main() {
           ),
         ),
       );
-      expect(legacyTranscriptValid, isFalse);
+      expect(mismatchedTranscriptValid, isFalse);
 
       expect(
         await service.isEnrolled(RelaySettings(endpoint: endpoint)),
@@ -211,7 +211,7 @@ void main() {
             relayCredential: 'original-credential',
             expiresAt: DateTime.now().add(const Duration(hours: 1)),
             serverTime: DateTime.now(),
-            protocolVersion: 1,
+            protocolVersion: 2,
           ),
           onRefresh: (requestEndpoint, request) => const SdkFailure(
             NetworkError(
@@ -260,7 +260,7 @@ final class _FakeBootstrapClient implements BootstrapClient {
 
   @override
   Future<SdkResult<BootstrapMetadata>> probe(Uri endpoint) async =>
-      const SdkSuccess(BootstrapMetadata(protocolVersion: 1));
+      const SdkSuccess(BootstrapMetadata(protocolVersion: 2));
 
   @override
   Future<SdkResult<DeviceEnrollment>> enroll(
@@ -281,7 +281,7 @@ final class _FakeBootstrapClient implements BootstrapClient {
           relayCredential: 'refreshed-credential',
           expiresAt: DateTime.now().add(const Duration(hours: 1)),
           serverTime: DateTime.now(),
-          protocolVersion: 1,
+          protocolVersion: 2,
         ),
       );
     }

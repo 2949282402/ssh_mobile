@@ -37,7 +37,7 @@ func TestRefreshRejectsRevokedButStillEnrolledDevice(t *testing.T) {
 	defer server.Close()
 
 	encodedKey := base64.RawURLEncoding.EncodeToString(publicKey)
-	if result := server.replaceEnrollment("device-a", encodedKey, "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", encodedKey, "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
 	recorded, err := server.store.RecordRevocation(context.Background(), "device-a", time.Now().Add(time.Hour))
@@ -57,12 +57,12 @@ func TestRefreshRejectsRevokedButStillEnrolledDevice(t *testing.T) {
 		Timestamp: timestamp,
 		Nonce:     nonce,
 		Signature: base64.RawURLEncoding.EncodeToString(
-			ed25519.Sign(privateKey, []byte(refreshProofPayload(timestamp, nonce))),
+			ed25519.Sign(privateKey, []byte(refreshProofPayloadForPath(PathRefreshV2, timestamp, nonce))),
 		),
 	})
 	mux := http.NewServeMux()
 	server.RegisterRoutes(mux)
-	request := httptest.NewRequest(http.MethodPost, "/v1/devices/refresh", bytes.NewReader(body))
+	request := httptest.NewRequest(http.MethodPost, PathRefreshV2, bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, request)
 	if rec.Code != http.StatusUnauthorized {
@@ -107,7 +107,7 @@ func TestAuthenticatedRequestFailsClosedWhenNonceCacheUnavailable(t *testing.T) 
 		"device-a",
 		base64.RawURLEncoding.EncodeToString(publicKey),
 		"test",
-		1,
+		RelayBootstrapProtocolVersion,
 		time.Now(),
 	); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
@@ -117,9 +117,9 @@ func TestAuthenticatedRequestFailsClosedWhenNonceCacheUnavailable(t *testing.T) 
 		t.Fatal(err)
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x41}, 32))
-	request := httptest.NewRequest(http.MethodGet, "/v2/control", nil)
+	request := httptest.NewRequest(http.MethodGet, PathControlV2, nil)
 	request.Header.Set("Authorization", "Bearer "+credential)
-	setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", privateKey, nonce)
+	setCurrentSignedDeviceProof(request.Header, http.MethodGet, PathControlV2, privateKey, nonce)
 	server.cache = failingNonceCache{Cache: server.cache}
 
 	if _, _, code, ok := server.authenticatedRequest(request); ok || code != relayErrorAuthenticationFailed {
@@ -142,7 +142,7 @@ func TestAuthenticatedDeviceAdmissionRechecksRevocation(t *testing.T) {
 		"device-a",
 		base64.RawURLEncoding.EncodeToString(publicKey),
 		"test",
-		1,
+		RelayBootstrapProtocolVersion,
 		time.Now(),
 	); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
@@ -152,20 +152,17 @@ func TestAuthenticatedDeviceAdmissionRechecksRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x42}, 32))
-	request := httptest.NewRequest(http.MethodGet, "/v2/control", nil)
+	request := httptest.NewRequest(http.MethodGet, PathControlV2, nil)
 	request.Header.Set("Authorization", "Bearer "+credential)
-	setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", privateKey, nonce)
+	setCurrentSignedDeviceProof(request.Header, http.MethodGet, PathControlV2, privateKey, nonce)
 	claims, authenticatedKey, code, ok := server.authenticatedRequest(request)
 	if !ok || code != relayErrorUnspecified {
 		t.Fatalf("valid proof was rejected before revoke: ok=%v code=%d", ok, code)
 	}
 
-	revokeRequest := httptest.NewRequest(http.MethodPost, "/api/admin/v1/devices/device-a/revoke", nil)
-	revokeRequest.SetPathValue("deviceId", "device-a")
-	revokeResponse := httptest.NewRecorder()
-	server.adminRevokeDevice(revokeResponse, revokeRequest)
-	if revokeResponse.Code != http.StatusNoContent {
-		t.Fatalf("revoke failed: got %d", revokeResponse.Code)
+	outcome, err := server.RevokeDevice(context.Background(), "device-a")
+	if err != nil || outcome != RevokeStatusOK {
+		t.Fatalf("revoke failed: outcome=%v err=%v", outcome, err)
 	}
 
 	admission, admissionCode, admitted := server.admitAuthenticatedDevice(
@@ -182,9 +179,9 @@ func TestAuthenticatedDeviceAdmissionRechecksRevocation(t *testing.T) {
 	}
 }
 
-// TestAdminRevokeReturnsErrorWhenRevokeFails verifies the revoke handler reports
-// 500 instead of a false 204 when the atomic revoke fails, so the operator knows
-// the revocation did not fully land.
+// TestAdminRevokeReturnsErrorWhenRevokeFails verifies the internal revoke surfaces
+// the store failure so operators know the revocation did not fully land, instead
+// of a false success when the atomic revoke fails.
 func TestAdminRevokeReturnsErrorWhenRevokeFails(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte(mysqlTestCredentialKey),
@@ -192,17 +189,17 @@ func TestAdminRevokeReturnsErrorWhenRevokeFails(t *testing.T) {
 		CredentialTTL:   time.Hour,
 	})
 	defer server.Close()
-	if result := server.replaceEnrollment("device-a", "key-a", "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", "key-a", "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
 	server.store = failingRevokeStore{Storage: server.store}
 
-	request := httptest.NewRequest(http.MethodPost, "/api/admin/v1/devices/device-a/revoke", nil)
-	request.SetPathValue("deviceId", "device-a")
-	rec := httptest.NewRecorder()
-	server.adminRevokeDevice(rec, request)
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500 when enrollment delete fails, got %d", rec.Code)
+	outcome, err := server.RevokeDevice(context.Background(), "device-a")
+	if err == nil {
+		t.Fatal("expected an error when the revocation store fails")
+	}
+	if outcome != RevokeStatusUnavailable {
+		t.Fatalf("expected revoke status unavailable, got %v", outcome)
 	}
 }
 
@@ -256,12 +253,12 @@ func TestDisconnectDeviceDoesNotClearForeignPresence(t *testing.T) {
 	}
 }
 
-// TestAdminDeviceSnapshotSourcesRemoteAddrFromLease pins the cross-instance admin
-// fix: a device whose presence lease was written by another instance (no local
-// peer in this hub) must still show online with the lease's RemoteAddr — the old
-// code read the local hub peer table, which is empty for a cross-instance device,
-// and reported an empty address.
-func TestAdminDeviceSnapshotSourcesRemoteAddrFromLease(t *testing.T) {
+// TestDeviceSnapshotSourcesRemoteAddrFromLease pins the cross-instance device
+// snapshot fix: a device whose presence lease was written by another instance
+// (no local peer in this hub) must still show online with the lease's RemoteAddr
+// — the old code read the local hub peer table, which is empty for a
+// cross-instance device, and reported an empty address.
+func TestDeviceSnapshotSourcesRemoteAddrFromLease(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte(mysqlTestCredentialKey),
 		EnrollmentToken: "test-token",
@@ -269,7 +266,7 @@ func TestAdminDeviceSnapshotSourcesRemoteAddrFromLease(t *testing.T) {
 	defer server.Close()
 	ctx := context.Background()
 
-	if result := server.replaceEnrollment("device-a", "key-a", "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", "key-a", "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
 	// The device is connected on another instance: only the lease exists, no
@@ -278,12 +275,12 @@ func TestAdminDeviceSnapshotSourcesRemoteAddrFromLease(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	items, presenceAvailable, err := server.adminDeviceSnapshot()
+	items, presenceAvailable, err := server.ListDevices(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !presenceAvailable || len(items) != 1 || !items[0].Online || items[0].RemoteAddr != "203.0.113.9:9000" {
-		t.Fatalf("admin snapshot should show the cross-instance device online with the lease address: %+v", items)
+		t.Fatalf("device snapshot should show the cross-instance device online with the lease address: %+v", items)
 	}
 }
 
@@ -626,7 +623,7 @@ func TestSameDeviceRevokeReEnrollSerialized(t *testing.T) {
 	})
 	defer server.Close()
 
-	if result := server.replaceEnrollment("device-a", "key-original", "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", "key-original", "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("initial enroll failed: %v", result)
 	}
 
@@ -636,13 +633,11 @@ func TestSameDeviceRevokeReEnrollSerialized(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			request := httptest.NewRequest(http.MethodPost, "/api/admin/v1/devices/device-a/revoke", nil)
-			request.SetPathValue("deviceId", "device-a")
-			server.adminRevokeDevice(httptest.NewRecorder(), request)
+			_, _ = server.RevokeDevice(ctx, "device-a")
 		}()
 		go func() {
 			defer wg.Done()
-			server.replaceEnrollment("device-a", fmt.Sprintf("key-new-%d", i), "test", 1, time.Now())
+			server.replaceEnrollment("device-a", fmt.Sprintf("key-new-%d", i), "test", RelayBootstrapProtocolVersion, time.Now())
 		}()
 		wg.Wait()
 
@@ -659,7 +654,7 @@ func TestSameDeviceRevokeReEnrollSerialized(t *testing.T) {
 
 		// Reset to a clean enrolled state for the next iteration.
 		_ = server.store.RemoveEnrollment(ctx, "device-a")
-		if result := server.replaceEnrollment("device-a", "key-original", "test", 1, time.Now()); result != enrollmentOK {
+		if result := server.replaceEnrollment("device-a", "key-original", "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 			t.Fatalf("reset enroll failed: %v", result)
 		}
 	}

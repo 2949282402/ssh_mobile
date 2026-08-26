@@ -23,7 +23,7 @@ import (
 	"time"
 )
 
-// revokeResult 描述 RevokeEnrollment 的结局，供 admin 处理器区分未注册（404）与
+// revokeResult 描述 RevokeEnrollment 的结局，供内部管理/吊销路径区分未注册（404）与
 // 墓碑容量饱和（429，仅内存实现）两种失败路径。
 type revokeResult int
 
@@ -75,7 +75,7 @@ type Storage interface {
 // 行为一致。
 //
 // 锁约定：device-plane 方法（enrollment/吊销/nonce）用内部 deviceMu 自同步，可无
-// 调用方锁直接调用；presence 与 admin 会话方法用内部 mu 自同步。同设备复合操作
+// 调用方锁直接调用；presence 与 reservation 等方法用内部 mu 自同步。同设备复合操作
 // 的原子性由调用方的 per-device 分片锁（s.lockDevice）保证。
 type memoryStore struct {
 	enrolledDevices map[string]*EnrolledDevice
@@ -88,16 +88,13 @@ type memoryStore struct {
 	presence                 map[string]presenceEntry
 	discovery                map[string]discoveryEntry
 	reservations             map[string]reservationEntry
-	adminSessions            map[string]time.Time
 	maxEnrolled              int
 	maxRevoked               int
 	maxReservations          int
-	maxAdminSession          int
 	mu                       sync.Mutex
 	// deviceMu 保护 device-plane map（enrolledDevices/revokedDevices/
 	// proofNonces）与 nonce expiry heap/index。presence、discovery、reservations
-	// 与 adminSessions 由 mu 保护。
-	// 两者从不嵌套持有。
+	// 由 mu 保护。两者从不嵌套持有。
 	deviceMu sync.Mutex
 }
 
@@ -112,11 +109,9 @@ func newMemoryStore(config Config) *memoryStore {
 		presence:                 make(map[string]presenceEntry),
 		discovery:                make(map[string]discoveryEntry),
 		reservations:             make(map[string]reservationEntry),
-		adminSessions:            make(map[string]time.Time),
 		maxEnrolled:              config.MaxEnrolledDevices,
 		maxRevoked:               config.MaxRevokedDevices,
 		maxReservations:          config.MaxTransferSessions,
-		maxAdminSession:          config.MaxAdminSessions,
 	}
 }
 
@@ -137,6 +132,12 @@ func (m *memoryStore) PutEnrollment(_ context.Context, device *EnrolledDevice) (
 	existing, exists := m.enrolledDevices[device.DeviceID]
 	if exists {
 		if existing.PublicKey != device.PublicKey {
+			return enrollmentIdentityConflict, nil
+		}
+		// Protocol downgrade protection: a device that already enrolled at a
+		// higher protocol version must not silently re-enroll at a lower one.
+		// Re-enrollment upgrades are allowed; downgrades are rejected.
+		if device.ProtocolVersion < existing.ProtocolVersion {
 			return enrollmentIdentityConflict, nil
 		}
 	} else if len(m.enrolledDevices) >= m.maxEnrolled {

@@ -1,6 +1,8 @@
-> Last updated: 2026-08-24
+> Last updated: 2026-08-27
 
 # Network V2 Final Acceptance Report
+
+> Note (2026-08-27): Relay Bootstrap has been updated to V2 (`POST /v2/devices/enroll` and `POST /v2/devices/refresh` with `protocol_version=2`, detailed in `protocol/RELAY_BOOTSTRAP_V2_CONTRACT.md`), and the backend is split into independent Relay and Admin services. This report preserves historical acceptance evidence for the network-v2 transition.
 
 Status: **PASS WITH LOCAL ENVIRONMENT GAP — runnable local gates, Stage A/B/C
 evidence, and final GitHub CI pass; WSL aggregate coverage and deployment

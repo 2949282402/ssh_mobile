@@ -1,63 +1,60 @@
-> Last updated: 2026-08-25
+> Last updated: 2026-08-27
 
 # Backend Current State
 
-The maintained backend exposes v1 Bootstrap HTTP for device enrollment and
-credential refresh, administrator API v1, and a v2-only transport plane. The
-transport routes are the long-lived protobuf `/v2/control` WebSocket and the
-reservation-scoped opaque `/v2/relay/{reservation_id}` WebSocket; the retired
-`/v1/connect`, `/v1/control`, and `/v1/peers` routes are not registered.
+The maintained backend is split into two independent Go services deployed via root
+Docker Compose:
+
+1. **Relay Backend** (`cmd/relay`, `internal/relay`):
+   - Exposes V2 Bootstrap HTTP for device enrollment (`POST /v2/devices/enroll`)
+     and credential refresh (`POST /v2/devices/refresh`), and a v2-only transport plane.
+   - The transport routes are the long-lived protobuf `/v2/control` WebSocket and the
+     reservation-scoped opaque `/v2/relay/{reservation_id}` WebSocket.
+   - Exposes private authenticated management endpoints (`/internal/v2/*`) protected by
+     `RELAY_INTERNAL_TOKEN`.
+   - The legacy `/v1/*` bootstrap routes are retired (return 404).
+
+2. **Admin Backend** (`cmd/admin`, `internal/admin`):
+   - Exposes public REST API (`/api/admin/v1/*`) for administrator login, session management,
+     overview, device listing, revocation, and enrollment token rotation.
+   - Communicates with Relay via `RelayManagementClient` calling `/internal/v2/*`.
+   - Maintains memory-local session store with single-replica constraint.
+   - Holds no database, Redis, or signing keys.
 
 Device-plane durable state (enrollment, revocation) is behind a `Storage`
 interface: the default `memory` mode is process-local and restart clears it;
 `mysql` mode persists it and requires `RedisURL` for the shared live-state
-layer (presence, discovery, replay-protection nonce, administrator sessions,
-reservations, and events). The first-phase topology remains one Relay Control
-instance and one Relay Data instance; Redis is external shared live state, not
-Global Control Routing or Relay Data Node Selection. Control peers live in the
-Hub while data endpoints live in an independent one-shot Relay Data registry.
+layer (presence, discovery, replay-protection nonce, reservations, and events).
+The first-phase topology remains one Relay Control instance and one Relay Data instance;
+Redis is external shared live state, not Global Control Routing or Relay Data Node Selection.
+Control peers live in the Hub while data endpoints live in an independent one-shot Relay Data registry.
 
 Current boundaries:
 
 - Device enrollment binds a signed (HMAC) credential to a device identity;
-  the durable enrollment record (device ID + public key) lives in `Storage`.
+  the durable enrollment record (device ID + public key + `protocol_version=2`) lives in `Storage`.
 - Device revocation is one atomic store transaction (MySQL: device-row lock +
   tombstone + removal), so a revoke and a concurrent re-enroll serialize on the
-  device row instead of tearing into a "removed but not revoked" state; the
-  admin handler keeps the per-device lock stripe for the local nonce/hub/event
-  side effects. Deterministic MySQL race coverage uses test-local transactions
-  and an InnoDB foreign-key gate in `_test.go`; the production storage adapter
-  contains no test hook or observer. A device's DiscoveryPublish fan-out budget
-  survives reconnect
-  and same-key re-enrollment; its bounded-map slot is released only after local
-  durable revocation succeeds or event/reconciliation reads confirm that the
-  durable enrollment is absent. A delayed event for an older generation cannot
-  reset the current enrollment's budget.
+  device row instead of tearing into a "removed but not revoked" state.
 - Device WebSocket connections are authenticated before hub admission through a
   single `authenticatedRequest` path: credential signature/expiry, Ed25519
-  proof, anti-replay nonce, enrollment key match, and revocation check. Both
+  proof, anti-replay nonce, enrollment key match, revocation check, and
+  **`enrollment.ProtocolVersion == 2` admission invariant**. Both
   Control and RelayData require a canonical positive Unix-seconds
   `X-Relay-Timestamp`; the exact transcript is
   `GET\n<path>\n<timestamp>\n<nonce>` without a trailing newline. The inclusive
   ±300-second window and timestamp-plus-301-second nonce expiry match refresh;
-  malformed/stale proofs and Cache consumption failure return 401 and do not
+  malformed/stale proofs, protocol mismatch, and Cache consumption failure return 401 and do not
   upgrade the socket ([ADR-031](../../docs/adr/ADR-031-relay-refresh-proof-freshness.md)).
-  After proof authentication, one five-second device-security deadline spans
-  the Server device-stripe wait, first durable check, WebSocket upgrade,
-  context-aware Hub same-device presence-admission stripe, non-routable staging,
-  second durable enrollment/lease check, and activation. Neither stripe resets
-  the caller deadline. Staged workers cannot emit Ready/PairReady or process
-  traffic before activation.
-- Device credential refresh is a hard-cut freshness contract: requests carry a
+- Device credential refresh is a V2 freshness contract: requests carry a
   required signed Unix-seconds `timestamp`, and the exact Ed25519 transcript is
-  `POST\n/v1/devices/refresh\n<timestamp>\n<nonce>` without a trailing newline.
+  `POST\n/v2/devices/refresh\n<timestamp>\n<nonce>` without a trailing newline.
   Relay accepts the inclusive ±300-second window, retains the nonce until the
   signed timestamp plus 301 seconds, and returns 503 without issuing a
   credential when the replay-protection cache cannot consume the nonce
-  ([ADR-031](../../docs/adr/ADR-031-relay-refresh-proof-freshness.md)). Same-key
-  re-enrollment does not clear consumed device-proof nonces or reopen a signed
-  refresh/WebSocket request within that window. The memory Cache indexes each
-  non-empty device nonce bucket by its earliest expiry, always prunes the caller
+  ([ADR-031](../../docs/adr/ADR-031-relay-refresh-proof-freshness.md)). Re-enrollment
+  on `/v2/devices/enroll` with the same key advances generation and upgrades
+  legacy rows to version 2.
   bucket, and drains at most eight unrelated expired buckets per consume; active
   proof windows survive enrollment/revocation while historical empty device
   buckets converge without a whole-cache scan.

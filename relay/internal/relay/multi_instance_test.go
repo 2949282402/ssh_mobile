@@ -72,7 +72,7 @@ func TestMultiInstanceSharedAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result := serverA.replaceEnrollment("device-a", base64.RawURLEncoding.EncodeToString(publicKey), "test", 1, time.Now()); result != enrollmentOK {
+	if result := serverA.replaceEnrollment("device-a", base64.RawURLEncoding.EncodeToString(publicKey), "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
 
@@ -81,9 +81,9 @@ func TestMultiInstanceSharedAuth(t *testing.T) {
 		t.Fatal(err)
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(randomBytes(32))
-	request := httptest.NewRequest("GET", "/v2/control", nil)
+	request := httptest.NewRequest(http.MethodGet, PathControlV2, nil)
 	request.Header.Set("Authorization", "Bearer "+credential)
-	setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", privateKey, nonce)
+	setCurrentSignedDeviceProof(request.Header, http.MethodGet, PathControlV2, privateKey, nonce)
 	if _, _, _, ok := serverB.authenticatedRequest(request); !ok {
 		t.Fatal("device could not authenticate against a different instance sharing the same backend")
 	}
@@ -109,18 +109,14 @@ func TestMultiInstanceCrossInstanceRevoke(t *testing.T) {
 	defer serverB.Close()
 	resetMySQLTestDB(t, mysqlDSN)
 
-	if result := serverA.replaceEnrollment("device-x", "key-x", "test", 1, time.Now()); result != enrollmentOK {
+	if result := serverA.replaceEnrollment("device-x", "key-x", "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
 	// The device is connected to instance B only.
 	injectPeer(serverB.hub, "device-x")
 
-	revokeRequest := httptest.NewRequest(http.MethodPost, "/api/admin/v1/devices/device-x/revoke", nil)
-	revokeRequest.SetPathValue("deviceId", "device-x")
-	rec := httptest.NewRecorder()
-	serverA.adminRevokeDevice(rec, revokeRequest)
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("revoke on instance A failed: %d", rec.Code)
+	if outcome, err := serverA.RevokeDevice(context.Background(), "device-x"); err != nil || outcome != RevokeStatusOK {
+		t.Fatalf("revoke on instance A failed: outcome=%v err=%v", outcome, err)
 	}
 
 	deadline := time.Now().Add(3 * time.Second)
@@ -148,10 +144,10 @@ func enrollViaHTTP(t *testing.T, baseURL, deviceID, token string) (string, ed255
 		DeviceID:        deviceID,
 		PublicKey:       base64.RawURLEncoding.EncodeToString(publicKey),
 		EnrollmentToken: token,
-		ProtocolVersion: 1,
+		ProtocolVersion: 2,
 		Platform:        "windows",
 	})
-	response, err := http.Post(baseURL+"/v1/devices/enroll", "application/json", bytes.NewReader(body))
+	response, err := http.Post(baseURL+PathEnrollV2, "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,11 +269,11 @@ func TestMultiInstanceConnectionReplacement(t *testing.T) {
 	}
 }
 
-// TestMultiInstanceAdminSnapshotShowsRemoteAddrFromLease verifies the admin
-// device snapshot reports the remote address of the instance that actually holds
-// the lease: a device connected to instance B appears in A's admin snapshot as
+// TestMultiInstanceDeviceSnapshotShowsRemoteAddrFromLease verifies the device
+// snapshot reports the remote address of the instance that actually holds
+// the lease: a device connected to instance B appears in A's device snapshot as
 // online with B's connection address, not an empty local-hub address.
-func TestMultiInstanceAdminSnapshotShowsRemoteAddrFromLease(t *testing.T) {
+func TestMultiInstanceDeviceSnapshotShowsRemoteAddrFromLease(t *testing.T) {
 	mysqlDSN := requireMySQLDSN(t)
 	redisURL := requireRedisURL(t)
 	ctx := context.Background()
@@ -321,8 +317,8 @@ func TestMultiInstanceAdminSnapshotShowsRemoteAddrFromLease(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	// A's admin snapshot must show the device online with B's connection address.
-	items, presenceAvailable, err := serverA.adminDeviceSnapshot()
+	// A's device snapshot must show the device online with B's connection address.
+	items, presenceAvailable, err := serverA.ListDevices(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +326,7 @@ func TestMultiInstanceAdminSnapshotShowsRemoteAddrFromLease(t *testing.T) {
 		t.Fatal("cross-instance snapshot should have presence available")
 	}
 	if len(items) != 1 || !items[0].Online || items[0].RemoteAddr == "" {
-		t.Fatalf("A's admin snapshot should show device-x online with B's remote address: %+v", items)
+		t.Fatalf("A's device snapshot should show device-x online with B's remote address: %+v", items)
 	}
 	presence, present, _ := serverB.cache.GetPresence(ctx, "device-x")
 	if !present || items[0].RemoteAddr != presence.RemoteAddr {

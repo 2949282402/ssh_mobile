@@ -38,11 +38,25 @@ func refreshProofTimestampIsFresh(timestamp int64, now time.Time) bool {
 	return timestamp >= nowSeconds-windowSeconds && timestamp <= nowSeconds+windowSeconds
 }
 
-func refreshProofPayload(timestamp int64, nonce string) string {
-	return "POST\n/v1/devices/refresh\n" + strconv.FormatInt(timestamp, 10) + "\n" + nonce
+// refreshProofPayloadForPath 构造指定路径的 refresh transcript。
+func refreshProofPayloadForPath(path string, timestamp int64, nonce string) string {
+	return "POST\n" + path + "\n" + strconv.FormatInt(timestamp, 10) + "\n" + nonce
 }
 
+// expectedRefreshTranscriptPath binds a refresh route to one exact transcript
+// path so a request signed for the other route cannot authenticate.
+type expectedRefreshTranscriptPath string
+
+// refresh 是 V2 设备凭据刷新处理函数（转录绑定到 /v2/devices/refresh）。
 func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
+	s.refreshWithExpectedTranscriptPath(w, r, expectedRefreshTranscriptPath(PathRefreshV2))
+}
+
+func (s *Server) refreshV2(w http.ResponseWriter, r *http.Request) {
+	s.refreshWithExpectedTranscriptPath(w, r, expectedRefreshTranscriptPath(PathRefreshV2))
+}
+
+func (s *Server) refreshWithExpectedTranscriptPath(w http.ResponseWriter, r *http.Request, expectedPath expectedRefreshTranscriptPath) {
 	defer r.Body.Close()
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	var request refreshRequest
@@ -94,8 +108,8 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
 		writeNetworkError(w, http.StatusInternalServerError, relayErrorRelayError, "Relay storage is unavailable.", "refresh_credential", request.DeviceID)
 		return
 	}
-	if device == nil {
-		// relay 重启后 enrollment 丢失：客户端必须重新 enroll，而不是静默循环。
+	if device == nil || device.ProtocolVersion != s.config.ProtocolVersion {
+		// relay 重启后 enrollment 丢失或协议版本不匹配：客户端必须重新 enroll，而不是静默循环。
 		writeNetworkError(w, http.StatusNotFound, relayErrorInvalidArgument, "Relay device is not enrolled; re-enroll with an enrollment token.", "refresh_credential", request.DeviceID)
 		return
 	}
@@ -120,7 +134,7 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
 		writeNetworkError(w, http.StatusUnauthorized, relayErrorAuthenticationFailed, "Relay device authentication failed.", "refresh_credential", request.DeviceID)
 		return
 	}
-	proofPayload := refreshProofPayload(request.Timestamp, request.Nonce)
+	proofPayload := refreshProofPayloadForPath(string(expectedPath), request.Timestamp, request.Nonce)
 	if err := verifyDeviceProof(storedKey, proofPayload, request.Signature); err != nil {
 		writeNetworkError(w, http.StatusUnauthorized, relayErrorAuthenticationFailed, "Relay device authentication failed.", "refresh_credential", request.DeviceID)
 		return

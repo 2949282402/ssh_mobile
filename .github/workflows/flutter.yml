@@ -64,7 +64,7 @@ jobs:
       - name: Install front dependencies
         working-directory: front
         run: npm ci
-      - name: Check Front ↔ Relay administrator API contract
+      - name: Check Front ↔ Admin API contract
         run: bash scripts/bash/contracts/admin_api_contract.sh
 
   native-network-quality:
@@ -185,7 +185,7 @@ jobs:
       RELAY_TEST_MYSQL_DSN: "relay:relay@tcp(127.0.0.1:3306)/relay?parseTime=true&loc=UTC"
       RELAY_TEST_REDIS_URL: "redis://127.0.0.1:6379/0"
     services:
-      # Mirrors relay/compose.yaml storage profile (mysql:8.4, redis:7-alpine).
+      # Mirrors compose.yaml storage profile (mysql:8.4, redis:7-alpine).
       mysql:
         image: mysql:8.4
         env:

@@ -133,10 +133,10 @@ func TestMySQLStoreRestartSurvival(t *testing.T) {
 		DeviceID:        "device-a",
 		PublicKey:       base64.RawURLEncoding.EncodeToString(publicKey),
 		EnrollmentToken: "test-token",
-		ProtocolVersion: 1,
+		ProtocolVersion: RelayBootstrapProtocolVersion,
 		Platform:        "test",
 	})
-	req := httptest.NewRequest(http.MethodPost, "/v1/devices/enroll", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, PathEnrollV2, bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -156,9 +156,9 @@ func TestMySQLStoreRestartSurvival(t *testing.T) {
 		t.Fatal(err)
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
-	authReq := httptest.NewRequest("GET", "/v2/control", nil)
+	authReq := httptest.NewRequest(http.MethodGet, PathControlV2, nil)
 	authReq.Header.Set("Authorization", "Bearer "+credential)
-	setCurrentSignedDeviceProof(authReq.Header, http.MethodGet, "/v2/control", privateKey, nonce)
+	setCurrentSignedDeviceProof(authReq.Header, http.MethodGet, PathControlV2, privateKey, nonce)
 	if _, _, _, ok := restarted.authenticatedRequest(authReq); !ok {
 		t.Fatal("credential was rejected after restart")
 	}
@@ -176,7 +176,7 @@ func TestMySQLStoreRevocationSurvivesRestart(t *testing.T) {
 		t.Fatalf("open server: %v", err)
 	}
 	resetMySQLTestDB(t, dsn)
-	if result := server.replaceEnrollment("device-a", "key-a", "test", 1, time.Now()); result != enrollmentOK {
+	if result := server.replaceEnrollment("device-a", "key-a", "test", RelayBootstrapProtocolVersion, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
 	if recorded, err := server.store.RecordRevocation(ctx, "device-a", time.Now().Add(time.Hour)); err != nil || !recorded {
@@ -207,7 +207,7 @@ func TestMySQLStoreSeedMigration(t *testing.T) {
 	}
 	resetMySQLTestDB(t, dsn)
 	enrollments := []EnrolledDevice{
-		{DeviceID: "device-a", PublicKey: "key-a", Platform: "test", ProtocolVersion: 1, EnrolledAt: time.Now()},
+		{DeviceID: "device-a", PublicKey: "key-a", Platform: "test", ProtocolVersion: RelayBootstrapProtocolVersion, EnrolledAt: time.Now()},
 	}
 	if err := server.SeedEnrollments(ctx, enrollments); err != nil {
 		t.Fatalf("seed failed: %v", err)

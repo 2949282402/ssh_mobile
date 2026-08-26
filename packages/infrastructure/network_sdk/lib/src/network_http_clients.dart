@@ -5,8 +5,9 @@ import 'dart:typed_data';
 import 'network_clients.dart';
 import 'network_models.dart';
 import 'network_requests.dart';
+import 'network_routes.dart';
 
-/// 使用注入式请求执行器访问当前 v1 Bootstrap HTTP API。
+/// 使用注入式请求执行器访问当前 v2 Bootstrap HTTP API。
 ///
 /// 该类不创建或关闭 HTTP client；请求执行器由 App Shell 拥有。Relay 数据面
 /// 仍由 Rust/native runtime 负责，Bootstrap 只处理探测和 enrollment。
@@ -14,7 +15,7 @@ final class JsonBootstrapClient implements BootstrapClient {
   JsonBootstrapClient({
     required this.executor,
     this.requestTimeout = const Duration(seconds: 10),
-    this.protocolVersion = 1,
+    this.protocolVersion = 2,
   });
 
   final SdkRequestExecutor executor;
@@ -25,7 +26,10 @@ final class JsonBootstrapClient implements BootstrapClient {
   Future<SdkResult<BootstrapMetadata>> probe(Uri endpoint) async {
     try {
       final response = await _send(
-        SdkRequest(method: 'GET', uri: _resolve(endpoint, '/healthz')),
+        SdkRequest(
+          method: 'GET',
+          uri: _resolve(endpoint, RelayBootstrapRoutes.healthz),
+        ),
       );
       if (!response.isSuccessful && response.statusCode != 204) {
         return SdkFailure(
@@ -104,7 +108,7 @@ final class JsonBootstrapClient implements BootstrapClient {
       final response = await _send(
         SdkRequest(
           method: 'POST',
-          uri: _resolve(endpoint, '/v1/devices/enroll'),
+          uri: _resolve(endpoint, RelayBootstrapRoutes.enrollV2),
           headers: const <String, String>{
             'content-type': 'application/json',
             'accept': 'application/json',
@@ -203,7 +207,7 @@ final class JsonBootstrapClient implements BootstrapClient {
       final response = await _send(
         SdkRequest(
           method: 'POST',
-          uri: _resolve(endpoint, '/v1/devices/refresh'),
+          uri: _resolve(endpoint, RelayBootstrapRoutes.refreshV2),
           headers: const <String, String>{
             'content-type': 'application/json',
             'accept': 'application/json',

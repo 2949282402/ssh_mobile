@@ -44,7 +44,7 @@ void main() {
         'credential': 'credential',
         'expires_at': 200,
         'server_time': 100,
-        'protocol_version': 1,
+        'protocol_version': 2,
       }),
     ]);
     final client = JsonBootstrapClient(executor: executor);
@@ -63,10 +63,12 @@ void main() {
     expect(probe, isA<SdkSuccess<BootstrapMetadata>>());
     expect(enrollment, isA<SdkSuccess<DeviceEnrollment>>());
     final request = executor.requests[1];
+    expect(request.method, 'POST');
+    expect(request.uri.path, '/v2/devices/enroll');
     expect(request.headers.containsKey('authorization'), isFalse);
     final body = jsonDecode(utf8.decode(request.body!)) as Map<String, dynamic>;
     expect(body['device_id'], 'device-1');
-    expect(body['protocol_version'], 1);
+    expect(body['protocol_version'], 2);
     expect(body['platform'], 'windows');
   });
 
@@ -378,7 +380,7 @@ void main() {
         'credential': 'refreshed-credential',
         'expires_at': 200,
         'server_time': 100,
-        'protocol_version': 1,
+        'protocol_version': 2,
       }),
     ]);
     final client = JsonBootstrapClient(executor: executor);
@@ -402,7 +404,7 @@ void main() {
     );
     final request = executor.requests.single;
     expect(request.method, 'POST');
-    expect(request.uri.path, '/v1/devices/refresh');
+    expect(request.uri.path, '/v2/devices/refresh');
     expect(request.headers.containsKey('authorization'), isFalse);
     final body = jsonDecode(utf8.decode(request.body!)) as Map<String, dynamic>;
     expect(body['device_id'], 'device-1');
@@ -831,7 +833,7 @@ final class _FakeAuthSession implements AuthSessionProvider {
 final class _FakeBootstrapClient implements BootstrapClient {
   @override
   Future<SdkResult<BootstrapMetadata>> probe(Uri endpoint) async =>
-      const SdkSuccess(BootstrapMetadata(protocolVersion: 1));
+      const SdkSuccess(BootstrapMetadata(protocolVersion: 2));
 
   @override
   Future<SdkResult<DeviceEnrollment>> enroll(
@@ -843,7 +845,7 @@ final class _FakeBootstrapClient implements BootstrapClient {
       relayCredential: 'fake',
       expiresAt: DateTime.utc(2030),
       serverTime: DateTime.utc(2029),
-      protocolVersion: 1,
+      protocolVersion: 2,
     ),
   );
 
@@ -857,7 +859,7 @@ final class _FakeBootstrapClient implements BootstrapClient {
       relayCredential: 'fake',
       expiresAt: DateTime.utc(2030),
       serverTime: DateTime.utc(2029),
-      protocolVersion: 1,
+      protocolVersion: 2,
     ),
   );
 }

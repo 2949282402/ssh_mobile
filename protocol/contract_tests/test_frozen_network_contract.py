@@ -587,6 +587,64 @@ class FrozenNetworkContractTest(unittest.TestCase):
         self.assertNotIn("target_device_id", offer.group(1))
         self.assertNotIn("sender_device_id", signal.group(1))
 
+    def test_relay_bootstrap_v1_retirement_guards(self) -> None:
+        """Ensure active code, test, and scripts contain no Relay Bootstrap V1 routes or transcripts."""
+        ignored_parts = {"build", ".dart_tool", "target", ".git", "node_modules", ".cache"}
+        ignored_files = {"relay_v2_contract.sh", "test_frozen_network_contract.py"}
+        scoped_dirs = [
+            ROOT / "relay",
+            ROOT / "packages/infrastructure/network_sdk",
+            ROOT / "packages/features/feature_lan_share",
+            ROOT / "native/network_core",
+            ROOT / "apps",
+            ROOT / "scripts",
+        ]
+        route_pattern = re.compile(r"/v1/devices/(?:enroll|refresh)")
+        for directory in scoped_dirs:
+            if not directory.exists():
+                continue
+            for path in directory.rglob("*"):
+                if not path.is_file() or path.name.startswith(".") or path.name in ignored_files:
+                    continue
+                if any(part in ignored_parts for part in path.parts):
+                    continue
+                try:
+                    content = path.read_text(encoding="utf-8", errors="ignore")
+                except Exception:
+                    continue
+                match = route_pattern.search(content)
+                self.assertIsNone(
+                    match,
+                    f"Forbidden Relay Bootstrap V1 route found in {path.relative_to(ROOT)}: {match.group(0) if match else ''}",
+                )
+
+        transcript_dirs = [
+            ROOT / "relay",
+            ROOT / "packages",
+            ROOT / "native",
+            ROOT / "apps",
+            ROOT / "scripts",
+        ]
+        transcript_pattern = re.compile(r"POST\\n/v1/devices/refresh")
+        for directory in transcript_dirs:
+            if not directory.exists():
+                continue
+            for path in directory.rglob("*"):
+                if not path.is_file() or path.name.startswith(".") or path.name in ignored_files:
+                    continue
+                if any(part in ignored_parts for part in path.parts):
+                    continue
+                try:
+                    content = path.read_text(encoding="utf-8", errors="ignore")
+                except Exception:
+                    continue
+                match = transcript_pattern.search(content)
+                self.assertIsNone(
+                    match,
+                    f"Forbidden Relay Bootstrap V1 transcript found in {path.relative_to(ROOT)}",
+                )
+
+
     def test_runtime_has_no_obvious_second_strong_physical_path_registry(self) -> None:
         """A source-shape guard for duplicate carrier ownership, not a lifecycle proof."""
         if os.environ.get("SSH_MOBILE_ACCEPTANCE_STRICT") != "1":

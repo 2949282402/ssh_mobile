@@ -41,7 +41,7 @@ void main() {
     final bootstrap = JsonBootstrapClient(executor: executor);
     final probe = await bootstrap.probe(endpoint);
     final probeMetadata = _success(probe, 'Relay health probe');
-    expect(probeMetadata.protocolVersion, 1);
+    expect(probeMetadata.protocolVersion, 2);
 
     final algorithm = Ed25519();
     final deviceA = await _newDevice(algorithm, 'e2e-dart-a');
@@ -188,7 +188,7 @@ Future<RefreshRequest> _refreshRequest(
       timestamp ??
       DateTime.now().toUtc().millisecondsSinceEpoch ~/
           Duration.millisecondsPerSecond;
-  final transcript = 'POST\n/v1/devices/refresh\n$proofTimestamp\n$nonce';
+  final transcript = 'POST\n/v2/devices/refresh\n$proofTimestamp\n$nonce';
   final signature = await algorithm.sign(
     utf8.encode(transcript),
     keyPair: device.keyPair,
@@ -222,6 +222,6 @@ NetworkError _failure<T>(SdkResult<T> result, String operation) {
 void _assertEnrollment(DeviceEnrollment enrollment, String deviceId) {
   expect(enrollment.deviceId, deviceId);
   expect(enrollment.relayCredential, isNotEmpty);
-  expect(enrollment.protocolVersion, 1);
+  expect(enrollment.protocolVersion, 2);
   expect(enrollment.expiresAt.isAfter(enrollment.serverTime), isTrue);
 }

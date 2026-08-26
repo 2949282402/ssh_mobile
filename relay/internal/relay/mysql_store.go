@@ -35,7 +35,7 @@ var mysqlSchemaStatements = []string{
   device_id        VARCHAR(128) NOT NULL PRIMARY KEY,
   public_key       VARCHAR(128) NOT NULL,
   platform         VARCHAR(64)  NOT NULL DEFAULT '',
-  protocol_version INT          NOT NULL DEFAULT 1,
+  protocol_version INT          NOT NULL DEFAULT 2,
   enrolled_at      DATETIME(6)  NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 	`CREATE TABLE IF NOT EXISTS revocations (
@@ -154,6 +154,11 @@ func openMySQLStore(ctx context.Context, dsn string, maxEnrolled int) (*mysqlSto
 			_ = db.Close()
 			return nil, err
 		}
+	}
+	// 确保既有表的 column default 为 2（幂等执行）。
+	if _, err := db.ExecContext(ctx, "ALTER TABLE devices ALTER COLUMN protocol_version SET DEFAULT 2"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to alter devices protocol_version default: %w", err)
 	}
 	// 启动时初始化容量计数器：serving 前该行必存在，使 RemoveEnrollment 的递减与
 	// putEnrollment 的 FOR UPDATE 都作用于 record lock（而非缺失行 gap lock），且
@@ -292,13 +297,20 @@ func (m *mysqlStore) putEnrollment(ctx context.Context, device *EnrolledDevice) 
 	// inserted row.
 	var storedKey string
 	var storedEnrolledAt time.Time
+	var storedProtocolVersion uint32
 	err = tx.QueryRowContext(ctx,
-		`SELECT public_key, enrolled_at FROM devices WHERE device_id = ? FOR UPDATE`, device.DeviceID,
-	).Scan(&storedKey, &storedEnrolledAt)
+		`SELECT public_key, enrolled_at, protocol_version FROM devices WHERE device_id = ? FOR UPDATE`, device.DeviceID,
+	).Scan(&storedKey, &storedEnrolledAt, &storedProtocolVersion)
 	isNewDevice := false
 	switch {
 	case err == nil:
 		if storedKey != device.PublicKey {
+			return enrollmentIdentityConflict, nil
+		}
+		// Protocol downgrade protection: a device that already enrolled at a
+		// higher protocol version must not silently re-enroll at a lower one.
+		// Re-enrollment upgrades are allowed; downgrades are rejected.
+		if device.ProtocolVersion < storedProtocolVersion {
 			return enrollmentIdentityConflict, nil
 		}
 		device.EnrolledAt = nextEnrollmentTime(device.EnrolledAt, &EnrolledDevice{EnrolledAt: storedEnrolledAt})
@@ -466,7 +478,7 @@ func (m *mysqlStore) RemoveEnrollment(ctx context.Context, deviceID string) erro
 
 // RevokeEnrollment 以单事务原子地完成吊销：先对 devices 行 FOR UPDATE（与
 // putEnrollment 的首锁一致，跨实例与并发 re-enroll 严格串行），再写 tombstone、删
-// enrollment、递减容量计数器。这消除旧复合流程（adminRevokeDevice 的 RecordRevocation
+// enrollment、递减容量计数器。这消除旧复合流程（RecordRevocation
 // + RemoveEnrollment 两个独立事务，仅靠进程内分片锁串行）在多实例下的撕裂窗口：实例 A
 // 写墓碑后、删设备前，实例 B 的 re-enroll 曾可覆盖新行并清墓碑，随后 A 误删新 enrollment
 // → "设备没了 + 墓碑也没了"。锁序 device → counter 与 putEnrollment/RemoveEnrollment

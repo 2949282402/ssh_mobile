@@ -1,0 +1,38 @@
+{
+  http_port {$CADDY_HTTP_PORT}
+  https_port {$CADDY_HTTPS_PORT}
+}
+
+{$RELAY_PUBLIC_DOMAIN} {
+  encode zstd gzip
+
+  header {
+    -Server
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "DENY"
+    Referrer-Policy "no-referrer"
+    Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+  }
+
+  route {
+    # Block retired v1 and private internal routes explicitly from public access
+    @blocked path /v1 /v1/* /internal /internal/*
+    respond @blocked 404
+
+    # Public Admin API -> admin-api service
+    @admin_api path /api/admin/v1 /api/admin/v1/*
+    reverse_proxy @admin_api admin-api:{$ADMIN_INTERNAL_PORT}
+
+    # Relay Health Probe -> relay service (strictly Relay health, not Frontend SPA)
+    @relay_health path /healthz
+    reverse_proxy @relay_health relay:{$RELAY_INTERNAL_PORT}
+
+    # Relay V2 Bootstrap, Control, and Data plane -> relay service
+    @relay_api path /v2 /v2/*
+    reverse_proxy @relay_api relay:{$RELAY_INTERNAL_PORT}
+
+    # Front SPA catch-all
+    reverse_proxy front:{$FRONT_INTERNAL_PORT}
+  }
+}

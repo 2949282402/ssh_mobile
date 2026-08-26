@@ -5,6 +5,7 @@ package relay
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -17,27 +18,23 @@ import (
 )
 
 const (
-	defaultAddress                           = ":8080"
-	defaultCredentialTTL                     = 24 * time.Hour
-	defaultAdminSessionTTL                   = 24 * time.Hour
-	defaultMaxConnections                    = 2048
-	defaultMaxTransferSessions               = 4096
-	defaultMaxEnrolledDevices                = 4096
-	defaultMaxRevokedDevices                 = 4096
-	defaultMaxPendingFramesPerDevice         = 64
-	defaultMaxPendingBytesPerDevice    int64 = 16 * 1024 * 1024
-	defaultMaxFramesPerSecondPerDevice       = 256
-	defaultMaxBytesPerSecondPerDevice  int64 = 64 * 1024 * 1024
-	defaultMaxAdminSessions                  = 32
-	defaultAdminLoginMaxAttempts             = 5
-	defaultAdminLoginWindow                  = time.Minute
-	defaultAdminLoginBlockDuration           = 5 * time.Minute
-	defaultMaxAdminLoginEntries              = 4096
-	defaultHTTPReadTimeout                   = 15 * time.Second
-	defaultHTTPWriteTimeout                  = 15 * time.Second
-	defaultHTTPIdleTimeout                   = 60 * time.Second
-	defaultHTTPMaxHeaderBytes                = 16 * 1024
-	defaultPresenceTTL                       = 60 * time.Second
+	defaultAddress                            = ":8080"
+	defaultCredentialTTL                      = 24 * time.Hour
+	defaultMaxConnections                     = 2048
+	defaultMaxTransferSessions                = 4096
+	defaultMaxEnrolledDevices                 = 4096
+	defaultMaxRevokedDevices                  = 4096
+	defaultMaxPendingFramesPerDevice          = 64
+	defaultMaxPendingBytesPerDevice    int64  = 16 * 1024 * 1024
+	defaultMaxFramesPerSecondPerDevice        = 256
+	defaultMaxBytesPerSecondPerDevice  int64  = 64 * 1024 * 1024
+	defaultHTTPReadTimeout                    = 15 * time.Second
+	defaultHTTPWriteTimeout                   = 15 * time.Second
+	defaultHTTPIdleTimeout                    = 60 * time.Second
+	defaultHTTPMaxHeaderBytes                 = 16 * 1024
+	defaultPresenceTTL                        = 60 * time.Second
+	RelayBootstrapProtocolVersion      uint32 = 2
+	defaultProtocolVersion             uint32 = RelayBootstrapProtocolVersion
 	// 服务端心跳监视器默认值镜像冻结契约常量：HEARTBEAT_INTERVAL_S=20、
 	// SERVER_HEARTBEAT_MISSES_BEFORE_CLOSE=2（配合 PRESENCE_TTL_S=60：60/20）。
 	defaultServerHeartbeatInterval = 20 * time.Second
@@ -45,8 +42,7 @@ const (
 
 	publishedExampleEnrollmentToken = "replace-with-a-one-time-random-enrollment-secret"
 	publishedExampleCredentialKey   = "replace-with-a-32-byte-base64url-random-key"
-	publishedExampleAdminUser       = "replace-with-an-admin-username"
-	publishedExampleAdminPassword   = "replace-with-a-random-password-of-at-least-12-characters"
+	publishedExampleInternalToken   = "replace-with-a-32-byte-random-internal-token"
 )
 
 // relayEventsChannel is the Redis Pub/Sub channel carrying cross-instance
@@ -74,9 +70,10 @@ type Config struct {
 	ServerHeartbeatInterval     time.Duration
 	ServerHeartbeatMisses       int
 	EnrollmentToken             string
+	InternalToken               string
 	CredentialKey               []byte
 	CredentialTTL               time.Duration
-	AdminSessionTTL             time.Duration
+	ProtocolVersion             uint32
 	MaxConnections              int
 	MaxTransferSessions         int
 	MaxEnrolledDevices          int
@@ -85,18 +82,11 @@ type Config struct {
 	MaxPendingBytesPerDevice    int64
 	MaxFramesPerSecondPerDevice int
 	MaxBytesPerSecondPerDevice  int64
-	MaxAdminSessions            int
-	AdminLoginMaxAttempts       int
-	AdminLoginWindow            time.Duration
-	AdminLoginBlockDuration     time.Duration
-	MaxAdminLoginEntries        int
 	HTTPReadTimeout             time.Duration
 	HTTPWriteTimeout            time.Duration
 	HTTPIdleTimeout             time.Duration
 	HTTPMaxHeaderBytes          int
 	TrustedProxyCIDRs           []netip.Prefix
-	AdminUser                   string
-	AdminPassword               string
 }
 
 // ConfigFromEnvironment 从环境变量加载并校验生产 Relay 配置。
@@ -150,13 +140,9 @@ func ConfigFromEnvironment() (Config, error) {
 		return Config{}, errors.New("RELAY_REDIS_PASSWORD must be set and contain at least 16 characters when RELAY_STORAGE_MODE=mysql")
 	}
 
-	adminUser := os.Getenv("RELAY_ADMIN_USER")
-	if adminUser == "" || adminUser == publishedExampleAdminUser {
-		return Config{}, errors.New("RELAY_ADMIN_USER must be set")
-	}
-	adminPassword := os.Getenv("RELAY_ADMIN_PASSWORD")
-	if len(adminPassword) < 12 || adminPassword == publishedExampleAdminPassword {
-		return Config{}, errors.New("RELAY_ADMIN_PASSWORD must be set and contain at least 12 characters")
+	internalToken := os.Getenv("RELAY_INTERNAL_TOKEN")
+	if len(internalToken) < 32 || internalToken == publishedExampleInternalToken {
+		return Config{}, errors.New("RELAY_INTERNAL_TOKEN must be set and contain at least 32 characters")
 	}
 
 	var parseErr error
@@ -203,9 +189,9 @@ func ConfigFromEnvironment() (Config, error) {
 		ServerHeartbeatInterval:     readDuration("RELAY_SERVER_HEARTBEAT_INTERVAL", defaultServerHeartbeatInterval),
 		ServerHeartbeatMisses:       readInt("RELAY_SERVER_HEARTBEAT_MISSES", defaultServerHeartbeatMisses),
 		EnrollmentToken:             enrollment,
+		InternalToken:               internalToken,
 		CredentialKey:               decoded,
 		CredentialTTL:               readDuration("RELAY_CREDENTIAL_TTL", defaultCredentialTTL),
-		AdminSessionTTL:             readDuration("RELAY_ADMIN_SESSION_TTL", defaultAdminSessionTTL),
 		MaxConnections:              readInt("RELAY_MAX_CONNECTIONS", defaultMaxConnections),
 		MaxTransferSessions:         readInt("RELAY_MAX_TRANSFER_SESSIONS", defaultMaxTransferSessions),
 		MaxEnrolledDevices:          readInt("RELAY_MAX_ENROLLED_DEVICES", defaultMaxEnrolledDevices),
@@ -214,18 +200,11 @@ func ConfigFromEnvironment() (Config, error) {
 		MaxPendingBytesPerDevice:    readInt64("RELAY_MAX_PENDING_BYTES_PER_DEVICE", defaultMaxPendingBytesPerDevice),
 		MaxFramesPerSecondPerDevice: readInt("RELAY_MAX_FRAMES_PER_SECOND_PER_DEVICE", defaultMaxFramesPerSecondPerDevice),
 		MaxBytesPerSecondPerDevice:  readInt64("RELAY_MAX_BYTES_PER_SECOND_PER_DEVICE", defaultMaxBytesPerSecondPerDevice),
-		MaxAdminSessions:            readInt("RELAY_MAX_ADMIN_SESSIONS", defaultMaxAdminSessions),
-		AdminLoginMaxAttempts:       readInt("RELAY_ADMIN_LOGIN_MAX_ATTEMPTS", defaultAdminLoginMaxAttempts),
-		AdminLoginWindow:            readDuration("RELAY_ADMIN_LOGIN_WINDOW", defaultAdminLoginWindow),
-		AdminLoginBlockDuration:     readDuration("RELAY_ADMIN_LOGIN_BLOCK", defaultAdminLoginBlockDuration),
-		MaxAdminLoginEntries:        readInt("RELAY_MAX_ADMIN_LOGIN_ENTRIES", defaultMaxAdminLoginEntries),
 		HTTPReadTimeout:             readDuration("RELAY_HTTP_READ_TIMEOUT", defaultHTTPReadTimeout),
 		HTTPWriteTimeout:            readDuration("RELAY_HTTP_WRITE_TIMEOUT", defaultHTTPWriteTimeout),
 		HTTPIdleTimeout:             readDuration("RELAY_HTTP_IDLE_TIMEOUT", defaultHTTPIdleTimeout),
 		HTTPMaxHeaderBytes:          readInt("RELAY_HTTP_MAX_HEADER_BYTES", defaultHTTPMaxHeaderBytes),
 		TrustedProxyCIDRs:           cidrListEnv("RELAY_TRUSTED_PROXY_CIDRS"),
-		AdminUser:                   adminUser,
-		AdminPassword:               adminPassword,
 	}
 	if parseErr != nil {
 		return Config{}, parseErr
@@ -267,11 +246,14 @@ func withConfigDefaults(config Config) Config {
 	if config.Address == "" {
 		config.Address = defaultAddress
 	}
+	if config.ProtocolVersion == 0 {
+		config.ProtocolVersion = defaultProtocolVersion
+	}
+	if config.InternalToken == "" {
+		config.InternalToken = hex.EncodeToString(randomBytes(16))
+	}
 	if config.CredentialTTL <= 0 {
 		config.CredentialTTL = defaultCredentialTTL
-	}
-	if config.AdminSessionTTL <= 0 {
-		config.AdminSessionTTL = defaultAdminSessionTTL
 	}
 	if config.MaxConnections <= 0 {
 		config.MaxConnections = defaultMaxConnections
@@ -297,21 +279,6 @@ func withConfigDefaults(config Config) Config {
 	if config.MaxBytesPerSecondPerDevice <= 0 {
 		config.MaxBytesPerSecondPerDevice = defaultMaxBytesPerSecondPerDevice
 	}
-	if config.MaxAdminSessions <= 0 {
-		config.MaxAdminSessions = defaultMaxAdminSessions
-	}
-	if config.AdminLoginMaxAttempts <= 0 {
-		config.AdminLoginMaxAttempts = defaultAdminLoginMaxAttempts
-	}
-	if config.AdminLoginWindow <= 0 {
-		config.AdminLoginWindow = defaultAdminLoginWindow
-	}
-	if config.AdminLoginBlockDuration <= 0 {
-		config.AdminLoginBlockDuration = defaultAdminLoginBlockDuration
-	}
-	if config.MaxAdminLoginEntries <= 0 {
-		config.MaxAdminLoginEntries = defaultMaxAdminLoginEntries
-	}
 	if config.PresenceTTL <= 0 {
 		config.PresenceTTL = defaultPresenceTTL
 	}
@@ -334,6 +301,82 @@ func withConfigDefaults(config Config) Config {
 		config.HTTPMaxHeaderBytes = defaultHTTPMaxHeaderBytes
 	}
 	return config
+}
+
+func durationEnv(name string, fallback time.Duration) (time.Duration, error) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback, nil
+	}
+	val, err := time.ParseDuration(raw)
+	if err != nil || val <= 0 {
+		return 0, fmt.Errorf("%s must be a positive duration", name)
+	}
+	return val, nil
+}
+
+func intEnv(name string, fallback int) (int, error) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback, nil
+	}
+	val, err := strconv.Atoi(raw)
+	if err != nil || val <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", name)
+	}
+	return val, nil
+}
+
+func int64Env(name string, fallback int64) (int64, error) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback, nil
+	}
+	val, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || val <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", name)
+	}
+	return val, nil
+}
+
+// validateRelayPublicURL keeps production endpoint publication on an explicit
+// origin. Plain HTTP/WS is accepted only for loopback integration tests.
+func validateRelayPublicURL(value string) error {
+	raw := strings.TrimSpace(value)
+	if raw == "" {
+		return errors.New("RELAY_PUBLIC_URL must be set to the externally reachable Relay origin")
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "wss://" + raw
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" || parsed.Hostname() == "" {
+		return errors.New("RELAY_PUBLIC_URL must be a valid origin")
+	}
+	if parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return errors.New("RELAY_PUBLIC_URL must not contain credentials, a path, query, or fragment")
+	}
+	switch parsed.Scheme {
+	case "https", "wss":
+		if relayPublicHostIsLoopback(parsed.Hostname()) {
+			return errors.New("RELAY_PUBLIC_URL must not publish a loopback HTTPS/WSS origin")
+		}
+	case "http", "ws":
+		if !relayPublicHostIsLoopback(parsed.Hostname()) {
+			return errors.New("RELAY_PUBLIC_URL permits HTTP/WS only for loopback integration tests")
+		}
+	default:
+		return errors.New("RELAY_PUBLIC_URL scheme must be https or wss")
+	}
+	return nil
+}
+
+func relayPublicHostIsLoopback(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	address := net.ParseIP(host)
+	return address != nil && address.IsLoopback()
 }
 
 // relayDataEndpointOrigin 返回构造自包含 relay_data_endpoint 的公共源（wss://host[:port]）。
@@ -377,91 +420,8 @@ func relayDataEndpointOrigin(config Config) string {
 	return "wss://" + net.JoinHostPort(host, port)
 }
 
-// validateRelayPublicURL keeps production endpoint publication on an explicit
-// origin. Plain HTTP/WS is accepted only for loopback integration tests.
-func validateRelayPublicURL(value string) error {
-	raw := strings.TrimSpace(value)
-	if raw == "" {
-		return errors.New("RELAY_PUBLIC_URL must be set to the externally reachable Relay origin")
-	}
-	if !strings.Contains(raw, "://") {
-		raw = "wss://" + raw
-	}
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Host == "" || parsed.Hostname() == "" {
-		return errors.New("RELAY_PUBLIC_URL must be a valid origin")
-	}
-	if parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return errors.New("RELAY_PUBLIC_URL must not contain credentials, a path, query, or fragment")
-	}
-	switch parsed.Scheme {
-	case "https", "wss":
-		if relayPublicHostIsLoopback(parsed.Hostname()) {
-			return errors.New("RELAY_PUBLIC_URL must not publish a loopback HTTPS/WSS origin")
-		}
-	case "http", "ws":
-		if !relayPublicHostIsLoopback(parsed.Hostname()) {
-			return errors.New("RELAY_PUBLIC_URL permits HTTP/WS only for loopback integration tests")
-		}
-	default:
-		return errors.New("RELAY_PUBLIC_URL scheme must be https or wss")
-	}
-	return nil
-}
-
-func relayPublicHostIsLoopback(host string) bool {
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	address := net.ParseIP(host)
-	return address != nil && address.IsLoopback()
-}
-
-// durationEnv reads a positive duration. Unset values use the documented
-// default; explicitly empty, malformed, zero, or negative values fail closed.
-func durationEnv(name string, fallback time.Duration) (time.Duration, error) {
-	raw, present := os.LookupEnv(name)
-	if !present {
-		return fallback, nil
-	}
-	value, err := time.ParseDuration(raw)
-	if err != nil || value <= 0 {
-		return 0, fmt.Errorf("%s must be a positive duration", name)
-	}
-	return value, nil
-}
-
-// intEnv reads a positive integer resource limit with fail-closed explicit
-// configuration semantics.
-func intEnv(name string, fallback int) (int, error) {
-	raw, present := os.LookupEnv(name)
-	if !present {
-		return fallback, nil
-	}
-	value, err := strconv.Atoi(raw)
-	if err != nil || value <= 0 {
-		return 0, fmt.Errorf("%s must be a positive integer", name)
-	}
-	return value, nil
-}
-
-// int64Env reads a positive int64 resource limit with fail-closed explicit
-// configuration semantics.
-func int64Env(name string, fallback int64) (int64, error) {
-	raw, present := os.LookupEnv(name)
-	if !present {
-		return fallback, nil
-	}
-	value, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || value <= 0 {
-		return 0, fmt.Errorf("%s must be a positive integer", name)
-	}
-	return value, nil
-}
-
-// randomBytes 生成指定长度的密码学随机字节。
-func randomBytes(size int) []byte {
-	b := make([]byte, size)
+func randomBytes(n int) []byte {
+	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
 		panic(err)
 	}

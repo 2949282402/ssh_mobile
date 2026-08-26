@@ -99,7 +99,15 @@ func writeNetworkErrorRetry(w http.ResponseWriter, status int, code relayErrorCo
 	})
 }
 
+// expectedProtocolVersion binds an enroll route to one exact device protocol version.
+type expectedProtocolVersion uint32
+
+// enroll handles POST /v2/devices/enroll endpoint.
 func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
+	s.enrollWithExpectedProtocolVersion(w, r, expectedProtocolVersion(s.config.ProtocolVersion))
+}
+
+func (s *Server) enrollWithExpectedProtocolVersion(w http.ResponseWriter, r *http.Request, expected expectedProtocolVersion) {
 	defer r.Body.Close()
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	var request enrollRequest
@@ -115,7 +123,7 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		writeNetworkError(w, http.StatusBadRequest, relayErrorInvalidArgument, "Device identity is invalid.", "enroll_relay", request.DeviceID)
 		return
 	}
-	if request.ProtocolVersion != 1 {
+	if request.ProtocolVersion != uint32(expected) {
 		writeNetworkError(w, http.StatusBadRequest, relayErrorProtocolError, "Relay protocol version is unsupported.", "enroll_relay", request.DeviceID)
 		return
 	}
@@ -132,8 +140,8 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	result, generation := s.replaceEnrollmentContext(r.Context(), request.DeviceID, request.PublicKey, request.Platform, request.ProtocolVersion, now)
 	switch result {
 	case enrollmentIdentityConflict:
-		// 与 admin 面既有的 conflict 分类（adminErrorConflict）语义一致：在既有
-		// enrollment 之下更换了身份材料，必须显式解决而非静默覆盖。
+		// 与管理面既有的 conflict 分类语义一致：在既有 enrollment 之下更换了
+		// 身份材料，必须显式解决而非静默覆盖。
 		writeNetworkError(w, http.StatusConflict, relayErrorIdentityConflict, "Relay device identity conflicts with an existing enrollment.", "enroll_relay", request.DeviceID)
 		return
 	case enrollmentResourceLimit:
@@ -274,9 +282,10 @@ func (s *Server) authenticatedRequest(r *http.Request) (credentialClaims, []byte
 	device, getErr := s.store.GetEnrollment(ctx, claims.DeviceID)
 	keyMatches := device != nil && device.PublicKey == base64.RawURLEncoding.EncodeToString(publicKey)
 	generationMatches := device != nil && claims.EnrollmentGeneration == device.EnrolledAt.UnixMicro()
+	protocolMatches := device != nil && device.ProtocolVersion == s.config.ProtocolVersion
 	replayed := false
 	var nonceErr error
-	if storeErr == nil && getErr == nil && !revoked && keyMatches && generationMatches {
+	if storeErr == nil && getErr == nil && !revoked && keyMatches && generationMatches && protocolMatches {
 		nonceExpiresAt := time.Unix(timestamp, 0).Add(refreshProofFreshness).Add(refreshNonceSlack)
 		replayed, nonceErr = s.cache.ConsumeNonce(ctx, claims.DeviceID, nonce, nonceExpiresAt)
 	}
@@ -288,7 +297,7 @@ func (s *Server) authenticatedRequest(r *http.Request) (credentialClaims, []byte
 		s.logger.Warn("replay-protection cache unavailable during authentication; rejecting",
 			"device_id", claims.DeviceID, "error", nonceErr)
 	}
-	if storeErr != nil || getErr != nil || nonceErr != nil || revoked || !keyMatches || !generationMatches || replayed {
+	if storeErr != nil || getErr != nil || nonceErr != nil || revoked || !keyMatches || !generationMatches || !protocolMatches || replayed {
 		// 内存实现不返回错误；存储故障时在此 fail closed，与吊销/不匹配同等拒绝。
 		return credentialClaims{}, nil, relayErrorAuthenticationFailed, false
 	}
@@ -324,7 +333,7 @@ func (admission *authenticatedDeviceAdmission) release() {
 }
 
 // admitAuthenticatedDevice serializes the interval between successful proof
-// authentication and socket admission with admin revocation/re-enrollment.
+// authentication and socket admission with revocation/re-enrollment.
 // authenticatedRequest intentionally releases its lock after consuming the
 // nonce; callers must retain this admission object until a staged endpoint has
 // passed its second durable check and becomes reachable. The shared context is
@@ -357,7 +366,8 @@ func (s *Server) enrollmentClaimsCurrent(ctx context.Context, claims credentialC
 	device, enrollmentErr := s.store.GetEnrollment(ctx, claims.DeviceID)
 	keyMatches := device != nil && device.PublicKey == base64.RawURLEncoding.EncodeToString(publicKey)
 	generationMatches := device != nil && claims.EnrollmentGeneration == device.EnrolledAt.UnixMicro()
-	if revokeErr != nil || enrollmentErr != nil || revoked || !keyMatches || !generationMatches {
+	protocolMatches := device != nil && device.ProtocolVersion == s.config.ProtocolVersion
+	if revokeErr != nil || enrollmentErr != nil || revoked || !keyMatches || !generationMatches || !protocolMatches {
 		return relayErrorAuthenticationFailed, false
 	}
 	return relayErrorUnspecified, true

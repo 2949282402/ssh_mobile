@@ -18,7 +18,7 @@ $started=$false
 $rustProcess=$null
 if($storage-notin@('memory','mysql')){[Console]::Error.WriteLine("CLIENT_BACKEND_E2E_STORAGE must be memory or mysql: $storage");exit 64}
 function Compose([string[]]$Args){
-  $a=@('compose','--project-name',$project,'--env-file',$envFile,'--file',(Join-Path $root 'relay\compose.yaml'))
+  $a=@('compose','--project-name',$project,'--env-file',$envFile,'--file',(Join-Path $root 'compose.yaml'))
   if($storage-eq'mysql'){$a+=@('--profile','storage')}
   Invoke-CommandChecked docker ($a+$Args) $root
 }
@@ -42,13 +42,13 @@ function AssertRoutes{
 function StartDeployment{
   & docker info *> $null
   if($LASTEXITCODE-ne0){[Console]::Error.WriteLine('ENVIRONMENT GAP: Docker daemon unavailable');exit 125}
-  $http=Port;$https=Port;$script:token=Hex 24;$key=B64 32;$script:adminUser='e2e-admin';$script:adminPassword=Hex 24
+  $http=Port;$https=Port;$script:token=Hex 24;$key=B64 32;$authKey=B64 32;$internalToken=Hex 24;$script:adminUser='e2e-admin';$script:adminPassword=Hex 24
   $mysqlRoot=Hex 24;$mysqlPassword=Hex 24;$redisPassword=Hex 24;$script:base="http://127.0.0.1:$http"
   $octet=Get-Random -Minimum 18 -Maximum 30;$subnet="172.$octet.0.0/24";$caddy="172.$octet.0.10"
   $ttl=if($env:CLIENT_BACKEND_E2E_CREDENTIAL_TTL){$env:CLIENT_BACKEND_E2E_CREDENTIAL_TTL}elseif($Mode-eq'strict'){'45s'}else{'24h'}
   $db=if($storage-eq'mysql'){"e2e_relay:${mysqlPassword}@tcp(mysql:3306)/relay?parseTime=true&loc=UTC"}else{''}
   $redisUrl=if($storage-eq'mysql'){'redis://redis:6379/0'}else{''}
-  @('RELAY_PUBLIC_DOMAIN=http://127.0.0.1',"RELAY_PUBLIC_URL=$base","RELAY_HTTP_PORT=$http","RELAY_HTTPS_PORT=$https",'RELAY_CADDY_IMAGE=caddy:2.8-alpine','CADDY_HTTP_PORT=80','CADDY_HTTPS_PORT=443','RELAY_INTERNAL_PORT=8080','FRONT_INTERNAL_PORT=80',"RELAY_STORAGE_MODE=$storage","RELAY_DATABASE_URL=$db","RELAY_REDIS_URL=$redisUrl","RELAY_REDIS_PASSWORD=$redisPassword",'RELAY_INSTANCE_ID=client-backend-e2e','RELAY_PRESENCE_TTL=60s',"RELAY_ENROLLMENT_TOKEN=$token","RELAY_CREDENTIAL_KEY=$key","RELAY_CREDENTIAL_TTL=$ttl",'RELAY_ADMIN_SESSION_TTL=24h','RELAY_MAX_CONNECTIONS=2048','RELAY_MAX_ENROLLED_DEVICES=4096','RELAY_MAX_REVOKED_DEVICES=4096','RELAY_MAX_TRANSFER_SESSIONS=4096','RELAY_MAX_PENDING_FRAMES_PER_DEVICE=64','RELAY_MAX_PENDING_BYTES_PER_DEVICE=16777216','RELAY_MAX_FRAMES_PER_SECOND_PER_DEVICE=256','RELAY_MAX_BYTES_PER_SECOND_PER_DEVICE=67108864','RELAY_MAX_ADMIN_SESSIONS=32','RELAY_ADMIN_LOGIN_MAX_ATTEMPTS=5','RELAY_ADMIN_LOGIN_WINDOW=1m','RELAY_ADMIN_LOGIN_BLOCK=5m','RELAY_MAX_ADMIN_LOGIN_ENTRIES=4096','RELAY_HTTP_READ_TIMEOUT=15s','RELAY_HTTP_WRITE_TIMEOUT=15s','RELAY_HTTP_IDLE_TIMEOUT=60s','RELAY_HTTP_MAX_HEADER_BYTES=16384',"RELAY_TRUSTED_PROXY_CIDRS=$caddy/32","RELAY_CADDY_IP=$caddy","RELAY_NETWORK_SUBNET=$subnet","MYSQL_ROOT_PASSWORD=$mysqlRoot",'MYSQL_DATABASE=relay','MYSQL_USER=e2e_relay',"MYSQL_PASSWORD=$mysqlPassword",'RELAY_ADMIN_USER=e2e-admin',"RELAY_ADMIN_PASSWORD=$adminPassword")|Set-Content $envFile -Encoding utf8NoBOM
+  @('RELAY_PUBLIC_DOMAIN=http://127.0.0.1',"RELAY_PUBLIC_URL=$base","RELAY_HTTP_PORT=$http","RELAY_HTTPS_PORT=$https",'RELAY_CADDY_IMAGE=caddy:2.8-alpine','CADDY_HTTP_PORT=80','CADDY_HTTPS_PORT=443','RELAY_INTERNAL_PORT=8080','ADMIN_INTERNAL_PORT=8081','FRONT_INTERNAL_PORT=80',"RELAY_STORAGE_MODE=$storage","RELAY_DATABASE_URL=$db","RELAY_REDIS_URL=$redisUrl","RELAY_REDIS_PASSWORD=$redisPassword",'RELAY_INSTANCE_ID=client-backend-e2e','RELAY_PRESENCE_TTL=60s',"RELAY_ENROLLMENT_TOKEN=$token","RELAY_INTERNAL_TOKEN=$internalToken","RELAY_CREDENTIAL_KEY=$key","RELAY_CREDENTIAL_TTL=$ttl",'ADMIN_USER=e2e-admin',"ADMIN_PASSWORD=$adminPassword","ADMIN_AUTH_KEY=$authKey","ADMIN_RELAY_INTERNAL_TOKEN=$internalToken","ADMIN_TRUSTED_PROXY_CIDRS=$caddy/32",'ADMIN_SESSION_TTL=24h','ADMIN_MAX_SESSIONS=32','ADMIN_LOGIN_MAX_ATTEMPTS=5','ADMIN_LOGIN_WINDOW=1m','ADMIN_LOGIN_BLOCK=5m','ADMIN_MAX_LOGIN_ENTRIES=4096','ADMIN_HTTP_READ_TIMEOUT=15s','ADMIN_HTTP_WRITE_TIMEOUT=15s','ADMIN_HTTP_IDLE_TIMEOUT=60s','ADMIN_HTTP_MAX_HEADER_BYTES=16384','RELAY_MAX_CONNECTIONS=2048','RELAY_MAX_ENROLLED_DEVICES=4096','RELAY_MAX_REVOKED_DEVICES=4096','RELAY_MAX_TRANSFER_SESSIONS=4096','RELAY_MAX_PENDING_FRAMES_PER_DEVICE=64','RELAY_MAX_PENDING_BYTES_PER_DEVICE=16777216','RELAY_MAX_FRAMES_PER_SECOND_PER_DEVICE=256','RELAY_MAX_BYTES_PER_SECOND_PER_DEVICE=67108864','RELAY_HTTP_READ_TIMEOUT=15s','RELAY_HTTP_WRITE_TIMEOUT=15s','RELAY_HTTP_IDLE_TIMEOUT=60s','RELAY_HTTP_MAX_HEADER_BYTES=16384',"RELAY_TRUSTED_PROXY_CIDRS=$caddy/32","RELAY_CADDY_IP=$caddy","RELAY_NETWORK_SUBNET=$subnet","MYSQL_ROOT_PASSWORD=$mysqlRoot",'MYSQL_DATABASE=relay','MYSQL_USER=e2e_relay',"MYSQL_PASSWORD=$mysqlPassword")|Set-Content $envFile -Encoding utf8NoBOM
   $script:started=$true
   Compose @('up','-d','--build')
   WaitHealth
@@ -89,7 +89,20 @@ try{
   AssertRoutes
   RunDart
   if($Mode-eq'strict'-and$adminUser-and$adminPassword){RunRevocation}else{RunRust}
-  if($Mode-eq'strict'-and$started){Compose @('restart','caddy');WaitHealth;AssertRoutes;Compose @('restart','relay');WaitHealth;AssertRoutes}
+  if($Mode-eq'strict'-and$started){
+    Compose @('restart','caddy')
+    WaitHealth
+    AssertRoutes
+    Compose @('stop','relay')
+    $downStatus=CurlStatus ((TlsArgs)+@('-sS','--max-time','3','-o','NUL','-w','%{http_code}',"$base/healthz"))
+    if($downStatus-eq'204'){throw "Deployment regression: public /healthz returned 204 while Relay was stopped"}
+    Compose @('start','relay')
+    WaitHealth
+    AssertRoutes
+    Compose @('restart','relay')
+    WaitHealth
+    AssertRoutes
+  }
   Write-Host $(if($Mode-eq'strict'){'CLIENT_BACKEND_STRICT_PASS'}else{'CLIENT_BACKEND_SMOKE_PASS'})
 }finally{
   if($null-ne$rustProcess-and-not$rustProcess.HasExited){$rustProcess.Kill($true)}

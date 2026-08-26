@@ -1,8 +1,8 @@
-> 最新更新时间：2026-08-23
+> 最新更新时间：2026-08-27
 
 # SSH Mobile 跨平台 P2P 网络平台实施计划
 
-**Status:** Network Protocol V2 ownership closeout complete (2026-08-20); the
+**Status:** Relay / Admin Backend split and Relay Bootstrap V2 complete (2026-08-27). Network Protocol V2 ownership closeout complete (2026-08-20); the
 broader future platform roadmap remains explicitly out of current release scope
 where marked below. WireGuard scope is removed from the current project.
 **Target Repository:** `hejulian2004/ssh_mobile`

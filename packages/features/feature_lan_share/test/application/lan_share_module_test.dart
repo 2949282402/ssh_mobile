@@ -63,7 +63,7 @@ void main() {
 final class _FakeBootstrapClient implements BootstrapClient {
   @override
   Future<SdkResult<BootstrapMetadata>> probe(Uri endpoint) async =>
-      const SdkSuccess(BootstrapMetadata(protocolVersion: 1));
+      const SdkSuccess(BootstrapMetadata(protocolVersion: 2));
 
   @override
   Future<SdkResult<DeviceEnrollment>> enroll(
@@ -75,7 +75,7 @@ final class _FakeBootstrapClient implements BootstrapClient {
       relayCredential: 'fake',
       expiresAt: DateTime.utc(2030),
       serverTime: DateTime.utc(2029),
-      protocolVersion: 1,
+      protocolVersion: 2,
     ),
   );
 
@@ -89,7 +89,7 @@ final class _FakeBootstrapClient implements BootstrapClient {
       relayCredential: 'fake-refreshed',
       expiresAt: DateTime.utc(2030),
       serverTime: DateTime.utc(2029),
-      protocolVersion: 1,
+      protocolVersion: 2,
     ),
   );
 }
