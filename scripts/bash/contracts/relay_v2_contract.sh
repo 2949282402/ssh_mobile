@@ -60,6 +60,26 @@ assert "message RelayDataReady" not in proto, "RelayDataReady protobuf drift"
 print("forbidden Relay V2 additions: absent")
 PY
 
+# --- Scoped Relay Bootstrap V1 retirement guards ---
+if command -v rg >/dev/null 2>&1; then
+  if rg -n --glob '!scripts/bash/contracts/relay_v2_contract.sh' '/v1/devices/(enroll|refresh)' \
+    relay \
+    packages/infrastructure/network_sdk \
+    packages/features/feature_lan_share \
+    native/network_core \
+    apps \
+    scripts; then
+    echo "Found forbidden Relay Bootstrap V1 endpoint references" >&2
+    exit 1
+  fi
+  if rg -n --glob '!scripts/bash/contracts/relay_v2_contract.sh' 'POST\\n/v1/devices/refresh' \
+    relay packages native apps scripts; then
+    echo "Found forbidden Relay Bootstrap V1 refresh transcript references" >&2
+    exit 1
+  fi
+  echo "Relay Bootstrap V1 retirement guards: PASS"
+fi
+
 # --- 2. Descriptor equality against the original frozen proto revision. ---
 descriptor_status="NOT RUN (protoc unavailable)"
 if command -v protoc >/dev/null 2>&1; then

@@ -175,13 +175,13 @@ func dialControlV2NoReady(t *testing.T, baseURL, credential, deviceID string, pr
 	nonce := base64.RawURLEncoding.EncodeToString(randomBytes(32))
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+credential)
-	setCurrentSignedDeviceProof(headers, http.MethodGet, "/v2/control", privateKey, nonce)
+	setCurrentSignedDeviceProof(headers, http.MethodGet, PathControlV2, privateKey, nonce)
 	relayURL, err := url.Parse(baseURL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	relayURL.Scheme = "ws"
-	relayURL.Path = "/v2/control"
+	relayURL.Path = PathControlV2
 	conn, response, err := websocket.DefaultDialer.Dial(relayURL.String(), headers)
 	if err != nil {
 		status := 0
@@ -199,7 +199,7 @@ func dialRelayDataWithIdentity(baseURL, reservationID, tokenHex string, identity
 		return nil, nil, err
 	}
 	relayURL.Scheme = "ws"
-	relayURL.Path = "/v2/relay/" + reservationID
+	relayURL.Path = PathRelayDataV2 + reservationID
 	nonce := base64.RawURLEncoding.EncodeToString(randomBytes(32))
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+identity.credential)
@@ -325,7 +325,7 @@ func createRelayDataTestReservation(t *testing.T, server *Server, httpServer *ht
 		ReservationID:     reservationID,
 		InitiatorDeviceID: initiatorDevice,
 		ResponderDeviceID: responderDevice,
-		RelayDataEndpoint: "wss://" + httpServer.URL + "/v2/relay/" + reservationID,
+		RelayDataEndpoint: "wss://" + httpServer.URL + PathRelayDataV2 + reservationID,
 		InitiatorToken:    randomBytes(v2.RESERVATION_TOKEN_BYTES),
 		ResponderToken:    randomBytes(v2.RESERVATION_TOKEN_BYTES),
 		ExpiresAtMs:       time.Now().Add(time.Minute).UnixMilli(),
@@ -1113,7 +1113,7 @@ func TestControlV2ReservationAndRelayData(t *testing.T) {
 		len(rr.ReservationId) != v2.RESERVATION_ID_HEX_CHARS || len(rr.LocalToken) != v2.RESERVATION_TOKEN_BYTES {
 		t.Fatalf("device-a expected relay_reserve_response, got %+v", resp)
 	}
-	if !strings.Contains(rr.RelayDataEndpoint, "/v2/relay/"+rr.ReservationId) {
+	if !strings.Contains(rr.RelayDataEndpoint, PathRelayDataV2+rr.ReservationId) {
 		t.Fatalf("relay_data_endpoint should reference the reservation: %s", rr.RelayDataEndpoint)
 	}
 	expiresAt := time.UnixMilli(rr.ExpiresAtMs)
@@ -1212,7 +1212,7 @@ func TestRelayDataPairReadyRequiresBothRoles(t *testing.T) {
 		ReservationID:     reservationID,
 		InitiatorDeviceID: "device-a",
 		ResponderDeviceID: "device-b",
-		RelayDataEndpoint: "wss://" + httpServer.URL + "/v2/relay/" + reservationID,
+		RelayDataEndpoint: "wss://" + httpServer.URL + PathRelayDataV2 + reservationID,
 		InitiatorToken:    initiatorToken,
 		ResponderToken:    responderToken,
 		ExpiresAtMs:       time.Now().Add(time.Minute).UnixMilli(),
@@ -1290,7 +1290,7 @@ func TestRelayDataSameRoleRetryReplacesPendingEndpoint(t *testing.T) {
 				ReservationID:     reservationID,
 				InitiatorDeviceID: "device-a",
 				ResponderDeviceID: "device-b",
-				RelayDataEndpoint: "wss://" + httpServer.URL + "/v2/relay/" + reservationID,
+				RelayDataEndpoint: "wss://" + httpServer.URL + PathRelayDataV2 + reservationID,
 				InitiatorToken:    initiatorToken,
 				ResponderToken:    responderToken,
 				ExpiresAtMs:       time.Now().Add(time.Minute).UnixMilli(),
@@ -1366,7 +1366,7 @@ func TestRelayDataSameRoleRetryInvalidatesActivePairAndRequiresFreshCounterpart(
 		ReservationID:     reservationID,
 		InitiatorDeviceID: "device-a",
 		ResponderDeviceID: "device-b",
-		RelayDataEndpoint: "wss://" + httpServer.URL + "/v2/relay/" + reservationID,
+		RelayDataEndpoint: "wss://" + httpServer.URL + PathRelayDataV2 + reservationID,
 		InitiatorToken:    initiatorToken,
 		ResponderToken:    responderToken,
 		ExpiresAtMs:       time.Now().Add(time.Minute).UnixMilli(),
@@ -1455,7 +1455,7 @@ func TestRelayDataPairedDisconnectRequiresFreshPair(t *testing.T) {
 		ReservationID:     reservationID,
 		InitiatorDeviceID: "device-a",
 		ResponderDeviceID: "device-b",
-		RelayDataEndpoint: "wss://" + httpServer.URL + "/v2/relay/" + reservationID,
+		RelayDataEndpoint: "wss://" + httpServer.URL + PathRelayDataV2 + reservationID,
 		InitiatorToken:    initiatorToken,
 		ResponderToken:    responderToken,
 		ExpiresAtMs:       time.Now().Add(time.Minute).UnixMilli(),
@@ -1522,7 +1522,7 @@ func TestRelayDataUpgradeValidation(t *testing.T) {
 		ReservationID:     reservationID,
 		InitiatorDeviceID: "device-a",
 		ResponderDeviceID: "device-b",
-		RelayDataEndpoint: "wss://" + httpServer.URL + "/v2/relay/" + reservationID,
+		RelayDataEndpoint: "wss://" + httpServer.URL + PathRelayDataV2 + reservationID,
 		InitiatorToken:    initiatorToken,
 		ResponderToken:    responderToken,
 		ExpiresAtMs:       time.Now().Add(time.Minute).UnixMilli(),
@@ -1534,20 +1534,20 @@ func TestRelayDataUpgradeValidation(t *testing.T) {
 	badID := strings.Repeat("zz", 16)
 	relayURL, _ := url.Parse(httpServer.URL)
 	relayURL.Scheme = "ws"
-	relayURL.Path = "/v2/relay/" + badID
+	relayURL.Path = PathRelayDataV2 + badID
 	if _, response, err := websocket.DefaultDialer.Dial(relayURL.String(), nil); err == nil || response == nil || response.StatusCode != http.StatusNotFound {
 		t.Fatalf("invalid reservation id should 404, got status=%v err=%v", statusOf(response), err)
 	}
 
 	// 未认证请求不能探测 reservation 是否存在，格式合法的未知 ID 也统一返回 401。
 	nonexistent := hex.EncodeToString(randomBytes(16))
-	relayURL.Path = "/v2/relay/" + nonexistent
+	relayURL.Path = PathRelayDataV2 + nonexistent
 	if _, response, err := websocket.DefaultDialer.Dial(relayURL.String(), nil); err == nil || response == nil || response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("missing reservation must not be distinguishable before auth, got status=%v err=%v", statusOf(response), err)
 	}
 
 	// 无 token → 401。
-	relayURL.Path = "/v2/relay/" + reservationID
+	relayURL.Path = PathRelayDataV2 + reservationID
 	relayURL.RawQuery = ""
 	if _, response, err := websocket.DefaultDialer.Dial(relayURL.String(), nil); err == nil || response == nil || response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("missing token should 401, got status=%v err=%v", statusOf(response), err)
@@ -1581,7 +1581,7 @@ func TestRelayDataConnectValidation(t *testing.T) {
 		ReservationID:     reservationID,
 		InitiatorDeviceID: "device-a",
 		ResponderDeviceID: "device-b",
-		RelayDataEndpoint: "wss://" + httpServer.URL + "/v2/relay/" + reservationID,
+		RelayDataEndpoint: "wss://" + httpServer.URL + PathRelayDataV2 + reservationID,
 		InitiatorToken:    initiatorToken,
 		ResponderToken:    responderToken,
 		ExpiresAtMs:       time.Now().Add(time.Minute).UnixMilli(),
@@ -1644,7 +1644,7 @@ func TestRelayDataExpiryCloses(t *testing.T) {
 		ReservationID:     reservationID,
 		InitiatorDeviceID: "device-a",
 		ResponderDeviceID: "device-b",
-		RelayDataEndpoint: "wss://" + httpServer.URL + "/v2/relay/" + reservationID,
+		RelayDataEndpoint: "wss://" + httpServer.URL + PathRelayDataV2 + reservationID,
 		InitiatorToken:    initiatorToken,
 		ResponderToken:    randomBytes(32),
 		ExpiresAtMs:       time.Now().Add(-time.Second).UnixMilli(),
@@ -1903,7 +1903,7 @@ func TestRelayDataSlidingExpiryKeepsActiveSessionAlive(t *testing.T) {
 		ReservationID:     reservationID,
 		InitiatorDeviceID: "device-a",
 		ResponderDeviceID: "device-b",
-		RelayDataEndpoint: "wss://" + httpServer.URL + "/v2/relay/" + reservationID,
+		RelayDataEndpoint: "wss://" + httpServer.URL + PathRelayDataV2 + reservationID,
 		InitiatorToken:    initiatorToken,
 		ResponderToken:    responderToken,
 		ExpiresAtMs:       time.Now().UnixMilli(),
@@ -1964,7 +1964,7 @@ func TestRelayDataIdleCredentialExpiryKeepsReadySessionAlive(t *testing.T) {
 		ReservationID:     reservationID,
 		InitiatorDeviceID: "device-a",
 		ResponderDeviceID: "device-b",
-		RelayDataEndpoint: "wss://" + httpServer.URL + "/v2/relay/" + reservationID,
+		RelayDataEndpoint: "wss://" + httpServer.URL + PathRelayDataV2 + reservationID,
 		InitiatorToken:    initiatorToken,
 		ResponderToken:    responderToken,
 		ExpiresAtMs:       time.Now().Add(time.Second).UnixMilli(),
@@ -2020,7 +2020,7 @@ func TestRelayDataPeerNotifiedOnAbnormalClose(t *testing.T) {
 		ReservationID:     reservationID,
 		InitiatorDeviceID: "device-a",
 		ResponderDeviceID: "device-b",
-		RelayDataEndpoint: "wss://" + httpServer.URL + "/v2/relay/" + reservationID,
+		RelayDataEndpoint: "wss://" + httpServer.URL + PathRelayDataV2 + reservationID,
 		InitiatorToken:    initiatorToken,
 		ResponderToken:    responderToken,
 		ExpiresAtMs:       time.Now().Add(time.Minute).UnixMilli(),
@@ -2076,7 +2076,7 @@ func TestRelayDataLateJoinAfterSlidingRenewal(t *testing.T) {
 		ReservationID:     reservationID,
 		InitiatorDeviceID: "device-a",
 		ResponderDeviceID: "device-b",
-		RelayDataEndpoint: "wss://" + httpServer.URL + "/v2/relay/" + reservationID,
+		RelayDataEndpoint: "wss://" + httpServer.URL + PathRelayDataV2 + reservationID,
 		InitiatorToken:    initiatorToken,
 		ResponderToken:    responderToken,
 		ExpiresAtMs:       time.Now().Add(time.Second).UnixMilli(),

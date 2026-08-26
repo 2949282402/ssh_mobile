@@ -64,7 +64,7 @@ jobs:
       - name: Install front dependencies
         working-directory: front
         run: npm ci
-      - name: Check Front ↔ Relay administrator API contract
+      - name: Check Front ↔ Admin API contract
         run: bash scripts/bash/contracts/admin_api_contract.sh
 
   native-network-quality:

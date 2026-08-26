@@ -15,7 +15,6 @@ import (
 )
 
 // TestPreSplitCharacterization locks the baseline invariants for:
-// - V1 device bootstrap retirement (returns 404)
 // - V2 device bootstrap (enroll + refresh) with ProtocolVersion = 2
 // - Admin authentication and overview
 // - Credential verification and control/data admission
@@ -44,22 +43,7 @@ func TestPreSplitCharacterization(t *testing.T) {
 	}
 	pubKeyB64 := base64.RawURLEncoding.EncodeToString(pubKey)
 
-	// 1. Verify V1 routes are retired and return 404
-	v1EnrollReq := httptest.NewRequest(http.MethodPost, "/v1/devices/enroll", bytes.NewReader([]byte("{}")))
-	v1EnrollRec := httptest.NewRecorder()
-	mux.ServeHTTP(v1EnrollRec, v1EnrollReq)
-	if v1EnrollRec.Code != http.StatusNotFound {
-		t.Fatalf("Retired /v1/devices/enroll status = %d; want 404", v1EnrollRec.Code)
-	}
-
-	v1RefreshReq := httptest.NewRequest(http.MethodPost, "/v1/devices/refresh", bytes.NewReader([]byte("{}")))
-	v1RefreshRec := httptest.NewRecorder()
-	mux.ServeHTTP(v1RefreshRec, v1RefreshReq)
-	if v1RefreshRec.Code != http.StatusNotFound {
-		t.Fatalf("Retired /v1/devices/refresh status = %d; want 404", v1RefreshRec.Code)
-	}
-
-	// 2. Lock V2 Enroll
+	// 1. Lock V2 Enroll
 	enrollReq := enrollRequest{
 		DeviceID:        "char-device-1",
 		PublicKey:       pubKeyB64,

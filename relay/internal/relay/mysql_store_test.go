@@ -156,9 +156,9 @@ func TestMySQLStoreRestartSurvival(t *testing.T) {
 		t.Fatal(err)
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
-	authReq := httptest.NewRequest("GET", "/v2/control", nil)
+	authReq := httptest.NewRequest(http.MethodGet, PathControlV2, nil)
 	authReq.Header.Set("Authorization", "Bearer "+credential)
-	setCurrentSignedDeviceProof(authReq.Header, http.MethodGet, "/v2/control", privateKey, nonce)
+	setCurrentSignedDeviceProof(authReq.Header, http.MethodGet, PathControlV2, privateKey, nonce)
 	if _, _, _, ok := restarted.authenticatedRequest(authReq); !ok {
 		t.Fatal("credential was rejected after restart")
 	}

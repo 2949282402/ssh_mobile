@@ -99,18 +99,11 @@ func writeNetworkErrorRetry(w http.ResponseWriter, status int, code relayErrorCo
 	})
 }
 
-// expectedProtocolVersion binds an enroll route to one exact device protocol
-// version. The dual /v1 and /v2 bootstrap routes are intentionally distinct:
-// each accepts only its own protocol version so a client cannot silently
-// downgrade the enrollment contract.
+// expectedProtocolVersion binds an enroll route to one exact device protocol version.
 type expectedProtocolVersion uint32
 
-// enroll 是 /v1 路由的兼容别名：直接调用时等价于 enrollV1（仅允许协议版本 1）。
+// enroll handles POST /v2/devices/enroll endpoint.
 func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
-	s.enrollWithExpectedProtocolVersion(w, r, expectedProtocolVersion(s.config.ProtocolVersion))
-}
-
-func (s *Server) enrollV2(w http.ResponseWriter, r *http.Request) {
 	s.enrollWithExpectedProtocolVersion(w, r, expectedProtocolVersion(s.config.ProtocolVersion))
 }
 

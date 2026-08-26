@@ -38,13 +38,7 @@ func refreshProofTimestampIsFresh(timestamp int64, now time.Time) bool {
 	return timestamp >= nowSeconds-windowSeconds && timestamp <= nowSeconds+windowSeconds
 }
 
-// refreshProofPayload 构造 v1 refresh transcript。
-func refreshProofPayload(timestamp int64, nonce string) string {
-	return refreshProofPayloadForPath("/v1/devices/refresh", timestamp, nonce)
-}
-
-// refreshProofPayloadForPath 构造指定路径的 refresh transcript。V1 与 V2 路由的
-// transcript 以路径为界互相独立：签名绑定到的路径必须与请求路径一致，否则认证失败。
+// refreshProofPayloadForPath 构造指定路径的 refresh transcript。
 func refreshProofPayloadForPath(path string, timestamp int64, nonce string) string {
 	return "POST\n" + path + "\n" + strconv.FormatInt(timestamp, 10) + "\n" + nonce
 }

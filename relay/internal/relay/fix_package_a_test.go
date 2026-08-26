@@ -117,9 +117,9 @@ func TestAuthenticatedRequestFailsClosedWhenNonceCacheUnavailable(t *testing.T) 
 		t.Fatal(err)
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x41}, 32))
-	request := httptest.NewRequest(http.MethodGet, "/v2/control", nil)
+	request := httptest.NewRequest(http.MethodGet, PathControlV2, nil)
 	request.Header.Set("Authorization", "Bearer "+credential)
-	setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", privateKey, nonce)
+	setCurrentSignedDeviceProof(request.Header, http.MethodGet, PathControlV2, privateKey, nonce)
 	server.cache = failingNonceCache{Cache: server.cache}
 
 	if _, _, code, ok := server.authenticatedRequest(request); ok || code != relayErrorAuthenticationFailed {
@@ -152,9 +152,9 @@ func TestAuthenticatedDeviceAdmissionRechecksRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x42}, 32))
-	request := httptest.NewRequest(http.MethodGet, "/v2/control", nil)
+	request := httptest.NewRequest(http.MethodGet, PathControlV2, nil)
 	request.Header.Set("Authorization", "Bearer "+credential)
-	setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", privateKey, nonce)
+	setCurrentSignedDeviceProof(request.Header, http.MethodGet, PathControlV2, privateKey, nonce)
 	claims, authenticatedKey, code, ok := server.authenticatedRequest(request)
 	if !ok || code != relayErrorUnspecified {
 		t.Fatalf("valid proof was rejected before revoke: ok=%v code=%d", ok, code)

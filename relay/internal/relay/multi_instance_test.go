@@ -81,9 +81,9 @@ func TestMultiInstanceSharedAuth(t *testing.T) {
 		t.Fatal(err)
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(randomBytes(32))
-	request := httptest.NewRequest("GET", "/v2/control", nil)
+	request := httptest.NewRequest(http.MethodGet, PathControlV2, nil)
 	request.Header.Set("Authorization", "Bearer "+credential)
-	setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", privateKey, nonce)
+	setCurrentSignedDeviceProof(request.Header, http.MethodGet, PathControlV2, privateKey, nonce)
 	if _, _, _, ok := serverB.authenticatedRequest(request); !ok {
 		t.Fatal("device could not authenticate against a different instance sharing the same backend")
 	}

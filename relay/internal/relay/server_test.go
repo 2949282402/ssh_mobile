@@ -77,9 +77,9 @@ func TestSameKeyReenrollmentInvalidatesPriorCredentialGeneration(t *testing.T) {
 
 	authRequest := func(credential string, nonceByte byte) *http.Request {
 		nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{nonceByte}, 32))
-		request := httptest.NewRequest(http.MethodGet, "/v2/control", nil)
+		request := httptest.NewRequest(http.MethodGet, PathControlV2, nil)
 		request.Header.Set("Authorization", "Bearer "+credential)
-		setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", privateKey, nonce)
+		setCurrentSignedDeviceProof(request.Header, http.MethodGet, PathControlV2, privateKey, nonce)
 		return request
 	}
 	if _, _, _, ok := server.authenticatedRequest(authRequest(oldCredential, 0x31)); ok {
@@ -213,9 +213,9 @@ func TestDeviceProofRejectsReplayAndRevocation(t *testing.T) {
 	}
 	authenticatedRequest := func(nonceValue byte) *http.Request {
 		nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{nonceValue}, 32))
-		request := httptest.NewRequest("GET", "/v2/control", nil)
+		request := httptest.NewRequest(http.MethodGet, PathControlV2, nil)
 		request.Header.Set("Authorization", "Bearer "+credential)
-		setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", privateKey, nonce)
+		setCurrentSignedDeviceProof(request.Header, http.MethodGet, PathControlV2, privateKey, nonce)
 		return request
 	}
 
@@ -261,9 +261,9 @@ func TestCredentialRequiresCurrentEnrollment(t *testing.T) {
 		t.Fatal(err)
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{3}, 32))
-	request := httptest.NewRequest("GET", "/v2/control", nil)
+	request := httptest.NewRequest(http.MethodGet, PathControlV2, nil)
 	request.Header.Set("Authorization", "Bearer "+credential)
-	setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", privateKey, nonce)
+	setCurrentSignedDeviceProof(request.Header, http.MethodGet, PathControlV2, privateKey, nonce)
 	if _, _, _, ok := server.authenticatedRequest(request); ok {
 		t.Fatal("credential from an unregistered relay process was accepted")
 	}

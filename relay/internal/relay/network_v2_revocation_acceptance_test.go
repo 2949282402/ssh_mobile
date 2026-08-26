@@ -63,11 +63,11 @@ func dialControlV2ForRevocation(baseURL, credential string, nonceByte byte, priv
 		return nil, nil, err
 	}
 	relayURL.Scheme = "ws"
-	relayURL.Path = "/v2/control"
+	relayURL.Path = PathControlV2
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{nonceByte}, 32))
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+credential)
-	setCurrentSignedDeviceProof(headers, http.MethodGet, "/v2/control", privateKey, nonce)
+	setCurrentSignedDeviceProof(headers, http.MethodGet, PathControlV2, privateKey, nonce)
 	return websocket.DefaultDialer.Dial(relayURL.String(), headers)
 }
 

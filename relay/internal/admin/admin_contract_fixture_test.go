@@ -124,10 +124,10 @@ func TestExportAdminAPIContractFixture(t *testing.T) {
 
 	fixture := adminAPIContractFixture{
 		UnauthenticatedSession: captureAdminAPIContractResponse(
-			t, mux, http.MethodGet, "/api/admin/v1/auth/session", nil, nil, http.StatusOK,
+			t, mux, http.MethodGet, PathAuthSession, nil, nil, http.StatusOK,
 		),
 		UnauthorizedOverview: captureAdminAPIContractResponse(
-			t, mux, http.MethodGet, "/api/admin/v1/overview", nil, nil, http.StatusUnauthorized,
+			t, mux, http.MethodGet, PathOverview, nil, nil, http.StatusUnauthorized,
 		),
 	}
 
@@ -138,7 +138,7 @@ func TestExportAdminAPIContractFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	loginRequest := httptest.NewRequest(http.MethodPost, "/api/admin/v1/auth/login", bytes.NewReader(loginBody))
+	loginRequest := httptest.NewRequest(http.MethodPost, PathAuthLogin, bytes.NewReader(loginBody))
 	loginRequest.Header.Set("Content-Type", "application/json")
 	loginRecorder := httptest.NewRecorder()
 	mux.ServeHTTP(loginRecorder, loginRequest)
@@ -146,7 +146,7 @@ func TestExportAdminAPIContractFixture(t *testing.T) {
 		t,
 		loginRecorder,
 		http.MethodPost,
-		"/api/admin/v1/auth/login",
+		PathAuthLogin,
 		http.StatusOK,
 	)
 	cookies := loginRecorder.Result().Cookies()
@@ -156,18 +156,18 @@ func TestExportAdminAPIContractFixture(t *testing.T) {
 	sessionCookie := cookies[0]
 
 	fixture.AuthenticatedSession = captureAdminAPIContractResponse(
-		t, mux, http.MethodGet, "/api/admin/v1/auth/session", nil, sessionCookie, http.StatusOK,
+		t, mux, http.MethodGet, PathAuthSession, nil, sessionCookie, http.StatusOK,
 	)
 
 	fixture.Overview = captureAdminAPIContractResponse(
-		t, mux, http.MethodGet, "/api/admin/v1/overview", nil, sessionCookie, http.StatusOK,
+		t, mux, http.MethodGet, PathOverview, nil, sessionCookie, http.StatusOK,
 	)
 	fixture.Devices = captureAdminAPIContractResponse(
-		t, mux, http.MethodGet, "/api/admin/v1/devices", nil, sessionCookie, http.StatusOK,
+		t, mux, http.MethodGet, PathDevices, nil, sessionCookie, http.StatusOK,
 	)
 
 	fixture.EnrollmentToken = captureAdminAPIContractResponse(
-		t, mux, http.MethodGet, "/api/admin/v1/access/enrollment-token", nil, sessionCookie, http.StatusOK,
+		t, mux, http.MethodGet, PathEnrollmentToken, nil, sessionCookie, http.StatusOK,
 	)
 	fixture.EnrollmentToken.Body = redactAdminContractValue(
 		fixture.EnrollmentToken.Body,
@@ -175,7 +175,7 @@ func TestExportAdminAPIContractFixture(t *testing.T) {
 	)
 
 	fixture.RotateEnrollmentToken = captureAdminAPIContractResponse(
-		t, mux, http.MethodPost, "/api/admin/v1/access/enrollment-token/rotate", nil, sessionCookie, http.StatusOK,
+		t, mux, http.MethodPost, PathRotateToken, nil, sessionCookie, http.StatusOK,
 	)
 	fixture.RotateEnrollmentToken.Body = redactAdminContractValue(
 		fixture.RotateEnrollmentToken.Body,
@@ -186,16 +186,16 @@ func TestExportAdminAPIContractFixture(t *testing.T) {
 		t,
 		mux,
 		http.MethodPost,
-		"/api/admin/v1/devices/contract-device/revoke",
+		PathRevokeDevice+"contract-device/revoke",
 		nil,
 		sessionCookie,
 		http.StatusNoContent,
 	)
 	fixture.Logout = captureAdminAPIContractResponse(
-		t, mux, http.MethodPost, "/api/admin/v1/auth/logout", nil, sessionCookie, http.StatusNoContent,
+		t, mux, http.MethodPost, PathAuthLogout, nil, sessionCookie, http.StatusNoContent,
 	)
 	fixture.PostLogoutSession = captureAdminAPIContractResponse(
-		t, mux, http.MethodGet, "/api/admin/v1/auth/session", nil, sessionCookie, http.StatusOK,
+		t, mux, http.MethodGet, PathAuthSession, nil, sessionCookie, http.StatusOK,
 	)
 
 	outputPath := strings.TrimSpace(os.Getenv("SSH_MOBILE_ADMIN_CONTRACT_FIXTURE"))

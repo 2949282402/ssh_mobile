@@ -42,7 +42,7 @@ func TestAdminAuthLoginSuccessAndSessionCheck(t *testing.T) {
 		"username": user,
 		"password": pass,
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/v1/auth/login", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, PathAuthLogin, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -68,7 +68,7 @@ func TestAdminAuthLoginSuccessAndSessionCheck(t *testing.T) {
 	}
 
 	// 2. Active Session Check
-	sessionReq := httptest.NewRequest(http.MethodGet, "/api/admin/v1/auth/session", nil)
+	sessionReq := httptest.NewRequest(http.MethodGet, PathAuthSession, nil)
 	sessionReq.AddCookie(sessionCookie)
 	sessionRec := httptest.NewRecorder()
 	mux.ServeHTTP(sessionRec, sessionReq)
@@ -85,7 +85,7 @@ func TestAdminAuthLoginSuccessAndSessionCheck(t *testing.T) {
 	}
 
 	// 3. Logout
-	logoutReq := httptest.NewRequest(http.MethodPost, "/api/admin/v1/auth/logout", nil)
+	logoutReq := httptest.NewRequest(http.MethodPost, PathAuthLogout, nil)
 	logoutReq.AddCookie(sessionCookie)
 	logoutRec := httptest.NewRecorder()
 	mux.ServeHTTP(logoutRec, logoutReq)
@@ -95,7 +95,7 @@ func TestAdminAuthLoginSuccessAndSessionCheck(t *testing.T) {
 	}
 
 	// 4. Session Check After Logout
-	sessionReq2 := httptest.NewRequest(http.MethodGet, "/api/admin/v1/auth/session", nil)
+	sessionReq2 := httptest.NewRequest(http.MethodGet, PathAuthSession, nil)
 	sessionReq2.AddCookie(sessionCookie)
 	sessionRec2 := httptest.NewRecorder()
 	mux.ServeHTTP(sessionRec2, sessionReq2)
@@ -121,7 +121,7 @@ func TestAdminAuthLoginFailureAndRateLimiting(t *testing.T) {
 	})
 
 	for attempt := 1; attempt <= 3; attempt++ {
-		req := httptest.NewRequest(http.MethodPost, "/api/admin/v1/auth/login", bytes.NewReader(badBody))
+		req := httptest.NewRequest(http.MethodPost, PathAuthLogin, bytes.NewReader(badBody))
 		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
@@ -132,7 +132,7 @@ func TestAdminAuthLoginFailureAndRateLimiting(t *testing.T) {
 	}
 
 	// 4th attempt should be rate limited (429)
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/v1/auth/login", bytes.NewReader(badBody))
+	req := httptest.NewRequest(http.MethodPost, PathAuthLogin, bytes.NewReader(badBody))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -151,7 +151,7 @@ func TestAdminAuthTrustedProxyAndTLS(t *testing.T) {
 		"username": user,
 		"password": pass,
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/v1/auth/login", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, PathAuthLogin, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	// Request from trusted proxy with HTTPS proto
 	req.RemoteAddr = "10.0.1.5:45678"

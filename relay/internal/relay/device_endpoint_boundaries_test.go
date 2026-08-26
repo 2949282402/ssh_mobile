@@ -174,13 +174,13 @@ func TestRefreshEndpointValidationBoundaries(t *testing.T) {
 		t.Fatalf("bad signature refresh status = %d, want 401", got)
 	}
 
-	legacyNonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{5}, 32))
-	legacyProof := makeRequest(legacyNonce, time.Now().Unix(), privateKey)
-	legacyProof.Signature = base64.RawURLEncoding.EncodeToString(
-		ed25519.Sign(privateKey, []byte("POST\n/v1/devices/refresh\n"+legacyNonce)),
+	invalidNonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{5}, 32))
+	mismatchedProof := makeRequest(invalidNonce, time.Now().Unix(), privateKey)
+	mismatchedProof.Signature = base64.RawURLEncoding.EncodeToString(
+		ed25519.Sign(privateKey, []byte("POST\n/v2/devices/invalid\n"+invalidNonce)),
 	)
-	if got := callRefreshBoundary(t, server, legacyProof).Code; got != http.StatusUnauthorized {
-		t.Fatalf("legacy refresh transcript status = %d, want 401", got)
+	if got := callRefreshBoundary(t, server, mismatchedProof).Code; got != http.StatusUnauthorized {
+		t.Fatalf("mismatched refresh transcript status = %d, want 401", got)
 	}
 
 	nowSeconds := time.Now().Unix()
@@ -322,31 +322,31 @@ func TestV2WebSocketProofFreshnessAndTranscriptAreHardCut(t *testing.T) {
 		timestamp int64
 		mutate    func(*http.Request, string)
 	}{
-		{name: "missing timestamp", path: "/v2/control", timestamp: now, mutate: func(request *http.Request, _ string) {
+		{name: "missing timestamp", path: PathControlV2, timestamp: now, mutate: func(request *http.Request, _ string) {
 			request.Header.Del("X-Relay-Timestamp")
 		}},
-		{name: "zero timestamp", path: "/v2/control", timestamp: 0},
-		{name: "negative timestamp", path: "/v2/control", timestamp: -1},
-		{name: "non integer timestamp", path: "/v2/control", timestamp: now, mutate: func(request *http.Request, _ string) {
+		{name: "zero timestamp", path: PathControlV2, timestamp: 0},
+		{name: "negative timestamp", path: PathControlV2, timestamp: -1},
+		{name: "non integer timestamp", path: PathControlV2, timestamp: now, mutate: func(request *http.Request, _ string) {
 			request.Header.Set("X-Relay-Timestamp", "not-an-integer")
 		}},
-		{name: "non canonical timestamp", path: "/v2/control", timestamp: now, mutate: func(request *http.Request, _ string) {
+		{name: "non canonical timestamp", path: PathControlV2, timestamp: now, mutate: func(request *http.Request, _ string) {
 			request.Header.Set("X-Relay-Timestamp", "0"+request.Header.Get("X-Relay-Timestamp"))
 		}},
-		{name: "stale timestamp", path: "/v2/control", timestamp: now - 600},
-		{name: "future timestamp", path: "/v2/control", timestamp: now + 600},
-		{name: "retired transcript", path: "/v2/control", timestamp: now, mutate: func(request *http.Request, nonce string) {
+		{name: "stale timestamp", path: PathControlV2, timestamp: now - 600},
+		{name: "future timestamp", path: PathControlV2, timestamp: now + 600},
+		{name: "retired transcript", path: PathControlV2, timestamp: now, mutate: func(request *http.Request, nonce string) {
 			request.Header.Set("X-Relay-Signature", base64.RawURLEncoding.EncodeToString(
 				ed25519.Sign(privateKey, []byte(http.MethodGet+"\n"+request.URL.Path+"\n"+nonce)),
 			))
 		}},
-		{name: "trailing newline transcript", path: "/v2/control", timestamp: now, mutate: func(request *http.Request, nonce string) {
+		{name: "trailing newline transcript", path: PathControlV2, timestamp: now, mutate: func(request *http.Request, nonce string) {
 			payload := authenticatedProofPayload(http.MethodGet, request.URL.Path, now, nonce) + "\n"
 			request.Header.Set("X-Relay-Signature", base64.RawURLEncoding.EncodeToString(
 				ed25519.Sign(privateKey, []byte(payload)),
 			))
 		}},
-		{name: "relay data missing timestamp", path: "/v2/relay/9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d", timestamp: now, mutate: func(request *http.Request, _ string) {
+		{name: "relay data missing timestamp", path: PathRelayDataV2 + "9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d", timestamp: now, mutate: func(request *http.Request, _ string) {
 			request.Header.Del("X-Relay-Timestamp")
 		}},
 	}
@@ -493,7 +493,7 @@ func TestV2WebSocketNonceExpiryIsBoundToSignedTimestamp(t *testing.T) {
 	server.cache = recorder
 	timestamp := time.Now().Unix() - 100
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{75}, 32))
-	request := httptest.NewRequest(http.MethodGet, "/v2/control", nil)
+	request := httptest.NewRequest(http.MethodGet, PathControlV2, nil)
 	request.Header.Set("Authorization", "Bearer "+credential)
 	setSignedDeviceProof(request.Header, http.MethodGet, request.URL.Path, privateKey, nonce, timestamp)
 	if _, _, code, ok := server.authenticatedRequest(request); !ok || code != relayErrorUnspecified {
@@ -529,7 +529,7 @@ func TestV2WebSocketReplayRemainsConsumedAfterSameKeyReenrollment(t *testing.T) 
 	}
 	timestamp := time.Now().Unix()
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{76}, 32))
-	request := httptest.NewRequest(http.MethodGet, "/v2/control", nil)
+	request := httptest.NewRequest(http.MethodGet, PathControlV2, nil)
 	request.Header.Set("Authorization", "Bearer "+firstCredential)
 	setSignedDeviceProof(request.Header, http.MethodGet, request.URL.Path, privateKey, nonce, timestamp)
 	if _, _, code, ok := server.authenticatedRequest(request); !ok || code != relayErrorUnspecified {

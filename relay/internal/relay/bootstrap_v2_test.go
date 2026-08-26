@@ -1,4 +1,4 @@
-// Relay Bootstrap V2 tests: V1 route retirement (404), V2-only enroll/refresh,
+// Relay Bootstrap V2 tests: V2-only enroll/refresh,
 // ProtocolVersion=2 admission invariant, and re-enroll upgrade semantics.
 
 package relay
@@ -123,23 +123,6 @@ func decodeNetworkError(t *testing.T, body []byte, status int, wantStatus int) n
 	return errBody
 }
 
-// TestBootstrapV1RetiredRoutesReturn404 verifies that legacy /v1/devices/* routes
-// are completely retired and return HTTP 404.
-func TestBootstrapV1RetiredRoutesReturn404(t *testing.T) {
-	baseURL, _ := newBootstrapV2TestServer(t)
-	publicKey, privateKey := bootstrapKeyPair(t)
-
-	status, _ := enrollBootstrapHTTP(t, baseURL, "/v1/devices/enroll", "device-1", "test-token", publicKey, 1)
-	if status != http.StatusNotFound {
-		t.Fatalf("retired /v1/devices/enroll status = %d, want 404", status)
-	}
-
-	status, _ = refreshBootstrapHTTP(t, baseURL, "/v1/devices/refresh", "device-1", publicKey, privateKey)
-	if status != http.StatusNotFound {
-		t.Fatalf("retired /v1/devices/refresh status = %d, want 404", status)
-	}
-}
-
 // TestBootstrapV2EnrollAndRefreshWithProtocolVersion2 verifies that /v2/devices/enroll
 // and /v2/devices/refresh work exclusively with ProtocolVersion=2 and V2 transcript.
 func TestBootstrapV2EnrollAndRefreshWithProtocolVersion2(t *testing.T) {
@@ -174,9 +157,9 @@ func TestBootstrapV2EnrollRejectsProtocolVersionNotTwo(t *testing.T) {
 	}
 }
 
-// TestBootstrapV2RefreshRejectsV1Transcript verifies that a signature over the
-// V1 refresh transcript cannot authenticate against the V2 refresh route.
-func TestBootstrapV2RefreshRejectsV1Transcript(t *testing.T) {
+// TestBootstrapV2RefreshRejectsMismatchedTranscript verifies that a signature over a
+// mismatched refresh transcript cannot authenticate against the V2 refresh route.
+func TestBootstrapV2RefreshRejectsMismatchedTranscript(t *testing.T) {
 	baseURL, _ := newBootstrapV2TestServer(t)
 	publicKey, privateKey := bootstrapKeyPair(t)
 
@@ -187,14 +170,13 @@ func TestBootstrapV2RefreshRejectsV1Transcript(t *testing.T) {
 
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x2b}, 32))
 	timestamp := time.Now().Unix()
-	// Sign over the legacy V1 transcript while presenting the request at the V2 route.
 	refreshBody, err := json.Marshal(refreshRequest{
 		DeviceID:  "device-2",
 		PublicKey: base64.RawURLEncoding.EncodeToString(publicKey),
 		Timestamp: timestamp,
 		Nonce:     nonce,
 		Signature: base64.RawURLEncoding.EncodeToString(
-			ed25519.Sign(privateKey, []byte(refreshProofPayloadForPath("/v1/devices/refresh", timestamp, nonce))),
+			ed25519.Sign(privateKey, []byte(refreshProofPayloadForPath("/v2/devices/mismatched", timestamp, nonce))),
 		),
 	})
 	if err != nil {
@@ -203,7 +185,7 @@ func TestBootstrapV2RefreshRejectsV1Transcript(t *testing.T) {
 	status, body = postBootstrapJSON(t, baseURL, PathRefreshV2, refreshBody)
 	errBody := decodeNetworkError(t, body, status, http.StatusUnauthorized)
 	if errBody.Code != relayErrorAuthenticationFailed {
-		t.Fatalf("v2 refresh signed over v1 transcript: expected code %d, got %d", relayErrorAuthenticationFailed, errBody.Code)
+		t.Fatalf("v2 refresh signed over mismatched transcript: expected code %d, got %d", relayErrorAuthenticationFailed, errBody.Code)
 	}
 }
 
@@ -242,17 +224,17 @@ func TestBootstrapAdmissionRejectsProtocolVersion1DurableRow(t *testing.T) {
 		t.Fatalf("issue credential: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/v2/control", nil)
+	req := httptest.NewRequest(http.MethodGet, PathControlV2, nil)
 	req.Header.Set("Authorization", "Bearer "+credential)
 	nonce := base64.RawURLEncoding.EncodeToString(randomBytes(32))
-	setCurrentSignedDeviceProof(req.Header, http.MethodGet, "/v2/control", privateKey, nonce)
+	setCurrentSignedDeviceProof(req.Header, http.MethodGet, PathControlV2, privateKey, nonce)
 
 	if _, _, code, ok := server.authenticatedRequest(req); ok || code != relayErrorAuthenticationFailed {
 		t.Fatalf("v1 durable enrollment admitted to /v2/control: ok=%v code=%d", ok, code)
 	}
 
 	// The same protocol-version gate must block /v2/relay/* data-plane admission.
-	relayURL := "/v2/relay/00112233445566778899aabbccddeeff"
+	relayURL := PathRelayDataV2 + "00112233445566778899aabbccddeeff"
 	relayReq := httptest.NewRequest(http.MethodGet, relayURL, nil)
 	relayReq.SetPathValue("reservation_id", "00112233445566778899aabbccddeeff")
 	relayReq.Header.Set("Authorization", "Bearer "+credential)

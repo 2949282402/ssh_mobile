@@ -36,10 +36,6 @@ services:
       RELAY_REDIS_PASSWORD: ${RELAY_REDIS_PASSWORD:-}
       RELAY_INSTANCE_ID: ${RELAY_INSTANCE_ID:-}
       RELAY_PRESENCE_TTL: ${RELAY_PRESENCE_TTL:-60s}
-      # Temporary backward compatibility during Phase 8/9 cutover
-      RELAY_ADMIN_USER: ${ADMIN_USER:-${RELAY_ADMIN_USER:-admin}}
-      RELAY_ADMIN_PASSWORD: ${ADMIN_PASSWORD:-${RELAY_ADMIN_PASSWORD:-temporary-admin-password}}
-      RELAY_ADMIN_SESSION_TTL: ${ADMIN_SESSION_TTL:-24h}
     networks:
       - relay_internal
       - relay_state

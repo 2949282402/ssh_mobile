@@ -490,9 +490,9 @@ func TestAuthFailsClosedWhenCacheUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{5}, 32))
-	request := httptest.NewRequest("GET", "/v2/control", nil)
+	request := httptest.NewRequest(http.MethodGet, PathControlV2, nil)
 	request.Header.Set("Authorization", "Bearer "+credential)
-	setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", privateKey, nonce)
+	setCurrentSignedDeviceProof(request.Header, http.MethodGet, PathControlV2, privateKey, nonce)
 	if _, _, code, ok := server.authenticatedRequest(request); ok || code != relayErrorAuthenticationFailed {
 		t.Fatalf("authentication did not fail closed when the cache was unavailable: ok=%v code=%d", ok, code)
 	}

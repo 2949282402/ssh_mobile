@@ -156,7 +156,10 @@ func openMySQLStore(ctx context.Context, dsn string, maxEnrolled int) (*mysqlSto
 		}
 	}
 	// 确保既有表的 column default 为 2（幂等执行）。
-	_, _ = db.ExecContext(ctx, "ALTER TABLE devices ALTER COLUMN protocol_version SET DEFAULT 2")
+	if _, err := db.ExecContext(ctx, "ALTER TABLE devices ALTER COLUMN protocol_version SET DEFAULT 2"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to alter devices protocol_version default: %w", err)
+	}
 	// 启动时初始化容量计数器：serving 前该行必存在，使 RemoveEnrollment 的递减与
 	// putEnrollment 的 FOR UPDATE 都作用于 record lock（而非缺失行 gap lock），且
 	// 升级库（已有设备、无 counter 行）在首个 enroll/remove 前即拿到正确基准。

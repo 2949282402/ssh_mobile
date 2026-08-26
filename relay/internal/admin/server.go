@@ -55,7 +55,7 @@ func NewServerWithClient(config Config, client RelayManagementClient) *Server {
 
 // RegisterRoutes registers the Admin service HTTP endpoints.
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /healthz", s.health)
+	mux.HandleFunc(RouteHealthz, s.health)
 
 	admin := func(next http.HandlerFunc) http.HandlerFunc {
 		return s.adminResponseHeaders(next)
@@ -71,16 +71,16 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	}
 
 	// Auth Endpoints
-	mux.HandleFunc("POST /api/admin/v1/auth/login", adminStateChange(s.adminLoginHandler))
-	mux.HandleFunc("POST /api/admin/v1/auth/logout", adminStateChange(s.adminLogoutHandler))
-	mux.HandleFunc("GET /api/admin/v1/auth/session", admin(s.adminSessionHandler))
+	mux.HandleFunc(RouteAuthLogin, adminStateChange(s.adminLoginHandler))
+	mux.HandleFunc(RouteAuthLogout, adminStateChange(s.adminLogoutHandler))
+	mux.HandleFunc(RouteAuthSession, admin(s.adminSessionHandler))
 
 	// Management Endpoints
-	mux.HandleFunc("GET /api/admin/v1/overview", adminAuth(s.overviewHandler))
-	mux.HandleFunc("GET /api/admin/v1/devices", adminAuth(s.devicesHandler))
-	mux.HandleFunc("POST /api/admin/v1/devices/{deviceId}/revoke", adminAuthStateChange(s.revokeHandler))
-	mux.HandleFunc("GET /api/admin/v1/access/enrollment-token", adminAuth(s.tokenHandler))
-	mux.HandleFunc("POST /api/admin/v1/access/enrollment-token/rotate", adminAuthStateChange(s.rotateTokenHandler))
+	mux.HandleFunc(RouteOverview, adminAuth(s.overviewHandler))
+	mux.HandleFunc(RouteDevices, adminAuth(s.devicesHandler))
+	mux.HandleFunc(RouteRevokeDevice, adminAuthStateChange(s.revokeHandler))
+	mux.HandleFunc(RouteEnrollmentToken, adminAuth(s.tokenHandler))
+	mux.HandleFunc(RouteRotateToken, adminAuthStateChange(s.rotateTokenHandler))
 }
 
 // health provides an independent process liveness check that does NOT depend on Relay.

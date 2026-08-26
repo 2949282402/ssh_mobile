@@ -119,9 +119,9 @@ func TestExpiredRevocationTombstoneDoesNotBlockValidCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32))
-	request := httptest.NewRequest("GET", "/v2/control", nil)
+	request := httptest.NewRequest(http.MethodGet, PathControlV2, nil)
 	request.Header.Set("Authorization", "Bearer "+credential)
-	setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", privateKey, nonce)
+	setCurrentSignedDeviceProof(request.Header, http.MethodGet, PathControlV2, privateKey, nonce)
 	if _, _, _, ok := server.authenticatedRequest(request); !ok {
 		t.Fatal("expired revocation tombstone incorrectly blocked a valid credential")
 	}

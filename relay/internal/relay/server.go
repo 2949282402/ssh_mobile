@@ -1,11 +1,10 @@
 // Relay server composition and route registration.
 //
-// The transport network is v2-only: /v2/control is the long-lived control plane
-// (protobuf RelayFrame) and /v2/relay/{reservation_id} is the reservation-scoped
-// opaque data plane (RelayDataFrame). Enrollment/refresh stay under /v1/devices
-// because they issue the bearer credentials both control planes authenticate
-// with. The internal management API (/internal/v2/*) is authenticated with the
-// internal token and serves status, device listing, revocation, and enrollment
+// The transport network and bootstrap are v2-only: /v2/control is the long-lived control plane
+// (protobuf RelayFrame), /v2/relay/{reservation_id} is the reservation-scoped
+// opaque data plane (RelayDataFrame), and device bootstrap uses /v2/devices/enroll
+// and /v2/devices/refresh. The internal management API (/internal/v2/*) is authenticated
+// with the internal token and serves status, device listing, revocation, and enrollment
 // token rotation. The standalone admin backend (internal/admin) consumes these
 // endpoints on behalf of operators.
 

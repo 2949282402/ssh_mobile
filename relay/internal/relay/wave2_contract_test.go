@@ -1,6 +1,6 @@
 // Wave-2 protocol-contract tests: expired-credential connect code, identity
 // conflict at enroll, retry disposition on device-plane errors, and the
-// /v1/devices/refresh endpoint.
+// /v2/devices/refresh endpoint.
 
 package relay
 
@@ -43,9 +43,9 @@ func TestConnectExpiredCredentialReturnsCode12(t *testing.T) {
 		t.Fatal(err)
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{4}, 32))
-	request := httptest.NewRequest("GET", "/v2/control", nil)
+	request := httptest.NewRequest(http.MethodGet, PathControlV2, nil)
 	request.Header.Set("Authorization", "Bearer "+expired)
-	setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", privateKey, nonce)
+	setCurrentSignedDeviceProof(request.Header, http.MethodGet, PathControlV2, privateKey, nonce)
 
 	mux := http.NewServeMux()
 	server.RegisterRoutes(mux)
@@ -116,9 +116,9 @@ func TestShortCredentialTTLExpiresBeforeReadyAdmission(t *testing.T) {
 	}
 
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x43}, 32))
-	request := httptest.NewRequest("GET", "/v2/control", nil)
+	request := httptest.NewRequest(http.MethodGet, PathControlV2, nil)
 	request.Header.Set("Authorization", "Bearer "+credential)
-	setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", privateKey, nonce)
+	setCurrentSignedDeviceProof(request.Header, http.MethodGet, PathControlV2, privateKey, nonce)
 	mux := http.NewServeMux()
 	server.RegisterRoutes(mux)
 	rec := httptest.NewRecorder()
@@ -159,14 +159,14 @@ func TestConnectGenericAuthFailureKeepsCode2(t *testing.T) {
 		t.Fatal(err)
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{4}, 32))
-	request := httptest.NewRequest("GET", "/v2/control", nil)
+	request := httptest.NewRequest(http.MethodGet, PathControlV2, nil)
 	request.Header.Set("Authorization", "Bearer "+credential)
 	// Sign with the wrong key: a non-expired but invalid proof.
 	_, wrongPrivate, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", wrongPrivate, nonce)
+	setCurrentSignedDeviceProof(request.Header, http.MethodGet, PathControlV2, wrongPrivate, nonce)
 
 	mux := http.NewServeMux()
 	server.RegisterRoutes(mux)

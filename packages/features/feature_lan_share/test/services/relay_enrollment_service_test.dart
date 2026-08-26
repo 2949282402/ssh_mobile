@@ -175,8 +175,8 @@ void main() {
         ),
       );
       expect(valid, isTrue);
-      final legacyTranscriptValid = await Ed25519().verify(
-        utf8.encode('POST\n/v1/devices/refresh\n${request.nonce}'),
+      final mismatchedTranscriptValid = await Ed25519().verify(
+        utf8.encode('POST\n/v2/devices/invalid\n${request.nonce}'),
         signature: Signature(
           signatureBytes,
           publicKey: SimplePublicKey(
@@ -185,7 +185,7 @@ void main() {
           ),
         ),
       );
-      expect(legacyTranscriptValid, isFalse);
+      expect(mismatchedTranscriptValid, isFalse);
 
       expect(
         await service.isEnrolled(RelaySettings(endpoint: endpoint)),

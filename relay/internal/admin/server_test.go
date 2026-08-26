@@ -16,7 +16,7 @@ func TestAdminServerHealthz(t *testing.T) {
 	mux := http.NewServeMux()
 	server.RegisterRoutes(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req := httptest.NewRequest(http.MethodGet, PathHealthz, nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 

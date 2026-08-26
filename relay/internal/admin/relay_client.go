@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -95,7 +96,7 @@ func NewRelayManagementClient(baseURL, internalToken string) RelayManagementClie
 }
 
 func (c *httpRelayManagementClient) Status(ctx context.Context) (RelayStatus, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/internal/v2/status", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+RelayInternalPathStatus, nil)
 	if err != nil {
 		return RelayStatus{}, err
 	}
@@ -119,7 +120,7 @@ func (c *httpRelayManagementClient) Status(ctx context.Context) (RelayStatus, er
 }
 
 func (c *httpRelayManagementClient) Devices(ctx context.Context) (RelayDevices, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/internal/v2/devices", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+RelayInternalPathDevices, nil)
 	if err != nil {
 		return RelayDevices{}, err
 	}
@@ -143,7 +144,7 @@ func (c *httpRelayManagementClient) Devices(ctx context.Context) (RelayDevices, 
 }
 
 func (c *httpRelayManagementClient) RevokeDevice(ctx context.Context, deviceID string) error {
-	path := fmt.Sprintf("%s/internal/v2/devices/%s/revoke", c.baseURL, deviceID)
+	path := fmt.Sprintf("%s%s%s/revoke", c.baseURL, RelayInternalPathRevokePrefix, url.PathEscape(deviceID))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, path, nil)
 	if err != nil {
 		return err
@@ -164,7 +165,7 @@ func (c *httpRelayManagementClient) RevokeDevice(ctx context.Context, deviceID s
 }
 
 func (c *httpRelayManagementClient) EnrollmentToken(ctx context.Context) (EnrollmentTokenInfo, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/internal/v2/access/enrollment-token", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+RelayInternalPathToken, nil)
 	if err != nil {
 		return EnrollmentTokenInfo{}, err
 	}
@@ -188,7 +189,7 @@ func (c *httpRelayManagementClient) EnrollmentToken(ctx context.Context) (Enroll
 }
 
 func (c *httpRelayManagementClient) RotateEnrollmentToken(ctx context.Context) (EnrollmentTokenInfo, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/internal/v2/access/enrollment-token/rotate", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+RelayInternalPathRotateToken, nil)
 	if err != nil {
 		return EnrollmentTokenInfo{}, err
 	}

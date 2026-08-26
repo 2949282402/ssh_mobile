@@ -33,7 +33,7 @@ func TestRelayDataAdmissionBindsLookupDeviceRoleAndToken(t *testing.T) {
 		InitiatorToken:    []byte{1, 2, 3},
 		ResponderToken:    []byte{4, 5, 6},
 	}
-	request := httptest.NewRequest("GET", "/v2/relay/"+res.ReservationID, nil)
+	request := httptest.NewRequest(http.MethodGet, PathRelayDataV2+res.ReservationID, nil)
 	request.Header.Set("X-Relay-Token", "010203")
 
 	tests := []struct {
@@ -76,7 +76,7 @@ func TestRelayDataAdmissionAllowsOnlyTrackedActivePairRetryAfterSharedTTLDeletio
 		InitiatorToken:    []byte{1, 2, 3},
 		ResponderToken:    []byte{4, 5, 6},
 	}
-	request := httptest.NewRequest(http.MethodGet, "/v2/relay/"+res.ReservationID, nil)
+	request := httptest.NewRequest(http.MethodGet, PathRelayDataV2+res.ReservationID, nil)
 	request.Header.Set("X-Relay-Token", "010203")
 	registry := newRelayDataRegistry(1)
 	initiator := testRelayDataConnForRegistry(res.ReservationID, "device-a", relayDataRoleInitiator)
@@ -126,7 +126,7 @@ func TestRelayDataPreUpgradeErrorsUseStableJSONContract(t *testing.T) {
 	}
 
 	requestFor := func(reservationID string, nonceByte byte) *http.Request {
-		path := "/v2/relay/" + reservationID
+		path := PathRelayDataV2 + reservationID
 		nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{nonceByte}, 32))
 		credential, issueErr := issueCredential(server.config.CredentialKey, "device-a", publicKey, mustEnrollmentGeneration(t, server, "device-a"), time.Hour)
 		if issueErr != nil {
@@ -160,7 +160,7 @@ func TestRelayDataPreUpgradeErrorsUseStableJSONContract(t *testing.T) {
 		{
 			name: "invalid reservation id", status: http.StatusNotFound, code: relayErrorInvalidArgument,
 			make: func() *http.Request {
-				request := httptest.NewRequest(http.MethodGet, "/v2/relay/not-an-id", nil)
+				request := httptest.NewRequest(http.MethodGet, PathRelayDataV2+"not-an-id", nil)
 				request.SetPathValue("reservation_id", "not-an-id")
 				return request
 			},

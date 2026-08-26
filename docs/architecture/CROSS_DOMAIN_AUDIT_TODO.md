@@ -108,8 +108,8 @@ bash -n scripts/bash/coverage/backend_coverage.sh scripts/bash/contracts/admin_a
 export RELAY_PUBLIC_URL=http://127.0.0.1:18080
 export RELAY_ENROLLMENT_TOKEN="$(openssl rand -hex 32)"
 export RELAY_CREDENTIAL_KEY="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
-export RELAY_ADMIN_USER=config-check
-export RELAY_ADMIN_PASSWORD="$(openssl rand -base64 24)"
+export ADMIN_USER=config-check
+export ADMIN_PASSWORD="$(openssl rand -base64 24)"
 docker compose --env-file relay/.env.example -f relay/compose.yaml config --quiet
 export RELAY_STORAGE_MODE=mysql
 export MYSQL_PASSWORD="$(openssl rand -hex 16)"

@@ -234,7 +234,6 @@ start_compose() {
     'ADMIN_HTTP_WRITE_TIMEOUT=15s' \
     'ADMIN_HTTP_IDLE_TIMEOUT=60s' \
     'ADMIN_HTTP_MAX_HEADER_BYTES=16384' \
-    'RELAY_ADMIN_SESSION_TTL=24h' \
     'RELAY_MAX_CONNECTIONS=2048' \
     'RELAY_MAX_ENROLLED_DEVICES=4096' \
     'RELAY_MAX_REVOKED_DEVICES=4096' \
@@ -243,11 +242,6 @@ start_compose() {
     'RELAY_MAX_PENDING_BYTES_PER_DEVICE=16777216' \
     'RELAY_MAX_FRAMES_PER_SECOND_PER_DEVICE=256' \
     'RELAY_MAX_BYTES_PER_SECOND_PER_DEVICE=67108864' \
-    'RELAY_MAX_ADMIN_SESSIONS=32' \
-    'RELAY_ADMIN_LOGIN_MAX_ATTEMPTS=5' \
-    'RELAY_ADMIN_LOGIN_WINDOW=1m' \
-    'RELAY_ADMIN_LOGIN_BLOCK=5m' \
-    'RELAY_MAX_ADMIN_LOGIN_ENTRIES=4096' \
     'RELAY_HTTP_READ_TIMEOUT=15s' \
     'RELAY_HTTP_WRITE_TIMEOUT=15s' \
     'RELAY_HTTP_IDLE_TIMEOUT=60s' \
@@ -258,9 +252,7 @@ start_compose() {
     "MYSQL_ROOT_PASSWORD=$mysql_root_password" \
     'MYSQL_DATABASE=relay' \
     "MYSQL_USER=$mysql_user" \
-    "MYSQL_PASSWORD=$mysql_password" \
-    'RELAY_ADMIN_USER=e2e-admin' \
-    "RELAY_ADMIN_PASSWORD=$ADMIN_PASSWORD" > "$ENV_FILE"
+    "MYSQL_PASSWORD=$mysql_password" > "$ENV_FILE"
 
   COMPOSE_STARTED=1
   compose up -d --build
@@ -432,6 +424,21 @@ run_strict_lifecycle_probes() {
     compose restart caddy >/dev/null
     wait_health
     assert_relay_routes
+
+    # Deployment regression probe: verify public /healthz reflects Relay health
+    # and that front SPA does NOT mask Relay failure.
+    compose stop relay >/dev/null
+    local down_status
+    down_status="$(curl "${CURL_TLS_ARGS[@]}" --silent --show-error --max-time 3 \
+      --output /dev/null --write-out '%{http_code}' "$BASE_URL/healthz" || true)"
+    if [[ "$down_status" == 204 ]]; then
+      echo "Deployment regression: public /healthz returned 204 while Relay was stopped" >&2
+      return 1
+    fi
+    compose start relay >/dev/null
+    wait_health
+    assert_relay_routes
+
     compose restart relay >/dev/null
     wait_health
     assert_relay_routes

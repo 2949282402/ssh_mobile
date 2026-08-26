@@ -1,4 +1,4 @@
-// Relay 服务启动入口；设备 bootstrap 保留 /v1，传输控制面与数据面仅使用 v2。
+// Relay 服务启动入口；设备 bootstrap、传输控制面与数据面均使用 v2。
 
 package main
 
