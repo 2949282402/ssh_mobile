@@ -10,7 +10,13 @@ import 'package:network_sdk/network_sdk.dart';
 import '../services/lan_receiver_coordinator.dart';
 
 /// UI state for the incoming transfer approval dialog.
-enum IncomingApprovalUiState { idle, accepting, rejecting, retryableFailure }
+enum IncomingApprovalUiState {
+  idle,
+  accepting,
+  rejecting,
+  retryableFailure,
+  retryableRejectFailure,
+}
 
 bool _isRetryableNetworkError(NetworkErrorCode code) => switch (code) {
   NetworkErrorCode.ioError ||
@@ -148,6 +154,7 @@ class _IncomingApprovalDialogState extends State<IncomingApprovalDialog> {
   IncomingApprovalUiState _state = IncomingApprovalUiState.idle;
   String? _errorMessage;
   Timer? _expiryTimer;
+  bool _expired = false;
 
   @override
   void initState() {
@@ -161,6 +168,7 @@ class _IncomingApprovalDialogState extends State<IncomingApprovalDialog> {
 
   void _handleTimeout() {
     if (!mounted) return;
+    _expired = true;
     if (_state == IncomingApprovalUiState.accepting ||
         _state == IncomingApprovalUiState.rejecting) {
       return;
@@ -179,6 +187,10 @@ class _IncomingApprovalDialogState extends State<IncomingApprovalDialog> {
         _state == IncomingApprovalUiState.rejecting) {
       return;
     }
+    if (widget.request.isExpired || _expired) {
+      await _reject(isTimeout: true);
+      return;
+    }
     setState(() {
       _state = IncomingApprovalUiState.accepting;
       _errorMessage = null;
@@ -194,7 +206,10 @@ class _IncomingApprovalDialogState extends State<IncomingApprovalDialog> {
       }
 
       final failure = result as NetworkFailure<void>;
-      if (_isRetryableNetworkError(failure.error.code)) {
+      final isExpiredNow = widget.request.isExpired || _expired;
+      if (isExpiredNow) {
+        await _reject(isTimeout: true);
+      } else if (_isRetryableNetworkError(failure.error.code)) {
         setState(() {
           _state = IncomingApprovalUiState.retryableFailure;
           _errorMessage = failure.error.message;
@@ -210,7 +225,10 @@ class _IncomingApprovalDialogState extends State<IncomingApprovalDialog> {
         'Incoming transfer approval failed',
         details: '$error\n$stackTrace',
       );
-      if (mounted) {
+      if (!mounted) return;
+      if (widget.request.isExpired || _expired) {
+        await _reject(isTimeout: true);
+      } else {
         setState(() {
           _state = IncomingApprovalUiState.retryableFailure;
           _errorMessage = error.toString();
@@ -223,25 +241,35 @@ class _IncomingApprovalDialogState extends State<IncomingApprovalDialog> {
     if (_state == IncomingApprovalUiState.rejecting) return;
     setState(() {
       _state = IncomingApprovalUiState.rejecting;
+      _errorMessage = null;
     });
 
     final logger = context.read<LanShareLoggerPort>();
     try {
       final result = await widget.request.reject();
+      if (!mounted) return;
       if (result is NetworkFailure<void>) {
         logger.warning(
           'Incoming transfer rejection returned failure',
           details: result.error.toString(),
         );
+        setState(() {
+          _state = IncomingApprovalUiState.retryableRejectFailure;
+          _errorMessage = result.error.message;
+        });
+        return;
       }
+      Navigator.of(context).pop();
     } on Object catch (error, stackTrace) {
       logger.warning(
         'Incoming transfer rejection failed',
         details: '$error\n$stackTrace',
       );
-    } finally {
       if (mounted) {
-        Navigator.of(context).pop();
+        setState(() {
+          _state = IncomingApprovalUiState.retryableRejectFailure;
+          _errorMessage = error.toString();
+        });
       }
     }
   }
@@ -311,7 +339,11 @@ class _IncomingApprovalDialogState extends State<IncomingApprovalDialog> {
       actions: [
         TextButton(
           onPressed: inProgress ? null : () => _reject(),
-          child: Text(strings.reject),
+          child: Text(
+            _state == IncomingApprovalUiState.retryableRejectFailure
+                ? (strings.isEnglish ? 'Retry Reject' : '重试拒绝')
+                : strings.reject,
+          ),
         ),
         if (_state == IncomingApprovalUiState.retryableFailure)
           FilledButton(

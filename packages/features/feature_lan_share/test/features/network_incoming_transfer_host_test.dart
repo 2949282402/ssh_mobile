@@ -185,4 +185,168 @@ void main() {
       expect(acceptCalls, 1);
     },
   );
+
+  testWidgets(
+    'IncomingApprovalDialog: Accept crossing expiry failure does not show Retry and invokes reject',
+    (tester) async {
+      final settings = FakeLanShareSettings();
+      final logger = FakeLanShareLogger();
+      int acceptCalls = 0;
+      int rejectCalls = 0;
+      final acceptCompleter = Completer<NetworkResult<void>>();
+
+      final request = IncomingApprovalRequest(
+        sessionId: 'tx-4',
+        senderId: 'peer-test',
+        fileName: 'test.bin',
+        totalBytes: 100,
+        expiresAt: DateTime.now().add(const Duration(milliseconds: 100)),
+        accept: () async {
+          acceptCalls++;
+          return acceptCompleter.future;
+        },
+        reject: () async {
+          rejectCalls++;
+          return const NetworkSuccess<void>(null);
+        },
+      );
+
+      await tester.pumpWidget(
+        buildDialogHost(
+          dialog: IncomingApprovalDialog(request: request),
+          settings: settings,
+          logger: logger,
+        ),
+      );
+
+      // Start accept
+      await tester.tap(find.text('Accept'));
+      await tester.pump();
+      expect(acceptCalls, 1);
+
+      // Advance clock past expiry
+      await tester.pump(const Duration(milliseconds: 200));
+
+      // Fail the accept with retryable error
+      acceptCompleter.complete(
+        const NetworkFailure<void>(
+          NetworkError(
+            code: NetworkErrorCode.ioError,
+            message: 'Socket timeout',
+            operation: NetworkOperation.respondToIncoming,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Dialog is closed (expired), reject was invoked, Retry is NOT shown
+      expect(rejectCalls, 1);
+      expect(find.text('Retry'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'IncomingApprovalDialog: Accept crossing expiry success wins and closes without invoking reject',
+    (tester) async {
+      final settings = FakeLanShareSettings();
+      final logger = FakeLanShareLogger();
+      int acceptCalls = 0;
+      int rejectCalls = 0;
+      final acceptCompleter = Completer<NetworkResult<void>>();
+
+      final request = IncomingApprovalRequest(
+        sessionId: 'tx-5',
+        senderId: 'peer-test',
+        fileName: 'test.bin',
+        totalBytes: 100,
+        expiresAt: DateTime.now().add(const Duration(milliseconds: 100)),
+        accept: () async {
+          acceptCalls++;
+          return acceptCompleter.future;
+        },
+        reject: () async {
+          rejectCalls++;
+          return const NetworkSuccess<void>(null);
+        },
+      );
+
+      await tester.pumpWidget(
+        buildDialogHost(
+          dialog: IncomingApprovalDialog(request: request),
+          settings: settings,
+          logger: logger,
+        ),
+      );
+
+      // Start accept
+      await tester.tap(find.text('Accept'));
+      await tester.pump();
+      expect(acceptCalls, 1);
+
+      // Advance clock past expiry
+      await tester.pump(const Duration(milliseconds: 200));
+
+      // Sockets succeed despite clock
+      acceptCompleter.complete(const NetworkSuccess<void>(null));
+      await tester.pumpAndSettle();
+
+      // Succeeded, reject was NOT invoked
+      expect(rejectCalls, 0);
+      expect(find.byType(IncomingApprovalDialog), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'IncomingApprovalDialog: Reject failure keeps dialog open and allows Retry Reject',
+    (tester) async {
+      final settings = FakeLanShareSettings();
+      final logger = FakeLanShareLogger();
+      int rejectCalls = 0;
+      NetworkResult<void> nextResult = const NetworkFailure<void>(
+        NetworkError(
+          code: NetworkErrorCode.ioError,
+          message: 'Network unreachable on reject',
+          operation: NetworkOperation.respondToIncoming,
+        ),
+      );
+
+      final request = IncomingApprovalRequest(
+        sessionId: 'tx-6',
+        senderId: 'peer-test',
+        fileName: 'test.bin',
+        totalBytes: 100,
+        expiresAt: DateTime.now().add(const Duration(minutes: 5)),
+        accept: () async => const NetworkSuccess<void>(null),
+        reject: () async {
+          rejectCalls++;
+          return nextResult;
+        },
+      );
+
+      await tester.pumpWidget(
+        buildDialogHost(
+          dialog: IncomingApprovalDialog(request: request),
+          settings: settings,
+          logger: logger,
+        ),
+      );
+
+      // Tap Reject -> fails
+      await tester.tap(find.text('Reject'));
+      await tester.pump();
+
+      expect(rejectCalls, 1);
+      // Dialog remains open, error shown, button changed to Retry Reject
+      expect(find.text('Network unreachable on reject'), findsOneWidget);
+      expect(find.text('Retry Reject'), findsOneWidget);
+
+      // Second attempt succeeds
+      nextResult = const NetworkSuccess<void>(null);
+      await tester.tap(find.text('Retry Reject'));
+      await tester.pumpAndSettle();
+
+      expect(rejectCalls, 2);
+      expect(find.byType(IncomingApprovalDialog), findsNothing);
+    },
+  );
 }
