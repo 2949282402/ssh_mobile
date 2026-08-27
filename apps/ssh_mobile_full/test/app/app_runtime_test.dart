@@ -329,6 +329,33 @@ void main() {
   );
 
   test(
+    'telemetry disposal still runs when its flush cannot read storage',
+    () async {
+      final events = <String>[];
+      final harness = await _newHarness(
+        disposeLogger: false,
+        lifecycleObserver: events.add,
+      );
+      try {
+        final runtime = await harness.createFuture;
+        final telemetryStorage = runtime.telemetryClient!.storage;
+        // Close the owned store early to force the flush read to fail while
+        // leaving the Runtime's normal disposal path under test.
+        await telemetryStorage.close();
+
+        await expectLater(runtime.dispose(), completes);
+
+        expect(events, contains('telemetry.flush.start'));
+        expect(events, contains('telemetry.flush.end'));
+        expect(events, contains('telemetry.dispose.start'));
+        expect(events, contains('telemetry.dispose.end'));
+      } finally {
+        await harness.close();
+      }
+    },
+  );
+
+  test(
     'construction failure does not start lazy pending initializers',
     () async {
       final events = <String>[];

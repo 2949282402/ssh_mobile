@@ -718,15 +718,128 @@ class TelemetryClient {
     if (isHighPriorityError && activePolicy.triggerHighPriorityError) {
       unawaited(flush());
     } else {
-      final pending = await storage.fetchPendingBatch(
-        activePolicy.batchSizeThreshold,
-      );
-      if (pending.length >= activePolicy.batchSizeThreshold) {
-        unawaited(flush());
+      try {
+        final pending = await storage.fetchPendingBatch(
+          activePolicy.batchSizeThreshold,
+        );
+        if (pending.length >= activePolicy.batchSizeThreshold) {
+          unawaited(flush());
+        }
+      } on Object {
+        // An accepted record remains durable even when the threshold read
+        // fails. The next scheduled/background flush can retry the read, but
+        // the producer must not surface a storage diagnostic through an
+        // intentionally fire-and-forget write.
+        _recordStorageFailure();
       }
     }
 
     return true;
+  }
+
+  static const _persistedRecordRejectedReason =
+      'Telemetry record failed local validation';
+
+  /// Re-applies the public privacy and contract boundary to rows read from
+  /// durable storage. Older clients, migrations, or local corruption can
+  /// leave rows that were written before the current redactor/schema rules;
+  /// no such row may cross the transport boundary unchanged.
+  Future<List<TelemetryEventRecord>> _preparePersistedRecords(
+    Iterable<TelemetryEventRecord> records,
+  ) async {
+    final valid = <TelemetryEventRecord>[];
+    final rejected = <TelemetryAckResult>[];
+    for (final record in records) {
+      final safe = _sanitizePersistedRecord(record);
+      if (safe == null) {
+        rejected.add(
+          TelemetryAckResult(
+            eventId: record.eventId,
+            status: 'rejected',
+            reason: _persistedRecordRejectedReason,
+          ),
+        );
+      } else {
+        valid.add(safe);
+      }
+    }
+
+    if (rejected.isNotEmpty) {
+      await storage.applyAckResults(rejected);
+    }
+    return valid;
+  }
+
+  TelemetryEventRecord? _sanitizePersistedRecord(TelemetryEventRecord record) {
+    final event = catalog.eventDefinition(record.eventName);
+    final eventId = redactor.sanitizeIdentifier(record.eventId);
+    final deviceId = redactor.sanitizeIdentifier(record.deviceId);
+    final sessionId = redactor.sanitizeIdentifier(record.sessionId);
+    final traceId = redactor.sanitizeIdentifier(record.traceId);
+    if (event == null ||
+        eventId == null ||
+        deviceId == null ||
+        deviceId != config.deviceId ||
+        sessionId == null ||
+        traceId == null ||
+        !_isSafePersistedMetadata(record.appVersion) ||
+        !_isSafePersistedMetadata(record.buildNumber) ||
+        !_isSafePersistedMetadata(record.platform)) {
+      return null;
+    }
+
+    final properties = redactor.sanitizeProperties(event, record.properties);
+    if (properties == null) return null;
+
+    TelemetryErrorDetail? error;
+    final persistedError = record.error;
+    if (persistedError != null) {
+      final errorDefinition = catalog.errorDefinition(persistedError.errorCode);
+      if (errorDefinition == null ||
+          persistedError.category != errorDefinition.category ||
+          persistedError.terminalFailure != errorDefinition.terminalFailure) {
+        return null;
+      }
+      error = TelemetryErrorDetail(
+        errorCode: errorDefinition.code,
+        category: errorDefinition.category,
+        terminalFailure: errorDefinition.terminalFailure,
+        message: redactor.sanitizeExceptionText(persistedError.message),
+        stackTrace: redactor.sanitizeStackTrace(persistedError.stackTrace),
+      );
+    }
+
+    final sanitized = TelemetryEventRecord(
+      eventId: eventId,
+      recordType: record.recordType,
+      eventName: record.eventName,
+      eventVersion: record.eventVersion,
+      deviceId: deviceId,
+      sessionId: sessionId,
+      traceId: traceId,
+      occurredAt: record.occurredAt,
+      feature: record.feature,
+      severity: record.severity,
+      appVersion: record.appVersion,
+      buildNumber: record.buildNumber,
+      platform: record.platform,
+      properties: properties,
+      error: error,
+      syncState: record.syncState,
+      logicalDeletedAt: record.logicalDeletedAt,
+      retryCount: record.retryCount,
+    );
+    return catalog.isValidRecord(sanitized) ? sanitized : null;
+  }
+
+  bool _isSafePersistedMetadata(String value) {
+    return value.isNotEmpty &&
+        value.length <= TelemetryRedactor.maxTextLength &&
+        redactor.sanitizeText(value) == value;
+  }
+
+  void _recordStorageFailure() {
+    _lastSyncError = 'Telemetry storage operation failed';
   }
 
   /// 刷新远程上传策略并应用安全边界。
@@ -944,7 +1057,25 @@ class TelemetryClient {
     final batchSize = activePolicy.maxBatchSize > 0
         ? activePolicy.maxBatchSize
         : 50;
-    final pending = await storage.fetchPendingBatch(batchSize);
+    late final List<TelemetryEventRecord> persisted;
+    try {
+      persisted = await storage.fetchPendingBatch(batchSize);
+    } on Object {
+      // Timer/background callers intentionally do not await [flush]. A
+      // storage read failure must therefore be converted into diagnostics,
+      // not an unhandled future, while pending rows remain untouched.
+      _recordStorageFailure();
+      return;
+    }
+    late final List<TelemetryEventRecord> pending;
+    try {
+      pending = await _preparePersistedRecords(persisted);
+    } on Object {
+      // A quarantine write is part of the local durability boundary. If it
+      // fails, leave every row pending and retry on the next flush.
+      _recordStorageFailure();
+      return;
+    }
     if (pending.isEmpty) {
       return;
     }
@@ -969,10 +1100,7 @@ class TelemetryClient {
         records: pending,
       );
 
-      await storage.applyAckResults(result.ackResults);
-      await storage.purgeOldSyncedRecords(
-        targetCapacity: activePolicy.clientMaxLocalRecords,
-      );
+      if (!await _applyUploadResult(result)) return;
 
       _lastSyncTime = DateTime.now().toUtc();
       _lastSyncError = null;
@@ -999,10 +1127,7 @@ class TelemetryClient {
             deviceId: config.deviceId,
             records: pending,
           );
-          await storage.applyAckResults(retried.ackResults);
-          await storage.purgeOldSyncedRecords(
-            targetCapacity: activePolicy.clientMaxLocalRecords,
-          );
+          if (!await _applyUploadResult(retried)) return;
           _lastSyncTime = DateTime.now().toUtc();
           _lastSyncError = null;
           return;
@@ -1022,7 +1147,12 @@ class TelemetryClient {
                   'Telemetry upload rejected',
             ),
         ];
-        await storage.applyAckResults(results);
+        try {
+          await storage.applyAckResults(results);
+        } on Object {
+          _recordStorageFailure();
+          return;
+        }
         _lastSyncError = _describeError(e);
         return;
       } else {
@@ -1039,6 +1169,28 @@ class TelemetryClient {
     }
   }
 
+  Future<bool> _applyUploadResult(
+    TelemetryBatchUploadResult result, {
+    bool purge = true,
+  }) async {
+    try {
+      await storage.applyAckResults(result.ackResults);
+      if (purge) {
+        await storage.purgeOldSyncedRecords(
+          targetCapacity: activePolicy.clientMaxLocalRecords,
+        );
+      }
+      return true;
+    } on Object {
+      // The server may have accepted the batch, but without a durable local
+      // ACK the rows must remain pending for an idempotent replay. Do not
+      // convert this storage failure into a retry-count write or leak it from
+      // an unawaited background flush.
+      _recordStorageFailure();
+      return false;
+    }
+  }
+
   Future<void> _handleUploadFailure(
     List<TelemetryEventRecord> records,
     TelemetryUploadException error,
@@ -1046,10 +1198,17 @@ class TelemetryClient {
     _lastSyncError = _describeError(error);
     if (!error.isPermanentClientError) {
       // 递增 retryCount 并持久化，供后续退避决策使用。
-      await storage.applyRetryCount(
-        records.map((r) => r.eventId).toList(),
-        increment: 1,
-      );
+      try {
+        await storage.applyRetryCount(
+          records.map((r) => r.eventId).toList(),
+          increment: 1,
+        );
+      } on Object {
+        // Keep the rows pending if retry bookkeeping itself is unavailable;
+        // this method is also reached by fire-and-forget flush timers.
+        _recordStorageFailure();
+        return;
+      }
     }
     _scheduleBackoffRetry(records, error);
   }
@@ -1121,6 +1280,9 @@ class TelemetryClient {
       final allRecords = await storage.fetchAllForReplay();
       if (allRecords.isEmpty) return 0;
 
+      final records = await _preparePersistedRecords(allRecords);
+      if (records.isEmpty) return 0;
+
       try {
         await _ensureAuthenticated();
       } catch (e) {
@@ -1137,9 +1299,9 @@ class TelemetryClient {
           ? activePolicy.maxBatchSize
           : 50;
 
-      for (var i = 0; i < allRecords.length; i += batchSize) {
-        final end = min(i + batchSize, allRecords.length);
-        final batch = allRecords.sublist(i, end);
+      for (var i = 0; i < records.length; i += batchSize) {
+        final end = min(i + batchSize, records.length);
+        final batch = records.sublist(i, end);
 
         final result = await transport.uploadBatch(
           baseUrl: config.baseUrl,
@@ -1148,13 +1310,18 @@ class TelemetryClient {
           records: batch,
         );
 
-        await storage.applyAckResults(result.ackResults);
+        if (!await _applyUploadResult(result, purge: false)) return 0;
         totalReplayed += batch.length;
       }
 
-      await storage.purgeOldSyncedRecords(
-        targetCapacity: activePolicy.clientMaxLocalRecords,
-      );
+      try {
+        await storage.purgeOldSyncedRecords(
+          targetCapacity: activePolicy.clientMaxLocalRecords,
+        );
+      } on Object {
+        _recordStorageFailure();
+        return 0;
+      }
       _lastSyncTime = DateTime.now().toUtc();
       _lastSyncError = null;
       return totalReplayed;

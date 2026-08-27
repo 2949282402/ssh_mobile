@@ -1,6 +1,128 @@
 import 'package:app_core/app_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+TelemetryEventRecord _persistedDiagnosticRecord({
+  required String eventId,
+  required String message,
+  String eventName = 'app.diagnostic.log',
+}) {
+  return TelemetryEventRecord(
+    eventId: eventId,
+    recordType: TelemetryRecordType.diagnostic,
+    eventName: eventName,
+    eventVersion: 1,
+    deviceId: 'dev-client-1',
+    sessionId: 'sess-fixed',
+    traceId: 'trace-persisted',
+    occurredAt: DateTime.utc(2026, 8, 28),
+    feature: 'app',
+    severity: TelemetrySeverity.warn,
+    appVersion: '1.0.0',
+    buildNumber: '100',
+    platform: 'android',
+    properties: {'message': message},
+  );
+}
+
+final class _ScriptedTelemetryStorage implements TelemetryStorage {
+  _ScriptedTelemetryStorage([Iterable<TelemetryEventRecord>? records])
+    : records = List<TelemetryEventRecord>.from(records ?? const []);
+
+  final List<TelemetryEventRecord> records;
+  bool failFetchPending = false;
+  bool failApplyAck = false;
+  bool failRetryCount = false;
+  bool closed = false;
+
+  @override
+  Future<void> insertRecord(TelemetryEventRecord record) async {
+    if (closed) throw StateError('closed');
+    records.add(record);
+  }
+
+  @override
+  Future<List<TelemetryEventRecord>> fetchPendingBatch(int limit) async {
+    if (failFetchPending) throw StateError('pending read failed');
+    if (closed) throw StateError('closed');
+    return records
+        .where((record) => record.syncState == TelemetrySyncState.pending)
+        .take(limit > 0 ? limit : 50)
+        .toList();
+  }
+
+  @override
+  Future<void> applyAckResults(List<TelemetryAckResult> results) async {
+    if (failApplyAck) throw StateError('ack write failed');
+    if (closed) throw StateError('closed');
+    final byId = {for (final result in results) result.eventId: result};
+    for (var i = 0; i < records.length; i++) {
+      final result = byId[records[i].eventId];
+      if (result == null) continue;
+      records[i] = records[i].copyWith(
+        syncState: result.isRejected
+            ? TelemetrySyncState.rejected
+            : TelemetrySyncState.synced,
+        logicalDeletedAt: result.isRejected ? null : DateTime.utc(2026, 8, 28),
+        clearLogicalDeletedAt: result.isRejected,
+      );
+    }
+  }
+
+  @override
+  Future<void> applyRetryCount(
+    List<String> eventIds, {
+    required int increment,
+  }) async {
+    if (failRetryCount) throw StateError('retry write failed');
+    if (closed) throw StateError('closed');
+    final ids = eventIds.toSet();
+    for (var i = 0; i < records.length; i++) {
+      if (ids.contains(records[i].eventId)) {
+        records[i] = records[i].copyWith(
+          retryCount: records[i].retryCount + increment,
+        );
+      }
+    }
+  }
+
+  @override
+  Future<List<TelemetryEventRecord>> fetchAllForReplay() async =>
+      List<TelemetryEventRecord>.unmodifiable(records);
+
+  @override
+  Future<int> purgeOldSyncedRecords({required int targetCapacity}) async => 0;
+
+  @override
+  Future<TelemetryStorageHealth> getHealthStats({
+    required int targetCapacity,
+  }) async {
+    return TelemetryStorageHealth(
+      localPendingCount: records
+          .where((record) => record.syncState == TelemetrySyncState.pending)
+          .length,
+      localRejectedCount: records
+          .where((record) => record.syncState == TelemetrySyncState.rejected)
+          .length,
+      localSyncedCount: records
+          .where((record) => record.syncState == TelemetrySyncState.synced)
+          .length,
+      totalCount: records.length,
+      cacheOverflow: records.length > targetCapacity,
+    );
+  }
+
+  @override
+  TelemetryStorageHealth? get cachedHealthStats => null;
+
+  @override
+  Future<void> clearAll() async => records.clear();
+
+  @override
+  Future<void> close() async {
+    closed = true;
+  }
+}
+
 class MockTelemetryTransport implements TelemetryTransport {
   String token = 'mock-test-token-123';
   TelemetryUploadPolicy? remotePolicy;
@@ -215,6 +337,149 @@ void main() {
         );
         expect(missingProp, isFalse);
         expect((await storage.fetchPendingBatch(10)).length, 1);
+      },
+    );
+
+    test('revalidates and re-sanitizes persisted rows before upload', () async {
+      final persistedStorage = _ScriptedTelemetryStorage([
+        _persistedDiagnosticRecord(
+          eventId: 'evt-persisted-safe',
+          message: 'Authorization: Bearer persisted-token-value',
+        ),
+        _persistedDiagnosticRecord(
+          eventId: 'evt-persisted-invalid',
+          message: 'must not be uploaded',
+          eventName: 'unknown.persisted.event',
+        ),
+      ]);
+      final persistedClient = _buildClient(
+        storage: persistedStorage,
+        transport: transport,
+      );
+
+      await persistedClient.flush();
+
+      expect(transport.uploadCalls, 1);
+      expect(transport.uploadedBatches, hasLength(1));
+      expect(transport.uploadedBatches.single, hasLength(1));
+      expect(
+        transport.uploadedBatches.single.single.properties['message'],
+        isNot(contains('persisted-token-value')),
+      );
+      expect(
+        persistedStorage.records
+            .singleWhere((record) => record.eventId == 'evt-persisted-invalid')
+            .syncState,
+        TelemetrySyncState.rejected,
+      );
+
+      await persistedClient.dispose();
+    });
+
+    test(
+      'quarantines invalid persisted rows without authenticating or uploading',
+      () async {
+        final persistedStorage = _ScriptedTelemetryStorage([
+          _persistedDiagnosticRecord(
+            eventId: 'evt-persisted-invalid-only',
+            message: 'must not be uploaded',
+            eventName: 'unknown.persisted.event',
+          ),
+        ]);
+        final persistedClient = _buildClient(
+          storage: persistedStorage,
+          transport: transport,
+        );
+
+        await persistedClient.flush();
+
+        expect(transport.authCalls, 0);
+        expect(transport.uploadCalls, 0);
+        expect(
+          persistedStorage.records.single.syncState,
+          TelemetrySyncState.rejected,
+        );
+        expect(persistedClient.latestDiagnostics.lastSyncError, isNull);
+
+        await persistedClient.dispose();
+      },
+    );
+
+    test('contains pending-read storage failures in flush', () async {
+      final failingStorage = _ScriptedTelemetryStorage()
+        ..failFetchPending = true;
+      final failingClient = _buildClient(
+        storage: failingStorage,
+        transport: transport,
+      );
+
+      await expectLater(failingClient.flush(), completes);
+      expect(transport.authCalls, 0);
+      expect(
+        failingClient.latestDiagnostics.lastSyncError,
+        'Telemetry storage operation failed',
+      );
+
+      await failingClient.dispose();
+    });
+
+    test(
+      'contains storage failures while applying upload results and leaves rows pending',
+      () async {
+        final failingStorage = _ScriptedTelemetryStorage([
+          _persistedDiagnosticRecord(
+            eventId: 'evt-persisted-ack-failure',
+            message: 'ack write fails',
+          ),
+        ])..failApplyAck = true;
+        final failingClient = _buildClient(
+          storage: failingStorage,
+          transport: transport,
+        );
+
+        await expectLater(failingClient.flush(), completes);
+        expect(transport.uploadCalls, 1);
+        expect(
+          failingStorage.records.single.syncState,
+          TelemetrySyncState.pending,
+        );
+        expect(
+          failingClient.latestDiagnostics.lastSyncError,
+          'Telemetry storage operation failed',
+        );
+
+        await failingClient.dispose();
+      },
+    );
+
+    test(
+      'contains retry bookkeeping storage failures in background flush',
+      () async {
+        final failingStorage = _ScriptedTelemetryStorage([
+          _persistedDiagnosticRecord(
+            eventId: 'evt-persisted-retry-failure',
+            message: 'retry bookkeeping fails',
+          ),
+        ])..failRetryCount = true;
+        transport.nextUploadStatusCodes.add(503);
+        final failingClient = _buildClient(
+          storage: failingStorage,
+          transport: transport,
+        );
+
+        await expectLater(failingClient.flush(), completes);
+        expect(transport.uploadCalls, 1);
+        expect(
+          failingStorage.records.single.syncState,
+          TelemetrySyncState.pending,
+        );
+        expect(failingStorage.records.single.retryCount, 0);
+        expect(
+          failingClient.latestDiagnostics.lastSyncError,
+          'Telemetry storage operation failed',
+        );
+
+        await failingClient.dispose();
       },
     );
 
@@ -473,6 +738,30 @@ void main() {
         expect(transport.uploadedBatches.length, 2);
       },
     );
+
+    test('replay revalidates persisted rows before sending them', () async {
+      final persistedStorage = _ScriptedTelemetryStorage([
+        _persistedDiagnosticRecord(
+          eventId: 'evt-replay-persisted',
+          message: 'Cookie: session=persisted-cookie-value',
+        ),
+      ]);
+      final persistedClient = _buildClient(
+        storage: persistedStorage,
+        transport: transport,
+      );
+
+      final replayedCount = await persistedClient.replayAllLocalRecords();
+
+      expect(replayedCount, 1);
+      expect(transport.uploadCalls, 1);
+      expect(
+        transport.uploadedBatches.single.single.properties['message'],
+        isNot(contains('persisted-cookie-value')),
+      );
+
+      await persistedClient.dispose();
+    });
 
     test(
       'storage health and diagnostics snapshot are reported accurately',

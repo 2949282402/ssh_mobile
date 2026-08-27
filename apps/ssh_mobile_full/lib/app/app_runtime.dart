@@ -371,10 +371,8 @@ final class AppRuntime implements Disposable {
 
     // App Scope Module 先停止对外提供服务，避免释放基础设施时仍有新请求进入。
     if (telemetryClient != null) {
-      await attempt('telemetry.flush', () async {
-        await telemetryClient!.flush();
-        await telemetryClient!.dispose();
-      });
+      await attempt('telemetry.flush', telemetryClient!.flush);
+      await attempt('telemetry.dispose', telemetryClient!.dispose);
     }
     await attempt('mcp-module.dispose', mcpModule.dispose);
     await attempt(
