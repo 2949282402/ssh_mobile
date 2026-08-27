@@ -13,6 +13,7 @@ void main() {
     _testCleanGeneratedSourceIsAllowed(root);
     _testMirrorAndLegacyApiAreRejected(root);
     _testRawContractLiteralsAreRejected(root);
+    _testRawContractLiteralsInLoggingAllowlistsAreRejected(root);
     _testFrontRootContractImportsAreRejected(root);
     stdout.writeln('Telemetry producer source-ban tests passed.');
   } finally {
@@ -93,6 +94,33 @@ const code = "SSH_CONNECT_FAILED"
   _expect(
     violations.any((violation) => violation.contains('SSH_CONNECT_FAILED')),
     'raw error-code literals should be rejected',
+  );
+}
+
+void _testRawContractLiteralsInLoggingAllowlistsAreRejected(Directory root) {
+  final source = Directory(
+    '${root.path}/packages/core/app_core/lib/src/logging',
+  )..createSync(recursive: true);
+  File('${source.path}/telemetry_log_sink.dart').writeAsStringSync('''
+const allowlistedEvents = {'ssh.session.started'};
+const allowlistedErrors = {'SSH_CONNECT_FAILED'};
+''');
+  final violations = scanForViolations(root);
+  _expect(
+    violations.any(
+      (violation) =>
+          violation.contains('ssh.session.started') &&
+          violation.contains('telemetry_log_sink.dart'),
+    ),
+    'raw event literals in logging allowlists should be rejected',
+  );
+  _expect(
+    violations.any(
+      (violation) =>
+          violation.contains('SSH_CONNECT_FAILED') &&
+          violation.contains('telemetry_log_sink.dart'),
+    ),
+    'raw error-code literals in logging allowlists should be rejected',
   );
 }
 

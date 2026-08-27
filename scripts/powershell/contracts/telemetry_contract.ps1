@@ -13,6 +13,7 @@ Write-Host "Validating Telemetry contracts..."
 Invoke-CommandChecked dart @('run', 'tool/gen_telemetry_contract.dart') $root
 Invoke-CommandChecked dart @('run', 'tool/check_telemetry_contract_generated.dart') $root
 Invoke-CommandChecked dart @('run', 'tool/check_telemetry_producers.dart') $root
+Invoke-CommandChecked dart @('run', 'test/tool/telemetry_producer_ban_test.dart') $root
 
 # 2. Go validation
 Invoke-CommandChecked go @('test', './internal/telemetry', '-run', '^TestTelemetryContract', '-count=1') (Join-Path $root 'relay')

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../telemetry/generated/telemetry_events.dart';
 import '../telemetry/telemetry_catalog.dart';
 import '../telemetry/telemetry_client.dart';
 import '../telemetry/telemetry_model.dart';
@@ -25,14 +26,18 @@ final class TelemetryLogSink implements LogSink {
        );
 
   /// The event names explicitly approved for structured error forwarding.
-  static const Set<String> defaultAllowlistedEvents = {
-    'app.error.captured',
-    'app.crash.reported',
-    'network.relay.failed',
-    'ssh.session.failed',
-    'sftp.transfer.failed',
-    'ai.chat.failed',
-  };
+  static final Set<String> defaultAllowlistedEvents = Set.unmodifiable(
+    TelemetryEvents.all
+        .where(
+          (event) =>
+              event.feature != 'telemetry' &&
+              event.recordType == TelemetryRecordType.diagnostic &&
+              (event.severity == TelemetrySeverity.error ||
+                  event.severity == TelemetrySeverity.critical),
+        )
+        .map((event) => event.name)
+        .toSet(),
+  );
 
   final TelemetryClient client;
   final TelemetryCatalog catalog;

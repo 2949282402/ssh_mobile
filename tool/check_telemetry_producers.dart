@@ -12,7 +12,7 @@ import 'gen_telemetry_contract.dart';
 
 const List<String> _producerRoots = <String>[
   'apps/ssh_mobile_full/lib',
-  'packages/core/app_core/lib/src/telemetry',
+  'packages/core/app_core/lib/src',
   'front/src',
   'relay/internal/telemetry',
 ];

@@ -23,6 +23,7 @@ echo "Validating Telemetry contracts..."
   dart run tool/gen_telemetry_contract.dart
   dart run tool/check_telemetry_contract_generated.dart
   dart run tool/check_telemetry_producers.dart
+  dart run test/tool/telemetry_producer_ban_test.dart
 )
 
 # 2. Go validation

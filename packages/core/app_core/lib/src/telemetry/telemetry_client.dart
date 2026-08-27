@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:uuid/uuid.dart';
 
+import 'generated/error_codes.dart';
 import 'telemetry_catalog.dart';
 import 'telemetry_endpoints.dart';
 import 'telemetry_model.dart';
@@ -893,10 +894,10 @@ class TelemetryClient {
     try {
       await provider.persistSecret(result.secret);
     } on Object {
-      throw const TelemetryUploadException(
+      throw TelemetryUploadException(
         'Telemetry enrollment persistence failed',
         statusCode: 503,
-        errorCode: 'TELEMETRY_AUTH_FAILED',
+        errorCode: TelemetryErrorCodes.telemetryAuthFailed.code,
       );
     }
     return result.secret;
