@@ -482,7 +482,7 @@ void main() {
           quic.single.error?.errorCode,
           TelemetryErrorCodes.netQuicConnRefused.code,
         );
-        expect(quic.single.errorMessage, 'direct route refused');
+        expect(quic.single.error?.message, 'direct route refused');
         expect(quic.single.properties, containsPair('fallback_used', false));
         expect(records[TelemetryEvents.networkRelayFallback.name], isNull);
       },
