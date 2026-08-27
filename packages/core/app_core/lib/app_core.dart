@@ -21,3 +21,6 @@ export 'src/modules/module_context.dart';
 export 'src/modules/module_descriptor.dart';
 export 'src/modules/module_registry.dart';
 export 'src/modules/module_state.dart';
+export 'src/telemetry/telemetry_model.dart';
+export 'src/telemetry/telemetry_policy.dart';
+export 'src/telemetry/telemetry_catalog.dart';

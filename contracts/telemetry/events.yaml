@@ -1,0 +1,279 @@
+# Telemetry Event Catalog
+# Schema version: 1.0.0
+# Source of truth for Telemetry events across Client, Backend, and Frontend.
+
+version: "1.0.0"
+events:
+  - name: "app.lifecycle.started"
+    version: 1
+    recordType: "analytics"
+    feature: "app"
+    severity: "info"
+    description: "Emitted when the application process completes bootstrap and starts."
+    allowedProperties:
+      - name: "start_type"
+        type: "string"
+        required: false
+      - name: "cold_start"
+        type: "boolean"
+        required: false
+
+  - name: "app.lifecycle.backgrounded"
+    version: 1
+    recordType: "analytics"
+    feature: "app"
+    severity: "info"
+    description: "Emitted when the application transitions to the background."
+    allowedProperties:
+      - name: "active_sessions"
+        type: "integer"
+        required: false
+
+  - name: "app.lifecycle.foregrounded"
+    version: 1
+    recordType: "analytics"
+    feature: "app"
+    severity: "info"
+    description: "Emitted when the application returns to the foreground."
+    allowedProperties:
+      - name: "background_duration_ms"
+        type: "integer"
+        required: false
+
+  - name: "network.quic.connected"
+    version: 1
+    recordType: "analytics"
+    feature: "network"
+    severity: "info"
+    description: "Emitted when a direct QUIC network path is established."
+    allowedProperties:
+      - name: "rtt_ms"
+        type: "integer"
+        required: false
+      - name: "protocol_version"
+        type: "string"
+        required: false
+
+  - name: "network.quic.failed"
+    version: 1
+    recordType: "diagnostic"
+    feature: "network"
+    severity: "warn"
+    description: "Emitted when QUIC connection attempt fails."
+    allowedProperties:
+      - name: "reason"
+        type: "string"
+        required: false
+      - name: "fallback_used"
+        type: "boolean"
+        required: false
+
+  - name: "network.relay.connected"
+    version: 1
+    recordType: "analytics"
+    feature: "network"
+    severity: "info"
+    description: "Emitted when connected to the Relay control or data plane."
+    allowedProperties:
+      - name: "relay_region"
+        type: "string"
+        required: false
+
+  - name: "network.relay.fallback"
+    version: 1
+    recordType: "diagnostic"
+    feature: "network"
+    severity: "warn"
+    description: "Emitted when connection falls back from direct path to Relay."
+    allowedProperties:
+      - name: "direct_error"
+        type: "string"
+        required: false
+
+  - name: "ssh.session.started"
+    version: 1
+    recordType: "analytics"
+    feature: "ssh"
+    severity: "info"
+    description: "Emitted when an SSH interactive terminal or command session starts."
+    allowedProperties:
+      - name: "session_type"
+        type: "string"
+        required: false
+      - name: "auth_method"
+        type: "string"
+        required: false
+
+  - name: "ssh.session.terminated"
+    version: 1
+    recordType: "analytics"
+    feature: "ssh"
+    severity: "info"
+    description: "Emitted when an SSH session closes normally."
+    allowedProperties:
+      - name: "duration_ms"
+        type: "integer"
+        required: false
+      - name: "exit_code"
+        type: "integer"
+        required: false
+
+  - name: "ssh.session.failed"
+    version: 1
+    recordType: "diagnostic"
+    feature: "ssh"
+    severity: "error"
+    description: "Emitted when an SSH connection or authentication fails."
+    allowedProperties:
+      - name: "stage"
+        type: "string"
+        required: false
+      - name: "retry_count"
+        type: "integer"
+        required: false
+
+  - name: "sftp.transfer.started"
+    version: 1
+    recordType: "analytics"
+    feature: "sftp"
+    severity: "info"
+    description: "Emitted when an SFTP file upload or download begins."
+    allowedProperties:
+      - name: "direction"
+        type: "string"
+        required: true
+      - name: "file_size_bytes"
+        type: "integer"
+        required: false
+
+  - name: "sftp.transfer.completed"
+    version: 1
+    recordType: "analytics"
+    feature: "sftp"
+    severity: "info"
+    description: "Emitted when an SFTP file transfer completes successfully."
+    allowedProperties:
+      - name: "direction"
+        type: "string"
+        required: true
+      - name: "bytes_transferred"
+        type: "integer"
+        required: true
+      - name: "duration_ms"
+        type: "integer"
+        required: false
+
+  - name: "sftp.transfer.failed"
+    version: 1
+    recordType: "diagnostic"
+    feature: "sftp"
+    severity: "error"
+    description: "Emitted when an SFTP transfer fails."
+    allowedProperties:
+      - name: "direction"
+        type: "string"
+        required: true
+      - name: "bytes_transferred"
+        type: "integer"
+        required: false
+      - name: "stage"
+        type: "string"
+        required: false
+
+  - name: "lan.discovery.peer_found"
+    version: 1
+    recordType: "analytics"
+    feature: "lan_share"
+    severity: "info"
+    description: "Emitted when a LAN peer is discovered."
+    allowedProperties:
+      - name: "peer_count"
+        type: "integer"
+        required: false
+
+  - name: "lan.transfer.completed"
+    version: 1
+    recordType: "analytics"
+    feature: "lan_share"
+    severity: "info"
+    description: "Emitted when LAN file transfer completes."
+    allowedProperties:
+      - name: "bytes_transferred"
+        type: "integer"
+        required: true
+      - name: "duration_ms"
+        type: "integer"
+        required: false
+
+  - name: "ai.chat.request"
+    version: 1
+    recordType: "analytics"
+    feature: "ai"
+    severity: "info"
+    description: "Emitted when a client-side AI chat prompt request is sent."
+    allowedProperties:
+      - name: "model_type"
+        type: "string"
+        required: false
+      - name: "token_estimate"
+        type: "integer"
+        required: false
+
+  - name: "ai.chat.response"
+    version: 1
+    recordType: "analytics"
+    feature: "ai"
+    severity: "info"
+    description: "Emitted when an AI response is successfully received."
+    allowedProperties:
+      - name: "latency_ms"
+        type: "integer"
+        required: false
+      - name: "status"
+        type: "string"
+        required: false
+
+  - name: "ai.chat.failed"
+    version: 1
+    recordType: "diagnostic"
+    feature: "ai"
+    severity: "error"
+    description: "Emitted when an AI chat request fails."
+    allowedProperties:
+      - name: "provider"
+        type: "string"
+        required: false
+      - name: "http_status"
+        type: "integer"
+        required: false
+
+  - name: "telemetry.batch.uploaded"
+    version: 1
+    recordType: "analytics"
+    feature: "telemetry"
+    severity: "info"
+    description: "Emitted when a telemetry batch is successfully acknowledged by server."
+    allowedProperties:
+      - name: "record_count"
+        type: "integer"
+        required: true
+      - name: "duration_ms"
+        type: "integer"
+        required: false
+
+  - name: "telemetry.batch.failed"
+    version: 1
+    recordType: "diagnostic"
+    feature: "telemetry"
+    severity: "warn"
+    description: "Emitted when a telemetry batch upload fails."
+    allowedProperties:
+      - name: "error_type"
+        type: "string"
+        required: false
+      - name: "http_status"
+        type: "integer"
+        required: false
+      - name: "retry_count"
+        type: "integer"
+        required: false

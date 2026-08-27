@@ -1,0 +1,101 @@
+{
+  "version": "1.0.0",
+  "errorCodes": [
+    {
+      "code": "NET_QUIC_CONN_REFUSED",
+      "category": "network",
+      "terminalFailure": false,
+      "description": "Direct QUIC connection refused by peer or relay; fallback may proceed."
+    },
+    {
+      "code": "NET_QUIC_TIMEOUT",
+      "category": "network",
+      "terminalFailure": false,
+      "description": "Direct QUIC connection handshake timed out."
+    },
+    {
+      "code": "NET_RELAY_UNAVAILABLE",
+      "category": "network",
+      "terminalFailure": true,
+      "description": "Relay server is unreachable or returned a service unavailable error."
+    },
+    {
+      "code": "SSH_AUTH_FAILED",
+      "category": "ssh",
+      "terminalFailure": true,
+      "description": "SSH password, public key, or interactive authentication failed."
+    },
+    {
+      "code": "SSH_HOST_KEY_MISMATCH",
+      "category": "ssh",
+      "terminalFailure": true,
+      "description": "Remote host key verification failed or did not match known hosts."
+    },
+    {
+      "code": "SSH_TIMEOUT",
+      "category": "ssh",
+      "terminalFailure": true,
+      "description": "SSH connection or banner exchange timed out."
+    },
+    {
+      "code": "SFTP_PERMISSION_DENIED",
+      "category": "sftp",
+      "terminalFailure": true,
+      "description": "Remote filesystem operation denied due to lack of permissions."
+    },
+    {
+      "code": "SFTP_FILE_NOT_FOUND",
+      "category": "sftp",
+      "terminalFailure": true,
+      "description": "Remote target file or directory does not exist."
+    },
+    {
+      "code": "SFTP_TRANSFER_ABORTED",
+      "category": "sftp",
+      "terminalFailure": true,
+      "description": "SFTP file transfer was aborted by user or connection drop."
+    },
+    {
+      "code": "LAN_PEER_DISCONNECTED",
+      "category": "lan",
+      "terminalFailure": false,
+      "description": "LAN peer disconnected during discovery or session."
+    },
+    {
+      "code": "LAN_HANDSHAKE_FAILED",
+      "category": "lan",
+      "terminalFailure": true,
+      "description": "LAN encryption or pairing handshake failed."
+    },
+    {
+      "code": "AI_RATE_LIMITED",
+      "category": "ai",
+      "terminalFailure": false,
+      "description": "AI provider rate limit reached; retryable."
+    },
+    {
+      "code": "AI_SERVICE_UNAVAILABLE",
+      "category": "ai",
+      "terminalFailure": true,
+      "description": "AI provider service unavailable or invalid API key."
+    },
+    {
+      "code": "TELEMETRY_AUTH_FAILED",
+      "category": "telemetry",
+      "terminalFailure": true,
+      "description": "Device authentication to telemetry endpoint failed."
+    },
+    {
+      "code": "TELEMETRY_NETWORK_ERROR",
+      "category": "telemetry",
+      "terminalFailure": false,
+      "description": "Transient network failure during telemetry upload."
+    },
+    {
+      "code": "TELEMETRY_STORAGE_FULL",
+      "category": "telemetry",
+      "terminalFailure": false,
+      "description": "Local storage limit reached; overflow state exposed."
+    }
+  ]
+}
