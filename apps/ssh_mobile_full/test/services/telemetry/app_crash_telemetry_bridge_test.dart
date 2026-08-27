@@ -1,6 +1,6 @@
 // 未捕获异常遥测桥测试。
 //
-// 验证 FlutterError.onError 链式包装会以 app.crash.reported（category=crash）
+// 验证 FlutterError.onError 链式包装会以 app.crash.reported（category=flutter）
 // 写一条诊断遥测；dispose 后恢复原 handler；reportZoneError 与独立顶层函数
 // 也会写同名事件。
 
@@ -50,7 +50,7 @@ void main() {
         final diagnostics = records[TelemetryEvents.appCrashReported.name];
         expect(diagnostics, hasLength(1));
         final record = diagnostics!.single;
-        expect(record.properties, containsPair('category', 'crash'));
+        expect(record.properties, containsPair('category', 'flutter'));
         expect(record.error?.errorCode, TelemetryErrorCodes.appFatalError.code);
 
         // dispose 恢复安装前的链尾 handler。
@@ -74,6 +74,58 @@ void main() {
         containsPair('category', 'uncaught'),
       );
     });
+
+    test('chains and restores PlatformDispatcher.onError', () async {
+      var previousCalls = 0;
+      final previous = PlatformDispatcher.instance.onError;
+      PlatformDispatcher.instance.onError = (error, stackTrace) {
+        previousCalls++;
+        return true;
+      };
+
+      addTearDown(() {
+        PlatformDispatcher.instance.onError = previous;
+      });
+
+      bridge.install();
+      final handled = PlatformDispatcher.instance.onError!(
+        StateError('platform failure'),
+        StackTrace.current,
+      );
+      await bridge.pendingReports;
+
+      expect(handled, isTrue);
+      expect(previousCalls, 1);
+      final records = await harness.recordsByName();
+      expect(records[TelemetryEvents.appCrashReported.name], hasLength(1));
+
+      await bridge.dispose();
+      expect(PlatformDispatcher.instance.onError, isNotNull);
+      expect(
+        PlatformDispatcher.instance.onError!(
+          StateError('restored'),
+          StackTrace.current,
+        ),
+        isTrue,
+      );
+      expect(previousCalls, 2);
+    });
+
+    test(
+      'install and dispose are idempotent and do not clobber a replacement handler',
+      () async {
+        final previous = FlutterError.onError;
+        bridge.install();
+        final installed = FlutterError.onError;
+        bridge.install();
+        expect(FlutterError.onError, same(installed));
+
+        FlutterError.onError = (details) {};
+        await bridge.dispose();
+        expect(FlutterError.onError, isNot(same(previous)));
+        await bridge.dispose();
+      },
+    );
   });
 }
 

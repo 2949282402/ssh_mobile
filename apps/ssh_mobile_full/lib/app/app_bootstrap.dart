@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 
 import '../utils/startup_instrumentation.dart';
+import '../services/telemetry/app_crash_telemetry_bridge.dart';
 import 'app_runtime.dart';
 import 'app_runtime_factory.dart';
 import 'ssh_mobile_app.dart';
@@ -27,12 +28,23 @@ final class AppBootstrap {
         runApp(SshMobileApp(runtime: runtime));
       },
       (error, stackTrace) {
-        final appLogService = runtime?.appLogService;
-        if (appLogService != null) {
-          appLogService.error(
+        final currentRuntime = runtime;
+        if (currentRuntime != null) {
+          // Keep the existing local App Scope log projection while the
+          // structured bridge writes the durable telemetry record below.
+          currentRuntime.appLogService.error(
             'Uncaught zone error',
             error: error,
             stackTrace: stackTrace,
+          );
+          // The bridge awaits durable local insertion before attempting its
+          // asynchronous upload. runZonedGuarded itself remains non-blocking.
+          unawaited(
+            reportUncaughtErrorToRuntime(
+              currentRuntime,
+              error: error,
+              stackTrace: stackTrace,
+            ),
           );
         } else {
           // Runtime 尚未创建时无法注入 Logger，只保留启动边界的最小兜底。

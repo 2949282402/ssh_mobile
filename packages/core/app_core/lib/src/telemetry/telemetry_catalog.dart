@@ -64,6 +64,14 @@ class TelemetryCatalog {
     _errors[def.code] = def;
   }
 
+  /// Returns a registered event definition without exposing the mutable
+  /// registry. Consumers such as [TelemetryLogSink] use this to enforce the
+  /// same contract that [TelemetryClient] uses before a record is persisted.
+  TelemetryEventDefinition? eventDefinition(String name) => _events[name];
+
+  /// Returns a registered error-code definition, when present.
+  TelemetryErrorCodeDefinition? errorDefinition(String code) => _errors[code];
+
   void _registerDefaults() {
     // 从 contracts/telemetry 生成的常量目录注册全部事件定义，禁止业务代码
     // 硬编码事件名、属性白名单或错误码。

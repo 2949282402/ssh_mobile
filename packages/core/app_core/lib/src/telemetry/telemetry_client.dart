@@ -10,6 +10,7 @@ import 'telemetry_catalog.dart';
 import 'telemetry_endpoints.dart';
 import 'telemetry_model.dart';
 import 'telemetry_policy.dart';
+import 'telemetry_redactor.dart';
 import 'telemetry_storage.dart';
 
 /// 上传过程中的 HTTP / 连接错误，供上传分发器按状态码决策。
@@ -542,9 +543,11 @@ class TelemetryClient {
     TelemetryCatalog? catalog,
     TelemetryTransport? transport,
     TelemetryUploadPolicy? initialPolicy,
+    TelemetryRedactor? redactor,
   }) : catalog = catalog ?? TelemetryCatalog.instance,
        transport = transport ?? HttpTelemetryTransport(),
        activePolicy = initialPolicy ?? TelemetryUploadPolicy.defaultPolicy(),
+       redactor = redactor ?? const TelemetryRedactor(),
        sessionId = config.sessionId ?? _uuid.v4() {
     // Keep the credential in memory for the lifetime of this client.  The
     // enrollment provider persists it for restart recovery, but a token
@@ -559,6 +562,7 @@ class TelemetryClient {
   final TelemetryStorage storage;
   final TelemetryCatalog catalog;
   final TelemetryTransport transport;
+  final TelemetryRedactor redactor;
 
   /// App 运行期固定的会话 ID。
   final String sessionId;
@@ -662,14 +666,26 @@ class TelemetryClient {
     final now = DateTime.now().toUtc();
     final eventId = 'evt_${_uuid.v4()}';
 
+    // Apply the explicit schema allowlist before constructing an envelope.
+    // Unknown attributes and wrong primitive types fail closed; no caller can
+    // bypass this boundary by selecting a known event name.
+    final safeProperties = redactor.sanitizeProperties(event, properties);
+    if (safeProperties == null) return false;
+
+    final safeSessionId = redactor.sanitizeIdentifier(
+      sessionId ?? this.sessionId,
+    );
+    final safeTraceId = redactor.sanitizeIdentifier(traceId ?? _newTraceId());
+    if (safeSessionId == null || safeTraceId == null) return false;
+
     final errorDetail = errorCode == null
         ? null
         : TelemetryErrorDetail(
             errorCode: errorCode.code,
             category: errorCode.category,
             terminalFailure: errorCode.terminalFailure,
-            message: errorMessage,
-            stackTrace: stackTrace,
+            message: redactor.sanitizeExceptionText(errorMessage),
+            stackTrace: redactor.sanitizeStackTrace(stackTrace),
           );
     final record = TelemetryEventRecord(
       eventId: eventId,
@@ -677,15 +693,15 @@ class TelemetryClient {
       eventName: event.name,
       eventVersion: event.version,
       deviceId: config.deviceId,
-      sessionId: sessionId ?? this.sessionId,
-      traceId: traceId ?? _newTraceId(),
+      sessionId: safeSessionId,
+      traceId: safeTraceId,
       occurredAt: now,
       feature: event.feature,
       severity: event.severity,
       appVersion: config.appVersion,
       buildNumber: config.buildNumber,
       platform: config.platform,
-      properties: properties,
+      properties: safeProperties,
       error: errorDetail,
     );
 

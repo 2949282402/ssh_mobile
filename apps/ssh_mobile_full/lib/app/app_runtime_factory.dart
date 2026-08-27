@@ -541,6 +541,12 @@ final class AppRuntimeFactory {
         crashTelemetryBridge.dispose,
         priority: _CleanupPriority.module,
       );
+      final telemetryLogSink = TelemetryLogSink(client: telemetryClient);
+      logger.addSink(telemetryLogSink);
+      cleanup.add(() async {
+        logger.removeSink(telemetryLogSink);
+        await telemetryLogSink.close();
+      }, priority: _CleanupPriority.module);
       pendingInitialization.add(
         start: (_) => telemetryClient.record(
           event: TelemetryEvents.appLifecycleStarted,
@@ -661,6 +667,8 @@ final class AppRuntimeFactory {
         aiChatRuntimeFactory: aiChatRuntimeFactory,
         telemetryClient: telemetryClient,
         networkTelemetryBridge: networkTelemetryBridge,
+        crashTelemetryBridge: crashTelemetryBridge,
+        telemetryLogSink: telemetryLogSink,
         telemetryTraceRegistry: traceRegistry,
         awaitPendingInitialization: pendingInitialization.wait,
         lifecycleObserver: lifecycleObserver,

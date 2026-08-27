@@ -1,7 +1,7 @@
 // 未捕获异常与应用错误遥测桥。
 //
-// 任务要求把 FlutterError.onError / PlatformDispatcher.instance.onError /
-// AppLogService 错误 sink 桥接到 app.crash.reported / app.error.captured。
+// The bridge owns only the process-global error-handler wrappers. The
+// TelemetryClient and its SQLite storage remain AppRuntime-owned resources.
 
 import 'dart:async';
 
@@ -10,82 +10,177 @@ import 'package:flutter/foundation.dart';
 
 import '../../app/app_runtime.dart';
 
-/// 安装未捕获错误遥测入口。
+/// Installs chained, durable crash/error telemetry handlers.
 ///
-/// [install] 幂等；链式包装 [AppLogService.install] 已经安装的 FlutterError /
-/// PlatformDispatcher 钩子，在本地日志之外追加一条诊断遥测记录。AppRuntime
-/// 创建前不会安装（遥测客户端尚不存在），避免在启动早期产生无宿主事件。
+/// Each handler schedules a record operation whose first await is the local
+/// [TelemetryStorage.insertRecord] performed by [TelemetryClient.record]. The
+/// operation then flushes asynchronously. Existing handlers are always called
+/// and are restored only when the bridge still owns the installed wrapper, so
+/// another component cannot be silently clobbered during disposal.
 final class AppCrashTelemetryBridge {
   AppCrashTelemetryBridge({required this.telemetryClient});
 
   final TelemetryClient telemetryClient;
   FlutterExceptionHandler? _previousFlutterError;
+  bool Function(Object, StackTrace)? _previousPlatformError;
+  FlutterExceptionHandler? _installedFlutterError;
+  bool Function(Object, StackTrace)? _installedPlatformError;
+  Future<void> _reportQueue = Future<void>.value();
   bool _installed = false;
+  bool _disposed = false;
 
-  /// 是否已安装 FlutterError 链式入口；供测试与 AppRuntime 健康检查读取。
+  /// Whether the bridge currently owns both global wrappers.
   bool get installed => _installed;
 
-  /// 安装错误/崩溃遥测入口。
-  void install() {
-    if (_installed) return;
-    _installed = true;
+  /// Completes after every report accepted by a handler has been durably
+  /// recorded and its asynchronous flush attempt has settled.
+  Future<void> get pendingReports => _reportQueue;
 
+  /// Installs Flutter and platform error handlers exactly once.
+  void install() {
+    if (_installed || _disposed) return;
     _previousFlutterError = FlutterError.onError;
-    FlutterError.onError = (details) {
-      unawaited(_reportFlutterError(details));
+    _previousPlatformError = PlatformDispatcher.instance.onError;
+
+    // ignore: prefer_function_declarations_over_variables
+    final flutterHandler = (FlutterErrorDetails details) {
+      _enqueueReport(() => _reportFlutterError(details));
       _previousFlutterError?.call(details);
     };
+    // ignore: prefer_function_declarations_over_variables
+    final platformHandler = (Object error, StackTrace stackTrace) {
+      _enqueueReport(() => _reportPlatformError(error, stackTrace));
+      return _previousPlatformError?.call(error, stackTrace) ?? false;
+    };
+
+    _installedFlutterError = flutterHandler;
+    _installedPlatformError = platformHandler;
+    FlutterError.onError = flutterHandler;
+    PlatformDispatcher.instance.onError = platformHandler;
+    _installed = true;
   }
 
   Future<void> _reportFlutterError(FlutterErrorDetails details) async {
-    await telemetryClient.record(
+    await _recordAndFlush(
       event: TelemetryEvents.appCrashReported,
-      properties: {'message': details.exceptionAsString(), 'category': 'crash'},
-      stackTrace: details.stack?.toString(),
+      category: 'flutter',
       errorCode: TelemetryErrorCodes.appFatalError,
       errorMessage: details.exceptionAsString(),
+      stackTrace: details.stack?.toString(),
     );
   }
 
-  /// 供 AppBootstrap 的 runZonedGuarded 兜底路径调用（找不到 runtime 时）。
-  Future<void> reportZoneError(Object error, StackTrace stackTrace) async {
-    await telemetryClient.record(
-      event: TelemetryEvents.appErrorCaptured,
-      properties: {
-        'message': 'Uncaught zone error: $error',
-        'category': 'uncaught',
-      },
+  Future<void> _reportPlatformError(Object error, StackTrace stackTrace) {
+    return _recordAndFlush(
+      event: TelemetryEvents.appCrashReported,
+      category: 'platform',
+      errorCode: TelemetryErrorCodes.appFatalError,
+      errorMessage: error.toString(),
       stackTrace: stackTrace.toString(),
-      errorCode: TelemetryErrorCodes.appUncaughtError,
-      errorMessage: 'Uncaught zone error: $error',
     );
   }
 
+  /// Reports a runZonedGuarded error as non-fatal uncaught application error.
+  Future<void> reportZoneError(Object error, StackTrace stackTrace) {
+    return _enqueueReport(
+      () => _recordAndFlush(
+        event: TelemetryEvents.appErrorCaptured,
+        category: 'uncaught',
+        errorCode: TelemetryErrorCodes.appUncaughtError,
+        errorMessage: error.toString(),
+        stackTrace: stackTrace.toString(),
+      ),
+    );
+  }
+
+  Future<void> _recordAndFlush({
+    required TelemetryEventDefinition event,
+    required String category,
+    required TelemetryErrorCodeDefinition errorCode,
+    required String? errorMessage,
+    required String? stackTrace,
+  }) async {
+    // The event message is intentionally a static classifier. Raw exception
+    // text is retained only in the client's centralized redaction boundary.
+    final accepted = await telemetryClient.record(
+      event: event,
+      properties: <String, dynamic>{
+        'message': event == TelemetryEvents.appCrashReported
+            ? 'Application crash captured'
+            : 'Application error captured',
+        'category': category,
+      },
+      errorCode: errorCode,
+      errorMessage: errorMessage,
+      stackTrace: stackTrace,
+    );
+    if (accepted) await telemetryClient.flush();
+  }
+
+  Future<void> _enqueueReport(Future<void> Function() report) {
+    final previous = _reportQueue;
+    _reportQueue = previous.then<void>((_) async {
+      try {
+        await report();
+      } on Object {
+        // A crash reporter must never throw back into Flutter's handler or
+        // recursively create a telemetry-network diagnostic.
+      }
+    });
+    return _reportQueue;
+  }
+
+  /// Restores only wrappers still owned by this bridge and drains reports
+  /// before the AppRuntime closes the client's local SQLite store.
   Future<void> dispose() async {
-    if (!_installed) return;
-    _installed = false;
-    final previous = _previousFlutterError;
-    if (previous != null) {
-      FlutterError.onError = previous;
+    if (!_disposed) {
+      _disposed = true;
+      if (identical(FlutterError.onError, _installedFlutterError)) {
+        FlutterError.onError = _previousFlutterError;
+      }
+      if (identical(
+        PlatformDispatcher.instance.onError,
+        _installedPlatformError,
+      )) {
+        PlatformDispatcher.instance.onError = _previousPlatformError;
+      }
+      _installed = false;
+      _installedFlutterError = null;
+      _installedPlatformError = null;
       _previousFlutterError = null;
+      _previousPlatformError = null;
     }
+    await _reportQueue;
   }
 }
 
-/// AppBootstrap 把未捕获 zone 错误路由到 AppRuntime 持有的遥测桥。
+/// AppBootstrap routes runZonedGuarded errors to the Runtime-owned bridge.
 Future<void> reportUncaughtErrorToRuntime(
   AppRuntime runtime, {
   required Object error,
   required StackTrace stackTrace,
 }) async {
-  await runtime.telemetryClient?.record(
-    event: TelemetryEvents.appErrorCaptured,
-    properties: {
-      'message': 'Uncaught zone error: $error',
-      'category': 'uncaught',
-    },
-    stackTrace: stackTrace.toString(),
-    errorCode: TelemetryErrorCodes.appUncaughtError,
-    errorMessage: 'Uncaught zone error: $error',
-  );
+  final bridge = runtime.crashTelemetryBridge;
+  if (bridge != null) {
+    await bridge.reportZoneError(error, stackTrace);
+    return;
+  }
+  final client = runtime.telemetryClient;
+  if (client == null) return;
+  try {
+    final accepted = await client.record(
+      event: TelemetryEvents.appErrorCaptured,
+      properties: const {
+        'message': 'Application error captured',
+        'category': 'uncaught',
+      },
+      errorCode: TelemetryErrorCodes.appUncaughtError,
+      errorMessage: error.toString(),
+      stackTrace: stackTrace.toString(),
+    );
+    if (accepted) await client.flush();
+  } on Object {
+    // The fallback is used only by synthetic runtimes without a bridge. A
+    // telemetry storage/network failure must not re-enter runZonedGuarded.
+  }
 }
