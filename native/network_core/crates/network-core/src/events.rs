@@ -7,9 +7,10 @@ use network_protocol::{
     NetworkErrorCode, NetworkEvent, PeerConnectionState, PeerPresenceChangedEvent,
     PeerPresenceSnapshotEvent, PeerPresenceState, PeerStateChangedEvent, RealtimeSignalEvent,
     RealtimeSnapshotEvent, RealtimeStateChangedEvent, RelayConnectionState, RetryDisposition,
-    RouteTopology as ProtocolRouteTopology, RouteTransport as ProtocolRouteTransport, RouteType,
-    SshStreamClosedEvent, SshStreamDataReceivedEvent, StreamHandle, TransferCompletedEvent,
-    TransferFailedEvent, TransferProgressEvent, NETWORK_PROTOCOL_VERSION,
+    RouteAttemptPhase, RouteTopology as ProtocolRouteTopology,
+    RouteTransport as ProtocolRouteTransport, RouteType, SshStreamClosedEvent,
+    SshStreamDataReceivedEvent, StreamHandle, TransferCompletedEvent, TransferFailedEvent,
+    TransferProgressEvent, NETWORK_PROTOCOL_VERSION,
 };
 
 use crate::connect::PeerState;
@@ -273,6 +274,36 @@ pub(crate) fn emit_route_changed_profile(
                 loss_per_mille,
                 topology: topology as i32,
                 transport: transport as i32,
+            },
+        )),
+    });
+}
+
+/// Publish the causal phases of one native direct/Relay attempt. Unlike the
+/// terminal PeerState event, these observations let consumers distinguish an
+/// actual fallback from a direct failure that had no Relay retry.
+pub(crate) fn emit_route_attempt_changed(
+    event_tx: &EventSender,
+    peer_id: &str,
+    attempt_id: &str,
+    command_id: &str,
+    phase: RouteAttemptPhase,
+    route_type: RouteType,
+    error: Option<ProtocolError>,
+) {
+    let timestamp = unix_timestamp_ms();
+    let _ = event_tx.send(NetworkEvent {
+        event_id: format!("{peer_id}/route-attempt/{attempt_id}/{phase:?}/{timestamp}"),
+        timestamp_ms: timestamp,
+        protocol_version: NETWORK_PROTOCOL_VERSION,
+        payload: Some(network_event::Payload::RouteAttemptChanged(
+            network_protocol::RouteAttemptChangedEvent {
+                peer_id: peer_id.to_string(),
+                attempt_id: attempt_id.to_string(),
+                phase: phase as i32,
+                route_type: route_type as i32,
+                error,
+                command_id: command_id.to_string(),
             },
         )),
     });

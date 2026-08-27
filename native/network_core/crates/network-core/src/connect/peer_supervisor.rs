@@ -107,6 +107,7 @@ pub(crate) struct PeerIntent {
     pub(crate) generation: IntentGeneration,
     pub(crate) class: CommunicationClass,
     pub(crate) required_capabilities: u8,
+    pub(crate) command_id: String,
 }
 
 /// Capability demand carried by a peer-owned connectivity intent.
@@ -413,7 +414,11 @@ impl PeerSupervisor {
                 let attempt_coordinator =
                     crate::connect::ConnectivityAttemptCoordinator::new(Arc::clone(&task_state));
                 let result = attempt_coordinator
-                    .connect_with_capabilities(&peer_id, attempt_requirement.capability_mask())
+                    .connect_with_capabilities_for_command(
+                        &peer_id,
+                        attempt_requirement.capability_mask(),
+                        &intent.command_id,
+                    )
                     .await;
                 supervisor.finish_attempt(generation, attempt_id, result, task_state);
             },
@@ -628,6 +633,7 @@ impl PeerSupervisor {
                 generation,
                 class: active_requirement.communication_class(),
                 required_capabilities: active_requirement.capability_mask(),
+                command_id: command_id.to_string(),
             };
             if let Err(error) = self.mailbox_tx.try_send(intent) {
                 let reason = match error {
@@ -720,6 +726,12 @@ impl PeerSupervisor {
                             generation,
                             class: retry_requirement.communication_class(),
                             required_capabilities: retry_requirement.capability_mask(),
+                            command_id: inner
+                                .waiters
+                                .values()
+                                .next()
+                                .map(|waiter| waiter.command_id.clone())
+                                .unwrap_or_default(),
                         });
                         (waiters, delivered, retry_intent)
                     } else {

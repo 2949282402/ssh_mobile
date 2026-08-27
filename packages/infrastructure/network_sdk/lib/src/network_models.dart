@@ -304,6 +304,26 @@ enum NetworkRouteTransport {
       );
 }
 
+/// Causal phase of one native direct/Relay route attempt. This is an
+/// observation, not a terminal Peer lifecycle state.
+enum RouteAttemptPhase {
+  unspecified(0),
+  directFailed(1),
+  relayFallbackStarted(2),
+  relayConnected(3),
+  relayFailed(4);
+
+  const RouteAttemptPhase(this.wireValue);
+
+  final int wireValue;
+
+  static RouteAttemptPhase fromWire(int value) =>
+      RouteAttemptPhase.values.firstWhere(
+        (phase) => phase.wireValue == value,
+        orElse: () => unspecified,
+      );
+}
+
 enum RelayConnectionState {
   unspecified(0),
   connecting(1),
@@ -445,6 +465,27 @@ final class PeerStateChanged extends SdkEvent {
   final NetworkRouteType routeType;
   final NetworkRouteTopology routeTopology;
   final NetworkRouteTransport routeTransport;
+  final NetworkError? error;
+}
+
+/// Peer-scoped causal route-attempt observation emitted by native connectivity.
+final class RouteAttemptChanged extends SdkEvent {
+  const RouteAttemptChanged({
+    required super.eventId,
+    required super.timestamp,
+    required this.peerId,
+    required this.attemptId,
+    required this.phase,
+    required this.routeType,
+    this.commandId,
+    this.error,
+  });
+
+  final String peerId;
+  final String attemptId;
+  final RouteAttemptPhase phase;
+  final NetworkRouteType routeType;
+  final String? commandId;
   final NetworkError? error;
 }
 

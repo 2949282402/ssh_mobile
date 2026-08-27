@@ -296,6 +296,14 @@ void main() {
         _varintField(4, 100),
         _varintField(5, 1),
       ]),
+      33: _message(<List<int>>[
+        _stringField(1, 'peer-a'),
+        _stringField(2, 'attempt-a'),
+        _varintField(3, NativeRouteAttemptPhase.relayFallbackStarted.wireValue),
+        _varintField(4, NativeRouteType.relay.wireValue),
+        _bytesField(5, error),
+        _stringField(6, 'command-a'),
+      ]),
       26: _message(<List<int>>[
         _stringField(1, 'peer-a'),
         _bytesField(2, streamHandle),
@@ -335,6 +343,15 @@ void main() {
     expect(decoded[30], isA<NativePeerDiagnosticsEvent>());
     expect(decoded[31], isA<NativeNetworkEnvironmentChangedEvent>());
     expect(decoded[32], isA<NativePeerTransferProgressEvent>());
+    expect(decoded[33], isA<NativeRouteAttemptChangedEvent>());
+
+    final routeAttempt = decoded[33]! as NativeRouteAttemptChangedEvent;
+    expect(routeAttempt.peerId, 'peer-a');
+    expect(routeAttempt.attemptId, 'attempt-a');
+    expect(routeAttempt.phase, NativeRouteAttemptPhase.relayFallbackStarted);
+    expect(routeAttempt.routeType, NativeRouteType.relay);
+    expect(routeAttempt.error?.code, 7);
+    expect(routeAttempt.commandId, 'command-a');
 
     final diagnostics = decoded[30]! as NativePeerDiagnosticsEvent;
     expect(diagnostics.activeTransferCount, 4);

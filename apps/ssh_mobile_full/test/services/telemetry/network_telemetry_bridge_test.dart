@@ -22,15 +22,18 @@ void main() {
     late StreamController<SdkEvent> events;
     late NetworkTelemetryBridge bridge;
     late TelemetryTraceRegistry traces;
+    late DateTime now;
 
     setUp(() {
       harness = TelemetryTestHarness();
       events = StreamController<SdkEvent>.broadcast();
       traces = TelemetryTraceRegistry();
+      now = DateTime.utc(2026, 1, 1);
       bridge = NetworkTelemetryBridge(
         telemetryClient: harness.client,
         events: events.stream,
         traceRegistry: traces,
+        clock: () => now,
       );
       bridge.attach();
     });
@@ -109,6 +112,20 @@ void main() {
       () async {
         traces.bindPeer(peerId: 'peer-a', traceId: 'trace-a');
         events.add(
+          RouteAttemptChanged(
+            eventId: 'attempt-1',
+            timestamp: DateTime.utc(2026, 1, 1),
+            peerId: 'peer-a',
+            attemptId: 'attempt-a',
+            phase: RouteAttemptPhase.relayFallbackStarted,
+            routeType: NetworkRouteType.relay,
+            error: NetworkError(
+              code: NetworkErrorCode.quicError,
+              message: 'No route to relay',
+            ),
+          ),
+        );
+        events.add(
           RelayStateChanged(
             eventId: 'e1',
             timestamp: DateTime.now(),
@@ -160,6 +177,34 @@ void main() {
           containsPair('direct_error', 'No route to relay'),
         );
         expect(fallbackRecord.traceId, relayFailedRecord.traceId);
+      },
+    );
+
+    test(
+      'an unrelated Relay control reconnect is not an SSH fallback',
+      () async {
+        traces.bindPeer(peerId: 'peer-a', traceId: 'trace-a');
+        events.add(
+          RelayStateChanged(
+            eventId: 'relay-connecting',
+            timestamp: now,
+            state: RelayConnectionState.connecting,
+          ),
+        );
+        events.add(
+          RelayStateChanged(
+            eventId: 'relay-failed',
+            timestamp: now,
+            state: RelayConnectionState.failed,
+            error: const NetworkError(
+              code: NetworkErrorCode.relayError,
+              message: 'control reconnect failed',
+            ),
+          ),
+        );
+        await _settle();
+
+        expect(await harness.replayRecords(), isEmpty);
       },
     );
 
@@ -217,13 +262,13 @@ void main() {
       () async {
         traces.bindPeer(peerId: 'peer-a', traceId: 'trace-operation');
         events.add(
-          PeerStateChanged(
+          RouteAttemptChanged(
             eventId: 'e1',
-            timestamp: DateTime.now(),
+            timestamp: DateTime.utc(2026, 1, 1),
             peerId: 'peer-a',
-            state: PeerConnectionState.failed,
+            attemptId: 'attempt-a',
+            phase: RouteAttemptPhase.directFailed,
             routeType: NetworkRouteType.quicDirect,
-            routeTransport: NetworkRouteTransport.quic,
             error: const NetworkError(
               code: NetworkErrorCode.quicError,
               message: 'direct handshake refused',
@@ -232,6 +277,21 @@ void main() {
         );
         await _settle();
 
+        events.add(
+          RouteAttemptChanged(
+            eventId: 'e1b',
+            timestamp: DateTime.utc(2026, 1, 1),
+            peerId: 'peer-a',
+            attemptId: 'attempt-a',
+            phase: RouteAttemptPhase.relayFallbackStarted,
+            routeType: NetworkRouteType.relay,
+            error: NetworkError(
+              code: NetworkErrorCode.quicError,
+              message: 'direct handshake refused',
+            ),
+          ),
+        );
+        await _settle();
         events.add(
           RouteChanged(
             eventId: 'e2',
@@ -284,14 +344,29 @@ void main() {
         await _settle();
 
         events.add(
-          PeerStateChanged(
+          RouteAttemptChanged(
             eventId: 'e1',
-            timestamp: DateTime.now(),
+            timestamp: DateTime.utc(2026, 1, 1),
             peerId: 'peer-a',
-            state: PeerConnectionState.failed,
+            attemptId: 'attempt-a',
+            phase: RouteAttemptPhase.directFailed,
             routeType: NetworkRouteType.quicDirect,
-            routeTransport: NetworkRouteTransport.quic,
             error: const NetworkError(
+              code: NetworkErrorCode.quicError,
+              message: 'direct handshake refused',
+            ),
+          ),
+        );
+        await _settle();
+        events.add(
+          RouteAttemptChanged(
+            eventId: 'e1b',
+            timestamp: DateTime.utc(2026, 1, 1),
+            peerId: 'peer-a',
+            attemptId: 'attempt-a',
+            phase: RouteAttemptPhase.relayFallbackStarted,
+            routeType: NetworkRouteType.relay,
+            error: NetworkError(
               code: NetworkErrorCode.quicError,
               message: 'direct handshake refused',
             ),
@@ -338,6 +413,295 @@ void main() {
         });
       },
     );
+
+    test(
+      'terminal direct failure records QUIC only, with fallback false',
+      () async {
+        traces.bindPeer(peerId: 'peer-a', traceId: 'trace-direct');
+        events.add(
+          PeerStateChanged(
+            eventId: 'failed',
+            timestamp: DateTime.utc(2026, 1, 1),
+            peerId: 'peer-a',
+            state: PeerConnectionState.failed,
+            routeType: NetworkRouteType.quicDirect,
+            routeTransport: NetworkRouteTransport.quic,
+            error: NetworkError(
+              code: NetworkErrorCode.quicError,
+              message: 'direct only failed',
+            ),
+          ),
+        );
+        await _settle();
+
+        final records = await harness.recordsByName();
+        final quic = records[TelemetryEvents.networkQuicFailed.name]!;
+        expect(quic, hasLength(1));
+        expect(quic.single.properties, containsPair('fallback_used', false));
+        expect(records[TelemetryEvents.networkRelayFallback.name], isNull);
+      },
+    );
+
+    test(
+      'causal direct failure survives an unspecified terminal peer state',
+      () async {
+        traces.bindPeer(peerId: 'peer-a', traceId: 'trace-direct');
+        events.add(
+          RouteAttemptChanged(
+            eventId: 'direct-attempt',
+            timestamp: now,
+            peerId: 'peer-a',
+            attemptId: 'attempt-direct',
+            phase: RouteAttemptPhase.directFailed,
+            routeType: NetworkRouteType.quicDirect,
+            error: const NetworkError(
+              code: NetworkErrorCode.quicError,
+              message: 'direct route refused',
+            ),
+          ),
+        );
+        events.add(
+          PeerStateChanged(
+            eventId: 'terminal',
+            timestamp: now,
+            peerId: 'peer-a',
+            state: PeerConnectionState.failed,
+            routeType: NetworkRouteType.unspecified,
+            error: const NetworkError(
+              code: NetworkErrorCode.noRoute,
+              message: 'no eligible fallback route',
+            ),
+          ),
+        );
+        await _settle();
+
+        final records = await harness.recordsByName();
+        final quic = records[TelemetryEvents.networkQuicFailed.name]!;
+        expect(quic, hasLength(1));
+        expect(
+          quic.single.error?.errorCode,
+          TelemetryErrorCodes.netQuicConnRefused.code,
+        );
+        expect(quic.single.errorMessage, 'direct route refused');
+        expect(quic.single.properties, containsPair('fallback_used', false));
+        expect(records[TelemetryEvents.networkRelayFallback.name], isNull);
+      },
+    );
+
+    test(
+      'route RTT is recorded once from RouteChanged, never as zero',
+      () async {
+        traces.bindPeer(peerId: 'peer-a', traceId: 'trace-rtt');
+        events.add(
+          PeerStateChanged(
+            eventId: 'connected',
+            timestamp: DateTime.utc(2026, 1, 1),
+            peerId: 'peer-a',
+            state: PeerConnectionState.connected,
+            routeType: NetworkRouteType.quicDirect,
+          ),
+        );
+        events.add(
+          RouteChanged(
+            eventId: 'route',
+            timestamp: DateTime.utc(2026, 1, 1),
+            snapshot: SdkRouteSnapshot(
+              peerId: 'peer-a',
+              routeType: NetworkRouteType.quicDirect,
+              rtt: Duration(milliseconds: 37),
+            ),
+          ),
+        );
+        await _settle();
+
+        final records = (await harness
+            .recordsByName())[TelemetryEvents.networkQuicConnected.name]!;
+        expect(records, hasLength(1));
+        expect(records.single.properties, containsPair('rtt_ms', 37));
+        expect(records.single.properties, isNot(containsPair('rtt_ms', 0)));
+      },
+    );
+
+    test(
+      'command-correlated route attempts isolate same-peer traces',
+      () async {
+        traces
+          ..bindPeer(peerId: 'peer-a', traceId: 'trace-a')
+          ..bindCommand(
+            commandId: 'command-a',
+            peerId: 'peer-a',
+            traceId: 'trace-a',
+          )
+          ..bindPeer(peerId: 'peer-a', traceId: 'trace-b')
+          ..bindCommand(
+            commandId: 'command-b',
+            peerId: 'peer-a',
+            traceId: 'trace-b',
+          );
+        events.add(
+          RouteAttemptChanged(
+            eventId: 'a-direct',
+            timestamp: DateTime.utc(2026, 1, 1),
+            peerId: 'peer-a',
+            attemptId: 'attempt-a',
+            commandId: 'command-a',
+            phase: RouteAttemptPhase.directFailed,
+            routeType: NetworkRouteType.quicDirect,
+            error: NetworkError(
+              code: NetworkErrorCode.quicError,
+              message: 'a refused',
+            ),
+          ),
+        );
+        events.add(
+          RouteAttemptChanged(
+            eventId: 'a-fallback',
+            timestamp: DateTime.utc(2026, 1, 1),
+            peerId: 'peer-a',
+            attemptId: 'attempt-a',
+            commandId: 'command-a',
+            phase: RouteAttemptPhase.relayFallbackStarted,
+            routeType: NetworkRouteType.relay,
+            error: NetworkError(
+              code: NetworkErrorCode.quicError,
+              message: 'a refused',
+            ),
+          ),
+        );
+        await _settle();
+
+        final records = await harness.replayRecords();
+        expect(records, isNotEmpty);
+        expect(records.map((record) => record.traceId).toSet(), {'trace-a'});
+      },
+    );
+
+    test(
+      'late route attempt cannot move an old same-peer result to a new trace',
+      () async {
+        traces.bindPeer(peerId: 'peer-a', traceId: 'trace-old');
+        events.add(
+          RouteAttemptChanged(
+            eventId: 'old-direct',
+            timestamp: now,
+            peerId: 'peer-a',
+            attemptId: 'attempt-old',
+            phase: RouteAttemptPhase.directFailed,
+            routeType: NetworkRouteType.quicDirect,
+            error: const NetworkError(
+              code: NetworkErrorCode.quicError,
+              message: 'old direct failure',
+            ),
+          ),
+        );
+        events.add(
+          PeerStateChanged(
+            eventId: 'old-terminal',
+            timestamp: now,
+            peerId: 'peer-a',
+            state: PeerConnectionState.failed,
+            routeType: NetworkRouteType.quicDirect,
+            routeTransport: NetworkRouteTransport.quic,
+          ),
+        );
+        await _settle();
+
+        traces.bindPeer(peerId: 'peer-a', traceId: 'trace-new');
+        events.add(
+          RouteAttemptChanged(
+            eventId: 'late-old-fallback',
+            timestamp: now,
+            peerId: 'peer-a',
+            attemptId: 'attempt-old',
+            phase: RouteAttemptPhase.relayFallbackStarted,
+            routeType: NetworkRouteType.relay,
+            error: const NetworkError(
+              code: NetworkErrorCode.quicError,
+              message: 'late old fallback',
+            ),
+          ),
+        );
+        await _settle();
+
+        final records = await harness.replayRecords();
+        expect(
+          records.where((record) => record.traceId == 'trace-new'),
+          isEmpty,
+        );
+        expect(
+          records.where((record) => record.traceId == 'trace-old'),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'ambiguous command correlation fails closed instead of using peer trace',
+      () async {
+        traces
+          ..bindPeer(peerId: 'peer-a', traceId: 'trace-a')
+          ..bindPeer(peerId: 'peer-a', traceId: 'trace-b')
+          ..bindCommand(
+            commandId: 'command-collision',
+            peerId: 'peer-a',
+            traceId: 'trace-a',
+          )
+          ..bindCommand(
+            commandId: 'command-collision',
+            peerId: 'peer-a',
+            traceId: 'trace-b',
+          );
+        events.add(
+          RouteAttemptChanged(
+            eventId: 'ambiguous',
+            timestamp: now,
+            peerId: 'peer-a',
+            attemptId: 'attempt-collision',
+            commandId: 'command-collision',
+            phase: RouteAttemptPhase.directFailed,
+            routeType: NetworkRouteType.quicDirect,
+          ),
+        );
+        await _settle();
+
+        expect(await harness.replayRecords(), isEmpty);
+      },
+    );
+
+    test('expired bridge context cannot reuse a released trace', () async {
+      traces.bindPeer(peerId: 'peer-a', traceId: 'trace-expiring');
+      events.add(
+        RouteChanged(
+          eventId: 'lan',
+          timestamp: DateTime.utc(2026, 1, 1),
+          snapshot: SdkRouteSnapshot(
+            peerId: 'peer-a',
+            routeType: NetworkRouteType.lan,
+          ),
+        ),
+      );
+      await _settle();
+      traces.releasePeerTrace(peerId: 'peer-a', traceId: 'trace-expiring');
+      now = now.add(const Duration(minutes: 5));
+      events.add(
+        RouteChanged(
+          eventId: 'late',
+          timestamp: DateTime.utc(2026, 1, 1, 0, 5),
+          snapshot: SdkRouteSnapshot(
+            peerId: 'peer-a',
+            routeType: NetworkRouteType.quicDirect,
+            rtt: Duration(milliseconds: 20),
+          ),
+        ),
+      );
+      await _settle();
+
+      expect(
+        (await harness
+            .recordsByName())[TelemetryEvents.networkQuicConnected.name],
+        isNull,
+      );
+    });
 
     test(
       'does not create an independent network trace without an operation',

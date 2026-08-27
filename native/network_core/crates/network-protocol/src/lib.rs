@@ -119,6 +119,16 @@ pub enum RouteTransport {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Enumeration)]
 #[repr(i32)]
+pub enum RouteAttemptPhase {
+    Unspecified = 0,
+    DirectFailed = 1,
+    RelayFallbackStarted = 2,
+    RelayConnected = 3,
+    RelayFailed = 4,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Enumeration)]
+#[repr(i32)]
 pub enum RealtimeSessionState {
     Unspecified = 0,
     Negotiating = 1,
@@ -718,6 +728,22 @@ pub struct RouteChangedEvent {
 }
 
 #[derive(Clone, PartialEq, Message)]
+pub struct RouteAttemptChangedEvent {
+    #[prost(string, tag = "1")]
+    pub peer_id: String,
+    #[prost(string, tag = "2")]
+    pub attempt_id: String,
+    #[prost(enumeration = "RouteAttemptPhase", tag = "3")]
+    pub phase: i32,
+    #[prost(enumeration = "RouteType", tag = "4")]
+    pub route_type: i32,
+    #[prost(message, optional, tag = "5")]
+    pub error: Option<NetworkError>,
+    #[prost(string, tag = "6")]
+    pub command_id: String,
+}
+
+#[derive(Clone, PartialEq, Message)]
 pub struct RelayStateChangedEvent {
     #[prost(enumeration = "RelayConnectionState", tag = "1")]
     pub state: i32,
@@ -856,7 +882,7 @@ pub struct NetworkEvent {
     pub protocol_version: u32,
     #[prost(
         oneof = "network_event::Payload",
-        tags = "10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32"
+        tags = "10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33"
     )]
     pub payload: Option<network_event::Payload>,
 }
@@ -910,6 +936,8 @@ pub mod network_event {
         NetworkEnvironmentChanged(NetworkEnvironmentChangedEvent),
         #[prost(message, tag = "32")]
         PeerTransferProgress(PeerTransferProgressEvent),
+        #[prost(message, tag = "33")]
+        RouteAttemptChanged(RouteAttemptChangedEvent),
     }
 }
 

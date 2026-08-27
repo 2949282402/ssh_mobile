@@ -102,6 +102,16 @@ final class TelemetryTraceRegistry {
     return _peerTraceIds.values.any((traces) => traces.containsKey(traceId));
   }
 
+  /// Whether [traceId] is still owned by this exact peer operation.
+  ///
+  /// This is stricter than [hasTrace]: a late event for one peer must not be
+  /// accepted merely because the same trace happens to remain on another
+  /// peer's context.
+  bool hasPeerTrace(String peerId, String traceId) {
+    _prune();
+    return _peerTraceIds[peerId]?.containsKey(traceId) == true;
+  }
+
   /// Associate a peer with the trace of its current SSH connect operation.
   void bindPeer({required String peerId, required String traceId}) {
     _ensureUsable();
@@ -164,6 +174,14 @@ final class TelemetryTraceRegistry {
     final binding = bindings.values.single;
     binding.touchedAt = _clock();
     return binding.traceId;
+  }
+
+  /// Whether a command id is currently known, including when its bindings
+  /// are ambiguous. Callers must not fall back to a peer-only lookup for a
+  /// known-but-colliding command.
+  bool hasCommandBinding(String commandId) {
+    _prune();
+    return _commandTraceIds[commandId]?.isNotEmpty == true;
   }
 
   /// Resolve a relay-wide event only when it is unambiguous.

@@ -283,6 +283,12 @@ final class NetworkProtocolV2Codec {
             timestampMs,
             reader.bytes(field.wireType),
           );
+        case 33:
+          event = _peerEvents.decodeRouteAttemptChanged(
+            eventId,
+            timestampMs,
+            reader.bytes(field.wireType),
+          );
         case 24:
           event = _peerEvents.decodePresence(
             eventId,
@@ -504,6 +510,49 @@ final class _PeerEventDecoder {
       eventId: eventId,
       timestamp: _eventTimestamp(timestampMs),
       state: RelayConnectionState.fromWire(state),
+      error: error,
+    );
+  }
+
+  RouteAttemptChanged decodeRouteAttemptChanged(
+    String eventId,
+    int timestampMs,
+    Uint8List bytes,
+  ) {
+    final reader = _ProtoReader(bytes);
+    var peerId = '';
+    var attemptId = '';
+    var phase = 0;
+    var route = 0;
+    String? commandId;
+    NetworkError? error;
+    while (!reader.isDone) {
+      final field = reader.field();
+      switch (field.number) {
+        case 1:
+          peerId = utf8.decode(reader.bytes(field.wireType));
+        case 2:
+          attemptId = utf8.decode(reader.bytes(field.wireType));
+        case 3:
+          phase = reader.varint(field.wireType);
+        case 4:
+          route = reader.varint(field.wireType);
+        case 5:
+          error = _decodeNetworkError(reader.bytes(field.wireType));
+        case 6:
+          commandId = utf8.decode(reader.bytes(field.wireType));
+        default:
+          reader.skip(field.wireType);
+      }
+    }
+    return RouteAttemptChanged(
+      eventId: eventId,
+      timestamp: _eventTimestamp(timestampMs),
+      peerId: peerId,
+      attemptId: attemptId,
+      phase: RouteAttemptPhase.fromWire(phase),
+      routeType: NetworkRouteType.fromWire(route),
+      commandId: commandId,
       error: error,
     );
   }

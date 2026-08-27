@@ -37,7 +37,7 @@ use network_nat::{
 };
 use network_protocol::{
     CommunicationClass, NetworkError as ProtocolError, NetworkErrorCode, PeerConnectionState,
-    RouteType,
+    RouteAttemptPhase, RouteType,
 };
 use network_relay::v2::{
     ConnectivityAttemptStart, DiscoverySnapshot, ResolvePeerResponse, RuntimeEpoch,
@@ -47,8 +47,8 @@ use quinn::VarInt;
 
 use crate::discovery::resolver::{DiscoveryResolver, ResolvedPeer};
 use crate::events::{
-    emit_peer_state, emit_peer_state_profile, emit_route_changed, emit_route_changed_profile,
-    protocol_error_with_peer, protocol_error_with_retry,
+    emit_peer_state, emit_peer_state_profile, emit_route_attempt_changed, emit_route_changed,
+    emit_route_changed_profile, protocol_error_with_peer, protocol_error_with_retry,
 };
 use crate::peer::{
     connect_direct_or_generic, install_admitted_crypto, ConnectedRoute, DirectRouteAttempt,
@@ -311,7 +311,32 @@ impl ConnectivityAttemptCoordinator {
     ) -> Result<(), ProtocolError> {
         match tokio::time::timeout(
             super::OVERALL_CONNECT_BUDGET,
-            self.connect_with_capabilities_bounded(peer_id, capability),
+            self.connect_with_capabilities_bounded(peer_id, capability, None),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(protocol_error_with_peer(
+                NetworkErrorCode::Timeout,
+                "overall connectivity budget elapsed",
+                "connect",
+                peer_id,
+            )),
+        }
+    }
+
+    /// Command-owned connectivity entry point. The command id is carried on
+    /// causal route-attempt events so Dart can resolve an exact operation
+    /// context even when another operation targets the same peer.
+    pub(crate) async fn connect_with_capabilities_for_command(
+        &self,
+        peer_id: &str,
+        capability: u8,
+        command_id: &str,
+    ) -> Result<(), ProtocolError> {
+        match tokio::time::timeout(
+            super::OVERALL_CONNECT_BUDGET,
+            self.connect_with_capabilities_bounded(peer_id, capability, Some(command_id)),
         )
         .await
         {
@@ -329,6 +354,7 @@ impl ConnectivityAttemptCoordinator {
         &self,
         peer_id: &str,
         capability: u8,
+        command_id: Option<&str>,
     ) -> Result<(), ProtocolError> {
         let connect_deadline = Instant::now() + super::OVERALL_CONNECT_BUDGET;
         let state = Arc::clone(&self.state);
@@ -780,6 +806,17 @@ impl ConnectivityAttemptCoordinator {
                     .await
                     .set_state(network_nat::ConnectivityAttemptState::Expired);
                 self.set_stage(ConnectivityAttemptState::DirectFailed);
+                if let Some(command_id) = command_id {
+                    emit_route_attempt_changed(
+                        &state.event_tx,
+                        peer_id,
+                        &attempt_id,
+                        command_id,
+                        RouteAttemptPhase::DirectFailed,
+                        RouteType::QuicDirect,
+                        Some(direct_error.clone()),
+                    );
+                }
                 if authorization.is_some_and(|authorization| !authorization.relay) {
                     state.fail_session(peer_id, session_id).await;
                     return Err(protocol_error_with_peer(
@@ -798,6 +835,17 @@ impl ConnectivityAttemptCoordinator {
                     state.fail_session(peer_id, session_id).await;
                     return Err(direct_error);
                 }
+                if let Some(command_id) = command_id {
+                    emit_route_attempt_changed(
+                        &state.event_tx,
+                        peer_id,
+                        &attempt_id,
+                        command_id,
+                        RouteAttemptPhase::RelayFallbackStarted,
+                        RouteType::Relay,
+                        Some(direct_error.clone()),
+                    );
+                }
                 match self
                     .connect_relay_fallback(
                         peer_id,
@@ -810,6 +858,17 @@ impl ConnectivityAttemptCoordinator {
                     .await
                 {
                     Ok(admission) => {
+                        if let Some(command_id) = command_id {
+                            emit_route_attempt_changed(
+                                &state.event_tx,
+                                peer_id,
+                                &attempt_id,
+                                command_id,
+                                RouteAttemptPhase::RelayConnected,
+                                RouteType::Relay,
+                                None,
+                            );
+                        }
                         let final_remote_epoch = attempt
                             .lock()
                             .await
@@ -828,6 +887,17 @@ impl ConnectivityAttemptCoordinator {
                         Ok(())
                     }
                     Err(relay_error) => {
+                        if let Some(command_id) = command_id {
+                            emit_route_attempt_changed(
+                                &state.event_tx,
+                                peer_id,
+                                &attempt_id,
+                                command_id,
+                                RouteAttemptPhase::RelayFailed,
+                                RouteType::Relay,
+                                Some(relay_error.clone()),
+                            );
+                        }
                         state.fail_session(peer_id, session_id).await;
                         tracing::warn!(
                             peer_id = %peer_id,

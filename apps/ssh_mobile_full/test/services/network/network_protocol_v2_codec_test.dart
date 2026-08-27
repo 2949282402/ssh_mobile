@@ -546,6 +546,31 @@ void main() {
       expect(route.snapshot.loss, 0.007);
       expect(route.snapshot.transport, NetworkRouteTransport.quic);
 
+      final attempt =
+          codec
+                  .decodeEvent(
+                    Uint8List.fromList(
+                      _frame(33, <int>[
+                        ..._bytesField(1, utf8.encode('peer-a')),
+                        ..._bytesField(2, utf8.encode('attempt-a')),
+                        ..._varintField(
+                          3,
+                          RouteAttemptPhase.relayFallbackStarted.wireValue,
+                        ),
+                        ..._varintField(4, NetworkRouteType.relay.wireValue),
+                        ..._bytesField(5, error),
+                        ..._unknownFields(),
+                      ]),
+                    ),
+                  )
+                  .event!
+              as RouteAttemptChanged;
+      expect(attempt.peerId, 'peer-a');
+      expect(attempt.attemptId, 'attempt-a');
+      expect(attempt.phase, RouteAttemptPhase.relayFallbackStarted);
+      expect(attempt.routeType, NetworkRouteType.relay);
+      expect(attempt.error?.code, NetworkErrorCode.peerOffline);
+
       final relay =
           codec
                   .decodeEvent(

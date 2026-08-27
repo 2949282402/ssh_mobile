@@ -121,6 +121,25 @@ enum NativeRouteTransport {
       );
 }
 
+/// Causal phase of one native direct/Relay route attempt.
+enum NativeRouteAttemptPhase {
+  unspecified(0),
+  directFailed(1),
+  relayFallbackStarted(2),
+  relayConnected(3),
+  relayFailed(4);
+
+  const NativeRouteAttemptPhase(this.wireValue);
+
+  final int wireValue;
+
+  static NativeRouteAttemptPhase fromWire(int value) =>
+      NativeRouteAttemptPhase.values.firstWhere(
+        (phase) => phase.wireValue == value,
+        orElse: () => NativeRouteAttemptPhase.unspecified,
+      );
+}
+
 enum NativeRelayConnectionState {
   unspecified(0),
   connecting(1),
@@ -337,6 +356,28 @@ final class NativePeerStateChangedEvent extends NativeNetworkEvent {
   final NativeRouteType routeType;
   final NativeRouteTopology routeTopology;
   final NativeRouteTransport routeTransport;
+  final NativeNetworkError? error;
+}
+
+/// Peer-scoped causal route-attempt observation emitted by native connectivity.
+final class NativeRouteAttemptChangedEvent extends NativeNetworkEvent {
+  const NativeRouteAttemptChangedEvent({
+    required super.eventId,
+    required super.timestampMs,
+    required super.protocolVersion,
+    required this.peerId,
+    required this.attemptId,
+    required this.phase,
+    required this.routeType,
+    this.commandId,
+    this.error,
+  });
+
+  final String peerId;
+  final String attemptId;
+  final NativeRouteAttemptPhase phase;
+  final NativeRouteType routeType;
+  final String? commandId;
   final NativeNetworkError? error;
 }
 
@@ -1488,6 +1529,7 @@ final class _NativeProtocolEventDecoder {
         case 30:
         case 31:
         case 32:
+        case 33:
           payloadField = field.number;
           payload = reader.bytes(field.wireType);
         default:
@@ -1627,6 +1669,12 @@ final class _NativeProtocolEventDecoder {
         eventPayload,
       ),
       32 => _NativePeerEventDecoder._decodePeerTransferProgress(
+        eventId,
+        timestampMs,
+        protocolVersion,
+        eventPayload,
+      ),
+      33 => _NativePeerEventDecoder._decodeRouteAttemptChanged(
         eventId,
         timestampMs,
         protocolVersion,
@@ -1861,6 +1909,53 @@ final class _NativePeerEventDecoder {
       routeType: NativeRouteType.fromWire(route),
       routeTopology: NativeRouteTopology.fromWire(topology),
       routeTransport: NativeRouteTransport.fromWire(transport),
+      error: error,
+    );
+  }
+
+  static NativeRouteAttemptChangedEvent _decodeRouteAttemptChanged(
+    String eventId,
+    int timestampMs,
+    int protocolVersion,
+    Uint8List bytes,
+  ) {
+    final reader = _ProtoReader(bytes);
+    var peerId = '';
+    var attemptId = '';
+    var phase = 0;
+    var route = 0;
+    String? commandId;
+    NativeNetworkError? error;
+    while (!reader.isDone) {
+      final field = reader.field();
+      switch (field.number) {
+        case 1:
+          peerId = reader.string(field.wireType, _maxPeerIdBytes);
+        case 2:
+          attemptId = reader.string(field.wireType, _maxCommandIdBytes);
+        case 3:
+          phase = reader.varint(field.wireType);
+        case 4:
+          route = reader.varint(field.wireType);
+        case 5:
+          error = _values.decodeError(reader.bytes(field.wireType));
+        case 6:
+          commandId = reader.string(field.wireType, _maxCommandIdBytes);
+        default:
+          reader.skip(field.wireType);
+      }
+    }
+    _values.validateDecodedPeerId(peerId);
+    _values.validateDecodedIdentifier(attemptId, 'route attempt ID');
+    return NativeRouteAttemptChangedEvent(
+      eventId: eventId,
+      timestampMs: timestampMs,
+      protocolVersion: protocolVersion,
+      peerId: peerId,
+      attemptId: attemptId,
+      phase: NativeRouteAttemptPhase.fromWire(phase),
+      routeType: NativeRouteType.fromWire(route),
+      commandId: commandId,
       error: error,
     );
   }
