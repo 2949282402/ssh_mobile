@@ -163,12 +163,22 @@ void main() {
       'accepted SshStreamOpen CommandResult keeps the stream usable',
       () async {
         final gateway = _FakeGateway();
+        final traces = TelemetryTraceRegistry();
         final connector = AppSshNativeStreamConnector(
           gatewayProvider: () async => gateway,
           openerDeviceIdProvider: () async => 'device-a',
+          traceRegistry: traces,
         );
-        final stream = await connector.open(peerId: 'peer-a');
+        addTearDown(() async {
+          await connector.closeAll();
+          traces.dispose();
+        });
+        final stream = await connector.open(
+          peerId: 'peer-a',
+          traceId: 'trace-operation',
+        );
         final openCommandId = _commandIdOf(gateway.commands.first);
+        expect(traces.traceForCommand(openCommandId), 'trace-operation');
 
         gateway.push(
           _commandResultFrame(
@@ -178,6 +188,10 @@ void main() {
           ),
         );
         await Future<void>.delayed(Duration.zero);
+        // An accepted command remains correlated until the stream's terminal
+        // close event, then its command context is gone. A paired peer context
+        // follows the same terminal cleanup path when facade mode is enabled.
+        expect(traces.traceForCommand(openCommandId), 'trace-operation');
         // 流仍登记：后续数据事件照常路由。
         expect(connector.activeStreamCount, 1);
 
@@ -194,8 +208,18 @@ void main() {
         await Future<void>.delayed(Duration.zero);
         expect(received, hasLength(1));
 
+        gateway.push(
+          _closedFrame(
+            eventId: 'e5',
+            peerId: 'peer-a',
+            openerDeviceId: 'device-a',
+            streamId: 1,
+          ),
+        );
+        await stream.done;
+        expect(traces.traceForCommand(openCommandId), isNull);
+
         await subscription.cancel();
-        await connector.closeAll();
       },
     );
 

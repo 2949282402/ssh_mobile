@@ -63,6 +63,11 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
   // 等待 native CommandResult 确认的 SshStreamOpen：commandId → StreamHandle。
   final Map<String, NativeStreamHandle> _pendingOpens =
       <String, NativeStreamHandle>{};
+  // Accepted open commands remain traceable until the stream's terminal
+  // close/failure event. The native protocol has no trace field, so retaining
+  // this command-to-handle edge is the only safe late-result boundary.
+  final Map<NativeStreamHandle, String> _acceptedOpenCommands =
+      <NativeStreamHandle, String>{};
 
   NetworkCommandGateway? _gateway;
   Future<NetworkCommandGateway>? _gatewayFuture;
@@ -261,12 +266,22 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
         // accepted=false；必须让 open 返回的流立即失败，而不是被 default 丢弃
         // 导致 done 永久挂起。
         final handle = _pendingOpens.remove(commandId);
+        if (handle == null) {
+          // A duplicate/late result has no live stream terminal boundary. Do
+          // not retain an unknown command context that can never be released
+          // by one. A duplicate for an accepted live stream is ignored so it
+          // cannot erase that operation's still-valid correlation edge.
+          if (!_acceptedOpenCommands.containsValue(commandId)) {
+            _traceRegistry?.completeCommand(commandId);
+          }
+          break;
+        }
         final retainPeerBinding = accepted;
         _traceRegistry?.completeCommand(
           commandId,
           retainPeerBinding: retainPeerBinding,
         );
-        if (handle == null) break;
+        if (accepted) _acceptedOpenCommands[handle] = commandId;
         final stream = _streams[handle];
         if (stream == null) break;
         if (!accepted) {
@@ -312,6 +327,10 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
   }
 
   _AppSshNativeStream? _removeStream(NativeStreamHandle handle) {
+    final acceptedCommand = _acceptedOpenCommands.remove(handle);
+    if (acceptedCommand != null) {
+      _traceRegistry?.completeCommand(acceptedCommand);
+    }
     final pendingCommands = _pendingOpens.entries
         .where((entry) => entry.value == handle)
         .map((entry) => entry.key)
@@ -345,8 +364,12 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
     for (final commandId in _pendingOpens.keys.toList(growable: false)) {
       _traceRegistry?.completeCommand(commandId);
     }
+    for (final commandId in _acceptedOpenCommands.values) {
+      _traceRegistry?.completeCommand(commandId);
+    }
     _streams.clear();
     _pendingOpens.clear();
+    _acceptedOpenCommands.clear();
     for (final stream in streams) {
       stream._abort();
     }

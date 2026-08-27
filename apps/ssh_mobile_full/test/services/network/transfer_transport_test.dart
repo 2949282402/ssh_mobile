@@ -501,13 +501,10 @@ void main() {
         );
         expect((await connectFuture).isSuccess, isTrue);
         expect(traces.traceForCommand(commandId), isNull);
-        // The terminal event is still available to NetworkTelemetryBridge; the
-        // bridge releases the peer context after recording it.
-        expect(traces.traceForPeer('peer-traced'), 'trace-operation');
-        traces.releasePeerTrace(
-          peerId: 'peer-traced',
-          traceId: 'trace-operation',
-        );
+        // The adapter's terminal boundary releases the peer and its command;
+        // a bridge borrower may independently observe the same event without
+        // owning or extending this registry lifecycle.
+        expect(traces.traceForPeer('peer-traced'), isNull);
       },
     );
   });

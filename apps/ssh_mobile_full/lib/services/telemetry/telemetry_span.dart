@@ -58,13 +58,23 @@ final class TelemetryTraceRegistry {
   bool _disposed = false;
 
   /// Number of peer operation contexts currently retained by the owner.
-  int get peerBindingCount => _peerTraceIds.values.fold<int>(
+  int get peerBindingCount {
+    _prune();
+    return _peerBindingCount;
+  }
+
+  /// Number of command contexts currently retained by the owner.
+  int get commandBindingCount {
+    _prune();
+    return _commandBindingCount;
+  }
+
+  int get _peerBindingCount => _peerTraceIds.values.fold<int>(
     0,
     (count, traces) => count + traces.length,
   );
 
-  /// Number of command contexts currently retained by the owner.
-  int get commandBindingCount => _commandTraceIds.values.fold<int>(
+  int get _commandBindingCount => _commandTraceIds.values.fold<int>(
     0,
     (count, bindings) => count + bindings.length,
   );
@@ -176,7 +186,13 @@ final class TelemetryTraceRegistry {
     return traceId;
   }
 
-  /// Release a command result and, for rejected/expired commands, its peer.
+  /// Complete a command result.
+  ///
+  /// Accepted connect commands retain both the command and peer context until
+  /// the peer's terminal route event. This is the boundary at which a network
+  /// consumer can still correlate a command result with the SSH operation.
+  /// Rejected commands release their command context immediately; a peer is
+  /// released only when no command still owns it.
   void completeCommand(
     String commandId, {
     bool retainPeerBinding = false,
@@ -185,6 +201,13 @@ final class TelemetryTraceRegistry {
     _prune();
     final bindings = _commandTraceIds[commandId];
     if (bindings == null) return;
+
+    // Keep the command binding through the accepted operation's route
+    // terminal event. [completePeer]/[releasePeerTrace] removes the exact
+    // peer+trace binding (including this command) at that boundary. Retaining
+    // all colliding bindings is intentional: a command id alone cannot
+    // distinguish a late result from a newer operation.
+    if (retainPeerBinding) return;
 
     final removed = <_CommandTraceBinding>[];
     if (traceId == null) {
@@ -202,7 +225,7 @@ final class TelemetryTraceRegistry {
     // A command-id collision is intentionally ambiguous. Removing its
     // command entries is safe, but releasing a peer context here would risk
     // treating a late result for the old command as the newer operation.
-    if (!retainPeerBinding && removed.length == 1) {
+    if (removed.length == 1) {
       final binding = removed.single;
       _releasePeerTraceIfUnused(binding.peerId, binding.traceId);
     }
@@ -295,19 +318,19 @@ final class TelemetryTraceRegistry {
     final cutoff = _clock().subtract(bindingTtl);
     for (final peerId in _peerTraceIds.keys.toList(growable: false)) {
       final traces = _peerTraceIds[peerId]!;
-      traces.removeWhere((_, touchedAt) => touchedAt.isBefore(cutoff));
+      traces.removeWhere((_, touchedAt) => !touchedAt.isAfter(cutoff));
       if (traces.isEmpty) _peerTraceIds.remove(peerId);
     }
     for (final commandId in _commandTraceIds.keys.toList(growable: false)) {
       final bindings = _commandTraceIds[commandId]!;
-      bindings.removeWhere((_, binding) => binding.touchedAt.isBefore(cutoff));
+      bindings.removeWhere((_, binding) => !binding.touchedAt.isAfter(cutoff));
       if (bindings.isEmpty) _commandTraceIds.remove(commandId);
     }
     _trimToCapacity();
   }
 
   void _trimToCapacity() {
-    while (peerBindingCount + commandBindingCount > maxBindings) {
+    while (_peerBindingCount + _commandBindingCount > maxBindings) {
       String? oldestPeerId;
       String? oldestPeerTraceId;
       DateTime? oldestPeerAt;

@@ -701,7 +701,7 @@ class SshService extends ChangeNotifier
         error: e,
         details: 'connectionId=$connectionId sessionId=$id code=${e.code}',
       );
-      _setSessionError(id, connectionId, 'Unknown', e.message);
+      await _setSessionError(id, connectionId, 'Unknown', e.message);
       return;
     }
     if (_shutdownRequested) return;
@@ -720,7 +720,7 @@ class SshService extends ChangeNotifier
         'Window name already exists',
         details: 'name=$requestedDisplayName sessionId=$id',
       );
-      _setSessionError(
+      await _setSessionError(
         id,
         connectionId,
         config.name,
@@ -744,7 +744,7 @@ class SshService extends ChangeNotifier
     _refreshSessionsView();
 
     if (kIsWeb) {
-      _setSessionError(
+      await _setSessionError(
         id,
         connectionId,
         config.name,
@@ -767,7 +767,7 @@ class SshService extends ChangeNotifier
     session.updatedAt = DateTime.now();
     _lastErrorMessage = null;
     _lastSessionId = id;
-    _startSessionTelemetry(session, config);
+    await _startSessionTelemetry(session, config);
     final traceId = _telemetryTraceIds[id];
     final launchMode = _effectiveLaunchMode(config);
     final connectCompleter = Completer<void>();
@@ -872,13 +872,18 @@ class SshService extends ChangeNotifier
         'Session connect timed out',
         details: 'sessionId=$id connection=${config.name}',
       );
-      _failSessionTelemetry(
+      await _failSessionTelemetry(
         _sessions[id] ?? session,
         'connect',
         errorCode: TelemetryErrorCodes.sshTimeout,
         errorMessage: 'Connection timed out',
       );
-      _setSessionError(id, connectionId, config.name, 'Connection timed out');
+      await _setSessionError(
+        id,
+        connectionId,
+        config.name,
+        'Connection timed out',
+      );
     } catch (e, stackTrace) {
       if (_shutdownRequested) return;
       final pending = _connectCompleters.remove(id);
@@ -890,13 +895,18 @@ class SshService extends ChangeNotifier
         details: 'sessionId=$id connection=${config.name}',
       );
       final errorCode = _mapSshErrorCode(e, config);
-      _failSessionTelemetry(
+      await _failSessionTelemetry(
         _sessions[id] ?? session,
         'connect',
         errorCode: errorCode,
         errorMessage: '$e',
       );
-      _setSessionError(id, connectionId, config.name, 'Connection failed: $e');
+      await _setSessionError(
+        id,
+        connectionId,
+        config.name,
+        'Connection failed: $e',
+      );
     }
   }
 
@@ -917,7 +927,7 @@ class SshService extends ChangeNotifier
       session.state = SshConnectionState.disconnected;
       session.errorMessage = 'Closed by user';
       session.updatedAt = DateTime.now();
-      _terminateSessionTelemetry(session);
+      await _terminateSessionTelemetry(session);
       _schedulePersistence(
         () => _saveTerminalHistoryRecord(session),
         description: 'Failed to save terminal history record',
@@ -1114,18 +1124,25 @@ class SshService extends ChangeNotifier
     session.updatedAt = DateTime.now();
 
     if (state == SshConnectionState.connected) {
-      _recordSessionConnectedTelemetry(session);
-      _connectCompleters.remove(sessionId)?.complete();
-    } else if (state == SshConnectionState.error) {
-      _failSessionTelemetry(
-        session,
-        'connect',
-        errorCode: _mapBackgroundErrorCode(error),
-        errorMessage: error ?? 'Connection failed',
+      unawaited(
+        _completeBackgroundConnectAfterTelemetry(
+          sessionId,
+          _recordSessionConnectedTelemetry(session),
+        ),
       );
-      _connectCompleters
-          .remove(sessionId)
-          ?.completeError(StateError(error ?? 'Connection failed'));
+    } else if (state == SshConnectionState.error) {
+      unawaited(
+        _completeBackgroundFailureAfterTelemetry(
+          sessionId,
+          _failSessionTelemetry(
+            session,
+            'connect',
+            errorCode: _mapBackgroundErrorCode(error),
+            errorMessage: error ?? 'Connection failed',
+          ),
+          error ?? 'Connection failed',
+        ),
+      );
     }
 
     _schedulePersistence(
@@ -1133,6 +1150,37 @@ class SshService extends ChangeNotifier
       description: 'Failed to save terminal history record',
     );
     _notifySessionMetadataChanged();
+  }
+
+  Future<void> _completeBackgroundConnectAfterTelemetry(
+    String sessionId,
+    Future<void> telemetry,
+  ) async {
+    try {
+      await telemetry;
+    } on Object {
+      // The telemetry producer already treats storage errors as best effort;
+      // keep this guard at the completion boundary for custom clients.
+    }
+    final completer = _connectCompleters.remove(sessionId);
+    if (completer != null && !completer.isCompleted) completer.complete();
+  }
+
+  Future<void> _completeBackgroundFailureAfterTelemetry(
+    String sessionId,
+    Future<void> telemetry,
+    String message,
+  ) async {
+    try {
+      await telemetry;
+    } on Object {
+      // The telemetry producer already treats storage errors as best effort;
+      // preserve the original SSH failure regardless of local telemetry state.
+    }
+    final completer = _connectCompleters.remove(sessionId);
+    if (completer != null && !completer.isCompleted) {
+      completer.completeError(StateError(message));
+    }
   }
 
   void _handleBackgroundOutput(Map<String, dynamic> data) {

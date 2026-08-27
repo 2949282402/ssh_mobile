@@ -283,7 +283,7 @@ final class NetworkTelemetryBridge {
       () => telemetryClient.record(
         event: TelemetryEvents.networkRelayFallback,
         traceId: traceId,
-        errorCode: _quicErrorCodeFromReason(reason),
+        errorCode: TelemetryErrorCodes.netRelayUnavailable,
         errorMessage: reason,
         properties: {'direct_error': reason},
       ),
@@ -331,12 +331,6 @@ final class NetworkTelemetryBridge {
       return TelemetryErrorCodes.netQuicTimeout;
     }
     return TelemetryErrorCodes.netQuicConnRefused;
-  }
-
-  static TelemetryErrorCodeDefinition _quicErrorCodeFromReason(String reason) {
-    return reason.toLowerCase().contains('timed out')
-        ? TelemetryErrorCodes.netQuicTimeout
-        : TelemetryErrorCodes.netQuicConnRefused;
   }
 
   /// 当前 Relay region 仅作为占位值；正式 region 由 relay 配置/Handshake

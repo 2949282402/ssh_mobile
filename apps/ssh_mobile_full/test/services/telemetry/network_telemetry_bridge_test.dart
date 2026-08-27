@@ -326,16 +326,13 @@ void main() {
         );
 
         final records = await harness.replayRecords();
-        expect(
-          records.map((record) => record.eventName),
-          [
-            TelemetryEvents.sshSessionStarted.name,
-            TelemetryEvents.networkQuicFailed.name,
-            TelemetryEvents.networkRelayFallback.name,
-            TelemetryEvents.networkRelayConnected.name,
-            TelemetryEvents.sshSessionConnected.name,
-          ],
-        );
+        expect(records.map((record) => record.eventName), [
+          TelemetryEvents.sshSessionStarted.name,
+          TelemetryEvents.networkQuicFailed.name,
+          TelemetryEvents.networkRelayFallback.name,
+          TelemetryEvents.networkRelayConnected.name,
+          TelemetryEvents.sshSessionConnected.name,
+        ]);
         expect(records.map((record) => record.traceId).toSet(), {
           'trace-operation',
         });
@@ -428,7 +425,9 @@ void main() {
       );
       expect(bounded.peerBindingCount + bounded.commandBindingCount, 2);
       expect(bounded.traceForPeer('peer-a'), isNull);
-      now = now.add(const Duration(seconds: 20));
+      // Expiration at the exact TTL cutoff is inclusive: a context touched at
+      // t=2 must not survive when the cutoff reaches t=2.
+      now = now.add(const Duration(seconds: 10));
       expect(bounded.peerBindingCount, 0);
       expect(bounded.commandBindingCount, 0);
       bounded.dispose();

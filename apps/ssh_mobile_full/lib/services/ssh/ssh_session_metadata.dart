@@ -115,12 +115,12 @@ extension SshSessionMetadataActions on SshService {
     );
   }
 
-  void _setSessionError(
+  Future<void> _setSessionError(
     String sessionId,
     String connectionId,
     String connectionName,
     String message,
-  ) {
+  ) async {
     final session = _sessions.putIfAbsent(
       sessionId,
       () => SshSession(
@@ -137,7 +137,7 @@ extension SshSessionMetadataActions on SshService {
     // 仅在 span 已开始（traceId 存在）时上报失败，避免为早期预检失败产生
     // 无 started 对称事件的孤立 failed 记录。
     if (_telemetryTraceIds.containsKey(sessionId)) {
-      _failSessionTelemetry(
+      await _failSessionTelemetry(
         session,
         'connect',
         errorCode: _mapMessageErrorCode(message),
@@ -170,12 +170,15 @@ extension SshSessionMetadataActions on SshService {
   // ---------------------------------------------------------------------------
 
   /// 开始一个 SSH 会话 span，生成 traceId 并上报 started 事件。
-  void _startSessionTelemetry(SshSession session, ConnectionConfig config) {
+  Future<void> _startSessionTelemetry(
+    SshSession session,
+    ConnectionConfig config,
+  ) async {
     final client = telemetryClient;
     if (client == null) return;
     final traceId = _telemetryTraceIds[session.id] ??= newTelemetryTraceId();
     _telemetrySpanStartedAt[session.id] = DateTime.now();
-    unawaited(
+    await _recordTelemetry(
       client.record(
         event: TelemetryEvents.sshSessionStarted,
         traceId: traceId,
@@ -188,12 +191,15 @@ extension SshSessionMetadataActions on SshService {
   }
 
   /// 结束 SSH 会话 span（正常断开），上报 terminated 事件。
-  void _terminateSessionTelemetry(SshSession session, {int exitCode = 0}) {
+  Future<void> _terminateSessionTelemetry(
+    SshSession session, {
+    int exitCode = 0,
+  }) async {
     final client = telemetryClient;
     if (client == null) return;
     final traceId = _telemetryTraceIds.remove(session.id);
     final startedAt = _telemetrySpanStartedAt.remove(session.id);
-    unawaited(
+    await _recordTelemetry(
       client.record(
         event: TelemetryEvents.sshSessionTerminated,
         traceId: traceId,
@@ -206,12 +212,12 @@ extension SshSessionMetadataActions on SshService {
   }
 
   /// 会话建立成功后记录连接成功事件。
-  void _recordSessionConnectedTelemetry(SshSession session) {
+  Future<void> _recordSessionConnectedTelemetry(SshSession session) async {
     final client = telemetryClient;
     if (client == null) return;
     final traceId = _telemetryTraceIds[session.id];
     if (traceId == null) return;
-    unawaited(
+    await _recordTelemetry(
       client.record(
         event: TelemetryEvents.sshSessionConnected,
         traceId: traceId,
@@ -221,18 +227,22 @@ extension SshSessionMetadataActions on SshService {
   }
 
   /// 以失败状态结束 SSH 会话 span，上报 failed 事件并附带注册的错误码。
-  void _failSessionTelemetry(
+  Future<void> _failSessionTelemetry(
     SshSession session,
     String stage, {
     TelemetryErrorCodeDefinition? errorCode,
     String? errorMessage,
     int retryCount = 0,
-  }) {
+  }) async {
     final client = telemetryClient;
     if (client == null) return;
     final traceId = _telemetryTraceIds.remove(session.id);
     _telemetrySpanStartedAt.remove(session.id);
-    unawaited(
+    // A background terminal callback can race the enclosing connect operation;
+    // the callback owns the one active trace in that case, so a later catch
+    // must not synthesize a second unrelated failed span.
+    if (traceId == null) return;
+    await _recordTelemetry(
       client.record(
         event: TelemetryEvents.sshSessionFailed,
         traceId: traceId,
@@ -241,6 +251,18 @@ extension SshSessionMetadataActions on SshService {
         properties: {'stage': stage, 'retry_count': retryCount},
       ),
     );
+  }
+
+  /// A telemetry write is observational; storage failures must not alter SSH
+  /// connection semantics. Awaiting this boundary still guarantees that a
+  /// successful terminal outcome does not return before its accepted record is
+  /// serialized by [TelemetryClient].
+  Future<void> _recordTelemetry(Future<bool> operation) async {
+    try {
+      await operation;
+    } on Object {
+      // Telemetry is best effort when local storage is unavailable.
+    }
   }
 
   static int _telemetryElapsedMs(DateTime? startedAt) =>
