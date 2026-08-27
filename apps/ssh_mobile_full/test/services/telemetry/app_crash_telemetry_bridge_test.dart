@@ -75,6 +75,33 @@ void main() {
       );
     });
 
+    test('ignores stale callbacks after the bridge is disposed', () async {
+      bridge.install();
+      final staleFlutterHandler = FlutterError.onError!;
+      final stalePlatformHandler = PlatformDispatcher.instance.onError!;
+
+      await bridge.dispose();
+      staleFlutterHandler(
+        FlutterErrorDetails(
+          exception: StateError('late callback'),
+          library: 'test',
+        ),
+      );
+      expect(
+        stalePlatformHandler(
+          StateError('late platform callback'),
+          StackTrace.current,
+        ),
+        isFalse,
+      );
+      await bridge.reportZoneError(StateError('late zone'), StackTrace.current);
+      await bridge.pendingReports;
+
+      final records = await harness.recordsByName();
+      expect(records[TelemetryEvents.appCrashReported.name], isNull);
+      expect(records[TelemetryEvents.appErrorCaptured.name], isNull);
+    });
+
     test('chains and restores PlatformDispatcher.onError', () async {
       var previousCalls = 0;
       final previous = PlatformDispatcher.instance.onError;

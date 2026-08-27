@@ -29,7 +29,7 @@ final class AppBootstrap {
       },
       (error, stackTrace) {
         final currentRuntime = runtime;
-        if (currentRuntime != null) {
+        if (currentRuntime != null && !currentRuntime.isDisposed) {
           // Keep the existing local App Scope log projection while the
           // structured bridge writes the durable telemetry record below.
           currentRuntime.appLogService.error(
@@ -46,7 +46,7 @@ final class AppBootstrap {
               stackTrace: stackTrace,
             ),
           );
-        } else {
+        } else if (currentRuntime == null) {
           // Runtime 尚未创建时无法注入 Logger，只保留启动边界的最小兜底。
           debugPrint('Uncaught zone error: $error\n$stackTrace');
         }

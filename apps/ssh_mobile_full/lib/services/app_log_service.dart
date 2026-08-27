@@ -10,7 +10,6 @@ import 'package:path_provider/path_provider.dart';
 
 import 'app_log_database.dart' as db;
 import 'app_settings.dart';
-import 'tool_secret_policy.dart';
 
 part 'app_log_models.dart';
 part 'app_log_store.dart';
@@ -77,7 +76,11 @@ class AppLogService extends ChangeNotifier implements app_core.AppLogger {
   /// Release 模式是否允许写入磁盘日志。
   bool writeDiskLogsInRelease = false;
 
-  final ToolSecretPolicy _secretPolicy = const ToolSecretPolicy();
+  /// App diagnostics share Core's public redaction boundary. Keeping this
+  /// dependency in App Scope avoids importing a Feature security policy into
+  /// the app log/database owner.
+  final app_core.TelemetryRedactor _redactor =
+      const app_core.TelemetryRedactor();
 
   /// 返回磁盘写入队列排空的 Future。
   @visibleForTesting

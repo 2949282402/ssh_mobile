@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:app_core/app_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -247,6 +249,34 @@ void main() {
       expect(json, isNot(contains('token-placeholder')));
       expect(json, isNot(contains('stack-placeholder')));
     });
+
+    test('concurrent close callers await one shared drain future', () async {
+      final blockingStorage = _BlockingInsertStorage();
+      final blockingClient = TelemetryClient(
+        config: client.config,
+        storage: blockingStorage,
+        initialPolicy: client.activePolicy,
+      );
+      final blockingSink = TelemetryLogSink(client: blockingClient);
+      addTearDown(() async {
+        blockingStorage.release();
+        await blockingSink.close();
+        await blockingClient.dispose();
+      });
+
+      blockingSink.write(
+        _record(eventName: TelemetryEvents.appErrorCaptured.name),
+      );
+      await blockingStorage.started.future;
+
+      final firstClose = blockingSink.close();
+      final secondClose = blockingSink.close();
+
+      expect(identical(firstClose, secondClose), isTrue);
+      blockingStorage.release();
+      await firstClose;
+      expect(blockingSink.isClosed, isTrue);
+    });
   });
 }
 
@@ -259,6 +289,22 @@ final class _FailingInsertStorage extends MemoryTelemetryStorage {
       _failNext = false;
       throw StateError('placeholder storage failure');
     }
+    await super.insertRecord(record);
+  }
+}
+
+final class _BlockingInsertStorage extends MemoryTelemetryStorage {
+  final Completer<void> started = Completer<void>();
+  final Completer<void> _release = Completer<void>();
+
+  void release() {
+    if (!_release.isCompleted) _release.complete();
+  }
+
+  @override
+  Future<void> insertRecord(TelemetryEventRecord record) async {
+    started.complete();
+    await _release.future;
     await super.insertRecord(record);
   }
 }

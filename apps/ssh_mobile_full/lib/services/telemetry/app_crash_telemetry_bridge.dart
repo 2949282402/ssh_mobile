@@ -44,11 +44,13 @@ final class AppCrashTelemetryBridge {
 
     // ignore: prefer_function_declarations_over_variables
     final flutterHandler = (FlutterErrorDetails details) {
+      if (_disposed) return;
       _enqueueReport(() => _reportFlutterError(details));
       _previousFlutterError?.call(details);
     };
     // ignore: prefer_function_declarations_over_variables
     final platformHandler = (Object error, StackTrace stackTrace) {
+      if (_disposed) return false;
       _enqueueReport(() => _reportPlatformError(error, stackTrace));
       return _previousPlatformError?.call(error, stackTrace) ?? false;
     };
@@ -118,6 +120,7 @@ final class AppCrashTelemetryBridge {
   }
 
   Future<void> _enqueueReport(Future<void> Function() report) {
+    if (_disposed) return Future<void>.value();
     final previous = _reportQueue;
     _reportQueue = previous.then<void>((_) async {
       try {
@@ -160,6 +163,7 @@ Future<void> reportUncaughtErrorToRuntime(
   required Object error,
   required StackTrace stackTrace,
 }) async {
+  if (runtime.isDisposed) return;
   final bridge = runtime.crashTelemetryBridge;
   if (bridge != null) {
     await bridge.reportZoneError(error, stackTrace);

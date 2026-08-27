@@ -69,6 +69,10 @@ final class TelemetryRedactor {
   static final RegExp _windowsPath = RegExp(r'\b[A-Za-z]:\\[^\s]+');
   static final RegExp _homePath = RegExp(r'(?<![A-Za-z0-9])~[/\\][^\s]+');
   static final RegExp _uncPath = RegExp(r'(?<![A-Za-z0-9])\\\\[^\s]+');
+  static final RegExp _packagePath = RegExp(r'\bpackage:[^\s)]+');
+  static final RegExp _pathWithSpaces = RegExp(
+    r'''(?<![A-Za-z0-9])(?:[A-Za-z]:\\|\\\\|~[/\\]|\.\.?[/\\]|/(?:[^/|;,\r\n]+/)*|(?:[A-Za-z0-9_.-]+[/\\])+)[^|;,\r\n]+''',
+  );
   static final RegExp _relativePath = RegExp(
     r'(?<![A-Za-z0-9._-])(?:\.{1,2}/|(?:lib|bin|src|packages|apps|home|tmp|var|etc|users|data)/)[^\s]+',
     caseSensitive: false,
@@ -77,12 +81,28 @@ final class TelemetryRedactor {
     r'(?<![A-Za-z0-9.-])(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,63}(?::\d{1,5})?(?![A-Za-z0-9.-])',
     caseSensitive: false,
   );
+  static final RegExp _localhostHost = RegExp(
+    r'(?<![A-Za-z0-9.-])localhost(?::\d{1,5})?(?![A-Za-z0-9.-])',
+    caseSensitive: false,
+  );
+  static final RegExp _bareHostWithPort = RegExp(
+    r'(?<![A-Za-z0-9.-])[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?:\d{1,5}(?![A-Za-z0-9.-])',
+    caseSensitive: false,
+  );
+  static final RegExp _bareHost = RegExp(
+    r'(?<![A-Za-z0-9._-])[A-Za-z0-9-]*(?:host|server|node|gateway|router|machine|jumpbox)[A-Za-z0-9-]*(?![A-Za-z0-9._-])',
+    caseSensitive: false,
+  );
   static final RegExp _knownToken = RegExp(
-    r'\b(?:sk-[A-Za-z0-9]{12,}|ghp_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{16,})\b',
+    r'\b(?:sk-(?:proj-)?[A-Za-z0-9_-]{12,}|ASIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{16,})\b',
+    caseSensitive: false,
+  );
+  static final RegExp _environmentSecretAssignment = RegExp(
+    r'''(["']?\b(?:OPENAI_API_KEY|AWS_SECRET_ACCESS_KEY|AWS_ACCESS_KEY_ID|AZURE_CLIENT_SECRET|GOOGLE_APPLICATION_CREDENTIALS)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^,\s}\]]+)''',
     caseSensitive: false,
   );
   static final RegExp _shellCommand = RegExp(
-    r'(?<![A-Za-z0-9])(?:sudo\s+)?(?:ssh|scp|sftp|curl|wget|nc|netcat|rm|cat|echo|bash|sh|zsh|powershell|cmd(?:\.exe)?|chmod|chown|find|grep|git)\b[^\r\n]*',
+    r'(?<![A-Za-z0-9])(?:sudo\s+)?(?:ssh|scp|sftp|curl|wget|nc|netcat|rm|cat|echo|bash|sh|zsh|powershell|cmd(?:\.exe)?|chmod|chown|find|grep|git|python(?:3)?|node(?:js)?|kubectl)\b[^\r\n]*',
     caseSensitive: false,
   );
   static final RegExp _safeLabel = RegExp(r'^[A-Za-z][A-Za-z0-9_.:_-]{0,63}$');
@@ -187,6 +207,9 @@ final class TelemetryRedactor {
     text = text.replaceAll(_bearerOrBasic, redacted);
     text = text.replaceAll(_jwt, redacted);
     text = text.replaceAll(_knownToken, redacted);
+    text = text.replaceAllMapped(_environmentSecretAssignment, (match) {
+      return '${match.group(1)}$redacted';
+    });
     text = text.replaceAllMapped(_secretAssignment, (match) {
       return '${match.group(1)}$redacted';
     });
@@ -203,6 +226,11 @@ final class TelemetryRedactor {
     text = text.replaceAll(_ipv4, redacted);
     text = text.replaceAll(_ipv6, redacted);
     text = text.replaceAll(_dnsHost, redacted);
+    text = text.replaceAll(_localhostHost, redacted);
+    text = text.replaceAll(_bareHostWithPort, redacted);
+    text = text.replaceAll(_bareHost, redacted);
+    text = text.replaceAll(_packagePath, redacted);
+    text = text.replaceAll(_pathWithSpaces, redacted);
     text = text.replaceAll(_windowsPath, redacted);
     text = text.replaceAll(_homePath, redacted);
     text = text.replaceAll(_uncPath, redacted);
@@ -227,6 +255,11 @@ final class TelemetryRedactor {
         normalized.contains('command') ||
         normalized.contains('content') ||
         normalized.contains('path') ||
+        _knownToken.hasMatch(value) ||
+        _localhostHost.hasMatch(value) ||
+        _bareHostWithPort.hasMatch(value) ||
+        _bareHost.hasMatch(value) ||
+        _dnsHost.hasMatch(value) ||
         _ipv4.hasMatch(value) ||
         _ipv6.hasMatch(value);
   }

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:app_core/app_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -19,6 +20,7 @@ import 'package:ssh_mobile/app/app_runtime.dart';
 import 'package:ssh_mobile/app/app_runtime_factory.dart';
 import 'package:ssh_mobile/app/terminal_ssh_capability_adapter.dart';
 import 'package:ssh_mobile/services/network/network_protocol_v2_codec.dart';
+import 'package:ssh_mobile/services/telemetry/app_crash_telemetry_bridge.dart';
 
 const _pathProviderChannel = MethodChannel('plugins.flutter.io/path_provider');
 
@@ -354,6 +356,45 @@ void main() {
       }
     },
   );
+
+  test('late zone errors after Runtime disposal are ignored', () async {
+    late AppRuntime runtime;
+    Future<void>? lateReport;
+    Future<List<TelemetryEventRecord>>? storageSnapshot;
+    final events = <String>[];
+    final harness = await _newHarness(
+      disposeLogger: false,
+      lifecycleObserver: (event) {
+        events.add(event);
+        if (event == 'crash-telemetry-bridge.dispose.start') {
+          lateReport = reportUncaughtErrorToRuntime(
+            runtime,
+            error: StateError('late zone error'),
+            stackTrace: StackTrace.current,
+          );
+        }
+        if (event == 'telemetry.dispose.start') {
+          storageSnapshot = runtime.telemetryClient!.storage
+              .fetchAllForReplay();
+        }
+      },
+    );
+    try {
+      runtime = await harness.createFuture;
+      await runtime.dispose();
+      await lateReport;
+
+      final records = await storageSnapshot;
+      expect(
+        records!.where(
+          (record) => record.eventName == TelemetryEvents.appErrorCaptured.name,
+        ),
+        isEmpty,
+      );
+    } finally {
+      await harness.close();
+    }
+  });
 
   test(
     'construction failure does not start lazy pending initializers',

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:drift/drift.dart' as drift;
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/services/app_log_database.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
@@ -333,6 +334,31 @@ void main() {
     expect(replacementLogs.map((entry) => entry.message).toList(), <String>[
       'Created after detach',
     ]);
+  });
+
+  test('database failure diagnostics redact the raw stack trace', () async {
+    final printed = <String>[];
+    final previousDebugPrint = debugPrint;
+    debugPrint = (String? message, {int? wrapWidth}) {
+      if (message != null) printed.add(message);
+    };
+    try {
+      await logs.setDatabase(db);
+      await db.close();
+
+      logs.info('database failure password=db-placeholder');
+      await expectLater(logs.pendingDbWrites, throwsA(isA<StateError>()));
+      logs.resetDatabaseForTesting();
+    } finally {
+      debugPrint = previousDebugPrint;
+    }
+
+    final output = printed.join('\n');
+    expect(
+      output,
+      isNot(contains('package:ssh_mobile/services/app_log_store.dart')),
+    );
+    expect(output, isNot(contains('/home/hejulian')));
   });
 
   test('new logs are written to database and pruned to 1000 limit', () async {

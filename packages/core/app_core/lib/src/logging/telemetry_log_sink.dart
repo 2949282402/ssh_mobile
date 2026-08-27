@@ -43,6 +43,7 @@ final class TelemetryLogSink implements LogSink {
   final TelemetryCatalog catalog;
   final Set<String> allowlistedEvents;
   Future<void> _writeQueue = Future<void>.value();
+  Future<void>? _closeFuture;
   bool _closed = false;
 
   /// Whether the sink has stopped accepting records.
@@ -109,9 +110,13 @@ final class TelemetryLogSink implements LogSink {
   }
 
   @override
-  Future<void> close() async {
-    if (_closed) return;
+  Future<void> close() {
+    final inFlight = _closeFuture;
+    if (inFlight != null) return inFlight;
+
     _closed = true;
-    await _writeQueue;
+    final future = _writeQueue;
+    _closeFuture = future;
+    return future;
   }
 }

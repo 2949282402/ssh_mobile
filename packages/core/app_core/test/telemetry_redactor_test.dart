@@ -172,6 +172,47 @@ void main() {
     expect(sanitized, contains(TelemetryRedactor.redacted));
   });
 
+  test(
+    'fails closed for adversarial token, host, path, and command variants',
+    () {
+      final input = [
+        'sk-proj-abcdefghijklmnop',
+        'ASIAABCDEFGHIJKLMNOP',
+        'OPENAI_API_KEY=env-placeholder-value',
+        'AWS_SECRET_ACCESS_KEY=aws-placeholder-value',
+        'localhost:8080',
+        'bare-host:22',
+        '../folder with spaces/file.txt',
+        'project/secret file.txt',
+        r'relative\folder with spaces\file.txt',
+        'python script.py --input=relative/file.txt',
+        'node ./script.js --config=project/config.json',
+        'kubectl get pods --context=cluster-placeholder',
+      ].join(' | ');
+
+      final sanitized = redactor.sanitizeText(input);
+
+      for (final fragment in [
+        'abcdefghijklmnop',
+        'ASIAABCDEFGHIJKLMNOP',
+        'env-placeholder-value',
+        'aws-placeholder-value',
+        'localhost:8080',
+        'bare-host:22',
+        'folder with spaces/file.txt',
+        'project/secret file.txt',
+        r'folder with spaces\file.txt',
+        'python script.py',
+        'node ./script.js',
+        'kubectl get pods',
+        'cluster-placeholder',
+      ]) {
+        expect(sanitized, isNot(contains(fragment)), reason: fragment);
+      }
+      expect(sanitized, contains(TelemetryRedactor.redacted));
+    },
+  );
+
   test('redacts exception and stack text and bounds long diagnostics', () {
     expect(
       redactor.sanitizeExceptionText('failure password=exception-placeholder'),
