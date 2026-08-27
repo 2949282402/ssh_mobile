@@ -52,6 +52,7 @@ regression or performance issue.
 | SFTP UI, service, preview, cache, path history, or App SFTP adapters | [SFTP Feature Memory](../../../../memory_docs/client/features/sftp.md) and SFTP package contracts |
 | LAN discovery, pairing, share, Receiver, Web Share, or App LAN adapters | [LAN Share Memory](../../../../memory_docs/client/features/lan-share.md) and LAN package contracts |
 | MCP server, policy, approval queue, console, activity, or App MCP adapters | [MCP Feature Memory](../../../../memory_docs/client/features/mcp.md) and MCP package contracts |
+| Client Telemetry, event tracking, storage state machine, upload dispatcher, or Developer telemetry card | [Client overview](../../../../memory_docs/client/overview.md) and [Telemetry ADR](../../../../docs/adr/ADR-033-telemetry-data-tracking-architecture.md) |
 
 Conditional Client documents:
 
@@ -166,6 +167,7 @@ file resume to ADR-030. Always cite the complete filename:
 
 - [File resume ADR](../../../../docs/adr/ADR-030-file-resume.md)
 - [Transfer Session route dispatch ADR](../../../../docs/adr/ADR-011-transfer-session-route-dispatch.md)
+- [Telemetry & Observability ADR](../../../../docs/adr/ADR-033-telemetry-data-tracking-architecture.md)
 
 ## Common task simulations
 
@@ -182,6 +184,9 @@ file resume to ADR-030. Always cite the complete filename:
 6. **Relay architecture:** Backend + SDK architecture/current state + Transport
    and Routing + Relay README + precise Relay/Session/E2EE ADRs; add Front only
    if the dashboard or administrator API changes.
+7. **Telemetry & Observability:** Telemetry ADR-033 + Client/Backend/Front
+   overviews + `contracts/telemetry/` catalog; add owning package contracts for
+   UI or Storage work.
 
 Code and tests remain authoritative for current behavior. Accepted ADRs remain
 authoritative for architectural decisions.

@@ -47,6 +47,16 @@ React + Vite + TypeScript 前端控制台位于 `../front/`，在 Caddy 背后�
 - `POST /api/admin/v1/devices/{deviceId}/revoke` — 吊销设备。
 - `GET /api/admin/v1/access/enrollment-token` — 查看注册 Token。
 - `POST /api/admin/v1/access/enrollment-token/rotate` — 轮换注册 Token。
+- `GET /api/admin/v1/telemetry/overview` — 埋点监控大盘指标与错误分类分布。
+- `GET /api/admin/v1/telemetry/events` — 多维过滤埋点事件浏览器。
+- `GET /api/admin/v1/telemetry/diagnostics` — 基于 Redis/MySQL 的近实时诊断日志流。
+- `GET /api/admin/v1/telemetry/settings` — 获取当前动态策略与保留策略。
+- `PUT /api/admin/v1/telemetry/settings` — 更新动态上报策略与数据保留配置。
+
+### 埋点采集公开端点 (`/api/v1/telemetry/*`)
+- `POST /api/v1/telemetry/auth` — 客户端设备认证与临时 Token 签发。
+- `GET /api/v1/telemetry/policy` — 动态获取最新上报策略。
+- `POST /api/v1/telemetry/ingest` — 批量上报事件/诊断日志（HMAC 验签与持久幂等收据）。
 
 ## 容器部署
 

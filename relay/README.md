@@ -49,6 +49,16 @@ There is no `/v1/connect` route; only the V2 control and relay data routes are s
 - `POST /api/admin/v1/devices/{deviceId}/revoke` — Revoke a device.
 - `GET /api/admin/v1/access/enrollment-token` — View enrollment token.
 - `POST /api/admin/v1/access/enrollment-token/rotate` — Rotate enrollment token.
+- `GET /api/admin/v1/telemetry/overview` — Telemetry overview metrics and error distribution.
+- `GET /api/admin/v1/telemetry/events` — Filterable telemetry event explorer.
+- `GET /api/admin/v1/telemetry/diagnostics` — Real-time diagnostic stream from Redis/MySQL.
+- `GET /api/admin/v1/telemetry/settings` — Read dynamic policy and retention settings.
+- `PUT /api/admin/v1/telemetry/settings` — Update dynamic policy and retention settings.
+
+### Telemetry Public Endpoints (`/api/v1/telemetry/*`)
+- `POST /api/v1/telemetry/auth` — Client device authentication and short-lived token issuance.
+- `GET /api/v1/telemetry/policy` — Fetch active dynamic upload policy.
+- `POST /api/v1/telemetry/ingest` — Ingest batch events/diagnostics with HMAC and idempotency.
 
 ## Deployment
 

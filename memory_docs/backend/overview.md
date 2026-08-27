@@ -15,11 +15,19 @@
    - Communicates with Relay via `RelayManagementClient` over private HTTP (`/internal/v2/*`).
    - Holds no database, Redis, or signing keys.
 
+3. **Telemetry & Observability Pipeline** (`internal/telemetry`):
+   - Owns public device telemetry ingestion, HMAC verification, device auth, and dynamic policy (`/api/v1/telemetry/*`).
+   - Owns admin telemetry query endpoints (`/api/admin/v1/telemetry/*`: overview, events, diagnostics stream, settings).
+   - Dedicated persistence: isolated Analytics MySQL schema and optional Redis Stream cache for live diagnostic logs.
+   - Permanent idempotency receipts (`telemetry_ingest_receipts`) immune to retention purge.
+   - Decoupled observability architecture adhering to [ADR-033](../../docs/adr/ADR-033-telemetry-data-tracking-architecture.md).
+
 Canonical operational and API documentation:
 
 - [Relay README](../../relay/README.md)
 - [Root Compose topology](../../compose.yaml)
 - [Root Caddyfile](../../Caddyfile)
 - [Backend current state](current-state.md)
+- [Telemetry Architecture ADR](../../docs/adr/ADR-033-telemetry-data-tracking-architecture.md)
 - [Relay Bootstrap Protocol V2 Contract](../../protocol/RELAY_BOOTSTRAP_V2_CONTRACT.md)
 - [Relay Protocol V2 Wire Contract](../../protocol/RELAY_V2_CONTRACT.md)

@@ -1,4 +1,4 @@
-> Last updated: 2026-08-25
+> Last updated: 2026-08-27
 
 # Client Current State
 
@@ -7,7 +7,7 @@
 
 Maintained package owners cover:
 
-- Core application, UI, and Connection contracts;
+- Core application, UI, Telemetry runtime/storage, and Connection contracts;
 - Connection, Terminal, SFTP, Monitoring, System Administration, LAN Share,
   Playbook, RAG, MCP, AI, WebView, and Developer Features;
 - App-scoped SSH infrastructure.
@@ -19,7 +19,11 @@ new implementation goes to the owning package.
 
 Feature/Core persistence is split by owner. There is no shared business
 database, and a production database-open failure must not silently fall back to
-an in-memory database.
+an in-memory database. Client Telemetry uses dedicated `FileTelemetryStorage`
+persisted to `${supportDirectory}/telemetry/telemetry.json` with synchronous
+flush and in-memory cache, isolated from other business databases. Local FIFO
+eviction purges only `synced` records and preserves `pending` and `rejected`
+records upon capacity overflow.
 
 Network runtime and public network-contract work is routed through the
 [SDK domain](../sdk/current-state.md), even when `AppRuntime` creates the

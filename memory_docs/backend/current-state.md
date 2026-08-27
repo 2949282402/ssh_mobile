@@ -157,6 +157,19 @@ Current boundaries:
 - Docker Compose with Caddy is the supported production topology; a `storage`
   compose profile adds MySQL and Redis for the durable/Redis shared-state stack
   (single Relay Control instance + single Relay Data instance).
+- Telemetry & Observability Pipeline (`internal/telemetry`) is decoupled from Relay core:
+  - Ingestion (`POST /api/v1/telemetry/ingest`), authentication (`POST /api/v1/telemetry/auth`),
+    and dynamic policy (`GET /api/v1/telemetry/policy`) run on dedicated HTTP endpoints.
+  - Ingestion processes batch records atomically: each record writes to `telemetry_events` (or
+    `telemetry_diagnostics`) and inserts permanent `telemetry_ingest_receipts` (with
+    `event_id`, `received_at`, `status`). Duplicate `event_id`s return `already_seen` without
+    mutating data rows.
+  - Scheduled retention background worker purges data based on trusted server `received_at`
+    (time window and row count bounds) while preserving all idempotency receipts permanently.
+  - Redis Stream hot cache provides sub-millisecond retrieval of recent diagnostic logs for
+    admin streaming, automatically falling back to MySQL when Redis is offline or unconfigured.
+  - Admin endpoints (`/api/admin/v1/telemetry/*`) provide aggregated overview metrics, filterable
+    event explorer, diagnostic log stream, and dynamic policy/retention settings management.
 
 Endpoint definitions, environment variables, deployment instructions, and the
 operational contract remain owned by the [Relay README](../../relay/README.md).
