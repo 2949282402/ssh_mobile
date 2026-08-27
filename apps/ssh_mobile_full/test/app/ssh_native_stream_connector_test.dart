@@ -409,6 +409,48 @@ void main() {
     );
 
     test(
+      'releases the peer trace when the final stream reaches its terminal boundary',
+      () async {
+        final gateway = _FakeGateway();
+        final traces = TelemetryTraceRegistry();
+        final connector = AppSshNativeStreamConnector(
+          gatewayProvider: () async => gateway,
+          openerDeviceIdProvider: () async => 'device-a',
+          facade: _RecordingNetworkFacade(() async {
+            return const SdkSuccess<void>(null);
+          }),
+          traceRegistry: traces,
+        );
+        addTearDown(() async {
+          await connector.closeAll();
+          traces.dispose();
+        });
+
+        final stream = await connector.open(
+          peerId: 'peer-a',
+          traceId: 'trace-operation',
+        );
+        final openCommandId = _commandIdOf(gateway.commands.last);
+        gateway.push(
+          _commandResultFrame(
+            eventId: 'terminal-accepted',
+            commandId: openCommandId,
+            accepted: true,
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(traces.traceForPeer('peer-a'), 'trace-operation');
+
+        await stream.close();
+
+        expect(connector.activeStreamCount, 0);
+        expect(traces.traceForPeer('peer-a'), isNull);
+        expect(traces.peerBindingCount, 0);
+        expect(traces.commandBindingCount, 0);
+      },
+    );
+
+    test(
       'wraps stream IDs, skips occupied handles, and fails when exhausted',
       () async {
         final gateway = _FakeGateway();

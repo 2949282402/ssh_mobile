@@ -435,6 +435,44 @@ final class LanNativePeerRegistry implements LanNativePeerPolicyPort {
     }
   }
 
+  /// Applies one discovery observation without treating it as a complete
+  /// snapshot. Discovery streams emit full snapshots, but pairing/receiver
+  /// callbacks often carry only the peer that just changed. Clearing every
+  /// other endpoint for those callbacks would make unrelated enrolled peers
+  /// temporarily lose their native route.
+  Future<void> observeDiscoveredEndpoint(LanDiscoveredPeer peer) async {
+    final records = await trustStore.loadAll();
+    LanPeerTrustRecord? record;
+    for (final candidate in records) {
+      if (candidate.deviceId == peer.deviceId) {
+        record = candidate;
+        break;
+      }
+    }
+    if (record == null ||
+        _revokedPeerIds.contains(peer.deviceId) ||
+        _blockedPeerIds.contains(peer.deviceId)) {
+      return;
+    }
+
+    final nativePort = peer.advertisedNativePort;
+    final host = peer.ip.trim();
+    if (nativePort == null ||
+        nativePort < 1 ||
+        nativePort > 65535 ||
+        host.isEmpty) {
+      if (_directEndpoints.containsKey(peer.deviceId)) {
+        await invalidateDirectEndpoint(peer.deviceId);
+      }
+      return;
+    }
+
+    final endpoint = _formatEndpoint(host, nativePort);
+    if (_directEndpoints[peer.deviceId] != endpoint) {
+      await updateDirectEndpoint(peer.deviceId, endpoint);
+    }
+  }
+
   Future<T> _serializePeerMutation<T>(
     String peerId,
     Future<T> Function() operation,

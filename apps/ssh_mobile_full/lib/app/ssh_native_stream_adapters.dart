@@ -124,6 +124,7 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
       _streams.remove(handle);
       _pendingOpens.remove(commandId);
       _traceRegistry?.completeCommand(commandId);
+      _releasePeerWhenNoStreams(peerId);
       throw StateError(
         'Failed to queue native SSH stream open: ${status.name}.',
       );
@@ -339,7 +340,23 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
       _pendingOpens.remove(commandId);
       _traceRegistry?.completeCommand(commandId);
     }
-    return _streams.remove(handle);
+    final stream = _streams.remove(handle);
+    if (stream != null) _releasePeerWhenNoStreams(stream.peerId);
+    return stream;
+  }
+
+  /// A peer connect is shared by all streams opened for that peer, but its
+  /// trace belongs to the logical SSH operation that established the route.
+  /// Once the final stream closes there is no consumer left that can safely
+  /// correlate a late route result, so release that exact context and allow a
+  /// subsequent operation to establish a fresh one.
+  void _releasePeerWhenNoStreams(String peerId) {
+    if (_streams.values.any((stream) => stream.peerId == peerId)) return;
+    _connectedPeers.remove(peerId);
+    final traceId = _peerTraceIds.remove(peerId);
+    if (traceId != null) {
+      _traceRegistry?.releasePeerTrace(peerId: peerId, traceId: traceId);
+    }
   }
 
   void _failStream(

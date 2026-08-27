@@ -655,7 +655,9 @@ final class LanReceiverCoordinator extends ChangeNotifier {
         );
         return;
       }
-      await peerRegistry.syncDiscoveredEndpoints(<LanDiscoveredPeer>[peer]);
+      // This callback carries one peer, not a discovery snapshot. Updating it
+      // through the snapshot API would invalidate every other active endpoint.
+      await peerRegistry.observeDiscoveredEndpoint(peer);
     } on Object catch (error, stackTrace) {
       logger.warning(
         'Native paired peer synchronization failed',

@@ -170,6 +170,45 @@ void main() {
   );
 
   test(
+    'single peer observation preserves other active discovery endpoints',
+    () async {
+      final store = LanPeerTrustStore();
+      final facade = _RecordingFacade();
+      final registry = LanNativePeerRegistry(
+        trustStore: store,
+        networkFacade: facade,
+      );
+      addTearDown(store.dispose);
+      await store.save(_record('peer-a'));
+      await store.save(_record('peer-b'));
+
+      await registry.syncDiscoveredEndpoints(<LanDiscoveredPeer>[
+        _discovered('peer-a', '192.0.2.10', 43101),
+        _discovered('peer-b', '192.0.2.11', 43102),
+      ]);
+      await registry.observeDiscoveredEndpoint(
+        _discovered('peer-b', '192.0.2.12', 43103),
+      );
+
+      expect(registry.peerIdForHost('192.0.2.10'), 'peer-a');
+      expect(registry.peerIdForHost('192.0.2.12'), 'peer-b');
+      expect(registry.peerIdForHost('192.0.2.11'), isNull);
+      expect(
+        facade.registrations
+            .lastWhere((peer) => peer.peerId == 'peer-a')
+            .endpointAddress,
+        '192.0.2.10:43101',
+      );
+      expect(
+        facade.registrations
+            .lastWhere((peer) => peer.peerId == 'peer-b')
+            .endpointAddress,
+        '192.0.2.12:43103',
+      );
+    },
+  );
+
+  test(
     'relay authorization changes are persisted with the same peer identity',
     () async {
       final store = LanPeerTrustStore();
@@ -677,3 +716,15 @@ LanPeerTrustRecord _record(String deviceId) => LanPeerTrustRecord(
   authorization: const PeerRouteAuthorization(localDirect: true, relay: false),
   createdAt: DateTime.utc(2026, 1, 1),
 );
+
+LanDiscoveredPeer _discovered(String deviceId, String ip, int nativePort) =>
+    LanDiscoveredPeer(
+      deviceId: deviceId,
+      alias: deviceId,
+      ip: ip,
+      controlPort: 53317,
+      advertisedNativePort: nativePort,
+      deviceType: LanDeviceType.desktop,
+      os: 'linux',
+      lastSeen: DateTime.utc(2026),
+    );

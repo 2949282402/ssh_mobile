@@ -327,12 +327,16 @@ extension SshSessionMetadataActions on SshService {
   }
 
   Future<void> _stopServiceIfIdle() async {
-    final hasActive = _sessions.values.any(
-      (session) =>
-          session.state == SshConnectionState.connected ||
-          session.state == SshConnectionState.connecting,
+    // Native sessions live in the foreground process and must not keep the
+    // mobile background isolate alive. Only an active session explicitly
+    // assigned to that isolate owns the background-service lease.
+    final hasActiveBackgroundSession = _sessions.entries.any(
+      (entry) =>
+          _usesBackgroundForSession(entry.key) &&
+          (entry.value.state == SshConnectionState.connected ||
+              entry.value.state == SshConnectionState.connecting),
     );
-    if (!hasActive) {
+    if (!hasActiveBackgroundSession) {
       await BackgroundServiceManager.stop();
     } else {
       BackgroundServiceManager.updateStatus(_notificationSummary());

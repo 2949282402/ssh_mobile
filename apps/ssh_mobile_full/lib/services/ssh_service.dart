@@ -131,6 +131,7 @@ class SshService extends ChangeNotifier
   // is not present in the enrolled LAN peer catalog. Keep that choice per
   // session instead of globally disabling native wiring for the whole App.
   final Map<String, bool> _sessionUsesBackgroundService = {};
+  SshServerOverviewSnapshot? _backgroundOverviewSnapshot;
   final Map<String, Future<void>> _reconnectOperations = {};
   final Set<Future<void>> _ownedSshOperations = <Future<void>>{};
   final Set<Future<void>> _persistenceOperations = <Future<void>>{};
@@ -287,6 +288,7 @@ class SshService extends ChangeNotifier
     _sessions.clear();
     _sessionTargetBindings.clear();
     _sessionUsesBackgroundService.clear();
+    _backgroundOverviewSnapshot = null;
     _refreshSessionsView();
     for (final session in sessions) {
       await attempt(session.close);
@@ -1002,6 +1004,7 @@ class SshService extends ChangeNotifier
     _sessions.clear();
     _sessionTargetBindings.clear();
     _sessionUsesBackgroundService.clear();
+    _backgroundOverviewSnapshot = null;
     _refreshSessionsView();
     for (final completer in _connectCompleters.values) {
       if (!completer.isCompleted) completer.complete();
@@ -1149,6 +1152,10 @@ class SshService extends ChangeNotifier
       () => _saveTerminalHistoryRecord(session),
       description: 'Failed to save terminal history record',
     );
+    if (state == SshConnectionState.error ||
+        state == SshConnectionState.disconnected) {
+      unawaited(_stopServiceIfIdle());
+    }
     _notifySessionMetadataChanged();
   }
 
@@ -1214,10 +1221,11 @@ class SshService extends ChangeNotifier
       );
     }
 
-    _serverOverviewSnapshot = SshServerOverviewSnapshot(
+    _backgroundOverviewSnapshot = SshServerOverviewSnapshot(
       byConnection: byConnection,
       windowCount: windowCount,
     );
+    _refreshSessionsView();
     notify();
   }
 
@@ -1238,9 +1246,65 @@ class SshService extends ChangeNotifier
   void _refreshSessionsView() {
     final projection = _sessionProjection.project(_sessions.values);
     _sessionsView = projection.sessions;
-    if (!_sessionUsesBackgroundService.values.any((uses) => uses)) {
+    final background = _backgroundOverviewSnapshot;
+    final hasBackgroundSessions = _sessionUsesBackgroundService.values.any(
+      (uses) => uses,
+    );
+    if (background != null && hasBackgroundSessions) {
+      final nativeSessions = _sessions.entries
+          .where((entry) => !_usesBackgroundForSession(entry.key))
+          .map((entry) => entry.value);
+      final nativeOverview = _sessionProjection
+          .project(nativeSessions)
+          .overview;
+      _serverOverviewSnapshot = _mergeOverview(background, nativeOverview);
+    } else if (!hasBackgroundSessions) {
+      _backgroundOverviewSnapshot = null;
       _serverOverviewSnapshot = projection.overview;
     }
+  }
+
+  SshServerOverviewSnapshot _mergeOverview(
+    SshServerOverviewSnapshot background,
+    SshServerOverviewSnapshot native,
+  ) {
+    final byConnection = <String, SshConnectionOverview>{
+      ...background.byConnection,
+    };
+    for (final entry in native.byConnection.entries) {
+      final current = byConnection[entry.key];
+      if (current == null) {
+        byConnection[entry.key] = entry.value;
+        continue;
+      }
+      byConnection[entry.key] = SshConnectionOverview(
+        count: current.count + entry.value.count,
+        latestState: _latestOverviewState(
+          current.latestState,
+          entry.value.latestState,
+        ),
+        hasConnected: current.hasConnected || entry.value.hasConnected,
+      );
+    }
+    return SshServerOverviewSnapshot(
+      byConnection: byConnection,
+      windowCount: background.windowCount + native.windowCount,
+    );
+  }
+
+  SshConnectionState? _latestOverviewState(
+    SshConnectionState? current,
+    SshConnectionState? next,
+  ) {
+    if (current == null) return next;
+    if (next == null) return current;
+    const precedence = <SshConnectionState, int>{
+      SshConnectionState.disconnected: 0,
+      SshConnectionState.error: 1,
+      SshConnectionState.connecting: 2,
+      SshConnectionState.connected: 3,
+    };
+    return precedence[next]! > precedence[current]! ? next : current;
   }
 
   void notify() {
