@@ -146,6 +146,9 @@ func (s *Server) Close() error {
 		if s.telemetryWorker != nil {
 			s.telemetryWorker.Stop()
 		}
+		if s.telemetryService != nil {
+			_ = s.telemetryService.Close()
+		}
 		if s.sessionStore != nil {
 			_ = s.sessionStore.Close()
 		}

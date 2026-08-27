@@ -164,3 +164,21 @@ func (s *Service) PurgeRetention(ctx context.Context) (int, error) {
 
 	return s.store.PurgeRetention(ctx, cutoff, maxRows, 500)
 }
+
+// Close closes the underlying store and cache resources.
+func (s *Service) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var firstErr error
+	if s.store != nil {
+		if err := s.store.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if s.redisCache != nil {
+		if err := s.redisCache.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}

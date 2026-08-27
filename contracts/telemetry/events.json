@@ -215,6 +215,21 @@
       ]
     },
     {
+      "name": "app.diagnostic.log",
+      "version": 1,
+      "recordType": "diagnostic",
+      "feature": "app",
+      "severity": "warn",
+      "description": "General diagnostic log entry for client and system diagnostics.",
+      "allowedProperties": [
+        {"name": "message", "type": "string", "required": false},
+        {"name": "category", "type": "string", "required": false},
+        {"name": "stage", "type": "string", "required": false},
+        {"name": "direct_error", "type": "string", "required": false},
+        {"name": "details", "type": "string", "required": false}
+      ]
+    },
+    {
       "name": "telemetry.batch.uploaded",
       "version": 1,
       "recordType": "analytics",

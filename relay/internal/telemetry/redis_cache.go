@@ -18,6 +18,7 @@ const (
 type RedisCache interface {
 	PushDiagnostic(ctx context.Context, env TelemetryEnvelope, maxRecords int) error
 	GetRecentDiagnostics(ctx context.Context, limit int) ([]TelemetryEnvelope, error)
+	Close() error
 }
 
 type RedisClientCache struct {
@@ -91,6 +92,13 @@ func (r *RedisClientCache) GetRecentDiagnostics(ctx context.Context, limit int) 
 	return records, nil
 }
 
+func (r *RedisClientCache) Close() error {
+	if r.client != nil {
+		return r.client.Close()
+	}
+	return nil
+}
+
 type NoopRedisCache struct{}
 
 func (n *NoopRedisCache) PushDiagnostic(ctx context.Context, env TelemetryEnvelope, maxRecords int) error {
@@ -99,4 +107,8 @@ func (n *NoopRedisCache) PushDiagnostic(ctx context.Context, env TelemetryEnvelo
 
 func (n *NoopRedisCache) GetRecentDiagnostics(ctx context.Context, limit int) ([]TelemetryEnvelope, error) {
 	return nil, nil
+}
+
+func (n *NoopRedisCache) Close() error {
+	return nil
 }

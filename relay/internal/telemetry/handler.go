@@ -99,9 +99,7 @@ func (h *Handler) handlePublicIngest(w http.ResponseWriter, r *http.Request) {
 
 	// Ensure all records in the batch match the authenticated deviceId
 	for i := range req.Records {
-		if req.Records[i].DeviceID == "" {
-			req.Records[i].DeviceID = deviceID
-		}
+		req.Records[i].DeviceID = deviceID
 	}
 
 	// 3. Process Batch Ingest

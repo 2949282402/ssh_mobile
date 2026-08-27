@@ -25,6 +25,10 @@ func (m *mockFailingRedisCache) GetRecentDiagnostics(ctx context.Context, limit 
 	return nil, nil
 }
 
+func (m *mockFailingRedisCache) Close() error {
+	return nil
+}
+
 func TestRedisCacheDegradation(t *testing.T) {
 	ctx := context.Background()
 	catalog := DefaultCatalog()
