@@ -56,7 +56,6 @@ abstract class TelemetryStorage {
 
 class MemoryTelemetryStorage implements TelemetryStorage {
   final List<TelemetryEventRecord> _records = [];
-  final _lock = Completer<void>()..complete();
 
   @override
   Future<void> insertRecord(TelemetryEventRecord record) async {

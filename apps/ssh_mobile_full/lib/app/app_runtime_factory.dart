@@ -468,7 +468,7 @@ final class AppRuntimeFactory {
       );
       final telemetryClient = TelemetryClient(
         config: TelemetryClientConfig(
-          baseUrl: appSettings.relayServerUrl,
+          baseUrl: appSettings.relayEndpoint,
           deviceId: appSettings.lanDeviceId,
           appVersion: '1.0.0',
           buildNumber: '100',
@@ -477,7 +477,7 @@ final class AppRuntimeFactory {
         ),
         storage: telemetryStorage,
       );
-      cleanup.add(telemetryClient.dispose, priority: _CleanupPriority.service);
+      cleanup.add(telemetryClient.dispose, priority: _CleanupPriority.module);
 
       final developerDiagnosticsAdapter = AppDeveloperDiagnosticsAdapter(
         sshService: sshService,

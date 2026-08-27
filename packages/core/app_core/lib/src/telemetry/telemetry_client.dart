@@ -117,7 +117,7 @@ class HttpTelemetryTransport implements TelemetryTransport {
       'deviceId': deviceId,
       'platform': platform,
       'appVersion': appVersion,
-      if (authSecret != null) 'secret': authSecret,
+      'secret': ?authSecret,
     });
     req.add(utf8.encode(payload));
     final res = await req.close();
