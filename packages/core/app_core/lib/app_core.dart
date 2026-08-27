@@ -24,3 +24,5 @@ export 'src/modules/module_state.dart';
 export 'src/telemetry/telemetry_model.dart';
 export 'src/telemetry/telemetry_policy.dart';
 export 'src/telemetry/telemetry_catalog.dart';
+export 'src/telemetry/telemetry_endpoints.dart';
+export 'src/telemetry/telemetry_storage.dart';
