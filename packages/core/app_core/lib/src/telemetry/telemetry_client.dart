@@ -136,6 +136,74 @@ class TelemetryBatchUploadResult {
   final List<TelemetryAckResult> ackResults;
 }
 
+/// Callback used by [TelemetryTimerFactory]. Returning a Future lets tests
+/// deterministically await timer-triggered work while the default adapter
+/// still delegates scheduling to `dart:async`.
+typedef TelemetryTimerCallback = FutureOr<void> Function();
+
+/// Small timer contract owned by [TelemetryClient].
+abstract interface class TelemetryTimer {
+  bool get isActive;
+
+  void cancel();
+}
+
+/// Creates one-shot and periodic timers for the telemetry state machines.
+///
+/// Production uses [DartTelemetryTimerFactory]. Tests can provide a manual
+/// implementation without sleeping or depending on wall-clock time.
+abstract interface class TelemetryTimerFactory {
+  TelemetryTimer schedule(Duration delay, TelemetryTimerCallback callback);
+
+  TelemetryTimer schedulePeriodic(
+    Duration interval,
+    TelemetryTimerCallback callback,
+  );
+}
+
+/// Default timer adapter backed by `dart:async`.
+final class DartTelemetryTimerFactory implements TelemetryTimerFactory {
+  const DartTelemetryTimerFactory();
+
+  @override
+  TelemetryTimer schedule(Duration delay, TelemetryTimerCallback callback) {
+    return _DartTelemetryTimer(
+      Timer(delay, () => unawaited(_swallowTimerErrors(callback))),
+    );
+  }
+
+  @override
+  TelemetryTimer schedulePeriodic(
+    Duration interval,
+    TelemetryTimerCallback callback,
+  ) {
+    return _DartTelemetryTimer(
+      Timer.periodic(interval, (_) => unawaited(_swallowTimerErrors(callback))),
+    );
+  }
+}
+
+Future<void> _swallowTimerErrors(TelemetryTimerCallback callback) async {
+  try {
+    await callback();
+  } on Object {
+    // Timer callbacks are background work. TelemetryClient records failures in
+    // diagnostics, and a timer must never surface an unhandled zone error.
+  }
+}
+
+final class _DartTelemetryTimer implements TelemetryTimer {
+  const _DartTelemetryTimer(this._timer);
+
+  final Timer _timer;
+
+  @override
+  bool get isActive => _timer.isActive;
+
+  @override
+  void cancel() => _timer.cancel();
+}
+
 /// Abstract transport contract for Telemetry network operations.
 abstract class TelemetryTransport {
   Future<TelemetryAuthResult?> authenticateDevice({
@@ -687,10 +755,16 @@ class TelemetryClient {
     TelemetryTransport? transport,
     TelemetryUploadPolicy? initialPolicy,
     TelemetryRedactor? redactor,
+    TelemetryTimerFactory? timerFactory,
+    DateTime Function()? clock,
+    Random? random,
   }) : catalog = catalog ?? TelemetryCatalog.instance,
        transport = transport ?? HttpTelemetryTransport(),
        activePolicy = initialPolicy ?? TelemetryUploadPolicy.defaultPolicy(),
        redactor = redactor ?? const TelemetryRedactor(),
+       _timerFactory = timerFactory ?? const DartTelemetryTimerFactory(),
+       _clock = clock ?? (() => DateTime.now().toUtc()),
+       _random = random ?? Random(),
        sessionId = config.sessionId ?? _uuid.v4() {
     // Keep the credential in memory for the lifetime of this client.  The
     // enrollment provider persists it for restart recovery, but a token
@@ -706,6 +780,9 @@ class TelemetryClient {
   final TelemetryCatalog catalog;
   final TelemetryTransport transport;
   final TelemetryRedactor redactor;
+  final TelemetryTimerFactory _timerFactory;
+  final DateTime Function() _clock;
+  final Random _random;
 
   /// App 运行期固定的会话 ID。
   final String sessionId;
@@ -716,6 +793,7 @@ class TelemetryClient {
   DateTime? _authTokenExpiresAt;
   Future<void>? _authenticationFuture;
   Future<void>? _uploadFuture;
+  Future<bool>? _policyRefreshFuture;
   // All producers share one storage-write queue. This makes the durable order
   // of cross-layer spans deterministic even when callers intentionally use
   // fire-and-forget `record` calls.
@@ -727,30 +805,39 @@ class TelemetryClient {
   bool _isUploading = false;
   bool _isDisposed = false;
   Future<void>? _disposeFuture;
-  Timer? _flushTimer;
-  Timer? _policyTimer;
+  bool _uploadRequested = false;
+  bool _policyRefreshRequested = false;
+  TelemetryTimer? _periodicFlushTimer;
+  TelemetryTimer? _retryTimer;
+  TelemetryTimer? _policyRefreshTimer;
 
   static String _newTraceId() => _uuid.v4();
 
+  DateTime _now() => _clock().toUtc();
+
   void _startTimers() {
-    _resetFlushTimer();
-    _policyTimer?.cancel();
+    _resetPeriodicFlushTimer();
+    _policyRefreshTimer?.cancel();
+    _policyRefreshTimer = null;
     if (config.policyFetchIntervalSeconds > 0) {
-      _policyTimer = Timer.periodic(
+      _policyRefreshTimer = _timerFactory.schedulePeriodic(
         Duration(seconds: config.policyFetchIntervalSeconds),
-        (_) => refreshPolicy(),
+        () async {
+          await refreshPolicy();
+        },
       );
     }
   }
 
-  void _resetFlushTimer() {
-    _flushTimer?.cancel();
+  void _resetPeriodicFlushTimer() {
+    _periodicFlushTimer?.cancel();
+    _periodicFlushTimer = null;
     if (!activePolicy.uploadEnabled || activePolicy.timeIntervalSeconds <= 0) {
       return;
     }
-    _flushTimer = Timer.periodic(
+    _periodicFlushTimer = _timerFactory.schedulePeriodic(
       Duration(seconds: activePolicy.timeIntervalSeconds),
-      (_) => flush(),
+      () => _requestUpload(),
     );
   }
 
@@ -759,7 +846,7 @@ class TelemetryClient {
       _authToken != null &&
       _authToken!.isNotEmpty &&
       _authTokenExpiresAt != null &&
-      _authTokenExpiresAt!.isAfter(DateTime.now().toUtc());
+      _authTokenExpiresAt!.isAfter(_now());
 
   /// Records an event using the generated definition as the only metadata
   /// source. Business callers cannot override name, version, record type,
@@ -806,7 +893,18 @@ class TelemetryClient {
   }) async {
     // The public [record] gate runs before enqueueing. Once accepted, a
     // queued write must still drain after dispose marks the client closed.
-    final now = DateTime.now().toUtc();
+    final safeDeviceId = redactor.sanitizeIdentifier(config.deviceId);
+    final safeAppVersion = _sanitizeConfiguredMetadata(config.appVersion);
+    final safeBuildNumber = _sanitizeConfiguredMetadata(config.buildNumber);
+    final safePlatform = _sanitizeConfiguredMetadata(config.platform);
+    if (safeDeviceId != config.deviceId ||
+        safeAppVersion == null ||
+        safeBuildNumber == null ||
+        safePlatform == null) {
+      return false;
+    }
+
+    final now = _now();
     final eventId = 'evt_${_uuid.v4()}';
 
     // Apply the explicit schema allowlist before constructing an envelope.
@@ -835,15 +933,15 @@ class TelemetryClient {
       recordType: event.recordType,
       eventName: event.name,
       eventVersion: event.version,
-      deviceId: config.deviceId,
+      deviceId: safeDeviceId!,
       sessionId: safeSessionId,
       traceId: safeTraceId,
       occurredAt: now,
       feature: event.feature,
       severity: event.severity,
-      appVersion: config.appVersion,
-      buildNumber: config.buildNumber,
-      platform: config.platform,
+      appVersion: safeAppVersion,
+      buildNumber: safeBuildNumber,
+      platform: safePlatform,
       properties: safeProperties,
       error: errorDetail,
     );
@@ -852,20 +950,28 @@ class TelemetryClient {
       return false;
     }
 
-    await storage.insertRecord(record);
+    try {
+      await storage.insertRecord(record);
+    } on Object {
+      // Producers intentionally use fire-and-forget record calls. Keep a
+      // storage failure inside the record result so it cannot become an
+      // unhandled zone error, while the durable row remains absent.
+      _recordStorageFailure();
+      return false;
+    }
 
     final isHighPriorityError =
         event.severity == TelemetrySeverity.error ||
         event.severity == TelemetrySeverity.critical;
     if (isHighPriorityError && activePolicy.triggerHighPriorityError) {
-      unawaited(flush());
+      unawaited(_requestUpload());
     } else {
       try {
         final pending = await storage.fetchPendingBatch(
           activePolicy.batchSizeThreshold,
         );
         if (pending.length >= activePolicy.batchSizeThreshold) {
-          unawaited(flush());
+          unawaited(_requestUpload());
         }
       } on Object {
         // An accepted record remains durable even when the threshold read
@@ -980,13 +1086,46 @@ class TelemetryClient {
         redactor.sanitizeText(value) == value;
   }
 
+  String? _sanitizeConfiguredMetadata(String value) {
+    if (!_isSafePersistedMetadata(value)) return null;
+    return value;
+  }
+
   void _recordStorageFailure() {
     _lastSyncError = 'Telemetry storage operation failed';
   }
 
   /// 刷新远程上传策略并应用安全边界。
-  Future<bool> refreshPolicy() async {
-    if (_isDisposed) return false;
+  Future<bool> refreshPolicy() {
+    if (_isDisposed) return Future<bool>.value(false);
+
+    final inFlight = _policyRefreshFuture;
+    if (inFlight != null) {
+      _policyRefreshRequested = true;
+      return inFlight;
+    }
+
+    final operation = _refreshPolicyOnce();
+    late final Future<bool> tracked;
+    tracked = operation.then((success) {
+      _completePolicyRefresh(tracked);
+      return success;
+    });
+    _policyRefreshFuture = tracked;
+    return tracked;
+  }
+
+  void _completePolicyRefresh(Future<bool> operation) {
+    if (!identical(_policyRefreshFuture, operation)) return;
+    _policyRefreshFuture = null;
+    final refreshAgain = _policyRefreshRequested;
+    _policyRefreshRequested = false;
+    if (refreshAgain && !_isDisposed) {
+      unawaited(refreshPolicy());
+    }
+  }
+
+  Future<bool> _refreshPolicyOnce() async {
     try {
       await _ensureAuthenticated();
       if (!_hasValidToken) {
@@ -1000,8 +1139,8 @@ class TelemetryClient {
 
       if (policy != null) {
         activePolicy = policy;
-        _lastPolicyFetchTime = DateTime.now().toUtc();
-        _resetFlushTimer();
+        _lastPolicyFetchTime = _now();
+        if (!_isDisposed) _resetPeriodicFlushTimer();
         return true;
       }
     } catch (e) {
@@ -1066,7 +1205,7 @@ class TelemetryClient {
       return;
     }
 
-    final expEpoch = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000 + 60;
+    final expEpoch = _now().millisecondsSinceEpoch ~/ 1000 + 60;
     final result = await transport.authenticateDevice(
       baseUrl: config.baseUrl,
       deviceId: config.deviceId,
@@ -1085,7 +1224,7 @@ class TelemetryClient {
     // The server response is the source of truth. Do not substitute
     // TelemetryClientConfig.authTokenTtlSeconds here.
     _authToken = result.token;
-    _authTokenExpiresAt = DateTime.now().toUtc().add(
+    _authTokenExpiresAt = _now().add(
       Duration(seconds: result.expiresInSeconds),
     );
   }
@@ -1180,24 +1319,46 @@ class TelemetryClient {
 
   /// 刷新待上传记录，内置单飞守卫、401 重认证、5xx/4xx 决策与重试退避。
   ///
-  /// Concurrent callers that arrive while a flush is active intentionally
-  /// return immediately. Shared completion-future semantics and retry-state
-  /// ownership are deferred to the item-7 retry owner; this cluster only
-  /// closes the independent transport and producer shutdown bounds.
-  Future<void> flush() {
-    if (_isDisposed || _isUploading || !activePolicy.uploadEnabled) {
+  /// Every trigger shares one drain future. A trigger that arrives while a
+  /// batch is in flight sets [_uploadRequested] and waits for the same future;
+  /// the drain then fetches a follow-up batch before completing.
+  Future<void> flush() => _requestUpload();
+
+  Future<void> _requestUpload() {
+    if (_isDisposed || !activePolicy.uploadEnabled) {
       return Future<void>.value();
     }
-    _isUploading = true;
 
-    final operation = _flushWithToken();
-    _uploadFuture = operation;
-    return operation.whenComplete(() {
-      if (identical(_uploadFuture, operation)) {
-        _uploadFuture = null;
-      }
-      _isUploading = false;
-    });
+    _uploadRequested = true;
+    _cancelRetryTimer();
+
+    final inFlight = _uploadFuture;
+    if (inFlight != null) return inFlight;
+
+    _isUploading = true;
+    final operation = _drainUploadRequests();
+    late final Future<void> tracked;
+    tracked = operation.whenComplete(() => _completeUpload(tracked));
+    _uploadFuture = tracked;
+    return tracked;
+  }
+
+  Future<void> _drainUploadRequests() async {
+    while (_uploadRequested) {
+      _uploadRequested = false;
+      await _flushWithToken();
+    }
+  }
+
+  void _completeUpload(Future<void> operation) {
+    if (!identical(_uploadFuture, operation)) return;
+    _uploadFuture = null;
+    _isUploading = false;
+    if (_uploadRequested && !_isDisposed && activePolicy.uploadEnabled) {
+      // A timer or replay trigger can race the final completion callback. Keep
+      // that request durable by starting another shared drain immediately.
+      unawaited(_requestUpload());
+    }
   }
 
   Future<void> _flushWithToken() async {
@@ -1249,7 +1410,8 @@ class TelemetryClient {
 
       if (!await _applyUploadResult(result)) return;
 
-      _lastSyncTime = DateTime.now().toUtc();
+      _cancelRetryTimer();
+      _lastSyncTime = _now();
       _lastSyncError = null;
       return;
     } on TelemetryUploadException catch (e) {
@@ -1275,7 +1437,8 @@ class TelemetryClient {
             records: pending,
           );
           if (!await _applyUploadResult(retried)) return;
-          _lastSyncTime = DateTime.now().toUtc();
+          _cancelRetryTimer();
+          _lastSyncTime = _now();
           _lastSyncError = null;
           return;
         } on TelemetryUploadException catch (retryError) {
@@ -1360,6 +1523,9 @@ class TelemetryClient {
     _scheduleBackoffRetry(records, error);
   }
 
+  static const int _minRetryDelayMs = 1000;
+  static const int _maxRetryDelayMs = 60000;
+
   /// 429 优先使用 Retry-After；其他场景使用基于 retryCount 的指数退避 + 抖动。
   void _scheduleBackoffRetry(
     List<TelemetryEventRecord> records,
@@ -1367,26 +1533,37 @@ class TelemetryClient {
   ) {
     int delayMs;
     if (error.retryAfterSeconds != null && error.retryAfterSeconds! > 0) {
-      delayMs = min(error.retryAfterSeconds! * 1000, 60000);
+      delayMs = min(error.retryAfterSeconds!, _maxRetryDelayMs ~/ 1000) * 1000;
     } else {
       final maxRetries = records.fold<int>(
         0,
         (acc, r) => max(acc, r.retryCount),
       );
       // 第一次失败时 retryCount 尚未递增，这里 +1 作为本次尝试次数。
-      final attempt = max(1, maxRetries + 1);
-      final exponential = min(1000 * pow(2, attempt - 1).toInt(), 60000);
-      // 抖动 ±20%，避免同批设备同时重试。
-      final jitter = Random().nextInt(exponential ~/ 5 + 1) - exponential ~/ 10;
-      delayMs = max(1000, exponential + jitter);
+      final attempt = min(max(0, maxRetries), 6) + 1;
+      final exponential = min(1000 * (1 << (attempt - 1)), _maxRetryDelayMs);
+      // 抖动 ±20%，避免同批设备同时重试；整个延迟仍有硬上下界。
+      final jitterRange = exponential ~/ 5;
+      final jitter =
+          (_random.nextDouble() * (jitterRange * 2 + 1)).floor() - jitterRange;
+      delayMs = (exponential + jitter).clamp(
+        _minRetryDelayMs,
+        _maxRetryDelayMs,
+      );
     }
 
     if (_isDisposed) return;
-    _flushTimer?.cancel();
-    _flushTimer = Timer(Duration(milliseconds: delayMs), () {
-      if (_isDisposed) return;
-      flush();
+    _cancelRetryTimer();
+    _retryTimer = _timerFactory.schedule(Duration(milliseconds: delayMs), () {
+      _retryTimer = null;
+      if (_isDisposed) return Future<void>.value();
+      return _requestUpload();
     });
+  }
+
+  void _cancelRetryTimer() {
+    _retryTimer?.cancel();
+    _retryTimer = null;
   }
 
   static String _describeError(Object error) {
@@ -1409,17 +1586,13 @@ class TelemetryClient {
   /// 以原始身份（eventId/sessionId/traceId）重放全部本地记录。
   Future<int> replayAllLocalRecords() {
     if (_isDisposed || _isUploading) return Future<int>.value(0);
+    _cancelRetryTimer();
     _isUploading = true;
 
     final operation = _replayAllLocalRecords();
     final trackedOperation = operation.then<void>((_) {});
     _uploadFuture = trackedOperation;
-    return operation.whenComplete(() {
-      if (identical(_uploadFuture, trackedOperation)) {
-        _uploadFuture = null;
-      }
-      _isUploading = false;
-    });
+    return operation.whenComplete(() => _completeUpload(trackedOperation));
   }
 
   Future<int> _replayAllLocalRecords() async {
@@ -1469,7 +1642,8 @@ class TelemetryClient {
         _recordStorageFailure();
         return 0;
       }
-      _lastSyncTime = DateTime.now().toUtc();
+      _cancelRetryTimer();
+      _lastSyncTime = _now();
       _lastSyncError = null;
       return totalReplayed;
     } catch (e) {
@@ -1486,7 +1660,7 @@ class TelemetryClient {
   void onAppBackground() {
     if (_isDisposed) return;
     if (activePolicy.triggerAppBackground) {
-      unawaited(flush());
+      unawaited(_requestUpload());
     }
   }
 
@@ -1494,7 +1668,7 @@ class TelemetryClient {
   void onAppForeground() {
     if (_isDisposed) return;
     if (activePolicy.triggerAppForegroundWithBacklog) {
-      unawaited(flush());
+      unawaited(_requestUpload());
     }
   }
 
@@ -1502,7 +1676,7 @@ class TelemetryClient {
   void onNetworkRecovered() {
     if (_isDisposed) return;
     if (activePolicy.triggerNetworkRecovered) {
-      unawaited(flush());
+      unawaited(_requestUpload());
     }
   }
 
@@ -1569,8 +1743,11 @@ class TelemetryClient {
     if (inFlight != null) return inFlight;
 
     _isDisposed = true;
-    _flushTimer?.cancel();
-    _policyTimer?.cancel();
+    _periodicFlushTimer?.cancel();
+    _periodicFlushTimer = null;
+    _cancelRetryTimer();
+    _policyRefreshTimer?.cancel();
+    _policyRefreshTimer = null;
 
     final future = _disposeResources();
     _disposeFuture = future;
@@ -1585,6 +1762,16 @@ class TelemetryClient {
       } on Object {
         // Authentication failures are already reflected in client diagnostics;
         // disposal must still drain the operation and close storage.
+      }
+    }
+
+    final policyRefresh = _policyRefreshFuture;
+    if (policyRefresh != null) {
+      try {
+        await policyRefresh;
+      } on Object {
+        // Policy refresh does not own storage, but disposal still waits for
+        // it so no background request outlives the client.
       }
     }
 
