@@ -12,6 +12,9 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   static const int maxUploadBytes = 50 * 1024 * 1024;
   static const int maxDownloadBytes = 512 * 1024 * 1024;
   static const int maxInMemoryTransferBytes = maxDownloadBytes;
+  static const Duration _defaultTelemetryFailureTimeout = Duration(
+    milliseconds: 250,
+  );
 
   SftpService({
     required ConnectionRepository connectionRepository,
@@ -21,6 +24,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     dynamic nativeStreamConnector,
     dynamic peerIdResolver,
     this.telemetryClient,
+    Duration telemetryFailureTimeout = _defaultTelemetryFailureTimeout,
   });
 
   /// 可选遥测客户端；桌面/移动 IO 实现使用，Web stub 仅持有该字段保持一致。

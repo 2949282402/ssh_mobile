@@ -45,6 +45,9 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   static const int maxDownloadBytes = 512 * 1024 * 1024;
   static const int maxInMemoryTransferBytes = maxDownloadBytes;
   static const Duration _notifyCoalesceDelay = Duration(milliseconds: 16);
+  static const Duration _defaultTelemetryFailureTimeout = Duration(
+    milliseconds: 250,
+  );
 
   final ConnectionRepository _connectionRepository;
   final CredentialRepository _credentialRepository;
@@ -94,7 +97,11 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     this._nativeStreamConnector,
     this._peerIdResolver,
     this.telemetryClient,
-  }) : _pathHistoryStore = pathHistoryStore ?? InMemorySftpPathHistoryStore();
+    Duration telemetryFailureTimeout = _defaultTelemetryFailureTimeout,
+  }) : _pathHistoryStore = pathHistoryStore ?? InMemorySftpPathHistoryStore(),
+       _telemetryFailureTimeout = _validateTelemetryFailureTimeout(
+         telemetryFailureTimeout,
+       );
 
   @visibleForTesting
   SftpService.forTesting(
@@ -107,7 +114,11 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     SftpPathHistoryStore? pathHistoryStore,
     this._nativeStreamConnector,
     this._peerIdResolver,
-  }) : _pathHistoryStore = pathHistoryStore ?? InMemorySftpPathHistoryStore() {
+    Duration telemetryFailureTimeout = _defaultTelemetryFailureTimeout,
+  }) : _pathHistoryStore = pathHistoryStore ?? InMemorySftpPathHistoryStore(),
+       _telemetryFailureTimeout = _validateTelemetryFailureTimeout(
+         telemetryFailureTimeout,
+       ) {
     final session =
         _SftpSession(
             connectionId: connection.id,
@@ -119,6 +130,19 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
           ..state = SftpConnectionState.connected;
     _sessions[connection.id] = session;
     _activeConnectionId = connection.id;
+  }
+
+  final Duration _telemetryFailureTimeout;
+
+  static Duration _validateTelemetryFailureTimeout(Duration timeout) {
+    if (timeout.compareTo(Duration.zero) < 0) {
+      throw ArgumentError.value(
+        timeout,
+        'telemetryFailureTimeout',
+        'must not be negative',
+      );
+    }
+    return timeout;
   }
 
   static String _decodeUtf8(Uint8List bytes) {
@@ -338,17 +362,22 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     final traceId = _telemetryTransferTraceIds.remove(transferId);
     _telemetryTransferStartedAt.remove(transferId);
     try {
-      await client.record(
-        event: TelemetryEvents.sftpTransferFailed,
-        traceId: traceId,
-        errorCode: errorCode,
-        errorMessage: errorMessage,
-        properties: {
-          'direction': transfer.isUpload ? 'upload' : 'download',
-          'bytes_transferred': transfer.bytesTransferred,
-          'stage': stage,
-        },
-      );
+      // The business failure owns timely error propagation and cleanup. The
+      // client still durably queues healthy writes, while a blocked storage
+      // boundary is allowed to drain independently after this bounded wait.
+      await client
+          .record(
+            event: TelemetryEvents.sftpTransferFailed,
+            traceId: traceId,
+            errorCode: errorCode,
+            errorMessage: errorMessage,
+            properties: {
+              'direction': transfer.isUpload ? 'upload' : 'download',
+              'bytes_transferred': transfer.bytesTransferred,
+              'stage': stage,
+            },
+          )
+          .timeout(_telemetryFailureTimeout);
     } on Object {
       // Telemetry storage failure must not replace the original SFTP error.
     }

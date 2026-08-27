@@ -7,6 +7,7 @@
 // - failed 带注册错误码与 stage（download/upload）。
 // 使用 SftpService.forTesting + 内存 SftpClient 假实现，避免真实网络。
 
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:app_core/app_core.dart';
@@ -139,6 +140,60 @@ void main() {
         );
       },
     );
+
+    test(
+      'bounds failure telemetry so the original transfer error returns promptly',
+      () async {
+        final storage = _BlockingTelemetryStorage();
+        final client = TelemetryClient(
+          config: const TelemetryClientConfig(
+            baseUrl: 'https://relay.test',
+            deviceId: 'test-device',
+            appVersion: '1.0.0',
+            buildNumber: '1',
+            platform: 'linux',
+            releaseChannel: 'test',
+          ),
+          storage: storage,
+        );
+        fixture = _SftpFixture(
+          harness: harness,
+          bytes: Uint8List.fromList('data'.codeUnits),
+          openError: StateError('Permission denied'),
+          telemetryFailureTimeout: Duration.zero,
+        );
+        fixture.service.telemetryClient = client;
+        addTearDown(fixture.dispose);
+        addTearDown(() async {
+          storage.releaseWrites();
+          await client.dispose();
+        });
+
+        final operation = fixture.service.downloadBytes(
+          fixture.entry,
+          bypassCache: true,
+        );
+        Object? operationError;
+        var completed = false;
+        final observed = operation.then<void>(
+          (_) {
+            completed = true;
+          },
+          onError: (Object error, StackTrace _) {
+            operationError = error;
+            completed = true;
+          },
+        );
+        await storage.insertStarted.future;
+        await Future<void>.delayed(Duration.zero);
+
+        expect(completed, isTrue);
+        expect(operationError, isA<StateError>());
+
+        storage.releaseWrites();
+        await observed;
+      },
+    );
   });
 }
 
@@ -147,6 +202,7 @@ class _SftpFixture {
     required TelemetryTestHarness harness,
     required Uint8List bytes,
     Object? openError,
+    Duration? telemetryFailureTimeout,
   }) : connection = ConnectionConfig(
          id: 'server-1',
          name: 'server-1',
@@ -164,6 +220,8 @@ class _SftpFixture {
       connection: connection,
       sftpClient: remote,
       currentPath: '/srv',
+      telemetryFailureTimeout:
+          telemetryFailureTimeout ?? const Duration(milliseconds: 250),
     );
     service.telemetryClient = harness.client;
     entry = SftpEntry(
@@ -190,6 +248,22 @@ class _SftpFixture {
   void dispose() {
     service.dispose();
     storage.dispose();
+  }
+}
+
+final class _BlockingTelemetryStorage extends MemoryTelemetryStorage {
+  final Completer<void> insertStarted = Completer<void>();
+  final Completer<void> _writeRelease = Completer<void>();
+
+  @override
+  Future<void> insertRecord(TelemetryEventRecord record) async {
+    if (!insertStarted.isCompleted) insertStarted.complete();
+    await _writeRelease.future;
+    await super.insertRecord(record);
+  }
+
+  void releaseWrites() {
+    if (!_writeRelease.isCompleted) _writeRelease.complete();
   }
 }
 

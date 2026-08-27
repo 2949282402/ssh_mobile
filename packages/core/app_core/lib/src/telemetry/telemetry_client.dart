@@ -208,8 +208,26 @@ class HttpTelemetryTransport implements TelemetryTransport {
     HttpClient? client,
     TelemetryProofFactory? proofFactory,
     this.allowLoopbackHttp = false,
+    this.connectionTimeout = const Duration(seconds: 10),
+    this.requestTimeout = const Duration(seconds: 30),
   }) : _client = client ?? HttpClient(),
-       _proofFactory = proofFactory ?? const HmacTelemetryProofFactory();
+       _proofFactory = proofFactory ?? const HmacTelemetryProofFactory() {
+    if (connectionTimeout.compareTo(Duration.zero) <= 0) {
+      throw ArgumentError.value(
+        connectionTimeout,
+        'connectionTimeout',
+        'must be greater than zero',
+      );
+    }
+    if (requestTimeout.compareTo(Duration.zero) <= 0) {
+      throw ArgumentError.value(
+        requestTimeout,
+        'requestTimeout',
+        'must be greater than zero',
+      );
+    }
+    _client.connectionTimeout = connectionTimeout;
+  }
 
   final HttpClient _client;
   final TelemetryProofFactory _proofFactory;
@@ -219,6 +237,12 @@ class HttpTelemetryTransport implements TelemetryTransport {
   /// an HTTPS origin.
   final bool allowLoopbackHttp;
 
+  /// Bounds DNS/connect establishment for every request made by this client.
+  final Duration connectionTimeout;
+
+  /// Bounds request write, response headers, and response-body reads.
+  final Duration requestTimeout;
+
   @override
   Future<TelemetryAuthResult?> authenticateDevice({
     required String baseUrl,
@@ -227,6 +251,30 @@ class HttpTelemetryTransport implements TelemetryTransport {
     required String appVersion,
     String? authSecret,
     int? expEpoch,
+  }) {
+    HttpClientRequest? request;
+    return _withRequestTimeout(
+      () => _authenticateDevice(
+        baseUrl: baseUrl,
+        deviceId: deviceId,
+        platform: platform,
+        appVersion: appVersion,
+        authSecret: authSecret,
+        expEpoch: expEpoch,
+        onRequestCreated: (created) => request = created,
+      ),
+      onTimeout: () => request?.abort(),
+    );
+  }
+
+  Future<TelemetryAuthResult?> _authenticateDevice({
+    required String baseUrl,
+    required String deviceId,
+    required String platform,
+    required String appVersion,
+    String? authSecret,
+    int? expEpoch,
+    required void Function(HttpClientRequest request) onRequestCreated,
   }) async {
     final uri = _resolveUri(baseUrl, TelemetryEndpoints.publicAuthPath);
 
@@ -254,6 +302,7 @@ class HttpTelemetryTransport implements TelemetryTransport {
     };
 
     final req = await _client.postUrl(uri);
+    onRequestCreated(req);
     req.followRedirects = false;
     req.headers.set('Content-Type', 'application/json');
     req.headers.set('Accept', 'application/json');
@@ -329,6 +378,28 @@ class HttpTelemetryTransport implements TelemetryTransport {
     required TelemetryDeviceEnrollmentRequest request,
     required String path,
     required int expectedStatusCode,
+  }) {
+    HttpClientRequest? activeRequest;
+    return _withRequestTimeout(
+      () => _performEnrollment(
+        baseUrl: baseUrl,
+        deviceId: deviceId,
+        request: request,
+        path: path,
+        expectedStatusCode: expectedStatusCode,
+        onRequestCreated: (created) => activeRequest = created,
+      ),
+      onTimeout: () => activeRequest?.abort(),
+    );
+  }
+
+  Future<TelemetryEnrollmentResult?> _performEnrollment({
+    required String baseUrl,
+    required String deviceId,
+    required TelemetryDeviceEnrollmentRequest request,
+    required String path,
+    required int expectedStatusCode,
+    required void Function(HttpClientRequest request) onRequestCreated,
   }) async {
     if (deviceId.isEmpty || request.deviceId != deviceId) {
       throw const TelemetryUploadException(
@@ -355,6 +426,7 @@ class HttpTelemetryTransport implements TelemetryTransport {
       'signature': request.signature,
     };
     final req = await _client.postUrl(uri);
+    onRequestCreated(req);
     req.followRedirects = false;
     req.headers.set('Content-Type', 'application/json');
     req.headers.set('Accept', 'application/json');
@@ -394,9 +466,26 @@ class HttpTelemetryTransport implements TelemetryTransport {
   Future<TelemetryUploadPolicy?> fetchRemotePolicy({
     required String baseUrl,
     required String authToken,
+  }) {
+    HttpClientRequest? request;
+    return _withRequestTimeout(
+      () => _fetchRemotePolicy(
+        baseUrl: baseUrl,
+        authToken: authToken,
+        onRequestCreated: (created) => request = created,
+      ),
+      onTimeout: () => request?.abort(),
+    );
+  }
+
+  Future<TelemetryUploadPolicy?> _fetchRemotePolicy({
+    required String baseUrl,
+    required String authToken,
+    required void Function(HttpClientRequest request) onRequestCreated,
   }) async {
     final uri = _resolveUri(baseUrl, TelemetryEndpoints.publicPolicyPath);
     final req = await _client.getUrl(uri);
+    onRequestCreated(req);
     req.followRedirects = false;
     if (authToken.isNotEmpty) {
       req.headers.set('Authorization', 'Bearer $authToken');
@@ -428,9 +517,30 @@ class HttpTelemetryTransport implements TelemetryTransport {
     required String authToken,
     required String deviceId,
     required List<TelemetryEventRecord> records,
+  }) {
+    HttpClientRequest? request;
+    return _withRequestTimeout(
+      () => _uploadBatch(
+        baseUrl: baseUrl,
+        authToken: authToken,
+        deviceId: deviceId,
+        records: records,
+        onRequestCreated: (created) => request = created,
+      ),
+      onTimeout: () => request?.abort(),
+    );
+  }
+
+  Future<TelemetryBatchUploadResult> _uploadBatch({
+    required String baseUrl,
+    required String authToken,
+    required String deviceId,
+    required List<TelemetryEventRecord> records,
+    required void Function(HttpClientRequest request) onRequestCreated,
   }) async {
     final uri = _resolveUri(baseUrl, TelemetryEndpoints.publicIngestPath);
     final req = await _client.postUrl(uri);
+    onRequestCreated(req);
     req.followRedirects = false;
     req.headers.set('Content-Type', 'application/json');
     req.headers.set('X-Device-Id', deviceId);
@@ -479,6 +589,38 @@ class HttpTelemetryTransport implements TelemetryTransport {
       retryAfterSeconds: retryAfter,
       errorCode: _errorCodeFromBody(resBody),
     );
+  }
+
+  Future<T> _withRequestTimeout<T>(
+    Future<T> Function() operation, {
+    required void Function() onTimeout,
+  }) async {
+    try {
+      return await operation().timeout(requestTimeout);
+    } on TelemetryUploadException {
+      rethrow;
+    } on TimeoutException {
+      try {
+        onTimeout();
+      } on Object {
+        // Aborting an already-closed request is best effort; the timeout
+        // result remains the stable diagnostic exposed to callers.
+      }
+      throw TelemetryUploadException(
+        'Telemetry request timed out',
+        errorCode: TelemetryErrorCodes.telemetryNetworkError.code,
+      );
+    } on Object {
+      try {
+        onTimeout();
+      } on Object {
+        // The request may already have completed or failed at the socket.
+      }
+      throw TelemetryUploadException(
+        'Telemetry request failed',
+        errorCode: TelemetryErrorCodes.telemetryNetworkError.code,
+      );
+    }
   }
 
   Uri _resolveUri(String baseUrl, String path) {
@@ -1037,6 +1179,11 @@ class TelemetryClient {
   }
 
   /// 刷新待上传记录，内置单飞守卫、401 重认证、5xx/4xx 决策与重试退避。
+  ///
+  /// Concurrent callers that arrive while a flush is active intentionally
+  /// return immediately. Shared completion-future semantics and retry-state
+  /// ownership are deferred to the item-7 retry owner; this cluster only
+  /// closes the independent transport and producer shutdown bounds.
   Future<void> flush() {
     if (_isDisposed || _isUploading || !activePolicy.uploadEnabled) {
       return Future<void>.value();

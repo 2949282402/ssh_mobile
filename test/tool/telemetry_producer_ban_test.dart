@@ -13,6 +13,7 @@ void main() {
     _testCleanGeneratedSourceIsAllowed(root);
     _testMirrorAndLegacyApiAreRejected(root);
     _testRawContractLiteralsAreRejected(root);
+    _testRawContractLiteralsInTemplatesAndConcatsAreRejected(root);
     _testRawContractLiteralsInLoggingAllowlistsAreRejected(root);
     _testFrontRootContractImportsAreRejected(root);
     stdout.writeln('Telemetry producer source-ban tests passed.');
@@ -94,6 +95,91 @@ const code = "SSH_CONNECT_FAILED"
   _expect(
     violations.any((violation) => violation.contains('SSH_CONNECT_FAILED')),
     'raw error-code literals should be rejected',
+  );
+}
+
+void _testRawContractLiteralsInTemplatesAndConcatsAreRejected(Directory root) {
+  final goSource = Directory('${root.path}/relay/internal/telemetry')
+    ..createSync(recursive: true);
+  File('${goSource.path}/producer_raw.go').writeAsStringSync(r'''
+package telemetry
+const goEvent = `ssh.session.started`
+const goCode = ("SSH_" + "CONNECT_" + "FAILED")
+''');
+  final tsSource = Directory('${root.path}/front/src/telemetry')
+    ..createSync(recursive: true);
+  File('${tsSource.path}/producer_raw.ts').writeAsStringSync(r'''
+const tsEvent = `ssh.${('session.' + 'started')}`;
+const tsCode = 'SSH_' + 'CONNECT_' + 'FAILED';
+const escapedEvent = "\x73sh.session.started";
+''');
+  final jsSource = Directory('${root.path}/apps/ssh_mobile_full/lib')
+    ..createSync(recursive: true);
+  File('${jsSource.path}/producer_raw.js').writeAsStringSync(r'''
+const jsEvent = `ssh.session.started`;
+const jsCode = "SSH_" + "CONNECT_" + "FAILED";
+''');
+  final generated = Directory('${root.path}/front/src/generated')
+    ..createSync(recursive: true);
+  File('${generated.path}/producer_raw.ts').writeAsStringSync(r'''
+const generatedEvent = `ssh.session.started`;
+const generatedCode = 'SSH_' + 'CONNECT_FAILED';
+''');
+  final generatedSuffix = Directory('${root.path}/front/src/contracts')
+    ..createSync(recursive: true);
+  File(
+    '${generatedSuffix.path}/telemetry_contract.generated.ts',
+  ).writeAsStringSync(r'''
+const generatedEvent = `ssh.session.started`;
+const generatedCode = 'SSH_' + 'CONNECT_FAILED';
+''');
+
+  final violations = scanForViolations(root);
+  _expect(
+    violations.any(
+      (violation) =>
+          violation.contains('producer_raw.go') &&
+          violation.contains('ssh.session.started'),
+    ),
+    'Go raw telemetry literals in backticks should be rejected',
+  );
+  _expect(
+    violations.any(
+      (violation) =>
+          violation.contains('producer_raw.go') &&
+          violation.contains('SSH_CONNECT_FAILED'),
+    ),
+    'Go concatenated telemetry literals should be rejected',
+  );
+  _expect(
+    violations.any(
+      (violation) =>
+          violation.contains('producer_raw.ts') &&
+          violation.contains('ssh.session.started'),
+    ),
+    'TypeScript template and escaped telemetry literals should be rejected',
+  );
+  _expect(
+    violations.any(
+      (violation) =>
+          violation.contains('producer_raw.ts') &&
+          violation.contains('SSH_CONNECT_FAILED'),
+    ),
+    'TypeScript concatenated telemetry literals should be rejected',
+  );
+  _expect(
+    violations.any(
+      (violation) =>
+          violation.contains('producer_raw.js') &&
+          violation.contains('ssh.session.started'),
+    ),
+    'JavaScript template telemetry literals should be rejected',
+  );
+  _expect(
+    violations.every(
+      (violation) => !violation.contains('front/src/generated/producer_raw.ts'),
+    ),
+    'generated producer artifacts should remain excluded',
   );
 }
 
