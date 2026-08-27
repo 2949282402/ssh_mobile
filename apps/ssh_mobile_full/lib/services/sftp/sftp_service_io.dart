@@ -20,7 +20,6 @@ import '../../core/services/data_protection_service.dart';
 import '../connection_target_binding.dart';
 import '../remote_target_scope.dart';
 import '../sftp_path_history_store.dart';
-import '../telemetry/app_telemetry_contract.dart';
 import '../telemetry/telemetry_span.dart';
 import '../tool_secret_policy.dart';
 import '../sftp_service.dart';
@@ -295,11 +294,8 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
         newTelemetryTraceId();
     _telemetryTransferStartedAt[transferId] = DateTime.now();
     unawaited(
-      client.recordEvent(
-        eventName: AppTelemetryEvents.sftpTransferStarted.name,
-        eventVersion: AppTelemetryEvents.sftpTransferStarted.version,
-        feature: AppTelemetryEvents.sftpTransferStarted.feature,
-        severity: AppTelemetryEvents.sftpTransferStarted.severity,
+      client.record(
+        event: TelemetryEvents.sftpTransferStarted,
         traceId: traceId,
         properties: {
           'direction': transfer.isUpload ? 'upload' : 'download',
@@ -318,11 +314,8 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     final traceId = _telemetryTransferTraceIds.remove(transferId);
     final startedAt = _telemetryTransferStartedAt.remove(transferId);
     unawaited(
-      client.recordEvent(
-        eventName: AppTelemetryEvents.sftpTransferCompleted.name,
-        eventVersion: AppTelemetryEvents.sftpTransferCompleted.version,
-        feature: AppTelemetryEvents.sftpTransferCompleted.feature,
-        severity: AppTelemetryEvents.sftpTransferCompleted.severity,
+      client.record(
+        event: TelemetryEvents.sftpTransferCompleted,
         traceId: traceId,
         properties: {
           'direction': transfer.isUpload ? 'upload' : 'download',
@@ -336,7 +329,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   void _failTransferTelemetry(
     String transferId,
     SftpTransferState transfer, {
-    required String errorCode,
+    required TelemetryErrorCodeDefinition errorCode,
     required String stage,
     String? errorMessage,
   }) {
@@ -345,11 +338,8 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     final traceId = _telemetryTransferTraceIds.remove(transferId);
     _telemetryTransferStartedAt.remove(transferId);
     unawaited(
-      client.recordEvent(
-        eventName: AppTelemetryEvents.sftpTransferFailed.name,
-        eventVersion: AppTelemetryEvents.sftpTransferFailed.version,
-        feature: AppTelemetryEvents.sftpTransferFailed.feature,
-        severity: AppTelemetryEvents.sftpTransferFailed.severity,
+      client.record(
+        event: TelemetryEvents.sftpTransferFailed,
         traceId: traceId,
         errorCode: errorCode,
         errorMessage: errorMessage,
@@ -363,29 +353,30 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   }
 
   /// 将传输异常映射到 contract 已注册的 SFTP 错误码。
-  static String _mapSftpErrorCode(Object error, {required bool isUpload}) {
+  static TelemetryErrorCodeDefinition _mapSftpErrorCode(
+    Object error, {
+    required bool isUpload,
+  }) {
     final message = error.toString().toLowerCase();
     if (message.contains('permission') ||
         message.contains('denied') ||
         message.contains('access')) {
-      return AppTelemetryErrorCodes.sftpPermissionDenied.code;
+      return TelemetryErrorCodes.sftpPermissionDenied;
     }
     if (message.contains('not found') ||
         message.contains('no such file') ||
         message.contains('exists')) {
-      return AppTelemetryErrorCodes.sftpFileNotFound.code;
+      return TelemetryErrorCodes.sftpFileNotFound;
     }
     if (message.contains('quota') ||
         message.contains('no space') ||
         message.contains('full')) {
-      // contract 没有 sftpQuotaExceeded 码，映射到最接近的权限类终止错误，
-      // 让失败事件能通过 catalog 校验并在后端按 category 归类。
-      return AppTelemetryErrorCodes.sftpPermissionDenied.code;
+      return TelemetryErrorCodes.sftpQuotaExceeded;
     }
     if (message.contains('cancel') || message.contains('abort')) {
-      return AppTelemetryErrorCodes.sftpTransferAborted.code;
+      return TelemetryErrorCodes.sftpTransferAborted;
     }
-    return AppTelemetryErrorCodes.sftpTransferAborted.code;
+    return TelemetryErrorCodes.sftpOperationFailed;
   }
 
   @override
@@ -493,7 +484,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
         _failTransferTelemetry(
           transferId,
           transfer.copyWith(bytesTransferred: transfer.bytesTransferred),
-          errorCode: AppTelemetryErrorCodes.sftpTransferAborted.code,
+          errorCode: TelemetryErrorCodes.sftpTransferAborted,
           stage: 'upload',
           errorMessage: 'Transfer cancelled by user',
         );
@@ -631,7 +622,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
         _failTransferTelemetry(
           transferId,
           transfer.copyWith(bytesTransferred: transfer.bytesTransferred),
-          errorCode: AppTelemetryErrorCodes.sftpTransferAborted.code,
+          errorCode: TelemetryErrorCodes.sftpTransferAborted,
           stage: 'download',
           errorMessage: 'Transfer cancelled by user',
         );
@@ -847,7 +838,8 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       notifyListeners();
     }
 
-    final transferId = '${entry.connectionId}-${DateTime.now().millisecondsSinceEpoch}';
+    final transferId =
+        '${entry.connectionId}-${DateTime.now().millisecondsSinceEpoch}';
     final transfer = SftpTransferState(
       id: transferId,
       name: entry.name,

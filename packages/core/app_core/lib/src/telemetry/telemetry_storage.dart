@@ -55,10 +55,7 @@ abstract class TelemetryStorage {
   Future<void> insertRecord(TelemetryEventRecord record);
   Future<List<TelemetryEventRecord>> fetchPendingBatch(int limit);
   Future<void> applyAckResults(List<TelemetryAckResult> results);
-  Future<void> applyRetryCount(
-    List<String> eventIds, {
-    required int increment,
-  });
+  Future<void> applyRetryCount(List<String> eventIds, {required int increment});
   Future<List<TelemetryEventRecord>> fetchAllForReplay();
   Future<int> purgeOldSyncedRecords({required int targetCapacity});
   Future<TelemetryStorageHealth> getHealthStats({required int targetCapacity});

@@ -16,7 +16,8 @@ part 'telemetry_database/daos/telemetry_records_dao.dart';
 /// 数据库句柄由 [DriftTelemetryStorage] 显式创建并关闭，避免业务层重复释放
 /// 同一个连接。
 @DriftDatabase(tables: [TelemetryRecords], daos: [TelemetryRecordsDao])
-final class TelemetryDatabase extends _$TelemetryDatabase implements AppDisposable {
+final class TelemetryDatabase extends _$TelemetryDatabase
+    implements AppDisposable {
   /// 打开当前平台的独立遥测数据库。
   factory TelemetryDatabase({QueryExecutor? executor}) {
     return TelemetryDatabase._withExecutor(

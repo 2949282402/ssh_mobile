@@ -66,12 +66,12 @@ class TelemetryRecords extends Table {
     Index(
       'idx_telemetry_records_event_id',
       'CREATE UNIQUE INDEX idx_telemetry_records_event_id '
-      'ON telemetry_records(event_id)',
+          'ON telemetry_records(event_id)',
     ),
     Index(
       'idx_telemetry_records_sync_created',
       'CREATE INDEX idx_telemetry_records_sync_created '
-      'ON telemetry_records(sync_state, created_at)',
+          'ON telemetry_records(sync_state, created_at)',
     ),
   ];
 }

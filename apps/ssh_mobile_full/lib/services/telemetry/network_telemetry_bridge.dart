@@ -1,16 +1,14 @@
 // 网络路由与回退生命周期遥测桥。
 //
-// 订阅 network_sdk 的 typed 事件流，把路由评估/回退观察映射为 contract 已注册
-// 的遥测事件。因为 contracts 没有 net.route.evaluated / net.route.fallback 事件，
-// 这里使用 network.quic.connected / network.relay.connected / network.relay.fallback
-// / network.quic.failed 表达同等语义（详见任务映射说明）。
+// 订阅 network_sdk 的 typed 事件流，把路由评估/回退观察映射为生成 contract
+// 中已注册的网络遥测事件。直接连接与 Relay 失败分别使用对应的 typed
+// TelemetryEvents 定义，避免业务代码复制 wire event names。
 
 import 'dart:async';
 
 import 'package:app_core/app_core.dart';
 import 'package:network_sdk/network_sdk.dart';
 
-import 'app_telemetry_contract.dart';
 import 'telemetry_span.dart';
 
 /// 监听 [NetworkFacade.events] 并把网络路由生命周期投影为遥测事件。
@@ -36,9 +34,12 @@ final class NetworkTelemetryBridge {
   /// 开始订阅事件流。
   void attach() {
     if (_disposed || _subscription != null) return;
-    _subscription = _events.listen(_handleEvent, onError: (_) {
-      // 事件流错误不终止遥测；保留 bag-of-events 槽位给后续 fallback 记录。
-    });
+    _subscription = _events.listen(
+      _handleEvent,
+      onError: (_) {
+        // 事件流错误不终止遥测；保留 bag-of-events 槽位给后续 fallback 记录。
+      },
+    );
   }
 
   void _handleEvent(SdkEvent event) {
@@ -62,51 +63,36 @@ final class NetworkTelemetryBridge {
           return _newSpan('relay');
         });
         unawaited(
-          telemetryClient.recordEvent(
-            eventName: AppTelemetryEvents.networkRelayConnected.name,
-            eventVersion: AppTelemetryEvents.networkRelayConnected.version,
-            feature: AppTelemetryEvents.networkRelayConnected.feature,
-            severity: AppTelemetryEvents.networkRelayConnected.severity,
+          telemetryClient.record(
+            event: TelemetryEvents.networkRelayConnected,
             traceId: traceId,
-            properties: {
-              'relay_region': _relayRegion(),
-            },
+            properties: {'relay_region': _relayRegion()},
           ),
         );
       } else if (state == RelayConnectionState.failed) {
         final traceId = _traceIds.remove('relay');
         _startedAt.remove('relay');
         final reason = error?.message ?? 'relay_failed';
-        final fallbackUsed = error?.code == NetworkErrorCode.noRoute ||
+        final fallbackUsed =
+            error?.code == NetworkErrorCode.noRoute ||
             error?.code == NetworkErrorCode.relayError;
         unawaited(
-          telemetryClient.recordEvent(
-            eventName: AppTelemetryEvents.networkQuicFailed.name,
-            eventVersion: AppTelemetryEvents.networkQuicFailed.version,
-            feature: AppTelemetryEvents.networkQuicFailed.feature,
-            severity: AppTelemetryEvents.networkQuicFailed.severity,
+          telemetryClient.record(
+            event: TelemetryEvents.networkRelayFailed,
             traceId: traceId,
-            errorCode: AppTelemetryErrorCodes.netRelayUnavailable.code,
+            errorCode: TelemetryErrorCodes.netRelayUnavailable,
             errorMessage: reason,
-            properties: {
-              'reason': reason,
-              'fallback_used': fallbackUsed,
-            },
+            properties: {'reason': reason, 'fallback_used': fallbackUsed},
           ),
         );
         // 回退已触发：记录 relay fallback 诊断事件。
         unawaited(
-          telemetryClient.recordEvent(
-            eventName: AppTelemetryEvents.networkRelayFallback.name,
-            eventVersion: AppTelemetryEvents.networkRelayFallback.version,
-            feature: AppTelemetryEvents.networkRelayFallback.feature,
-            severity: AppTelemetryEvents.networkRelayFallback.severity,
+          telemetryClient.record(
+            event: TelemetryEvents.networkRelayFallback,
             traceId: traceId,
-            errorCode: AppTelemetryErrorCodes.netRelayUnavailable.code,
+            errorCode: TelemetryErrorCodes.netRelayUnavailable,
             errorMessage: reason,
-            properties: {
-              'direct_error': reason,
-            },
+            properties: {'direct_error': reason},
           ),
         );
       } else if (state == RelayConnectionState.connecting) {
@@ -124,34 +110,26 @@ final class NetworkTelemetryBridge {
     switch (snapshot.routeType) {
       case NetworkRouteType.quicDirect:
         unawaited(
-          telemetryClient.recordEvent(
-            eventName: AppTelemetryEvents.networkQuicConnected.name,
-            eventVersion: AppTelemetryEvents.networkQuicConnected.version,
-            feature: AppTelemetryEvents.networkQuicConnected.feature,
-            severity: AppTelemetryEvents.networkQuicConnected.severity,
+          telemetryClient.record(
+            event: TelemetryEvents.networkQuicConnected,
             traceId: traceId,
-            properties: {
-              'rtt_ms': rttMs,
-              'protocol_version': 'v2',
-            },
+            properties: {'rtt_ms': rttMs, 'protocol_version': 'v2'},
           ),
         );
       case NetworkRouteType.relay:
-        final relayTraceId = _traceIds.putIfAbsent('relay', () => _newSpan('relay'));
+        final relayTraceId = _traceIds.putIfAbsent(
+          'relay',
+          () => _newSpan('relay'),
+        );
         unawaited(
-          telemetryClient.recordEvent(
-            eventName: AppTelemetryEvents.networkRelayConnected.name,
-            eventVersion: AppTelemetryEvents.networkRelayConnected.version,
-            feature: AppTelemetryEvents.networkRelayConnected.feature,
-            severity: AppTelemetryEvents.networkRelayConnected.severity,
+          telemetryClient.record(
+            event: TelemetryEvents.networkRelayConnected,
             traceId: relayTraceId,
-            properties: {
-              'relay_region': _relayRegion(),
-            },
+            properties: {'relay_region': _relayRegion()},
           ),
         );
       case NetworkRouteType.lan:
-        // LAN 直连不单独上报；保留 trace span 供后续失败事件关联。
+      // LAN 直连不单独上报；保留 trace span 供后续失败事件关联。
       case NetworkRouteType.unspecified:
         // 路由未评估完成，不产生可聚合的事件。
         break;
@@ -163,30 +141,22 @@ final class NetworkTelemetryBridge {
     switch (routeType) {
       case NetworkRouteType.quicDirect:
         unawaited(
-          telemetryClient.recordEvent(
-            eventName: AppTelemetryEvents.networkQuicConnected.name,
-            eventVersion: AppTelemetryEvents.networkQuicConnected.version,
-            feature: AppTelemetryEvents.networkQuicConnected.feature,
-            severity: AppTelemetryEvents.networkQuicConnected.severity,
+          telemetryClient.record(
+            event: TelemetryEvents.networkQuicConnected,
             traceId: traceId,
-            properties: {
-              'rtt_ms': 0,
-              'protocol_version': 'v2',
-            },
+            properties: {'rtt_ms': 0, 'protocol_version': 'v2'},
           ),
         );
       case NetworkRouteType.relay:
-        final relayTraceId = _traceIds.putIfAbsent('relay', () => _newSpan('relay'));
+        final relayTraceId = _traceIds.putIfAbsent(
+          'relay',
+          () => _newSpan('relay'),
+        );
         unawaited(
-          telemetryClient.recordEvent(
-            eventName: AppTelemetryEvents.networkRelayConnected.name,
-            eventVersion: AppTelemetryEvents.networkRelayConnected.version,
-            feature: AppTelemetryEvents.networkRelayConnected.feature,
-            severity: AppTelemetryEvents.networkRelayConnected.severity,
+          telemetryClient.record(
+            event: TelemetryEvents.networkRelayConnected,
             traceId: relayTraceId,
-            properties: {
-              'relay_region': _relayRegion(),
-            },
+            properties: {'relay_region': _relayRegion()},
           ),
         );
       case NetworkRouteType.lan:

@@ -38,6 +38,12 @@
       "description": "SSH connection or banner exchange timed out."
     },
     {
+      "code": "SSH_CONNECT_FAILED",
+      "category": "ssh",
+      "terminalFailure": true,
+      "description": "SSH connection failed for a reason not covered by a more specific code."
+    },
+    {
       "code": "SFTP_PERMISSION_DENIED",
       "category": "sftp",
       "terminalFailure": true,
@@ -54,6 +60,18 @@
       "category": "sftp",
       "terminalFailure": true,
       "description": "SFTP file transfer was aborted by user or connection drop."
+    },
+    {
+      "code": "SFTP_QUOTA_EXCEEDED",
+      "category": "sftp",
+      "terminalFailure": true,
+      "description": "Remote filesystem quota or available space was exhausted."
+    },
+    {
+      "code": "SFTP_OPERATION_FAILED",
+      "category": "sftp",
+      "terminalFailure": true,
+      "description": "SFTP operation failed for an unclassified reason."
     },
     {
       "code": "LAN_PEER_DISCONNECTED",
@@ -78,6 +96,18 @@
       "category": "ai",
       "terminalFailure": true,
       "description": "AI provider service unavailable or invalid API key."
+    },
+    {
+      "code": "APP_UNCAUGHT_ERROR",
+      "category": "app",
+      "terminalFailure": false,
+      "description": "An uncaught application error was captured without a confirmed fatal crash."
+    },
+    {
+      "code": "APP_FATAL_ERROR",
+      "category": "app",
+      "terminalFailure": true,
+      "description": "A fatal application error or crash was captured."
     },
     {
       "code": "TELEMETRY_AUTH_FAILED",

@@ -1,6 +1,11 @@
 import { z } from 'zod';
-import eventsJson from '../../../contracts/telemetry/events.json';
-import errorCodesJson from '../../../contracts/telemetry/error_codes.json';
+
+import {
+  TelemetryErrorCodes,
+  TelemetryEvents,
+  type TelemetryErrorCodeDefinition,
+  type TelemetryEventDefinition,
+} from '../generated/telemetry_contract';
 
 export const RecordTypeSchema = z.enum(['analytics', 'diagnostic']);
 export type RecordType = z.infer<typeof RecordTypeSchema>;
@@ -157,12 +162,12 @@ export const TelemetrySettingsSchema = z.object({
 });
 export type TelemetrySettings = z.infer<typeof TelemetrySettingsSchema>;
 
-const registeredEventsMap = new Map<string, (typeof eventsJson.events)[0]>(
-  eventsJson.events.map((ev) => [ev.name, ev])
+const registeredEventsMap = new Map<string, TelemetryEventDefinition>(
+  TelemetryEvents.all.map((event) => [event.name, event]),
 );
 
-const registeredErrorsMap = new Map<string, (typeof errorCodesJson.errorCodes)[0]>(
-  errorCodesJson.errorCodes.map((err) => [err.code, err])
+const registeredErrorsMap = new Map<string, TelemetryErrorCodeDefinition>(
+  TelemetryErrorCodes.all.map((error) => [error.code, error]),
 );
 
 export function validateEventCatalogRecord(record: TelemetryRecord): { valid: boolean; error?: string } {
@@ -175,7 +180,24 @@ export function validateEventCatalogRecord(record: TelemetryRecord): { valid: bo
     return { valid: false, error: `Event version mismatch for ${record.eventName}: expected ${def.version}, got ${record.eventVersion}` };
   }
 
+  if (record.recordType !== def.recordType) {
+    return { valid: false, error: `Event recordType mismatch for ${record.eventName}: expected ${def.recordType}, got ${record.recordType}` };
+  }
+
+  if (record.feature !== def.feature) {
+    return { valid: false, error: `Event feature mismatch for ${record.eventName}: expected ${def.feature}, got ${record.feature}` };
+  }
+
+  if (record.severity !== def.severity) {
+    return { valid: false, error: `Event severity mismatch for ${record.eventName}: expected ${def.severity}, got ${record.severity}` };
+  }
+
   const allowedProps = new Set(def.allowedProperties.map((p) => p.name));
+  for (const required of def.requiredProperties) {
+    if (!(required in (record.properties || {}))) {
+      return { valid: false, error: `Missing required property "${required}" for event "${record.eventName}"` };
+    }
+  }
   for (const key of Object.keys(record.properties || {})) {
     if (!allowedProps.has(key)) {
       return { valid: false, error: `Unregistered property "${key}" for event "${record.eventName}"` };
@@ -183,8 +205,15 @@ export function validateEventCatalogRecord(record: TelemetryRecord): { valid: bo
   }
 
   if (record.error) {
-    if (!registeredErrorsMap.has(record.error.errorCode)) {
+    const errorDef = registeredErrorsMap.get(record.error.errorCode);
+    if (!errorDef) {
       return { valid: false, error: `Unregistered error code: ${record.error.errorCode}` };
+    }
+    if (record.error.category !== errorDef.category) {
+      return { valid: false, error: `Error category mismatch for ${record.error.errorCode}: expected ${errorDef.category}, got ${record.error.category}` };
+    }
+    if (record.error.terminalFailure !== errorDef.terminalFailure) {
+      return { valid: false, error: `Error terminalFailure mismatch for ${record.error.errorCode}: expected ${errorDef.terminalFailure}, got ${record.error.terminalFailure}` };
     }
   }
 

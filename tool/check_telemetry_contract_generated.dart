@@ -42,7 +42,8 @@ Directory _repoRoot() {
     final parent = dir.parent;
     if (parent.path == dir.path) {
       stderr.writeln(
-          'Could not locate repo root from ${Directory.current.path}');
+        'Could not locate repo root from ${Directory.current.path}',
+      );
       throw const FormatException('repo root not found');
     }
     dir = parent;

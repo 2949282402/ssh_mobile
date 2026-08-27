@@ -169,36 +169,34 @@ void main() {
       'validates event against catalog before inserting into storage',
       () async {
         // 1. Valid default event succeeds (e.g. ssh.session.started with allowed property 'session_type')
-        final success = await client.recordEvent(
-          eventName: 'ssh.session.started',
-          eventVersion: 1,
-          feature: 'ssh',
-          severity: TelemetrySeverity.info,
+        final success = await client.record(
+          event: TelemetryEvents.sshSessionStarted,
           properties: {'session_type': 'interactive'},
         );
         expect(success, isTrue);
 
         final pending = await storage.fetchPendingBatch(10);
         expect(pending.length, 1);
-        expect(pending[0].eventName, 'ssh.session.started');
+        expect(pending[0].eventName, TelemetryEvents.sshSessionStarted.name);
 
         // 2. Unregistered event fails validation and is not recorded
-        final unregistered = await client.recordEvent(
-          eventName: 'unknown.event.name',
-          eventVersion: 1,
-          feature: 'ssh',
-          severity: TelemetrySeverity.info,
+        final unregistered = await client.record(
+          event: const TelemetryEventDefinition(
+            name: 'unknown.event.name',
+            version: 1,
+            recordType: TelemetryRecordType.analytics,
+            feature: 'ssh',
+            severity: TelemetrySeverity.info,
+            allowedProperties: {},
+          ),
           properties: {},
         );
         expect(unregistered, isFalse);
         expect((await storage.fetchPendingBatch(10)).length, 1);
 
         // 3. Undeclared property fails validation
-        final missingProp = await client.recordEvent(
-          eventName: 'ssh.session.started',
-          eventVersion: 1,
-          feature: 'ssh',
-          severity: TelemetrySeverity.info,
+        final missingProp = await client.record(
+          event: TelemetryEvents.sshSessionStarted,
           properties: {'forbidden_prop': 123},
         );
         expect(missingProp, isFalse);
@@ -206,22 +204,67 @@ void main() {
       },
     );
 
+    test(
+      'record derives envelope metadata and error metadata from definitions',
+      () async {
+        final success = await client.record(
+          event: TelemetryEvents.networkRelayFailed,
+          properties: {'reason': 'relay unavailable', 'fallback_used': true},
+          errorCode: TelemetryErrorCodes.netRelayUnavailable,
+          errorMessage: 'relay unavailable',
+        );
+
+        expect(success, isTrue);
+        final pending = await storage.fetchPendingBatch(10);
+        expect(pending, hasLength(1));
+        final record = pending.single;
+        expect(record.eventName, TelemetryEvents.networkRelayFailed.name);
+        expect(record.eventVersion, TelemetryEvents.networkRelayFailed.version);
+        expect(record.recordType, TelemetryRecordType.diagnostic);
+        expect(record.feature, 'network');
+        expect(record.severity, TelemetrySeverity.error);
+        expect(
+          record.error?.errorCode,
+          TelemetryErrorCodes.netRelayUnavailable.code,
+        );
+        expect(
+          record.error?.category,
+          TelemetryErrorCodes.netRelayUnavailable.category,
+        );
+        expect(
+          record.error?.terminalFailure,
+          TelemetryErrorCodes.netRelayUnavailable.terminalFailure,
+        );
+      },
+    );
+
+    test(
+      'unregistered typed definitions are rejected by the catalog',
+      () async {
+        const unknownEvent = TelemetryEventDefinition(
+          name: 'unknown.event',
+          version: 1,
+          recordType: TelemetryRecordType.analytics,
+          feature: 'unknown',
+          severity: TelemetrySeverity.info,
+          allowedProperties: {},
+        );
+        final result = await client.record(event: unknownEvent);
+        expect(result, isFalse);
+        expect(await storage.fetchPendingBatch(10), isEmpty);
+      },
+    );
+
     test('batch count threshold triggers automatic upload', () async {
-      await client.recordEvent(
-        eventName: 'ssh.session.started',
-        eventVersion: 1,
-        feature: 'ssh',
-        severity: TelemetrySeverity.info,
+      await client.record(
+        event: TelemetryEvents.sshSessionStarted,
         properties: {'session_type': 'terminal'},
       );
 
       expect(transport.uploadCalls, 0);
 
-      await client.recordEvent(
-        eventName: 'ssh.session.started',
-        eventVersion: 1,
-        feature: 'ssh',
-        severity: TelemetrySeverity.info,
+      await client.record(
+        event: TelemetryEvents.sshSessionStarted,
         properties: {'auth_method': 'password'},
       );
 
@@ -239,22 +282,16 @@ void main() {
     test(
       'highPriorityError trigger immediately flushes even if batch size not reached',
       () async {
-        await client.recordEvent(
-          eventName: 'ssh.session.started',
-          eventVersion: 1,
-          feature: 'ssh',
-          severity: TelemetrySeverity.info,
+        await client.record(
+          event: TelemetryEvents.sshSessionStarted,
           properties: {'session_type': 'shell'},
         );
         expect(transport.uploadCalls, 0);
 
-        await client.recordEvent(
-          eventName: 'ssh.session.failed',
-          eventVersion: 1,
-          feature: 'ssh',
-          severity: TelemetrySeverity.error,
+        await client.record(
+          event: TelemetryEvents.sshSessionFailed,
           properties: {'stage': 'handshake'},
-          errorCode: 'SSH_AUTH_FAILED',
+          errorCode: TelemetryErrorCodes.sshAuthFailed,
         );
 
         await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -264,47 +301,42 @@ void main() {
       },
     );
 
-    test(
-      'recordDiagnostic triggers high priority flush for critical severity',
-      () async {
-        await client.recordDiagnostic(
-          message: 'fatal condition',
-          severity: TelemetrySeverity.critical,
-        );
+    test('typed critical records trigger a high priority flush', () async {
+      await client.record(
+        event: TelemetryEvents.appCrashReported,
+        properties: {'message': 'fatal condition', 'category': 'crash'},
+        errorCode: TelemetryErrorCodes.appFatalError,
+        errorMessage: 'fatal condition',
+      );
 
-        await Future<void>.delayed(const Duration(milliseconds: 50));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
 
-        expect(transport.uploadCalls, 1);
-        expect(transport.uploadedBatches[0].length, 1);
-        expect(transport.uploadedBatches[0][0].recordType,
-            TelemetryRecordType.diagnostic);
-      },
-    );
+      expect(transport.uploadCalls, 1);
+      expect(transport.uploadedBatches[0].length, 1);
+      expect(
+        transport.uploadedBatches[0][0].recordType,
+        TelemetryRecordType.diagnostic,
+      );
+    });
 
-    test(
-      'recordDiagnostic accepts explicit traceId and sessionId',
-      () async {
-        await client.recordDiagnostic(
-          message: 'custom trace',
-          severity: TelemetrySeverity.warn,
-          traceId: 'trace-explicit-1',
-          sessionId: 'sess-explicit-1',
-        );
+    test('typed records accept explicit traceId and sessionId', () async {
+      await client.record(
+        event: TelemetryEvents.appDiagnosticLog,
+        properties: {'message': 'custom trace'},
+        traceId: 'trace-explicit-1',
+        sessionId: 'sess-explicit-1',
+      );
 
-        final pending = await storage.fetchPendingBatch(10);
-        expect(pending[0].traceId, 'trace-explicit-1');
-        expect(pending[0].sessionId, 'sess-explicit-1');
-      },
-    );
+      final pending = await storage.fetchPendingBatch(10);
+      expect(pending[0].traceId, 'trace-explicit-1');
+      expect(pending[0].sessionId, 'sess-explicit-1');
+    });
 
     test(
       'single logical uploader guard prevents concurrent upload loops',
       () async {
-        await client.recordEvent(
-          eventName: 'ssh.session.started',
-          eventVersion: 1,
-          feature: 'ssh',
-          severity: TelemetrySeverity.info,
+        await client.record(
+          event: TelemetryEvents.sshSessionStarted,
           properties: {'session_type': 'interactive'},
         );
 
@@ -344,18 +376,12 @@ void main() {
     test(
       'replayAllLocalRecords sends all local records with original IDs and ACKs them',
       () async {
-        await client.recordEvent(
-          eventName: 'ssh.session.started',
-          eventVersion: 1,
-          feature: 'ssh',
-          severity: TelemetrySeverity.info,
+        await client.record(
+          event: TelemetryEvents.sshSessionStarted,
           properties: {'session_type': 't1'},
         );
-        await client.recordEvent(
-          eventName: 'ssh.session.started',
-          eventVersion: 1,
-          feature: 'ssh',
-          severity: TelemetrySeverity.info,
+        await client.record(
+          event: TelemetryEvents.sshSessionStarted,
           properties: {'session_type': 't2'},
         );
 
@@ -372,11 +398,8 @@ void main() {
     test(
       'storage health and diagnostics snapshot are reported accurately',
       () async {
-        await client.recordEvent(
-          eventName: 'ssh.session.started',
-          eventVersion: 1,
-          feature: 'ssh',
-          severity: TelemetrySeverity.info,
+        await client.record(
+          event: TelemetryEvents.sshSessionStarted,
           properties: {'session_type': 'interactive'},
         );
 
@@ -392,18 +415,12 @@ void main() {
     test(
       'sessionId is stable across calls unless explicitly overridden',
       () async {
-        await client.recordEvent(
-          eventName: 'ssh.session.started',
-          eventVersion: 1,
-          feature: 'ssh',
-          severity: TelemetrySeverity.info,
+        await client.record(
+          event: TelemetryEvents.sshSessionStarted,
           properties: {'session_type': 'interactive'},
         );
-        await client.recordEvent(
-          eventName: 'ssh.session.started',
-          eventVersion: 1,
-          feature: 'ssh',
-          severity: TelemetrySeverity.info,
+        await client.record(
+          event: TelemetryEvents.sshSessionStarted,
           properties: {'session_type': 'shell'},
         );
 
@@ -426,18 +443,12 @@ void main() {
           deviceEnrollmentSecret: 'super-secret-enrollment',
         );
 
-        await clientWithSecret.recordEvent(
-          eventName: 'ssh.session.started',
-          eventVersion: 1,
-          feature: 'ssh',
-          severity: TelemetrySeverity.info,
+        await clientWithSecret.record(
+          event: TelemetryEvents.sshSessionStarted,
           properties: {'session_type': 'interactive'},
         );
-        await clientWithSecret.recordEvent(
-          eventName: 'ssh.session.started',
-          eventVersion: 1,
-          feature: 'ssh',
-          severity: TelemetrySeverity.info,
+        await clientWithSecret.record(
+          event: TelemetryEvents.sshSessionStarted,
           properties: {'auth_method': 'password'},
         );
         await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -455,11 +466,8 @@ void main() {
         transport.authRepeatedAfter401 = true;
         // 第一次上传返回 401，第二次成功。
         transport.nextUploadStatusCodes.add(401);
-        await client.recordEvent(
-          eventName: 'ssh.session.started',
-          eventVersion: 1,
-          feature: 'ssh',
-          severity: TelemetrySeverity.info,
+        await client.record(
+          event: TelemetryEvents.sshSessionStarted,
           properties: {'session_type': 'interactive'},
         );
 
@@ -484,11 +492,8 @@ void main() {
       'auth failure keeps records pending, never marks accepted or deletes',
       () async {
         transport.shouldFailAuth = true;
-        await client.recordEvent(
-          eventName: 'ssh.session.started',
-          eventVersion: 1,
-          feature: 'ssh',
-          severity: TelemetrySeverity.info,
+        await client.record(
+          event: TelemetryEvents.sshSessionStarted,
           properties: {'session_type': 'interactive'},
         );
 
@@ -502,37 +507,28 @@ void main() {
       },
     );
 
-    test(
-      'permanent 4xx marks records rejected and stops auto-retry',
-      () async {
-        transport.nextUploadStatusCodes.add(400);
-        await client.recordEvent(
-          eventName: 'ssh.session.started',
-          eventVersion: 1,
-          feature: 'ssh',
-          severity: TelemetrySeverity.info,
-          properties: {'session_type': 'interactive'},
-        );
+    test('permanent 4xx marks records rejected and stops auto-retry', () async {
+      transport.nextUploadStatusCodes.add(400);
+      await client.record(
+        event: TelemetryEvents.sshSessionStarted,
+        properties: {'session_type': 'interactive'},
+      );
 
-        await client.flush();
-        await Future<void>.delayed(const Duration(milliseconds: 50));
+      await client.flush();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
 
-        final all = await storage.fetchAllForReplay();
-        expect(all[0].syncState, TelemetrySyncState.rejected);
-        // 不再自动重试：fetchPendingBatch 为空。
-        expect(await storage.fetchPendingBatch(10), isEmpty);
-      },
-    );
+      final all = await storage.fetchAllForReplay();
+      expect(all[0].syncState, TelemetrySyncState.rejected);
+      // 不再自动重试：fetchPendingBatch 为空。
+      expect(await storage.fetchPendingBatch(10), isEmpty);
+    });
 
     test(
       '5xx failure increments retryCount and keeps records pending',
       () async {
         transport.nextUploadStatusCodes.add(503);
-        await client.recordEvent(
-          eventName: 'ssh.session.started',
-          eventVersion: 1,
-          feature: 'ssh',
-          severity: TelemetrySeverity.info,
+        await client.record(
+          event: TelemetryEvents.sshSessionStarted,
           properties: {'session_type': 'interactive'},
         );
 
@@ -552,11 +548,8 @@ void main() {
       () async {
         transport.nextUploadStatusCodes.add(429);
         transport.nextRetryAfters.add(1); // 1 秒
-        await client.recordEvent(
-          eventName: 'ssh.session.started',
-          eventVersion: 1,
-          feature: 'ssh',
-          severity: TelemetrySeverity.info,
+        await client.record(
+          event: TelemetryEvents.sshSessionStarted,
           properties: {'session_type': 'interactive'},
         );
 
@@ -575,11 +568,8 @@ void main() {
       'single-flight guard prevents overlapping flushes after retry schedule',
       () async {
         transport.nextUploadStatusCodes.add(503);
-        await client.recordEvent(
-          eventName: 'ssh.session.started',
-          eventVersion: 1,
-          feature: 'ssh',
-          severity: TelemetrySeverity.info,
+        await client.record(
+          event: TelemetryEvents.sshSessionStarted,
           properties: {'session_type': 'interactive'},
         );
 

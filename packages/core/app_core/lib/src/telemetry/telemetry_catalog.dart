@@ -11,6 +11,10 @@ class TelemetryEventDefinition {
     required this.severity,
     required this.allowedProperties,
     this.requiredProperties = const {},
+    this.propertyTypes = const {},
+    this.description = '',
+    this.operationGroup = '',
+    this.operationRole = '',
   });
 
   final String name;
@@ -20,6 +24,10 @@ class TelemetryEventDefinition {
   final TelemetrySeverity severity;
   final Set<String> allowedProperties;
   final Set<String> requiredProperties;
+  final Map<String, String> propertyTypes;
+  final String description;
+  final String operationGroup;
+  final String operationRole;
 }
 
 class TelemetryErrorCodeDefinition {
@@ -27,11 +35,13 @@ class TelemetryErrorCodeDefinition {
     required this.code,
     required this.category,
     required this.terminalFailure,
+    this.description = '',
   });
 
   final String code;
   final String category;
   final bool terminalFailure;
+  final String description;
 }
 
 class TelemetryCatalog {
@@ -57,54 +67,11 @@ class TelemetryCatalog {
   void _registerDefaults() {
     // 从 contracts/telemetry 生成的常量目录注册全部事件定义，禁止业务代码
     // 硬编码事件名、属性白名单或错误码。
-    final defaultEvents = <TelemetryEventDefinition>[
-      TelemetryEvents.appLifecycleStarted,
-      TelemetryEvents.appLifecycleBackgrounded,
-      TelemetryEvents.appLifecycleForegrounded,
-      TelemetryEvents.networkQuicConnected,
-      TelemetryEvents.networkQuicFailed,
-      TelemetryEvents.networkRelayConnected,
-      TelemetryEvents.networkRelayFallback,
-      TelemetryEvents.sshSessionStarted,
-      TelemetryEvents.sshSessionTerminated,
-      TelemetryEvents.sshSessionFailed,
-      TelemetryEvents.sftpTransferStarted,
-      TelemetryEvents.sftpTransferCompleted,
-      TelemetryEvents.sftpTransferFailed,
-      TelemetryEvents.lanDiscoveryPeerFound,
-      TelemetryEvents.lanTransferCompleted,
-      TelemetryEvents.aiChatRequest,
-      TelemetryEvents.aiChatResponse,
-      TelemetryEvents.aiChatFailed,
-      TelemetryEvents.appDiagnosticLog,
-      TelemetryEvents.telemetryBatchUploaded,
-      TelemetryEvents.telemetryBatchFailed,
-    ];
-
-    for (final ev in defaultEvents) {
+    for (final ev in TelemetryEvents.all) {
       _events[ev.name] = ev;
     }
 
-    final defaultErrors = <TelemetryErrorCodeDefinition>[
-      TelemetryErrorCodes.netQuicConnRefused,
-      TelemetryErrorCodes.netQuicTimeout,
-      TelemetryErrorCodes.netRelayUnavailable,
-      TelemetryErrorCodes.sshAuthFailed,
-      TelemetryErrorCodes.sshHostKeyMismatch,
-      TelemetryErrorCodes.sshTimeout,
-      TelemetryErrorCodes.sftpPermissionDenied,
-      TelemetryErrorCodes.sftpFileNotFound,
-      TelemetryErrorCodes.sftpTransferAborted,
-      TelemetryErrorCodes.lanPeerDisconnected,
-      TelemetryErrorCodes.lanHandshakeFailed,
-      TelemetryErrorCodes.aiRateLimited,
-      TelemetryErrorCodes.aiServiceUnavailable,
-      TelemetryErrorCodes.telemetryAuthFailed,
-      TelemetryErrorCodes.telemetryNetworkError,
-      TelemetryErrorCodes.telemetryStorageFull,
-    ];
-
-    for (final err in defaultErrors) {
+    for (final err in TelemetryErrorCodes.all) {
       _errors[err.code] = err;
     }
   }
@@ -113,6 +80,9 @@ class TelemetryCatalog {
     final def = _events[record.eventName];
     if (def == null) return false;
     if (record.eventVersion != def.version) return false;
+    if (record.recordType != def.recordType) return false;
+    if (record.feature != def.feature) return false;
+    if (record.severity != def.severity) return false;
 
     // Check required properties
     for (final req in def.requiredProperties) {
@@ -126,7 +96,12 @@ class TelemetryCatalog {
 
     // Check error code if present
     if (record.error != null) {
-      if (!_errors.containsKey(record.error!.errorCode)) return false;
+      final errorDef = _errors[record.error!.errorCode];
+      if (errorDef == null) return false;
+      if (record.error!.category != errorDef.category) return false;
+      if (record.error!.terminalFailure != errorDef.terminalFailure) {
+        return false;
+      }
     }
 
     return true;

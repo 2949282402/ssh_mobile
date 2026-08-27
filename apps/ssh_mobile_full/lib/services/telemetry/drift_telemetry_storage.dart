@@ -33,12 +33,12 @@ class DriftTelemetryStorage implements TelemetryStorage {
       throw StateError('Telemetry storage already closed');
     }
     final recordRow = _toCompanion(record);
-    await _database.into(_database.telemetryRecords).insert(
-      recordRow,
-      onConflict: DoNothing(
-        target: [_database.telemetryRecords.eventId],
-      ),
-    );
+    await _database
+        .into(_database.telemetryRecords)
+        .insert(
+          recordRow,
+          onConflict: DoNothing(target: [_database.telemetryRecords.eventId]),
+        );
   }
 
   @override
@@ -61,29 +61,29 @@ class DriftTelemetryStorage implements TelemetryStorage {
     final now = DateTime.now().toUtc();
     await _database.transaction(() async {
       for (final ack in results) {
-        final row = await (_database.select(_database.telemetryRecords)
-              ..where((t) => t.eventId.equals(ack.eventId)))
-            .getSingleOrNull();
+        final row = await (_database.select(
+          _database.telemetryRecords,
+        )..where((t) => t.eventId.equals(ack.eventId))).getSingleOrNull();
         if (row == null) continue;
         if (ack.isAcceptedOrSeen) {
-          await (_database.update(_database.telemetryRecords)
-                ..where((t) => t.eventId.equals(ack.eventId)))
-              .write(
-                TelemetryRecordsCompanion(
-                  syncState: Value(TelemetrySyncState.synced.wireValue),
-                  logicalDeletedAt: Value(now.toIso8601String()),
-                  retryCount: const Value(0),
-                ),
-              );
+          await (_database.update(
+            _database.telemetryRecords,
+          )..where((t) => t.eventId.equals(ack.eventId))).write(
+            TelemetryRecordsCompanion(
+              syncState: Value(TelemetrySyncState.synced.wireValue),
+              logicalDeletedAt: Value(now.toIso8601String()),
+              retryCount: const Value(0),
+            ),
+          );
         } else if (ack.isRejected) {
-          await (_database.update(_database.telemetryRecords)
-                ..where((t) => t.eventId.equals(ack.eventId)))
-              .write(
-                TelemetryRecordsCompanion(
-                  syncState: Value(TelemetrySyncState.rejected.wireValue),
-                  logicalDeletedAt: const Value(null),
-                ),
-              );
+          await (_database.update(
+            _database.telemetryRecords,
+          )..where((t) => t.eventId.equals(ack.eventId))).write(
+            TelemetryRecordsCompanion(
+              syncState: Value(TelemetrySyncState.rejected.wireValue),
+              logicalDeletedAt: const Value(null),
+            ),
+          );
         }
       }
     });
@@ -128,19 +128,24 @@ class DriftTelemetryStorage implements TelemetryStorage {
       if (total.total <= targetCapacity) return 0;
 
       // 找出所有 synced + logicalDeletedAt != null 的记录（按淘汰时间最旧优先）。
-      final rows = await (_database.select(_database.telemetryRecords)
-            ..where(
-              (t) =>
-                  t.syncState.equals(TelemetrySyncState.synced.wireValue) &
-                  t.logicalDeletedAt.isNotNull(),
-            )
-            ..orderBy([
-              (t) => OrderingTerm(expression: t.createdAt,
-                  mode: OrderingMode.asc),
-              (t) => OrderingTerm(expression: t.eventId,
-                  mode: OrderingMode.asc),
-            ]))
-          .get();
+      final rows =
+          await (_database.select(_database.telemetryRecords)
+                ..where(
+                  (t) =>
+                      t.syncState.equals(TelemetrySyncState.synced.wireValue) &
+                      t.logicalDeletedAt.isNotNull(),
+                )
+                ..orderBy([
+                  (t) => OrderingTerm(
+                    expression: t.createdAt,
+                    mode: OrderingMode.asc,
+                  ),
+                  (t) => OrderingTerm(
+                    expression: t.eventId,
+                    mode: OrderingMode.asc,
+                  ),
+                ]))
+              .get();
 
       if (rows.isEmpty) return 0;
 
@@ -148,9 +153,9 @@ class DriftTelemetryStorage implements TelemetryStorage {
       final toDelete = excess < rows.length ? excess : rows.length;
       final deleteIds = rows.take(toDelete).map((r) => r.eventId).toSet();
 
-      await (_database.delete(_database.telemetryRecords)
-            ..where((t) => t.eventId.isIn(deleteIds)))
-          .go();
+      await (_database.delete(
+        _database.telemetryRecords,
+      )..where((t) => t.eventId.isIn(deleteIds))).go();
       return toDelete;
     });
   }
@@ -217,7 +222,9 @@ class DriftTelemetryStorage implements TelemetryStorage {
       buildNumber: Value(record.buildNumber),
       platform: Value(record.platform),
       properties: Value(jsonEncode(record.properties)),
-      error: Value(record.error != null ? jsonEncode(record.error!.toJson()) : null),
+      error: Value(
+        record.error != null ? jsonEncode(record.error!.toJson()) : null,
+      ),
       syncState: Value(_syncStateToWire(record.syncState)),
       logicalDeletedAt: Value(
         record.logicalDeletedAt?.toUtc().toIso8601String(),

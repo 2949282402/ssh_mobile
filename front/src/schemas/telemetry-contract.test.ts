@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import eventsJson from '../../../contracts/telemetry/events.json';
-import errorCodesJson from '../../../contracts/telemetry/error_codes.json';
 import policySchemaJson from '../../../contracts/telemetry/policy.schema.json';
+import {
+  TelemetryErrorCodes,
+  TelemetryEvents,
+} from '../generated/telemetry_contract';
 import {
   TelemetryUploadPolicySchema,
   TelemetryRecordSchema,
@@ -11,10 +13,18 @@ import {
 } from './telemetry';
 
 describe('Telemetry Contract & Schemas', () => {
-  it('loads valid contract definitions from JSON source of truth', () => {
-    expect(eventsJson.events.length).toBeGreaterThan(0);
-    expect(errorCodesJson.errorCodes.length).toBeGreaterThan(0);
+  it('loads valid generated contract definitions', () => {
+    expect(TelemetryEvents.all.length).toBeGreaterThan(0);
+    expect(TelemetryErrorCodes.all.length).toBeGreaterThan(0);
     expect(policySchemaJson.properties.uploadEnabled).toBeDefined();
+  });
+
+  it('exposes operation metadata and precise failure definitions', () => {
+    expect(TelemetryEvents.networkRelayFailed.operationGroup).toBe('network.relay');
+    expect(TelemetryEvents.networkRelayFailed.operationRole).toBe('failure');
+    expect(TelemetryEvents.sshSessionConnected.operationRole).toBe('success');
+    expect(TelemetryErrorCodes.sshConnectFailed.category).toBe('ssh');
+    expect(TelemetryErrorCodes.appFatalError.terminalFailure).toBe(true);
   });
 
   it('validates a correct telemetry upload policy', () => {
@@ -51,14 +61,14 @@ describe('Telemetry Contract & Schemas', () => {
     const record = {
       eventId: '550e8400-e29b-41d4-a716-446655440000',
       recordType: 'analytics' as const,
-      eventName: 'ssh.session.started',
-      eventVersion: 1,
+      eventName: TelemetryEvents.sshSessionStarted.name,
+      eventVersion: TelemetryEvents.sshSessionStarted.version,
       deviceId: 'dev_123456',
       sessionId: 'sess_abcdef',
       traceId: 'trace_xyz789',
       occurredAt: new Date().toISOString(),
-      feature: 'ssh',
-      severity: 'info' as const,
+      feature: TelemetryEvents.sshSessionStarted.feature,
+      severity: TelemetryEvents.sshSessionStarted.severity,
       appVersion: '1.0.0',
       buildNumber: '100',
       platform: 'android' as const,
@@ -79,14 +89,14 @@ describe('Telemetry Contract & Schemas', () => {
     const record = {
       eventId: '550e8400-e29b-41d4-a716-446655440001',
       recordType: 'analytics' as const,
-      eventName: 'ssh.session.started',
-      eventVersion: 1,
+      eventName: TelemetryEvents.sshSessionStarted.name,
+      eventVersion: TelemetryEvents.sshSessionStarted.version,
       deviceId: 'dev_123456',
       sessionId: 'sess_abcdef',
       traceId: 'trace_xyz789',
       occurredAt: new Date().toISOString(),
-      feature: 'ssh',
-      severity: 'info' as const,
+      feature: TelemetryEvents.sshSessionStarted.feature,
+      severity: TelemetryEvents.sshSessionStarted.severity,
       appVersion: '1.0.0',
       buildNumber: '100',
       platform: 'android' as const,
@@ -101,20 +111,62 @@ describe('Telemetry Contract & Schemas', () => {
     expect(validationResult.error).toContain('unregistered_field');
   });
 
+  it('rejects event metadata and error metadata mismatches', () => {
+    const event = TelemetryEvents.networkRelayFailed;
+    const error = TelemetryErrorCodes.netRelayUnavailable;
+    const record = {
+      eventId: '550e8400-e29b-41d4-a716-446655440002',
+      recordType: event.recordType,
+      eventName: event.name,
+      eventVersion: event.version,
+      deviceId: 'dev_123456',
+      sessionId: 'sess_abcdef',
+      traceId: 'trace_xyz789',
+      occurredAt: new Date().toISOString(),
+      feature: event.feature,
+      severity: event.severity,
+      appVersion: '1.0.0',
+      buildNumber: '100',
+      platform: 'android' as const,
+      properties: {},
+      error: {
+        errorCode: error.code,
+        category: error.category,
+        terminalFailure: error.terminalFailure,
+      },
+    };
+
+    expect(
+      validateEventCatalogRecord({ ...record, feature: 'ssh' }),
+    ).toMatchObject({ valid: false });
+    expect(
+      validateEventCatalogRecord({
+        ...record,
+        error: { ...record.error, category: 'ssh' },
+      }),
+    ).toMatchObject({ valid: false });
+    expect(
+      validateEventCatalogRecord({
+        ...record,
+        error: { ...record.error, terminalFailure: false },
+      }),
+    ).toMatchObject({ valid: false });
+  });
+
   it('validates batch request and response shape', () => {
     const req = {
       records: [
         {
           eventId: '550e8400-e29b-41d4-a716-446655440000',
           recordType: 'analytics' as const,
-          eventName: 'app.lifecycle.started',
-          eventVersion: 1,
+          eventName: TelemetryEvents.appLifecycleStarted.name,
+          eventVersion: TelemetryEvents.appLifecycleStarted.version,
           deviceId: 'dev_123456',
           sessionId: 'sess_abcdef',
           traceId: 'trace_xyz789',
           occurredAt: new Date().toISOString(),
-          feature: 'app',
-          severity: 'info' as const,
+          feature: TelemetryEvents.appLifecycleStarted.feature,
+          severity: TelemetryEvents.appLifecycleStarted.severity,
           appVersion: '1.0.0',
           buildNumber: '100',
           platform: 'ios' as const,

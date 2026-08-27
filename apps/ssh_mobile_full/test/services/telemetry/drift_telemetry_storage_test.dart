@@ -40,8 +40,12 @@ void main() {
     });
 
     test('inserts records and fetches pending batch oldest-first', () async {
-      await storage.insertRecord(record('e1', occurredAt: DateTime.utc(2026, 8, 1)));
-      await storage.insertRecord(record('e2', occurredAt: DateTime.utc(2026, 8, 2)));
+      await storage.insertRecord(
+        record('e1', occurredAt: DateTime.utc(2026, 8, 1)),
+      );
+      await storage.insertRecord(
+        record('e2', occurredAt: DateTime.utc(2026, 8, 2)),
+      );
 
       final pending = await storage.fetchPendingBatch(10);
       expect(pending.length, 2);
@@ -58,26 +62,28 @@ void main() {
       expect(all.length, 1);
     });
 
-    test('applyAckResults marks accepted as synced with logicalDeletedAt and resets retryCount',
-        () async {
-      await storage.insertRecord(record('ack-1'));
+    test(
+      'applyAckResults marks accepted as synced with logicalDeletedAt and resets retryCount',
+      () async {
+        await storage.insertRecord(record('ack-1'));
 
-      final pending = await storage.fetchPendingBatch(10);
-      expect(pending.length, 1);
-      await storage.applyRetryCount(['ack-1'], increment: 3);
+        final pending = await storage.fetchPendingBatch(10);
+        expect(pending.length, 1);
+        await storage.applyRetryCount(['ack-1'], increment: 3);
 
-      await storage.applyAckResults([
-        const TelemetryAckResult(eventId: 'ack-1', status: 'accepted'),
-      ]);
+        await storage.applyAckResults([
+          const TelemetryAckResult(eventId: 'ack-1', status: 'accepted'),
+        ]);
 
-      final all = await storage.fetchAllForReplay();
-      expect(all[0].syncState, TelemetrySyncState.synced);
-      expect(all[0].logicalDeletedAt, isNotNull);
-      expect(all[0].retryCount, 0);
+        final all = await storage.fetchAllForReplay();
+        expect(all[0].syncState, TelemetrySyncState.synced);
+        expect(all[0].logicalDeletedAt, isNotNull);
+        expect(all[0].retryCount, 0);
 
-      // 不再进入 pending 批次。
-      expect(await storage.fetchPendingBatch(10), isEmpty);
-    });
+        // 不再进入 pending 批次。
+        expect(await storage.fetchPendingBatch(10), isEmpty);
+      },
+    );
 
     test('partial ACK only transitions matching records', () async {
       await storage.insertRecord(record('ack-a'));
@@ -113,11 +119,21 @@ void main() {
     test('FIFO purge deletes only synced records oldest-first', () async {
       final now = DateTime.utc(2026, 8, 10, 12, 0, 0);
       // 2 pending + 2 synced + 1 rejected
-      await storage.insertRecord(record('p-1', occurredAt: now.subtract(Duration(minutes: 60))));
-      await storage.insertRecord(record('p-2', occurredAt: now.subtract(Duration(minutes: 50))));
-      await storage.insertRecord(record('s-1', occurredAt: now.subtract(Duration(minutes: 40))));
-      await storage.insertRecord(record('s-2', occurredAt: now.subtract(Duration(minutes: 30))));
-      await storage.insertRecord(record('r-1', occurredAt: now.subtract(Duration(minutes: 20))));
+      await storage.insertRecord(
+        record('p-1', occurredAt: now.subtract(Duration(minutes: 60))),
+      );
+      await storage.insertRecord(
+        record('p-2', occurredAt: now.subtract(Duration(minutes: 50))),
+      );
+      await storage.insertRecord(
+        record('s-1', occurredAt: now.subtract(Duration(minutes: 40))),
+      );
+      await storage.insertRecord(
+        record('s-2', occurredAt: now.subtract(Duration(minutes: 30))),
+      );
+      await storage.insertRecord(
+        record('r-1', occurredAt: now.subtract(Duration(minutes: 20))),
+      );
 
       // 让 s-1/s-2 变为 synced，r-1 变为 rejected
       await storage.applyAckResults([
@@ -149,15 +165,18 @@ void main() {
       expect(stats.cacheOverflow, isTrue);
     });
 
-    test('purge with no purgeable synced deletes 0 and reports overflow', () async {
-      await storage.insertRecord(record('pending-only'));
-      final purged = await storage.purgeOldSyncedRecords(targetCapacity: 0);
-      expect(purged, 0);
+    test(
+      'purge with no purgeable synced deletes 0 and reports overflow',
+      () async {
+        await storage.insertRecord(record('pending-only'));
+        final purged = await storage.purgeOldSyncedRecords(targetCapacity: 0);
+        expect(purged, 0);
 
-      final stats = await storage.getHealthStats(targetCapacity: 0);
-      expect(stats.localPendingCount, 1);
-      expect(stats.cacheOverflow, isTrue);
-    });
+        final stats = await storage.getHealthStats(targetCapacity: 0);
+        expect(stats.localPendingCount, 1);
+        expect(stats.cacheOverflow, isTrue);
+      },
+    );
 
     test('pending and rejected records are NEVER deleted by purge', () async {
       // 全部是 pending/rejected，容量 1。

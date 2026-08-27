@@ -22,7 +22,6 @@ import '../core/services/ssh_host_key_policy.dart';
 import 'connection_target_binding.dart';
 import 'remote_target_scope.dart';
 import 'remote_command_decoder.dart';
-import 'telemetry/app_telemetry_contract.dart';
 import 'telemetry/telemetry_span.dart';
 import 'terminal_session_metadata_store.dart' as terminal_metadata;
 import 'terminal_history_service.dart';
@@ -850,7 +849,7 @@ class SshService extends ChangeNotifier
       _failSessionTelemetry(
         _sessions[id] ?? session,
         'connect',
-        errorCode: AppTelemetryErrorCodes.sshTimeout.code,
+        errorCode: TelemetryErrorCodes.sshTimeout,
         errorMessage: 'Connection timed out',
       );
       _setSessionError(id, connectionId, config.name, 'Connection timed out');

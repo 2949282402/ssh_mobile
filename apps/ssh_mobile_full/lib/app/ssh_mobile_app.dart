@@ -22,7 +22,6 @@ import '../features/startup/viewmodels/startup_viewmodel.dart';
 import 'package:ssh_mobile/features/home/views/home_screen.dart';
 import 'package:ssh_mobile/features/startup/views/startup_screen.dart';
 import '../services/app_settings.dart';
-import '../services/telemetry/app_telemetry_contract.dart';
 import 'package:app_ui/app_ui.dart';
 import 'app_runtime.dart';
 import 'connection_feature_adapters.dart';
@@ -147,18 +146,9 @@ class _SshMobileAppState extends State<SshMobileApp>
       _pausedAt = null;
       _runtime.telemetryClient?.onAppForeground();
       unawaited(
-        _runtime.telemetryClient?.recordEvent(
-          eventName: AppTelemetryEvents.appLifecycleForegrounded.name,
-          eventVersion: AppTelemetryEvents
-              .appLifecycleForegrounded
-              .version,
-          feature: AppTelemetryEvents.appLifecycleForegrounded.feature,
-          severity: AppTelemetryEvents
-              .appLifecycleForegrounded
-              .severity,
-          properties: {
-            'background_duration_ms': bgDuration,
-          },
+        _runtime.telemetryClient?.record(
+          event: app_core.TelemetryEvents.appLifecycleForegrounded,
+          properties: {'background_duration_ms': bgDuration},
         ),
       );
     } else if (state == AppLifecycleState.inactive ||
@@ -169,15 +159,8 @@ class _SshMobileAppState extends State<SshMobileApp>
       }
       _runtime.telemetryClient?.onAppBackground();
       unawaited(
-        _runtime.telemetryClient?.recordEvent(
-          eventName: AppTelemetryEvents.appLifecycleBackgrounded.name,
-          eventVersion: AppTelemetryEvents
-              .appLifecycleBackgrounded
-              .version,
-          feature: AppTelemetryEvents.appLifecycleBackgrounded.feature,
-          severity: AppTelemetryEvents
-              .appLifecycleBackgrounded
-              .severity,
+        _runtime.telemetryClient?.record(
+          event: app_core.TelemetryEvents.appLifecycleBackgrounded,
           properties: {
             'active_sessions': _runtime.sshService.activeSubscriptionCount,
           },

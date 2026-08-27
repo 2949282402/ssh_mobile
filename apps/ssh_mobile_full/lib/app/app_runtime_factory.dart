@@ -21,7 +21,6 @@ import '../services/app_bootstrap_coordinator.dart';
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
 import '../services/telemetry/app_crash_telemetry_bridge.dart';
-import '../services/telemetry/app_telemetry_contract.dart';
 import '../services/telemetry/build_metadata_provider.dart';
 import '../services/telemetry/drift_telemetry_storage.dart';
 import '../services/telemetry/network_telemetry_bridge.dart';
@@ -472,11 +471,10 @@ final class AppRuntimeFactory {
 
       // 生产遥测存储：SQLite（Drift），绝不使用内存或 JSONL。
       final telemetryDatabase = TelemetryDatabase();
-      cleanup.add(
-        telemetryDatabase.dispose,
-        priority: _CleanupPriority.module,
+      cleanup.add(telemetryDatabase.dispose, priority: _CleanupPriority.module);
+      final telemetryStorage = DriftTelemetryStorage(
+        database: telemetryDatabase,
       );
-      final telemetryStorage = DriftTelemetryStorage(database: telemetryDatabase);
       final telemetryBuildMetadata = await DeviceInfoBuildMetadataProvider()
           .load();
       final telemetryRuntime = await createTelemetryRuntime(
@@ -508,15 +506,9 @@ final class AppRuntimeFactory {
         priority: _CleanupPriority.module,
       );
       pendingInitialization.add(
-        start: (_) => telemetryClient.recordEvent(
-          eventName: AppTelemetryEvents.appLifecycleStarted.name,
-          eventVersion: AppTelemetryEvents.appLifecycleStarted.version,
-          feature: AppTelemetryEvents.appLifecycleStarted.feature,
-          severity: AppTelemetryEvents.appLifecycleStarted.severity,
-          properties: {
-            'start_type': 'cold',
-            'cold_start': true,
-          },
+        start: (_) => telemetryClient.record(
+          event: TelemetryEvents.appLifecycleStarted,
+          properties: {'start_type': 'cold', 'cold_start': true},
         ),
         description: 'Telemetry initial lifecycle event failed',
       );

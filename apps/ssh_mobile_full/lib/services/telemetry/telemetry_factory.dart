@@ -14,10 +14,7 @@ const String telemetryDeviceSecretKey = 'telemetry_device_secret';
 
 /// 遥测客户端装配结果。
 class TelemetryRuntime {
-  const TelemetryRuntime({
-    required this.client,
-    required this.storage,
-  });
+  const TelemetryRuntime({required this.client, required this.storage});
 
   final TelemetryClient client;
   final DriftTelemetryStorage storage;

@@ -3,20 +3,15 @@
 package telemetry
 
 import (
-	"bytes"
-	_ "embed"
 	"encoding/json"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
+
+	contractgen "github.com/ssh-mobile/relay/internal/telemetry/generated"
 )
-
-//go:embed contracts/telemetry/events.json
-var defaultEventsJSON []byte
-
-//go:embed contracts/telemetry/error_codes.json
-var defaultErrorCodesJSON []byte
 
 // ContractPaths are the canonical contract source paths relative to the repo
 // root. They are used by LoadContractCatalog for environments that ship the
@@ -39,6 +34,8 @@ type EventDefinition struct {
 	RecordType        RecordType        `json:"recordType"`
 	Feature           string            `json:"feature"`
 	Severity          Severity          `json:"severity"`
+	OperationGroup    string            `json:"operationGroup"`
+	OperationRole     string            `json:"operationRole"`
 	Description       string            `json:"description"`
 	AllowedProperties []AllowedProperty `json:"allowedProperties"`
 }
@@ -126,15 +123,39 @@ func catalogFromPayloads(ep *eventsPayload, ecp *errorCodesPayload) *Catalog {
 	return c
 }
 
-// DefaultCatalog returns the catalog bundled from contracts/telemetry at build
-// time. It is used only as a fallback for package-local constructors; the Admin
-// server wires a contract catalog explicitly.
+// DefaultCatalog returns the catalog generated from the YAML source of truth. It
+// is used only as a fallback for package-local constructors; the Admin server
+// wires a contract catalog explicitly.
 func DefaultCatalog() *Catalog {
-	c, err := catalogFromJSON(defaultEventsJSON, defaultErrorCodesJSON)
-	if err != nil {
-		// The embedded contract artifacts are validated by contract_test.go
-		// before release; a parse failure here is a packaging defect.
-		panic(fmt.Sprintf("embedded telemetry contract catalog is invalid: %v", err))
+	c := NewCatalog()
+	for _, event := range contractgen.TelemetryEvents {
+		properties := make([]AllowedProperty, len(event.AllowedProperties))
+		for i, property := range event.AllowedProperties {
+			properties[i] = AllowedProperty{
+				Name:     property.Name,
+				Type:     property.Type,
+				Required: property.Required,
+			}
+		}
+		c.events[event.Name] = EventDefinition{
+			Name:              event.Name,
+			Version:           event.Version,
+			RecordType:        RecordType(event.RecordType),
+			Feature:           event.Feature,
+			Severity:          Severity(event.Severity),
+			OperationGroup:    event.OperationGroup,
+			OperationRole:     event.OperationRole,
+			Description:       event.Description,
+			AllowedProperties: properties,
+		}
+	}
+	for _, errorCode := range contractgen.TelemetryErrorCodes {
+		c.errorCodes[errorCode.Code] = ErrorCodeDefinition{
+			Code:            errorCode.Code,
+			Category:        errorCode.Category,
+			TerminalFailure: errorCode.TerminalFailure,
+			Description:     errorCode.Description,
+		}
 	}
 	return c
 }
@@ -145,19 +166,21 @@ func LoadContractCatalog(eventsPath, errorsPath string) (*Catalog, error) {
 	return LoadCatalogFromFiles(eventsPath, errorsPath)
 }
 
-// DefaultCatalogMatchesContract reports whether the embedded catalog is
-// byte-for-byte identical to the contract files at the given paths. It is used
-// by tests and CI to detect contract drift.
+// DefaultCatalogMatchesContract reports whether the generated catalog is
+// semantically identical to the generated JSON contract files at the given
+// paths. It is used by tests and CI to detect cross-language drift.
 func DefaultCatalogMatchesContract(eventsPath, errorsPath string) bool {
-	eventsData, err := os.ReadFile(eventsPath)
+	fileCatalog, err := LoadCatalogFromFiles(eventsPath, errorsPath)
 	if err != nil {
 		return false
 	}
-	errorsData, err := os.ReadFile(errorsPath)
-	if err != nil {
-		return false
-	}
-	return bytes.Equal(eventsData, defaultEventsJSON) && bytes.Equal(errorsData, defaultErrorCodesJSON)
+	generatedCatalog := DefaultCatalog()
+	generatedCatalog.mu.RLock()
+	defer generatedCatalog.mu.RUnlock()
+	fileCatalog.mu.RLock()
+	defer fileCatalog.mu.RUnlock()
+	return reflect.DeepEqual(generatedCatalog.events, fileCatalog.events) &&
+		reflect.DeepEqual(generatedCatalog.errorCodes, fileCatalog.errorCodes)
 }
 
 // RegisterEvent adds or updates an event definition in the catalog.
@@ -243,6 +266,9 @@ func (c *Catalog) ValidateErrorCode(code string) error {
 
 // ValidateEnvelope performs full validation on an incoming TelemetryEnvelope.
 func (c *Catalog) ValidateEnvelope(env *TelemetryEnvelope) error {
+	if env == nil {
+		return fmt.Errorf("missing envelope")
+	}
 	if strings.TrimSpace(env.EventID) == "" {
 		return fmt.Errorf("missing eventId")
 	}
@@ -259,13 +285,38 @@ func (c *Catalog) ValidateEnvelope(env *TelemetryEnvelope) error {
 		return fmt.Errorf("missing or invalid occurredAt timestamp")
 	}
 
+	c.mu.RLock()
+	eventDef, eventOK := c.events[env.EventName]
+	c.mu.RUnlock()
+	if !eventOK {
+		return fmt.Errorf("unregistered event name: %q", env.EventName)
+	}
+	if env.EventVersion != eventDef.Version {
+		return fmt.Errorf("event %q version mismatch: expected %d, got %d", env.EventName, eventDef.Version, env.EventVersion)
+	}
+	if env.RecordType != eventDef.RecordType {
+		return fmt.Errorf("event %q recordType mismatch: expected %q, got %q", env.EventName, eventDef.RecordType, env.RecordType)
+	}
+	if env.Feature != eventDef.Feature {
+		return fmt.Errorf("event %q feature mismatch: expected %q, got %q", env.EventName, eventDef.Feature, env.Feature)
+	}
+	if env.Severity != eventDef.Severity {
+		return fmt.Errorf("event %q severity mismatch: expected %q, got %q", env.EventName, eventDef.Severity, env.Severity)
+	}
 	if err := c.ValidateEvent(env.EventName, env.EventVersion, env.Properties); err != nil {
 		return err
 	}
 
 	if env.Error != nil {
-		if err := c.ValidateErrorCode(env.Error.ErrorCode); err != nil {
-			return err
+		errorDef, ok := c.GetErrorCode(env.Error.ErrorCode)
+		if !ok {
+			return fmt.Errorf("unregistered error code: %q", env.Error.ErrorCode)
+		}
+		if env.Error.Category != errorDef.Category {
+			return fmt.Errorf("error code %q category mismatch: expected %q, got %q", env.Error.ErrorCode, errorDef.Category, env.Error.Category)
+		}
+		if env.Error.TerminalFailure != errorDef.TerminalFailure {
+			return fmt.Errorf("error code %q terminalFailure mismatch: expected %t, got %t", env.Error.ErrorCode, errorDef.TerminalFailure, env.Error.TerminalFailure)
 		}
 	}
 

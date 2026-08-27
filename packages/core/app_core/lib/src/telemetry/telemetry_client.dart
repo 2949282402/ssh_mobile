@@ -38,7 +38,8 @@ class TelemetryUploadException implements Exception {
       statusCode == null || (statusCode! >= 500 && statusCode! < 600);
 
   @override
-  String toString() => 'TelemetryUploadException($message, '
+  String toString() =>
+      'TelemetryUploadException($message, '
       'statusCode: $statusCode, retryAfterSeconds: $retryAfterSeconds)';
 }
 
@@ -396,44 +397,43 @@ class TelemetryClient {
       _authTokenExpiresAt != null &&
       _authTokenExpiresAt!.isAfter(DateTime.now().toUtc());
 
-  /// 记录一个 Analytics/系统事件（经 Catalog 校验后写入存储）。
-  Future<bool> recordEvent({
-    required String eventName,
-    required int eventVersion,
-    required String feature,
-    required TelemetrySeverity severity,
-    required Map<String, dynamic> properties,
+  /// Records an event using the generated definition as the only metadata
+  /// source. Business callers cannot override name, version, record type,
+  /// feature, or severity independently of the contract definition.
+  Future<bool> record({
+    required TelemetryEventDefinition event,
+    Map<String, dynamic> properties = const {},
+    TelemetryErrorCodeDefinition? errorCode,
+    String? errorMessage,
+    String? stackTrace,
     String? sessionId,
     String? traceId,
-    String? errorCode,
-    String? errorMessage,
   }) async {
     if (_isDisposed) return false;
 
     final now = DateTime.now().toUtc();
     final eventId = 'evt_${_uuid.v4()}';
 
-    TelemetryErrorDetail? errorDetail;
-    if (errorCode != null) {
-      errorDetail = TelemetryErrorDetail(
-        errorCode: errorCode,
-        category: feature,
-        terminalFailure: catalog.isTerminalFailure(errorCode),
-        message: errorMessage,
-      );
-    }
-
+    final errorDetail = errorCode == null
+        ? null
+        : TelemetryErrorDetail(
+            errorCode: errorCode.code,
+            category: errorCode.category,
+            terminalFailure: errorCode.terminalFailure,
+            message: errorMessage,
+            stackTrace: stackTrace,
+          );
     final record = TelemetryEventRecord(
       eventId: eventId,
-      recordType: TelemetryRecordType.analytics,
-      eventName: eventName,
-      eventVersion: eventVersion,
+      recordType: event.recordType,
+      eventName: event.name,
+      eventVersion: event.version,
       deviceId: config.deviceId,
       sessionId: sessionId ?? this.sessionId,
       traceId: traceId ?? _newTraceId(),
       occurredAt: now,
-      feature: feature,
-      severity: severity,
+      feature: event.feature,
+      severity: event.severity,
       appVersion: config.appVersion,
       buildNumber: config.buildNumber,
       platform: config.platform,
@@ -447,87 +447,9 @@ class TelemetryClient {
 
     await storage.insertRecord(record);
 
-    // 触发条件：高优先级错误或批量条数阈值。
     final isHighPriorityError =
-        severity == TelemetrySeverity.error ||
-        severity == TelemetrySeverity.critical;
-    if (isHighPriorityError && activePolicy.triggerHighPriorityError) {
-      unawaited(flush());
-    } else {
-      final pending = await storage.fetchPendingBatch(
-        activePolicy.batchSizeThreshold,
-      );
-      if (pending.length >= activePolicy.batchSizeThreshold) {
-        unawaited(flush());
-      }
-    }
-
-    return true;
-  }
-
-  /// 记录一条诊断日志记录。
-  Future<bool> recordDiagnostic({
-    required String message,
-    required TelemetrySeverity severity,
-    String? eventName,
-    String? feature,
-    String? category,
-    String? stackTrace,
-    String? errorCode,
-    Map<String, dynamic>? properties,
-    String? sessionId,
-    String? traceId,
-  }) async {
-    if (_isDisposed) return false;
-
-    final now = DateTime.now().toUtc();
-    final eventId = 'diag_${_uuid.v4()}';
-
-    TelemetryErrorDetail? errorDetail;
-    if (errorCode != null) {
-      errorDetail = TelemetryErrorDetail(
-        errorCode: errorCode,
-        category: category ?? feature ?? 'app',
-        terminalFailure: catalog.isTerminalFailure(errorCode),
-        message: message,
-        stackTrace: stackTrace,
-      );
-    }
-
-    final resolvedEventName = eventName ?? 'app.diagnostic.log';
-    final resolvedFeature = feature ?? 'app';
-    final record = TelemetryEventRecord(
-      eventId: eventId,
-      recordType: TelemetryRecordType.diagnostic,
-      eventName: resolvedEventName,
-      eventVersion: 1,
-      deviceId: config.deviceId,
-      sessionId: sessionId ?? this.sessionId,
-      traceId: traceId ?? _newTraceId(),
-      occurredAt: now,
-      feature: resolvedFeature,
-      severity: severity,
-      appVersion: config.appVersion,
-      buildNumber: config.buildNumber,
-      platform: config.platform,
-      properties: {
-        'message': message,
-        'category': ?category,
-        ...?properties,
-      },
-      error: errorDetail,
-    );
-
-    if (!catalog.isValidRecord(record)) {
-      return false;
-    }
-
-    await storage.insertRecord(record);
-
-    // 诊断日志同样遵循高优先级错误与批量阈值触发。
-    final isHighPriorityError =
-        severity == TelemetrySeverity.error ||
-        severity == TelemetrySeverity.critical;
+        event.severity == TelemetrySeverity.error ||
+        event.severity == TelemetrySeverity.critical;
     if (isHighPriorityError && activePolicy.triggerHighPriorityError) {
       unawaited(flush());
     } else {
@@ -582,8 +504,7 @@ class TelemetryClient {
       return;
     }
 
-    final expEpoch =
-        DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000 + 60;
+    final expEpoch = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000 + 60;
     final token = await transport.authenticateDevice(
       baseUrl: config.baseUrl,
       deviceId: config.deviceId,
@@ -757,7 +678,9 @@ class TelemetryClient {
 
   static String _describeError(Object error) {
     if (error is TelemetryUploadException) return error.toString();
-    if (error is HttpException) return 'Telemetry connection error: ${error.message}';
+    if (error is HttpException) {
+      return 'Telemetry connection error: ${error.message}';
+    }
     return error.toString();
   }
 
@@ -845,7 +768,8 @@ class TelemetryClient {
 
   /// Synchronously retrieves latest diagnostics and storage health snapshot.
   TelemetryDiagnosticsSnapshot get latestDiagnostics {
-    final health = storage.cachedHealthStats ??
+    final health =
+        storage.cachedHealthStats ??
         const TelemetryStorageHealth(
           localPendingCount: 0,
           localRejectedCount: 0,

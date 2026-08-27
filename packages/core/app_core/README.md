@@ -1,4 +1,4 @@
-最新更新时间：2026-08-09
+最新更新时间：2026-08-27
 
 # app_core
 
@@ -9,6 +9,8 @@
 - 日志：`AppLogger`、`ScopedLogger`、`AppLoggerImpl`、`LogRecord`、`LogLevel`、
   有界 `LogBuffer` 和可释放的 `LogSink`；
 - Capability：按类型注册和读取的 `CapabilityRegistry`。
+- Telemetry：由 `contracts/telemetry/*.yaml` 生成的 `TelemetryEvents`、
+  `TelemetryErrorCodes` 和类型化 `TelemetryClient.record(event: ...)` 公共合约。
 
 本 Package 不依赖 Flutter UI、SSH、Drift 或任何 Feature。它只定义边界和轻量
 机制，具体平台日志实现由 AppRuntime 或 App 层通过依赖注入提供。

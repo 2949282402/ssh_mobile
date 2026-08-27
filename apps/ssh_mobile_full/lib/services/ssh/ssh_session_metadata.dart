@@ -176,11 +176,8 @@ extension SshSessionMetadataActions on SshService {
     final traceId = _telemetryTraceIds[session.id] ??= newTelemetryTraceId();
     _telemetrySpanStartedAt[session.id] = DateTime.now();
     unawaited(
-      client.recordEvent(
-        eventName: AppTelemetryEvents.sshSessionStarted.name,
-        eventVersion: AppTelemetryEvents.sshSessionStarted.version,
-        feature: AppTelemetryEvents.sshSessionStarted.feature,
-        severity: AppTelemetryEvents.sshSessionStarted.severity,
+      client.record(
+        event: TelemetryEvents.sshSessionStarted,
         sessionId: session.id,
         traceId: traceId,
         properties: {
@@ -198,11 +195,8 @@ extension SshSessionMetadataActions on SshService {
     final traceId = _telemetryTraceIds.remove(session.id);
     final startedAt = _telemetrySpanStartedAt.remove(session.id);
     unawaited(
-      client.recordEvent(
-        eventName: AppTelemetryEvents.sshSessionTerminated.name,
-        eventVersion: AppTelemetryEvents.sshSessionTerminated.version,
-        feature: AppTelemetryEvents.sshSessionTerminated.feature,
-        severity: AppTelemetryEvents.sshSessionTerminated.severity,
+      client.record(
+        event: TelemetryEvents.sshSessionTerminated,
         sessionId: session.id,
         traceId: traceId,
         properties: {
@@ -213,29 +207,18 @@ extension SshSessionMetadataActions on SshService {
     );
   }
 
-  /// 会话建立成功后记录连接诊断事件。
-  ///
-  /// contract 没有独立的 ssh.session.connected 事件，因此这里通过
-  /// app.diagnostic.log（category=ssh_connected）保留连接成功轨迹，并与
-  /// started 共享同一个 traceId，确保生命周期可端到端关联。
+  /// 会话建立成功后记录连接成功事件。
   void _recordSessionConnectedTelemetry(SshSession session) {
     final client = telemetryClient;
     if (client == null) return;
     final traceId = _telemetryTraceIds[session.id];
     if (traceId == null) return;
     unawaited(
-      client.recordEvent(
-        eventName: AppTelemetryEvents.appDiagnosticLog.name,
-        eventVersion: AppTelemetryEvents.appDiagnosticLog.version,
-        feature: 'ssh',
-        severity: TelemetrySeverity.info,
+      client.record(
+        event: TelemetryEvents.sshSessionConnected,
         sessionId: session.id,
         traceId: traceId,
-        properties: {
-          'message': 'SSH session connected',
-          'category': 'ssh_connected',
-          'stage': 'connected',
-        },
+        properties: {'session_type': 'terminal'},
       ),
     );
   }
@@ -244,7 +227,7 @@ extension SshSessionMetadataActions on SshService {
   void _failSessionTelemetry(
     SshSession session,
     String stage, {
-    String? errorCode,
+    TelemetryErrorCodeDefinition? errorCode,
     String? errorMessage,
     int retryCount = 0,
   }) {
@@ -253,19 +236,13 @@ extension SshSessionMetadataActions on SshService {
     final traceId = _telemetryTraceIds.remove(session.id);
     _telemetrySpanStartedAt.remove(session.id);
     unawaited(
-      client.recordEvent(
-        eventName: AppTelemetryEvents.sshSessionFailed.name,
-        eventVersion: AppTelemetryEvents.sshSessionFailed.version,
-        feature: AppTelemetryEvents.sshSessionFailed.feature,
-        severity: AppTelemetryEvents.sshSessionFailed.severity,
+      client.record(
+        event: TelemetryEvents.sshSessionFailed,
         sessionId: session.id,
         traceId: traceId,
         errorCode: errorCode,
         errorMessage: errorMessage,
-        properties: {
-          'stage': stage,
-          'retry_count': retryCount,
-        },
+        properties: {'stage': stage, 'retry_count': retryCount},
       ),
     );
   }
@@ -274,62 +251,61 @@ extension SshSessionMetadataActions on SshService {
       telemetryElapsedMs(startedAt);
 
   /// 后台桥接错误消息映射到已注册 SSH 错误码（无法访问异常对象）。
-  String _mapBackgroundErrorCode(String? error) {
+  TelemetryErrorCodeDefinition _mapBackgroundErrorCode(String? error) {
     final message = error?.toLowerCase() ?? '';
     if (message.contains('auth') || message.contains('password')) {
-      return AppTelemetryErrorCodes.sshAuthFailed.code;
+      return TelemetryErrorCodes.sshAuthFailed;
     }
     if (message.contains('host key') || message.contains('fingerprint')) {
-      return AppTelemetryErrorCodes.sshHostKeyMismatch.code;
+      return TelemetryErrorCodes.sshHostKeyMismatch;
     }
     if (message.contains('timeout')) {
-      return AppTelemetryErrorCodes.sshTimeout.code;
+      return TelemetryErrorCodes.sshTimeout;
     }
-    return AppTelemetryErrorCodes.sshTimeout.code;
+    return TelemetryErrorCodes.sshConnectFailed;
   }
 
   /// 根据错误消息字符串映射到已注册 SSH 错误码。
-  String _mapMessageErrorCode(String message) {
+  TelemetryErrorCodeDefinition _mapMessageErrorCode(String message) {
     final lower = message.toLowerCase();
     if (lower.contains('auth') ||
         lower.contains('password') ||
         lower.contains('credential')) {
-      return AppTelemetryErrorCodes.sshAuthFailed.code;
+      return TelemetryErrorCodes.sshAuthFailed;
     }
     if (lower.contains('host key') ||
         lower.contains('fingerprint') ||
         lower.contains('known_hosts')) {
-      return AppTelemetryErrorCodes.sshHostKeyMismatch.code;
+      return TelemetryErrorCodes.sshHostKeyMismatch;
     }
     if (lower.contains('timeout') || lower.contains('timed out')) {
-      return AppTelemetryErrorCodes.sshTimeout.code;
+      return TelemetryErrorCodes.sshTimeout;
     }
-    return AppTelemetryErrorCodes.sshTimeout.code;
+    return TelemetryErrorCodes.sshConnectFailed;
   }
 
   /// 将连接异常映射到 contract 已注册的 SSH 错误码。
-  ///
-  /// 任务要求的 sshHostUnreachable / sshConnectionTimeout 不在当前 catalog
-  /// 中（禁止编辑 contracts / app_core），这里使用最接近的已注册错误码表达
-  /// 同类失败，避免无效 errorCode 被 catalog 校验静默丢弃。
-  String _mapSshErrorCode(Object error, ConnectionConfig config) {
-    final message = error.toString();
-    if (message.contains('Authentication') ||
+  TelemetryErrorCodeDefinition _mapSshErrorCode(
+    Object error,
+    ConnectionConfig config,
+  ) {
+    final message = error.toString().toLowerCase();
+    if (message.contains('authentication') ||
         message.contains('authenticate') ||
-        message.contains('Password') ||
+        message.contains('password') ||
         message.contains('passphrase') ||
         message.contains('key')) {
-      return AppTelemetryErrorCodes.sshAuthFailed.code;
+      return TelemetryErrorCodes.sshAuthFailed;
     }
     if (message.contains('timeout') || message.contains('timed out')) {
-      return AppTelemetryErrorCodes.sshTimeout.code;
+      return TelemetryErrorCodes.sshTimeout;
     }
     if (message.contains('host key') ||
         message.contains('fingerprint') ||
         message.contains('HostKey')) {
-      return AppTelemetryErrorCodes.sshHostKeyMismatch.code;
+      return TelemetryErrorCodes.sshHostKeyMismatch;
     }
-    return AppTelemetryErrorCodes.sshTimeout.code;
+    return TelemetryErrorCodes.sshConnectFailed;
   }
 
   Future<void> _stopServiceIfIdle() async {

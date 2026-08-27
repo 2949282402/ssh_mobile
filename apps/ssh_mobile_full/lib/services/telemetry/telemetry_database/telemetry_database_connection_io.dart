@@ -18,7 +18,8 @@ typedef _MallocDart = Pointer<Uint8> Function(int size);
 typedef _FreeC = Void Function(Pointer<Uint8> ptr);
 typedef _FreeDart = void Function(Pointer<Uint8> ptr);
 typedef _DlopenC = Pointer<Void> Function(Pointer<Uint8> filename, Int32 flags);
-typedef _DlopenDart = Pointer<Void> Function(Pointer<Uint8> filename, int flags);
+typedef _DlopenDart =
+    Pointer<Void> Function(Pointer<Uint8> filename, int flags);
 
 bool _sqliteInitialized = false;
 

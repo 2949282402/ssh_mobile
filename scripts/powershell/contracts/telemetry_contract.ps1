@@ -12,6 +12,7 @@ Write-Host "Validating Telemetry contracts..."
 #    byte-for-byte that the generated artifacts are fresh (no drift).
 Invoke-CommandChecked dart @('run', 'tool/gen_telemetry_contract.dart') $root
 Invoke-CommandChecked dart @('run', 'tool/check_telemetry_contract_generated.dart') $root
+Invoke-CommandChecked dart @('run', 'tool/check_telemetry_producers.dart') $root
 
 # 2. Go validation
 Invoke-CommandChecked go @('test', './internal/telemetry', '-run', '^TestTelemetryContract', '-count=1') (Join-Path $root 'relay')

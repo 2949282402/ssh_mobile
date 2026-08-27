@@ -13,6 +13,7 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+	contractgen "github.com/ssh-mobile/relay/internal/telemetry/generated"
 )
 
 type MySQLStore struct {
@@ -380,25 +381,40 @@ const overviewSuccessSQL = `(
 )`
 
 // overviewFailureSQL matches events that represent a terminal failure:
-// *.failed, *.disconnected carrying an error, app.crash_reported, or any event
+// *.failed, *.disconnected carrying an error, app.crash.reported, or any event
 // with severity error/critical or a non-null error payload.
 const overviewFailureSQL = `(
 	event_name LIKE '%.failed'
 	OR (event_name LIKE '%.disconnected' AND (severity IN ('error', 'critical') OR error_code IS NOT NULL))
-	OR event_name = 'app.crash_reported'
 	OR severity IN ('error', 'critical')
 	OR error_code IS NOT NULL
 )`
 
 // latencyEventsSQL selects the telemetry events whose properties may carry a
 // completion duration (duration_ms or latency_ms) for a terminal success.
-const latencyEventsSQL = `event_name IN (
-	'ssh.session.terminated',
-	'sftp.transfer.completed',
-	'lan.transfer.completed',
-	'ai.chat.response',
-	'telemetry.batch.uploaded'
-) AND severity NOT IN ('error', 'critical') AND error_code IS NULL`
+func latencyEventsSQL() (string, []any) {
+	names := make([]any, 0, len(contractgen.TelemetryEvents))
+	for _, event := range contractgen.TelemetryEvents {
+		if event.OperationRole != "success" {
+			continue
+		}
+		for _, property := range event.AllowedProperties {
+			if property.Name == "duration_ms" || property.Name == "latency_ms" {
+				names = append(names, event.Name)
+				break
+			}
+		}
+	}
+
+	placeholders := make([]string, len(names))
+	for i := range placeholders {
+		placeholders[i] = "?"
+	}
+	return fmt.Sprintf(
+		"event_name IN (%s) AND severity NOT IN ('error', 'critical') AND error_code IS NULL",
+		strings.Join(placeholders, ", "),
+	), names
+}
 
 // isTerminalFailureEvent reports whether an envelope represents a terminal
 // failure per the overview success-rate contract.
@@ -408,9 +424,6 @@ func isTerminalFailureEvent(env *TelemetryEnvelope) bool {
 	}
 	if strings.HasSuffix(env.EventName, ".disconnected") &&
 		(env.Error != nil || env.Severity == SeverityError || env.Severity == SeverityCritical) {
-		return true
-	}
-	if env.EventName == "app.crash_reported" {
 		return true
 	}
 	if env.Severity == SeverityError || env.Severity == SeverityCritical {
@@ -556,7 +569,9 @@ func latencyStats(values []float64) LatencyStats {
 // duration_ms / latency_ms properties of completed/succeeded operations in the
 // requested time range. With no latency data it returns a zeroed LatencyStats.
 func (s *MySQLStore) queryLatencyPercentiles(ctx context.Context, combineWhere combineWhereFunc) LatencyStats {
-	w, qArgs := combineWhere(latencyEventsSQL)
+	latencyCondition, latencyArgs := latencyEventsSQL()
+	w, qArgs := combineWhere(latencyCondition)
+	qArgs = append(qArgs, latencyArgs...)
 	rows, err := s.db.QueryContext(ctx, "SELECT properties_json FROM telemetry_events"+w, qArgs...)
 	if err != nil {
 		return LatencyStats{}

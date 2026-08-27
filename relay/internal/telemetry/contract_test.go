@@ -1,14 +1,17 @@
 package telemetry
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
-func TestEmbeddedCatalogMatchesContractFiles(t *testing.T) {
-	// The embedded catalog must stay byte-for-byte in sync with the canonical
-	// contracts so the Go backend never hardcodes a divergent event/error set.
+func TestTelemetryContractGeneratedCatalogMatchesFiles(t *testing.T) {
+	// The generated catalog must stay semantically in sync with the canonical
+	// JSON artifacts emitted from YAML, so the Go backend never hardcodes a
+	// divergent event/error set.
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("failed to get working dir: %v", err)
@@ -17,23 +20,23 @@ func TestEmbeddedCatalogMatchesContractFiles(t *testing.T) {
 	eventsPath := filepath.Join(rootDir, "contracts", "telemetry", "events.json")
 	errorsPath := filepath.Join(rootDir, "contracts", "telemetry", "error_codes.json")
 	if !DefaultCatalogMatchesContract(eventsPath, errorsPath) {
-		t.Fatalf("embedded telemetry catalog drifted from contracts/telemetry; regenerate relay/internal/telemetry/contracts")
+		t.Fatalf("generated telemetry catalog drifted from contracts/telemetry; regenerate with dart run tool/gen_telemetry_contract.dart")
 	}
 
 	// Both loaders agree on the event/error sets.
-	embedded := DefaultCatalog()
+	generated := DefaultCatalog()
 	fileLoaded, err := LoadCatalogFromFiles(eventsPath, errorsPath)
 	if err != nil {
 		t.Fatalf("failed to load contract files: %v", err)
 	}
 	for _, name := range []string{"ssh.session.started", "telemetry.batch.uploaded"} {
-		def, ok := embedded.GetEvent(name)
+		def, ok := generated.GetEvent(name)
 		if !ok {
-			t.Fatalf("embedded catalog missing event %s", name)
+			t.Fatalf("generated catalog missing event %s", name)
 		}
 		fileDef, fileOK := fileLoaded.GetEvent(name)
 		if !fileOK || def.Name != fileDef.Name || def.Version != fileDef.Version || def.Feature != fileDef.Feature || len(def.AllowedProperties) != len(fileDef.AllowedProperties) {
-			t.Fatalf("event %s differs between embedded and file catalog", name)
+			t.Fatalf("event %s differs between generated and file catalog", name)
 		}
 	}
 }
@@ -115,4 +118,121 @@ func TestTelemetryContractValidation(t *testing.T) {
 			t.Fatalf("expected error for unregistered error code")
 		}
 	})
+}
+
+func TestTelemetryEnvelopeRejectsContractMetadataMismatches(t *testing.T) {
+	catalog := DefaultCatalog()
+	base := func() TelemetryEnvelope {
+		return TelemetryEnvelope{
+			EventID:      "evt-strict",
+			RecordType:   RecordTypeAnalytics,
+			EventName:    "ssh.session.started",
+			EventVersion: 1,
+			DeviceID:     "dev-strict",
+			SessionID:    "sess-strict",
+			TraceID:      "trace-strict",
+			OccurredAt:   time.Now().UTC(),
+			Feature:      "ssh",
+			Severity:     SeverityInfo,
+			AppVersion:   "1.0.0",
+			BuildNumber:  "1",
+			Platform:     "linux",
+			Properties:   map[string]any{"session_type": "interactive"},
+		}
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*TelemetryEnvelope)
+	}{
+		{
+			name: "record type",
+			mutate: func(env *TelemetryEnvelope) {
+				env.RecordType = RecordTypeDiagnostic
+			},
+		},
+		{
+			name: "feature",
+			mutate: func(env *TelemetryEnvelope) {
+				env.Feature = "network"
+			},
+		},
+		{
+			name: "severity",
+			mutate: func(env *TelemetryEnvelope) {
+				env.Severity = SeverityError
+			},
+		},
+		{
+			name: "version",
+			mutate: func(env *TelemetryEnvelope) {
+				env.EventVersion = 2
+			},
+		},
+		{
+			name: "error category",
+			mutate: func(env *TelemetryEnvelope) {
+				env.EventName = "ssh.session.failed"
+				env.RecordType = RecordTypeDiagnostic
+				env.Severity = SeverityError
+				env.Properties = map[string]any{"stage": "connect"}
+				env.Error = &TelemetryError{
+					ErrorCode:       "SSH_AUTH_FAILED",
+					Category:        "network",
+					TerminalFailure: true,
+				}
+			},
+		},
+		{
+			name: "error terminal failure",
+			mutate: func(env *TelemetryEnvelope) {
+				env.EventName = "ssh.session.failed"
+				env.RecordType = RecordTypeDiagnostic
+				env.Severity = SeverityError
+				env.Properties = map[string]any{"stage": "connect"}
+				env.Error = &TelemetryError{
+					ErrorCode:       "SSH_AUTH_FAILED",
+					Category:        "ssh",
+					TerminalFailure: false,
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := base()
+			tt.mutate(&env)
+			if err := catalog.ValidateEnvelope(&env); err == nil {
+				t.Fatalf("expected %s mismatch to be rejected", tt.name)
+			}
+		})
+	}
+}
+
+func TestTelemetryStoreRejectsMetadataMismatchPerRecord(t *testing.T) {
+	store := NewMemoryStore(DefaultCatalog())
+	env := TelemetryEnvelope{
+		EventID:      "evt-strict-store",
+		RecordType:   RecordTypeDiagnostic,
+		EventName:    "ssh.session.started",
+		EventVersion: 1,
+		DeviceID:     "dev-strict",
+		SessionID:    "sess-strict",
+		TraceID:      "trace-strict",
+		OccurredAt:   time.Now().UTC(),
+		Feature:      "ssh",
+		Severity:     SeverityInfo,
+		AppVersion:   "1.0.0",
+		BuildNumber:  "1",
+		Platform:     "linux",
+		Properties:   map[string]any{"session_type": "interactive"},
+	}
+	results, err := store.IngestBatch(context.Background(), []TelemetryEnvelope{env})
+	if err != nil {
+		t.Fatalf("ingest should return per-record rejection, got error: %v", err)
+	}
+	if len(results) != 1 || results[0].Status != StatusRejected {
+		t.Fatalf("expected one rejected result, got %+v", results)
+	}
 }

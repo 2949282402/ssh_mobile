@@ -1,89 +1,58 @@
-// AppScope 遥测常量镜像与 TelemetryCatalog 的一致性测试。
-//
-// app_telemetry_contract.dart 是 contract 生成目录的 App Scope 镜像；本测试
-// 通过 TelemetryCatalog 的公开校验面验证镜像并未漂移：
-// - 每个 AppTelemetryEvents 事件都能用其 name/version/properties 构造一条
-//   合法记录并通过 isValidRecord；
-// - 每个 AppTelemetryErrorCodes 错误码都通过 isValidErrorCode。
+// Generated telemetry contract integration tests for the Full App.
 
 import 'package:app_core/app_core.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/services/telemetry/app_telemetry_contract.dart';
 
 void main() {
-  group('AppTelemetryEvents mirror synchronisation', () {
-    test('every mirrored event passes catalog validation', () {
-      const events = <TelemetryEventDefinition>[
-        AppTelemetryEvents.appLifecycleStarted,
-        AppTelemetryEvents.appLifecycleBackgrounded,
-        AppTelemetryEvents.appLifecycleForegrounded,
-        AppTelemetryEvents.networkQuicConnected,
-        AppTelemetryEvents.networkQuicFailed,
-        AppTelemetryEvents.networkRelayConnected,
-        AppTelemetryEvents.networkRelayFallback,
-        AppTelemetryEvents.sshSessionStarted,
-        AppTelemetryEvents.sshSessionTerminated,
-        AppTelemetryEvents.sshSessionFailed,
-        AppTelemetryEvents.sftpTransferStarted,
-        AppTelemetryEvents.sftpTransferCompleted,
-        AppTelemetryEvents.sftpTransferFailed,
-        AppTelemetryEvents.appDiagnosticLog,
-      ];
-
-      for (final def in events) {
+  group('generated telemetry contract', () {
+    test('every generated event passes strict catalog validation', () {
+      for (final definition in TelemetryEvents.all) {
         final record = TelemetryEventRecord(
           eventId: 'probe',
-          recordType: def.recordType,
-          eventName: def.name,
-          eventVersion: def.version,
+          recordType: definition.recordType,
+          eventName: definition.name,
+          eventVersion: definition.version,
           deviceId: 'dev',
           sessionId: 'sess',
           traceId: 'trace',
           occurredAt: DateTime.now().toUtc(),
-          feature: def.feature,
-          severity: def.severity,
+          feature: definition.feature,
+          severity: definition.severity,
           appVersion: '1.0.0',
           buildNumber: '1',
           platform: 'linux',
           properties: {
-            for (final key in def.allowedProperties) key: _sampleValue(key),
+            for (final key in definition.allowedProperties)
+              key: _sampleValue(key),
           },
         );
         expect(
           TelemetryCatalog.instance.isValidRecord(record),
           isTrue,
-          reason: '镜子事件 ${def.name} 未通过 TelemetryCatalog 校验（可能漂移）',
+          reason: 'generated event ${definition.name} failed validation',
         );
       }
     });
 
-    test('every mirrored error code is registered', () {
-      const errorCodes = <TelemetryErrorCodeDefinition>[
-        AppTelemetryErrorCodes.netQuicConnRefused,
-        AppTelemetryErrorCodes.netQuicTimeout,
-        AppTelemetryErrorCodes.netRelayUnavailable,
-        AppTelemetryErrorCodes.sshAuthFailed,
-        AppTelemetryErrorCodes.sshHostKeyMismatch,
-        AppTelemetryErrorCodes.sshTimeout,
-        AppTelemetryErrorCodes.sftpPermissionDenied,
-        AppTelemetryErrorCodes.sftpFileNotFound,
-        AppTelemetryErrorCodes.sftpTransferAborted,
-        AppTelemetryErrorCodes.lanPeerDisconnected,
-        AppTelemetryErrorCodes.lanHandshakeFailed,
-        AppTelemetryErrorCodes.aiRateLimited,
-        AppTelemetryErrorCodes.aiServiceUnavailable,
-        AppTelemetryErrorCodes.telemetryAuthFailed,
-        AppTelemetryErrorCodes.telemetryNetworkError,
-        AppTelemetryErrorCodes.telemetryStorageFull,
-      ];
-
-      for (final code in errorCodes) {
+    test('every generated error code is registered with exact metadata', () {
+      for (final definition in TelemetryErrorCodes.all) {
         expect(
-          TelemetryCatalog.instance.isValidErrorCode(code.code),
+          TelemetryCatalog.instance.isValidErrorCode(definition.code),
           isTrue,
-          reason: '镜子错误码 ${code.code} 未在 TelemetryCatalog 注册（可能漂移）',
+          reason: 'generated error ${definition.code} is not registered',
         );
       }
+      expect(TelemetryErrorCodes.sshConnectFailed.category, 'ssh');
+      expect(TelemetryErrorCodes.appFatalError.terminalFailure, isTrue);
+    });
+
+    test('operation metadata is generated for dashboard consumers', () {
+      expect(
+        TelemetryEvents.networkRelayFailed.operationGroup,
+        'network.relay',
+      );
+      expect(TelemetryEvents.networkRelayFailed.operationRole, 'failure');
+      expect(TelemetryEvents.sshSessionConnected.operationRole, 'success');
     });
   });
 }

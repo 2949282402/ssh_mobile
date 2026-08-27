@@ -22,6 +22,7 @@ echo "Validating Telemetry contracts..."
   cd "$ROOT_DIR"
   dart run tool/gen_telemetry_contract.dart
   dart run tool/check_telemetry_contract_generated.dart
+  dart run tool/check_telemetry_producers.dart
 )
 
 # 2. Go validation

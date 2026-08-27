@@ -26,12 +26,10 @@ class TelemetryRecordsDao extends DatabaseAccessor<TelemetryDatabase>
 
   /// 读取全部记录，供开发者面板原样重放使用。
   Future<List<TelemetryRecord>> fetchAll() {
-    return (select(telemetryRecords)
-          ..orderBy([
-            (t) =>
-                OrderingTerm(expression: t.createdAt, mode: OrderingMode.asc),
-            (t) => OrderingTerm(expression: t.eventId, mode: OrderingMode.asc),
-          ]))
+    return (select(telemetryRecords)..orderBy([
+          (t) => OrderingTerm(expression: t.createdAt, mode: OrderingMode.asc),
+          (t) => OrderingTerm(expression: t.eventId, mode: OrderingMode.asc),
+        ]))
         .get();
   }
 

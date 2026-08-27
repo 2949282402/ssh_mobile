@@ -127,7 +127,8 @@ extension SftpServiceOperations on SftpService {
         return cachedBytes;
       }
 
-      final transferId = '${config.id}-dl-${DateTime.now().millisecondsSinceEpoch}';
+      final transferId =
+          '${config.id}-dl-${DateTime.now().millisecondsSinceEpoch}';
       final transfer = SftpTransferState(
         id: transferId,
         name: p.basename(absolutePath),
@@ -249,7 +250,8 @@ extension SftpServiceOperations on SftpService {
     _assertWithinMemoryLimit(bytes.length, 'upload', maxBytes: maxBytes);
     await _withDetachedSftp(connectionId, (sftp, config, targetBinding) async {
       final absolutePath = await sftp.absolute(path);
-      final transferId = '${config.id}-up-${DateTime.now().millisecondsSinceEpoch}';
+      final transferId =
+          '${config.id}-up-${DateTime.now().millisecondsSinceEpoch}';
       final transfer = SftpTransferState(
         id: transferId,
         name: p.basename(absolutePath),

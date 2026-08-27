@@ -5,13 +5,13 @@
 // 使用可抛异常的 SshNativeStreamConnector 在桌面本地连接路径上快速触发
 // 确定性失败，避免真实 TCP 连接。
 
+import 'package:app_core/app_core.dart';
 import 'package:connection_core/connection_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_core/ssh_core.dart' as ssh_core;
 import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/telemetry/app_telemetry_contract.dart';
 
 import '../../test_utils/test_storage_adapter.dart';
 import 'telemetry_test_utils.dart';
@@ -52,8 +52,8 @@ void main() {
       await sshService.connect('server-1');
 
       final records = await harness.recordsByName();
-      final started = records[AppTelemetryEvents.sshSessionStarted.name];
-      final failed = records[AppTelemetryEvents.sshSessionFailed.name];
+      final started = records[TelemetryEvents.sshSessionStarted.name];
+      final failed = records[TelemetryEvents.sshSessionFailed.name];
 
       expect(started, hasLength(1));
       expect(failed, hasLength(1));
@@ -69,12 +69,15 @@ void main() {
         startedRecord.properties,
         containsPair('auth_method', AuthMethod.password.name),
       );
-      expect(startedRecord.properties, containsPair('session_type', 'terminal'));
+      expect(
+        startedRecord.properties,
+        containsPair('session_type', 'terminal'),
+      );
 
       expect(failedRecord.properties, containsPair('stage', 'connect'));
       expect(
         failedRecord.error?.errorCode,
-        AppTelemetryErrorCodes.sshAuthFailed.code,
+        TelemetryErrorCodes.sshAuthFailed.code,
       );
       expect(failedRecord.error?.category, 'ssh');
     });
@@ -89,22 +92,22 @@ void main() {
 
       await sshService.connect('server-1');
 
-      final failed = (await harness.recordsByName())[
-        AppTelemetryEvents.sshSessionFailed.name
-      ];
+      final failed = (await harness
+          .recordsByName())[TelemetryEvents.sshSessionFailed.name];
       expect(failed, hasLength(1));
       expect(
         failed!.single.error?.errorCode,
-        AppTelemetryErrorCodes.sshTimeout.code,
+        TelemetryErrorCodes.sshTimeout.code,
       );
     });
 
     test('disconnect terminates a registered session with duration', () async {
       // 先触发一次连接失败，拿到注册的 sessionId（started 事件属性）。
       await sshService.connect('server-1');
-      final started = (await harness.recordsByName())[
-        AppTelemetryEvents.sshSessionStarted.name
-      ]!.single;
+      final started =
+          (await harness
+                  .recordsByName())[TelemetryEvents.sshSessionStarted.name]!
+              .single;
       final sessionId = started.sessionId;
 
       // 失败路径结束后 session 仍在 registry 中；断开应输出 terminated。
@@ -113,9 +116,8 @@ void main() {
 
       await sshService.disconnectSession(sessionId);
 
-      final terminated = (await harness.recordsByName())[
-        AppTelemetryEvents.sshSessionTerminated.name
-      ];
+      final terminated = (await harness
+          .recordsByName())[TelemetryEvents.sshSessionTerminated.name];
       expect(terminated, hasLength(1));
       final terminatedRecord = terminated!.single;
       expect(terminatedRecord.sessionId, sessionId);

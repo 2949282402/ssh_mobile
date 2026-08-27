@@ -9,13 +9,13 @@
 
 import 'dart:typed_data';
 
+import 'package:app_core/app_core.dart';
 import 'package:connection_core/connection_core.dart';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/app/sftp_backend_adapters.dart' hide SftpService;
 import 'package:ssh_mobile/app/sftp_io_backend_adapters.dart';
 import 'package:ssh_mobile/services/connection_target_binding.dart';
-import 'package:ssh_mobile/services/telemetry/app_telemetry_contract.dart';
 
 import '../../test_utils/test_storage_adapter.dart';
 import 'telemetry_test_utils.dart';
@@ -36,103 +36,109 @@ void main() {
       await SftpFileCache.clearAll();
     });
 
-    test('downloadBytes emits started then completed with shared traceId',
-        () async {
-      fixture = _SftpFixture(
-        harness: harness,
-        bytes: Uint8List.fromList('hello world'.codeUnits),
-      );
-      addTearDown(fixture.dispose);
+    test(
+      'downloadBytes emits started then completed with shared traceId',
+      () async {
+        fixture = _SftpFixture(
+          harness: harness,
+          bytes: Uint8List.fromList('hello world'.codeUnits),
+        );
+        addTearDown(fixture.dispose);
 
-      final result = await fixture.service.downloadBytes(
-        fixture.entry,
-        bypassCache: true,
-      );
+        final result = await fixture.service.downloadBytes(
+          fixture.entry,
+          bypassCache: true,
+        );
 
-      expect(result, 'hello world'.codeUnits);
-      final records = await harness.recordsByName();
-      final started = records[AppTelemetryEvents.sftpTransferStarted.name];
-      final completed = records[AppTelemetryEvents.sftpTransferCompleted.name];
+        expect(result, 'hello world'.codeUnits);
+        final records = await harness.recordsByName();
+        final started = records[TelemetryEvents.sftpTransferStarted.name];
+        final completed = records[TelemetryEvents.sftpTransferCompleted.name];
 
-      expect(started, hasLength(1));
-      expect(completed, hasLength(1));
+        expect(started, hasLength(1));
+        expect(completed, hasLength(1));
 
-      final startedRecord = started!.single;
-      final completedRecord = completed!.single;
+        final startedRecord = started!.single;
+        final completedRecord = completed!.single;
 
-      expect(completedRecord.traceId, startedRecord.traceId);
-      expect(startedRecord.properties, containsPair('direction', 'download'));
-      expect(
-        startedRecord.properties,
-        containsPair('file_size_bytes', 11),
-      );
-      expect(
-        completedRecord.properties,
-        containsPair('direction', 'download'),
-      );
-      expect(
-        completedRecord.properties,
-        containsPair('bytes_transferred', 11),
-      );
-      expect(completedRecord.properties['duration_ms'], isA<int>());
-    });
+        expect(completedRecord.traceId, startedRecord.traceId);
+        expect(startedRecord.properties, containsPair('direction', 'download'));
+        expect(startedRecord.properties, containsPair('file_size_bytes', 11));
+        expect(
+          completedRecord.properties,
+          containsPair('direction', 'download'),
+        );
+        expect(
+          completedRecord.properties,
+          containsPair('bytes_transferred', 11),
+        );
+        expect(completedRecord.properties['duration_ms'], isA<int>());
+      },
+    );
 
-    test('failed download emits failed with mapped error code and stage',
-        () async {
-      fixture = _SftpFixture(
-        harness: harness,
-        bytes: Uint8List.fromList('data'.codeUnits),
-        openError: StateError('Permission denied'),
-      );
-      addTearDown(fixture.dispose);
+    test(
+      'failed download emits failed with mapped error code and stage',
+      () async {
+        fixture = _SftpFixture(
+          harness: harness,
+          bytes: Uint8List.fromList('data'.codeUnits),
+          openError: StateError('Permission denied'),
+        );
+        addTearDown(fixture.dispose);
 
-      await expectLater(
-        fixture.service.downloadBytes(fixture.entry, bypassCache: true),
-        throwsA(isA<StateError>()),
-      );
+        await expectLater(
+          fixture.service.downloadBytes(fixture.entry, bypassCache: true),
+          throwsA(isA<StateError>()),
+        );
 
-      final records = await harness.recordsByName();
-      final started = records[AppTelemetryEvents.sftpTransferStarted.name];
-      final failed = records[AppTelemetryEvents.sftpTransferFailed.name];
+        final records = await harness.recordsByName();
+        final started = records[TelemetryEvents.sftpTransferStarted.name];
+        final failed = records[TelemetryEvents.sftpTransferFailed.name];
 
-      expect(started, hasLength(1));
-      expect(failed, hasLength(1));
+        expect(started, hasLength(1));
+        expect(failed, hasLength(1));
 
-      final failedRecord = failed!.single;
-      expect(failedRecord.traceId, started!.single.traceId);
-      expect(
-        failedRecord.error?.errorCode,
-        AppTelemetryErrorCodes.sftpPermissionDenied.code,
-      );
-      expect(failedRecord.properties, containsPair('stage', 'download'));
-      expect(failedRecord.properties, containsPair('direction', 'download'));
-      expect(failedRecord.properties['bytes_transferred'], isA<int>());
-    });
+        final failedRecord = failed!.single;
+        expect(failedRecord.traceId, started!.single.traceId);
+        expect(
+          failedRecord.error?.errorCode,
+          TelemetryErrorCodes.sftpPermissionDenied.code,
+        );
+        expect(failedRecord.properties, containsPair('stage', 'download'));
+        expect(failedRecord.properties, containsPair('direction', 'download'));
+        expect(failedRecord.properties['bytes_transferred'], isA<int>());
+      },
+    );
 
-    test('uploadBytes emits started then completed with shared traceId',
-        () async {
-      fixture = _SftpFixture(
-        harness: harness,
-        bytes: Uint8List.fromList('abc'.codeUnits),
-      );
-      addTearDown(fixture.dispose);
+    test(
+      'uploadBytes emits started then completed with shared traceId',
+      () async {
+        fixture = _SftpFixture(
+          harness: harness,
+          bytes: Uint8List.fromList('abc'.codeUnits),
+        );
+        addTearDown(fixture.dispose);
 
-      await fixture.service.uploadBytes(
-        filename: 'out.txt',
-        bytes: Uint8List.fromList('abc'.codeUnits),
-      );
+        await fixture.service.uploadBytes(
+          filename: 'out.txt',
+          bytes: Uint8List.fromList('abc'.codeUnits),
+        );
 
-      final records = await harness.recordsByName();
-      final started = records[AppTelemetryEvents.sftpTransferStarted.name];
-      final completed = records[AppTelemetryEvents.sftpTransferCompleted.name];
+        final records = await harness.recordsByName();
+        final started = records[TelemetryEvents.sftpTransferStarted.name];
+        final completed = records[TelemetryEvents.sftpTransferCompleted.name];
 
-      final startedRecord = started!.single;
-      final completedRecord = completed!.single;
-      expect(completedRecord.traceId, startedRecord.traceId);
-      expect(startedRecord.properties, containsPair('direction', 'upload'));
-      expect(completedRecord.properties, containsPair('direction', 'upload'));
-      expect(completedRecord.properties, containsPair('bytes_transferred', 3));
-    });
+        final startedRecord = started!.single;
+        final completedRecord = completed!.single;
+        expect(completedRecord.traceId, startedRecord.traceId);
+        expect(startedRecord.properties, containsPair('direction', 'upload'));
+        expect(completedRecord.properties, containsPair('direction', 'upload'));
+        expect(
+          completedRecord.properties,
+          containsPair('bytes_transferred', 3),
+        );
+      },
+    );
   });
 }
 

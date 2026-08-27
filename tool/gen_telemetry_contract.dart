@@ -1,12 +1,11 @@
-/// Generates `contracts/telemetry/events.json`, `error_codes.json`, and the
-/// Dart constant catalogs under
-/// `packages/core/app_core/lib/src/telemetry/generated/` from the YAML source
-/// of truth.
+/// Generates the cross-language telemetry contract catalogs from the YAML
+/// sources of truth. JSON remains a generated interchange artifact; Dart,
+/// Go, and TypeScript receive complete typed definitions for their owners.
 ///
 /// Usage:
 ///   dart run tool/gen_telemetry_contract.dart
 ///
-/// Regenerates all four output files in place, writing only changed files.
+/// Regenerates all six output files in place, writing only changed files.
 ///
 /// Public API shared with `tool/check_telemetry_contract_generated.dart`:
 /// [loadedContract], [renderAll], and [expectedFiles]. The checker reuses the
@@ -27,6 +26,9 @@ const String _dartEventsPath =
     'packages/core/app_core/lib/src/telemetry/generated/telemetry_events.dart';
 const String _dartErrorCodesPath =
     'packages/core/app_core/lib/src/telemetry/generated/error_codes.dart';
+const String _goContractPath =
+    'relay/internal/telemetry/generated/telemetry_contract.go';
+const String _tsContractPath = 'front/src/generated/telemetry_contract.ts';
 
 /// Header printed at the top of every generated file.
 const String generatedHeader =
@@ -61,6 +63,8 @@ class EventDef {
     required this.recordType,
     required this.feature,
     required this.severity,
+    required this.operationGroup,
+    required this.operationRole,
     required this.description,
     required this.allowedProperties,
     required this.requiredProperties,
@@ -71,6 +75,8 @@ class EventDef {
   final String recordType;
   final String feature;
   final String severity;
+  final String operationGroup;
+  final String operationRole;
   final String description;
   final List<Map<String, dynamic>> allowedProperties;
   final List<String> requiredProperties;
@@ -98,14 +104,17 @@ const List<String> generatedArtifacts = <String>[
   _errorCodesJsonPath,
   _dartEventsPath,
   _dartErrorCodesPath,
+  _goContractPath,
+  _tsContractPath,
 ];
 
 /// Loads both YAML sources of truth. Throws [FormatException] on malformed or
 /// missing input.
 LoadedContract loadContract(Directory repoRoot) {
   final eventsDoc = _loadYamlFile(File('${repoRoot.path}/$_eventsYamlPath'));
-  final errorCodesDoc =
-      _loadYamlFile(File('${repoRoot.path}/$_errorCodesYamlPath'));
+  final errorCodesDoc = _loadYamlFile(
+    File('${repoRoot.path}/$_errorCodesYamlPath'),
+  );
   return LoadedContract(
     eventsVersion: _scalarVersion(eventsDoc, _eventsYamlPath),
     errorCodesVersion: _scalarVersion(errorCodesDoc, _errorCodesYamlPath),
@@ -114,13 +123,15 @@ LoadedContract loadContract(Directory repoRoot) {
   );
 }
 
-/// Renders the four generated artifacts for [contract].
+/// Renders all generated artifacts for [contract].
 Map<String, String> renderAll(LoadedContract contract) {
   return <String, String>{
     _eventsJsonPath: _renderEventsJson(contract),
     _errorCodesJsonPath: _renderErrorCodesJson(contract),
     _dartEventsPath: _renderEventsDart(contract.events),
     _dartErrorCodesPath: _renderErrorCodesDart(contract.errorCodes),
+    _goContractPath: _renderContractGo(contract),
+    _tsContractPath: _renderContractTypeScript(contract),
   };
 }
 
@@ -169,7 +180,9 @@ Directory _repoRoot() {
   while (!File('${dir.path}/pubspec.yaml').existsSync()) {
     final parent = dir.parent;
     if (parent.path == dir.path) {
-      stderr.writeln('Could not locate repo root from ${Directory.current.path}');
+      stderr.writeln(
+        'Could not locate repo root from ${Directory.current.path}',
+      );
       throw const FormatException('repo root not found');
     }
     dir = parent;
@@ -191,24 +204,67 @@ List<EventDef> _parseEvents(dynamic doc) {
   if (rawEvents is! YamlList) {
     throw const FormatException('events.yaml must declare a `events` list');
   }
+  final names = <String>{};
+  final identifiers = <String>{};
   return rawEvents.map((raw) {
-    final ev = raw as Map;
-    final allowedProperties = ev['allowedProperties'] as YamlList? ?? const [];
-    final requiredPropertyNames = allowedProperties
-        .whereType<Map>()
+    if (raw is! Map) {
+      throw const FormatException('each telemetry event must be a map');
+    }
+    final name = _requiredString(raw, 'name', 'event');
+    if (!names.add(name)) {
+      throw FormatException('duplicate telemetry event name: $name');
+    }
+    final constantName = _eventConstantName(name);
+    if (!identifiers.add(constantName)) {
+      throw FormatException(
+        'event names collide on generated identifier: $constantName',
+      );
+    }
+
+    final rawProperties = raw['allowedProperties'];
+    if (rawProperties != null && rawProperties is! YamlList) {
+      throw FormatException('allowedProperties must be a list for event $name');
+    }
+    final properties = <Map<String, dynamic>>[];
+    final propertyNames = <String>{};
+    for (final rawProperty in (rawProperties as YamlList? ?? const [])) {
+      if (rawProperty is! Map) {
+        throw FormatException('event $name has an invalid property definition');
+      }
+      final propertyName = _requiredString(rawProperty, 'name', 'property');
+      if (!propertyNames.add(propertyName)) {
+        throw FormatException(
+          'event $name declares duplicate property: $propertyName',
+        );
+      }
+      final propertyType = _requiredString(rawProperty, 'type', 'property');
+      final required = rawProperty['required'];
+      if (required is! bool) {
+        throw FormatException(
+          'event $name property $propertyName must declare boolean required',
+        );
+      }
+      properties.add(<String, dynamic>{
+        'name': propertyName,
+        'type': propertyType,
+        'required': required,
+      });
+    }
+
+    final requiredPropertyNames = properties
         .where((p) => p['required'] == true)
         .map((p) => p['name'] as String)
         .toList();
     return EventDef(
-      name: ev['name'] as String,
-      version: ev['version'] as int,
-      recordType: ev['recordType'] as String,
-      feature: ev['feature'] as String,
-      severity: ev['severity'] as String,
-      description: ev['description'] as String? ?? '',
-      allowedProperties: allowedProperties
-          .map((p) => Map<String, dynamic>.from(p as Map))
-          .toList(),
+      name: name,
+      version: _requiredInt(raw, 'version', 'event'),
+      recordType: _requiredString(raw, 'recordType', 'event'),
+      feature: _requiredString(raw, 'feature', 'event'),
+      severity: _requiredString(raw, 'severity', 'event'),
+      operationGroup: _requiredString(raw, 'operationGroup', 'event'),
+      operationRole: _requiredString(raw, 'operationRole', 'event'),
+      description: raw['description'] as String? ?? '',
+      allowedProperties: properties,
       requiredProperties: requiredPropertyNames,
     );
   }).toList();
@@ -217,17 +273,55 @@ List<EventDef> _parseEvents(dynamic doc) {
 List<ErrorCodeDef> _parseErrorCodes(dynamic doc) {
   final rawCodes = (doc as Map)['errorCodes'];
   if (rawCodes is! YamlList) {
-    throw const FormatException('error_codes.yaml must declare a `errorCodes` list');
+    throw const FormatException(
+      'error_codes.yaml must declare a `errorCodes` list',
+    );
   }
+  final codes = <String>{};
+  final identifiers = <String>{};
   return rawCodes.map((raw) {
-    final ec = raw as Map;
+    if (raw is! Map) {
+      throw const FormatException('each telemetry error code must be a map');
+    }
+    final code = _requiredString(raw, 'code', 'error code');
+    if (!codes.add(code)) {
+      throw FormatException('duplicate telemetry error code: $code');
+    }
+    final constantName = _errorCodeConstantName(code);
+    if (!identifiers.add(constantName)) {
+      throw FormatException(
+        'error codes collide on generated identifier: $constantName',
+      );
+    }
+    final terminalFailure = raw['terminalFailure'];
+    if (terminalFailure is! bool) {
+      throw FormatException(
+        'error code $code must declare boolean terminalFailure',
+      );
+    }
     return ErrorCodeDef(
-      code: ec['code'] as String,
-      category: ec['category'] as String,
-      terminalFailure: ec['terminalFailure'] == true,
-      description: ec['description'] as String? ?? '',
+      code: code,
+      category: _requiredString(raw, 'category', 'error code'),
+      terminalFailure: terminalFailure,
+      description: raw['description'] as String? ?? '',
     );
   }).toList();
+}
+
+String _requiredString(Map raw, String key, String kind) {
+  final value = raw[key];
+  if (value is! String || value.trim().isEmpty) {
+    throw FormatException('$kind must declare a non-empty `$key` string');
+  }
+  return value;
+}
+
+int _requiredInt(Map raw, String key, String kind) {
+  final value = raw[key];
+  if (value is! int) {
+    throw FormatException('$kind must declare integer `$key`');
+  }
+  return value;
 }
 
 String _renderEventsJson(LoadedContract contract) {
@@ -241,6 +335,8 @@ String _renderEventsJson(LoadedContract contract) {
           'recordType': ev.recordType,
           'feature': ev.feature,
           'severity': ev.severity,
+          'operationGroup': ev.operationGroup,
+          'operationRole': ev.operationRole,
           'description': ev.description,
           'allowedProperties': ev.allowedProperties,
         },
@@ -295,13 +391,28 @@ String _renderEventsDart(List<EventDef> events) {
       ..write('    recordType: TelemetryRecordType.${ev.recordType},\n')
       ..write('    feature: ${_quote(ev.feature)},\n')
       ..write('    severity: TelemetrySeverity.${ev.severity},\n')
+      ..write('    operationGroup: ${_quote(ev.operationGroup)},\n')
+      ..write('    operationRole: ${_quote(ev.operationRole)},\n')
+      ..write('    description: ${_quote(ev.description)},\n')
       ..write('    allowedProperties: $propertySetLiteral,\n')
       ..write('    requiredProperties: $requiredSetLiteral,\n')
+      ..write(
+        '    propertyTypes: ${_propertyTypesLiteral(ev.allowedProperties)},\n',
+      )
       ..write('  );\n')
       ..writeln();
   }
+  buf
+    ..writeln('  static const List<TelemetryEventDefinition> all =')
+    ..writeln('      <TelemetryEventDefinition>[');
+  for (final ev in events) {
+    buf.writeln('    ${_eventConstantName(ev.name)},');
+  }
+  buf
+    ..writeln('  ];')
+    ..writeln();
   buf.write('}\n');
-  return buf.toString();
+  return _formatDart(buf.toString());
 }
 
 String _renderErrorCodesDart(List<ErrorCodeDef> errorCodes) {
@@ -310,7 +421,9 @@ String _renderErrorCodesDart(List<ErrorCodeDef> errorCodes) {
     ..writeln('$generatedIgnoreFile')
     ..writeln('//')
     ..writeln('/// Compile-time error-code catalog constants generated from')
-    ..writeln('/// `contracts/telemetry/error_codes.yaml`. Pure data, no logic.')
+    ..writeln(
+      '/// `contracts/telemetry/error_codes.yaml`. Pure data, no logic.',
+    )
     ..writeln('///')
     ..writeln("import '../telemetry_catalog.dart';")
     ..writeln()
@@ -324,11 +437,256 @@ String _renderErrorCodesDart(List<ErrorCodeDef> errorCodes) {
       ..write('    code: ${_quote(ec.code)},\n')
       ..write('    category: ${_quote(ec.category)},\n')
       ..write('    terminalFailure: ${ec.terminalFailure},\n')
+      ..write('    description: ${_quote(ec.description)},\n')
       ..write('  );\n')
       ..writeln();
   }
+  buf
+    ..writeln('  static const List<TelemetryErrorCodeDefinition> all =')
+    ..writeln('      <TelemetryErrorCodeDefinition>[');
+  for (final ec in errorCodes) {
+    buf.writeln('    ${_errorCodeConstantName(ec.code)},');
+  }
+  buf
+    ..writeln('  ];')
+    ..writeln();
   buf.write('}\n');
+  return _formatDart(buf.toString());
+}
+
+String _propertyTypesLiteral(List<Map<String, dynamic>> properties) {
+  if (properties.isEmpty) return '{}';
+  final sorted = [...properties]
+    ..sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
+  return '{${sorted.map((p) => '${_quote(p['name'] as String)}: ${_quote(p['type'] as String)}').join(', ')}}';
+}
+
+String _renderContractGo(LoadedContract contract) {
+  final buf = StringBuffer()
+    ..writeln(
+      '// GENERATED DO NOT EDIT, regenerate via dart run tool/gen_telemetry_contract.dart',
+    )
+    ..writeln('// Code generated from contracts/telemetry/*.yaml; DO NOT EDIT.')
+    ..writeln()
+    ..writeln('package generated')
+    ..writeln()
+    ..writeln('type AllowedProperty struct {')
+    ..writeln('\tName     string `json:"name"`')
+    ..writeln('\tType     string `json:"type"`')
+    ..writeln('\tRequired bool   `json:"required"`')
+    ..writeln('}')
+    ..writeln()
+    ..writeln('type EventDefinition struct {')
+    ..writeln('\tName              string            `json:"name"`')
+    ..writeln('\tVersion           int               `json:"version"`')
+    ..writeln('\tRecordType        string            `json:"recordType"`')
+    ..writeln('\tFeature           string            `json:"feature"`')
+    ..writeln('\tSeverity          string            `json:"severity"`')
+    ..writeln('\tOperationGroup    string            `json:"operationGroup"`')
+    ..writeln('\tOperationRole     string            `json:"operationRole"`')
+    ..writeln('\tDescription       string            `json:"description"`')
+    ..writeln(
+      '\tAllowedProperties []AllowedProperty `json:"allowedProperties"`',
+    )
+    ..writeln('}')
+    ..writeln()
+    ..writeln('type ErrorCodeDefinition struct {')
+    ..writeln('\tCode            string `json:"code"`')
+    ..writeln('\tCategory        string `json:"category"`')
+    ..writeln('\tTerminalFailure bool   `json:"terminalFailure"`')
+    ..writeln('\tDescription     string `json:"description"`')
+    ..writeln('}')
+    ..writeln()
+    ..writeln('var TelemetryEvents = []EventDefinition{');
+
+  for (final ev in contract.events) {
+    buf
+      ..writeln('\t{')
+      ..writeln('\t\tName:           ${_jsonQuote(ev.name)},')
+      ..writeln('\t\tVersion:        ${ev.version},')
+      ..writeln('\t\tRecordType:     ${_jsonQuote(ev.recordType)},')
+      ..writeln('\t\tFeature:        ${_jsonQuote(ev.feature)},')
+      ..writeln('\t\tSeverity:       ${_jsonQuote(ev.severity)},')
+      ..writeln('\t\tOperationGroup: ${_jsonQuote(ev.operationGroup)},')
+      ..writeln('\t\tOperationRole:  ${_jsonQuote(ev.operationRole)},')
+      ..writeln('\t\tDescription:    ${_jsonQuote(ev.description)},')
+      ..writeln('\t\tAllowedProperties: []AllowedProperty{');
+    for (final property in ev.allowedProperties) {
+      buf
+        ..writeln('\t\t\t{')
+        ..writeln(
+          '\t\t\t\tName:     ${_jsonQuote(property['name'] as String)},',
+        )
+        ..writeln(
+          '\t\t\t\tType:     ${_jsonQuote(property['type'] as String)},',
+        )
+        ..writeln('\t\t\t\tRequired: ${property['required'] == true},')
+        ..writeln('\t\t\t},');
+    }
+    buf
+      ..writeln('\t\t},')
+      ..writeln('\t},');
+  }
+  buf
+    ..writeln('}')
+    ..writeln()
+    ..writeln('var TelemetryErrorCodes = []ErrorCodeDefinition{');
+  for (final ec in contract.errorCodes) {
+    buf
+      ..writeln('\t{')
+      ..writeln('\t\tCode:            ${_jsonQuote(ec.code)},')
+      ..writeln('\t\tCategory:        ${_jsonQuote(ec.category)},')
+      ..writeln('\t\tTerminalFailure: ${ec.terminalFailure},')
+      ..writeln('\t\tDescription:     ${_jsonQuote(ec.description)},')
+      ..writeln('\t},');
+  }
+  buf..writeln('}');
   return buf.toString();
+}
+
+String _renderContractTypeScript(LoadedContract contract) {
+  final buf = StringBuffer()
+    ..writeln(
+      '// GENERATED DO NOT EDIT, regenerate via dart run tool/gen_telemetry_contract.dart',
+    )
+    ..writeln('// Code generated from contracts/telemetry/*.yaml; DO NOT EDIT.')
+    ..writeln()
+    ..writeln("export type TelemetryRecordType = 'analytics' | 'diagnostic';")
+    ..writeln(
+      "export type TelemetrySeverity = 'info' | 'warn' | 'error' | 'critical';",
+    )
+    ..writeln()
+    ..writeln('export interface TelemetryPropertyDefinition {')
+    ..writeln('  readonly name: string;')
+    ..writeln('  readonly type: string;')
+    ..writeln('  readonly required: boolean;')
+    ..writeln('}')
+    ..writeln()
+    ..writeln('export interface TelemetryEventDefinition {')
+    ..writeln('  readonly name: string;')
+    ..writeln('  readonly version: number;')
+    ..writeln('  readonly recordType: TelemetryRecordType;')
+    ..writeln('  readonly feature: string;')
+    ..writeln('  readonly severity: TelemetrySeverity;')
+    ..writeln('  readonly operationGroup: string;')
+    ..writeln('  readonly operationRole: string;')
+    ..writeln('  readonly description: string;')
+    ..writeln(
+      '  readonly allowedProperties: readonly TelemetryPropertyDefinition[];',
+    )
+    ..writeln('  readonly requiredProperties: readonly string[];')
+    ..writeln('}')
+    ..writeln()
+    ..writeln('export interface TelemetryErrorCodeDefinition {')
+    ..writeln('  readonly code: string;')
+    ..writeln('  readonly category: string;')
+    ..writeln('  readonly terminalFailure: boolean;')
+    ..writeln('  readonly description: string;')
+    ..writeln('}')
+    ..writeln()
+    ..writeln('export class TelemetryEvents {');
+
+  for (final ev in contract.events) {
+    final constantName = _eventConstantName(ev.name);
+    buf
+      ..writeln('  static readonly $constantName: TelemetryEventDefinition = {')
+      ..writeln('    name: ${_jsonQuote(ev.name)},')
+      ..writeln('    version: ${ev.version},')
+      ..writeln('    recordType: ${_jsonQuote(ev.recordType)},')
+      ..writeln('    feature: ${_jsonQuote(ev.feature)},')
+      ..writeln('    severity: ${_jsonQuote(ev.severity)},')
+      ..writeln('    operationGroup: ${_jsonQuote(ev.operationGroup)},')
+      ..writeln('    operationRole: ${_jsonQuote(ev.operationRole)},')
+      ..writeln('    description: ${_jsonQuote(ev.description)},')
+      ..writeln('    allowedProperties: [');
+    for (final property in ev.allowedProperties) {
+      buf
+        ..writeln('      {')
+        ..writeln('        name: ${_jsonQuote(property['name'] as String)},')
+        ..writeln('        type: ${_jsonQuote(property['type'] as String)},')
+        ..writeln('        required: ${property['required'] == true},')
+        ..writeln('      },');
+    }
+    buf
+      ..writeln('    ],')
+      ..writeln(
+        '    requiredProperties: ${_tsStringList(ev.requiredProperties)},',
+      )
+      ..writeln('  };')
+      ..writeln();
+  }
+  buf
+    ..writeln('  static readonly all: readonly TelemetryEventDefinition[] = [');
+  for (final ev in contract.events) {
+    buf.writeln('    TelemetryEvents.${_eventConstantName(ev.name)},');
+  }
+  buf
+    ..writeln('  ];')
+    ..writeln()
+    ..writeln('  private constructor() {}')
+    ..writeln('}')
+    ..writeln()
+    ..writeln('export class TelemetryErrorCodes {');
+  for (final ec in contract.errorCodes) {
+    final constantName = _errorCodeConstantName(ec.code);
+    buf
+      ..writeln(
+        '  static readonly $constantName: TelemetryErrorCodeDefinition = {',
+      )
+      ..writeln('    code: ${_jsonQuote(ec.code)},')
+      ..writeln('    category: ${_jsonQuote(ec.category)},')
+      ..writeln('    terminalFailure: ${ec.terminalFailure},')
+      ..writeln('    description: ${_jsonQuote(ec.description)},')
+      ..writeln('  };')
+      ..writeln();
+  }
+  buf..writeln(
+    '  static readonly all: readonly TelemetryErrorCodeDefinition[] = [',
+  );
+  for (final ec in contract.errorCodes) {
+    buf.writeln('    TelemetryErrorCodes.${_errorCodeConstantName(ec.code)},');
+  }
+  buf
+    ..writeln('  ];')
+    ..writeln()
+    ..writeln('  private constructor() {}')
+    ..writeln('}');
+  return buf.toString();
+}
+
+String _jsonQuote(String value) => jsonEncode(value) as String;
+
+String _tsStringList(List<String> values) {
+  if (values.isEmpty) return '[]';
+  return '[${values.map(_jsonQuote).join(', ')}]';
+}
+
+/// Applies the repository Dart formatter to generated Dart artifacts so the
+/// staleness checker and the normal formatting gate agree byte-for-byte.
+String _formatDart(String source) {
+  // Keep the scratch file under the repository so the formatter discovers the
+  // same package/language configuration as the committed generated outputs.
+  final tempDir = Directory.current.createTempSync(
+    'ssh_mobile_telemetry_codegen_',
+  );
+  final tempFile = File('${tempDir.path}/generated.dart')
+    ..writeAsStringSync(source);
+  try {
+    final result = Process.runSync(Platform.resolvedExecutable, <String>[
+      'format',
+      '--output=json',
+      tempFile.path,
+    ]);
+    if (result.exitCode != 0) {
+      throw FormatException(
+        'dart format failed for generated telemetry output: ${result.stderr}',
+      );
+    }
+    final payload = jsonDecode(result.stdout as String) as Map<String, dynamic>;
+    return payload['source'] as String;
+  } finally {
+    tempDir.deleteSync(recursive: true);
+  }
 }
 
 /// Renders a Dart const set literal for the given string members.

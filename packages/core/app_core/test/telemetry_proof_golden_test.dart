@@ -25,7 +25,8 @@ void main() {
       expect(
         vectorFile,
         isNotNull,
-        reason: 'auth_proof_vectors.json must exist in repository root contracts/',
+        reason:
+            'auth_proof_vectors.json must exist in repository root contracts/',
       );
 
       final content = vectorFile!.readAsStringSync();
