@@ -151,4 +151,13 @@ final class FakeDeveloperDiagnostics extends ChangeNotifier
 
   @override
   Future<DeveloperNativeMemorySnapshot?> readNativeMemory() async => null;
+
+  @override
+  Future<int> replayTelemetry() async => 0;
+
+  @override
+  Future<void> flushTelemetry() async {}
+
+  @override
+  Future<bool> refreshTelemetryPolicy() async => false;
 }

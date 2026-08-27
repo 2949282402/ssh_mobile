@@ -33,14 +33,24 @@ class TelemetryErrorCodeDefinition {
 }
 
 class TelemetryCatalog {
-  TelemetryCatalog._() {
-    _registerDefaults();
+  TelemetryCatalog({bool registerDefaults = true}) {
+    if (registerDefaults) {
+      _registerDefaults();
+    }
   }
 
-  static final TelemetryCatalog instance = TelemetryCatalog._();
+  static final TelemetryCatalog instance = TelemetryCatalog();
 
   final Map<String, TelemetryEventDefinition> _events = {};
   final Map<String, TelemetryErrorCodeDefinition> _errors = {};
+
+  void registerEvent(TelemetryEventDefinition def) {
+    _events[def.name] = def;
+  }
+
+  void registerError(TelemetryErrorCodeDefinition def) {
+    _errors[def.code] = def;
+  }
 
   void _registerDefaults() {
     final defaultEvents = <TelemetryEventDefinition>[

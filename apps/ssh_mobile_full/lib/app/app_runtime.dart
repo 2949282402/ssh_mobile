@@ -84,6 +84,7 @@ final class AppRuntime implements Disposable {
     required this.aiServerCatalogAdapter,
     required this.aiServerDiagnosticsAdapter,
     required this.aiChatRuntimeFactory,
+    this.telemetryClient,
     Future<void> Function()? awaitPendingInitialization,
     this.lifecycleObserver,
     this.disposeLogger = true,
@@ -215,6 +216,9 @@ final class AppRuntime implements Disposable {
   /// 供 Provider 注册的开发者诊断能力。
   feature_developer.DeveloperDiagnosticsPort get developerDiagnosticsPort =>
       developerDiagnosticsAdapter;
+
+  /// Telemetry 客户端运行时（若已启用）。
+  final TelemetryClient? telemetryClient;
 
   /// AI Module 的唯一 App Scope Owner；ai.db 只在首次 AI 使用时打开。
   final feature_ai.AiModule aiModule;

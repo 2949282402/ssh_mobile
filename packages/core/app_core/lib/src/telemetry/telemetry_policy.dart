@@ -17,6 +17,13 @@ class TelemetryUploadPolicy {
   final List<String> specialTriggers;
   final int policyVersion;
 
+  bool hasTrigger(String trigger) => specialTriggers.contains(trigger);
+  bool get triggerHighPriorityError => hasTrigger('highPriorityError');
+  bool get triggerAppBackground => hasTrigger('appBackground');
+  bool get triggerNetworkRecovered => hasTrigger('networkRecovered');
+  bool get triggerAppForegroundWithBacklog =>
+      hasTrigger('appForegroundWithBacklog');
+
   static const int minBatchSizeThreshold = 1;
   static const int maxBatchSizeThreshold = 1000;
   static const int minTimeIntervalSeconds = 5;

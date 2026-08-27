@@ -460,12 +460,32 @@ final class AppRuntimeFactory {
       const ragDatabaseName = 'rag.db';
       const mcpDatabaseName = 'mcp.db';
       const lanShareDatabaseName = 'lan_share.db';
+      const telemetryDatabaseName = 'telemetry_events.jsonl';
+
+      final telemetryStorage = FileTelemetryStorage(
+        filePath:
+            '${supportDirectory.path}${Platform.pathSeparator}telemetry${Platform.pathSeparator}$telemetryDatabaseName',
+      );
+      final telemetryClient = TelemetryClient(
+        config: TelemetryClientConfig(
+          baseUrl: appSettings.relayServerUrl,
+          deviceId: appSettings.lanDeviceId,
+          appVersion: '1.0.0',
+          buildNumber: '100',
+          platform: Platform.operatingSystem,
+          releaseChannel: 'prod',
+        ),
+        storage: telemetryStorage,
+      );
+      cleanup.add(telemetryClient.dispose, priority: _CleanupPriority.service);
+
       final developerDiagnosticsAdapter = AppDeveloperDiagnosticsAdapter(
         sshService: sshService,
         ragService: ragModule.service,
         mcpServer: mcpModule.service,
         performanceMonitor: monitoringService,
         logService: logger,
+        telemetryClient: telemetryClient,
         modules: [
           aiModule,
           playbookModule,
@@ -510,6 +530,11 @@ final class AppRuntimeFactory {
             moduleId: 'feature_lan_share',
             databaseName: lanShareDatabaseName,
             isOpen: () => _isModuleDatabaseOpen(lanShareModule),
+          ),
+          developer.DeveloperDatabaseDescriptor(
+            moduleId: 'telemetry',
+            databaseName: telemetryDatabaseName,
+            isOpen: () => true,
           ),
         ],
       );
@@ -564,6 +589,7 @@ final class AppRuntimeFactory {
         aiServerCatalogAdapter: aiServerCatalogAdapter,
         aiServerDiagnosticsAdapter: aiServerDiagnosticsAdapter,
         aiChatRuntimeFactory: aiChatRuntimeFactory,
+        telemetryClient: telemetryClient,
         awaitPendingInitialization: pendingInitialization.wait,
         lifecycleObserver: lifecycleObserver,
         disposeLogger: disposeLogger,

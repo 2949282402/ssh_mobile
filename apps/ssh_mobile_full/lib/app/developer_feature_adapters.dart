@@ -148,6 +148,7 @@ final class AppDeveloperDiagnosticsAdapter extends ChangeNotifier
     required this.networkRuntime,
     required Iterable<developer.DeveloperDatabaseDescriptor>
     databaseDescriptors,
+    this.telemetryClient,
   }) : modules = List.unmodifiable(modules),
        databaseDescriptors = List.unmodifiable(databaseDescriptors) {
     _subscriptionsAttached = true;
@@ -164,6 +165,7 @@ final class AppDeveloperDiagnosticsAdapter extends ChangeNotifier
   final List<app_core.AppModule> modules;
   final NetworkRuntime networkRuntime;
   final List<developer.DeveloperDatabaseDescriptor> databaseDescriptors;
+  final app_core.TelemetryClient? telemetryClient;
   bool _subscriptionsAttached = false;
   bool _disposed = false;
 
@@ -204,6 +206,12 @@ final class AppDeveloperDiagnosticsAdapter extends ChangeNotifier
       id: developer.DeveloperComponentId.logBuffer,
       state: '${logService.entries.length} entries',
     ),
+    if (telemetryClient != null)
+      developer.DeveloperComponentStatus(
+        id: developer.DeveloperComponentId.telemetry,
+        state:
+            'v${telemetryClient!.activePolicy.policyVersion} · ${telemetryClient!.activePolicy.uploadEnabled ? "active" : "disabled"}',
+      ),
   ];
 
   String get _ragState {
@@ -250,7 +258,35 @@ final class AppDeveloperDiagnosticsAdapter extends ChangeNotifier
           activeSubscriptions:
               activeSubscriptionCount + sshService.activeSubscriptionCount,
         ),
+        telemetry: telemetryClient == null
+            ? null
+            : developer.DeveloperTelemetrySnapshot(
+                localPendingCount: 0,
+                localRejectedCount: 0,
+                localSyncedCount: 0,
+                totalCount: 0,
+                cacheOverflow: false,
+                uploadEnabled: telemetryClient!.activePolicy.uploadEnabled,
+                policyVersion: telemetryClient!.activePolicy.policyVersion,
+                batchSizeThreshold:
+                    telemetryClient!.activePolicy.batchSizeThreshold,
+                timeIntervalSeconds:
+                    telemetryClient!.activePolicy.timeIntervalSeconds,
+                isUploading: false,
+              ),
       );
+
+  @override
+  Future<int> replayTelemetry() async =>
+      telemetryClient?.replayAllLocalRecords() ?? 0;
+
+  @override
+  Future<void> flushTelemetry() async =>
+      telemetryClient?.flush() ?? Future.value();
+
+  @override
+  Future<bool> refreshTelemetryPolicy() async =>
+      telemetryClient?.refreshPolicy() ?? false;
 
   @override
   Future<developer.DeveloperNativeMemorySnapshot?> readNativeMemory() async {

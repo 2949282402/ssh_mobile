@@ -94,6 +94,25 @@ final class DeveloperPanelViewModel extends ChangeNotifier {
     return '—';
   }
 
+  // ── Telemetry actions ──
+
+  Future<int> replayTelemetry() async {
+    final count = await _diagnostics.replayTelemetry();
+    notifyListeners();
+    return count;
+  }
+
+  Future<void> flushTelemetry() async {
+    await _diagnostics.flushTelemetry();
+    notifyListeners();
+  }
+
+  Future<bool> refreshTelemetryPolicy() async {
+    final result = await _diagnostics.refreshTelemetryPolicy();
+    notifyListeners();
+    return result;
+  }
+
   // ── Lifecycle ──
 
   void start() {

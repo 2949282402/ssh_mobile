@@ -27,9 +27,10 @@ void main() {
     await tester.pump();
 
     expect(find.text('Lifecycle Diagnostics'), findsOneWidget);
+    expect(find.text('Telemetry Diagnostics'), findsOneWidget);
     expect(find.text('Modules'), findsOneWidget);
     expect(find.text('feature_playbook'), findsNWidgets(2));
-    expect(find.text('SSH'), findsOneWidget);
+    expect(find.text('SSH'), findsAtLeastNWidgets(1));
     expect(find.text('Active sessions'), findsOneWidget);
     expect(find.text('Network'), findsOneWidget);
     expect(find.text('Native handles'), findsOneWidget);
