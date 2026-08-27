@@ -394,13 +394,14 @@ final class NetworkTelemetryBridge {
   }
 
   void _recordQuicConnected(String traceId, int? rttMs) {
+    _pruneConnectedTraces();
     final now = _clock();
     final previous = _quicConnectedTraces[traceId];
     if (previous != null &&
-        now.difference(previous) < const Duration(minutes: 5)) {
+        now.difference(previous) < traceRegistry.bindingTtl) {
       return;
     }
-    _quicConnectedTraces[traceId] = now;
+    _rememberConnectedTrace(_quicConnectedTraces, traceId, now);
     _enqueueRecord(
       () => telemetryClient.record(
         event: TelemetryEvents.networkQuicConnected,
@@ -414,25 +415,44 @@ final class NetworkTelemetryBridge {
   }
 
   void _recordRelayConnected(String traceId) {
+    _pruneConnectedTraces();
     final now = _clock();
     final previous = _relayConnectedTraces[traceId];
     if (previous != null &&
-        now.difference(previous) < const Duration(minutes: 5)) {
+        now.difference(previous) < traceRegistry.bindingTtl) {
       return;
     }
-    _relayConnectedTraces[traceId] = now;
-    if (_relayConnectedTraces.length > _maxPeerContexts) {
-      final oldest = _relayConnectedTraces.entries.reduce(
-        (left, right) => left.value.isBefore(right.value) ? left : right,
-      );
-      _relayConnectedTraces.remove(oldest.key);
-    }
+    _rememberConnectedTrace(_relayConnectedTraces, traceId, now);
     _enqueueRecord(
       () => telemetryClient.record(
         event: TelemetryEvents.networkRelayConnected,
         traceId: traceId,
         properties: {'relay_region': _relayRegion()},
       ),
+    );
+  }
+
+  void _rememberConnectedTrace(
+    Map<String, DateTime> traces,
+    String traceId,
+    DateTime touchedAt,
+  ) {
+    traces[traceId] = touchedAt;
+    if (traces.length <= _maxPeerContexts) return;
+    final oldest = traces.entries.reduce(
+      (left, right) =>
+          left.value.isBefore(right.value) ? left : right,
+    );
+    traces.remove(oldest.key);
+  }
+
+  void _pruneConnectedTraces() {
+    final cutoff = _clock().subtract(traceRegistry.bindingTtl);
+    _quicConnectedTraces.removeWhere(
+      (_, touchedAt) => !touchedAt.isAfter(cutoff),
+    );
+    _relayConnectedTraces.removeWhere(
+      (_, touchedAt) => !touchedAt.isAfter(cutoff),
     );
   }
 

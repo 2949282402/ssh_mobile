@@ -69,6 +69,96 @@ void main() {
     });
 
     test(
+      'bounds quic deduplication and re-records an expired trace once',
+      () async {
+        const churnCount = 257;
+        final start = now;
+
+        for (var index = 0; index < churnCount; index++) {
+          now = start.add(Duration(milliseconds: index));
+          final peerId = 'peer-$index';
+          final traceId = 'trace-$index';
+          traces.bindPeer(peerId: peerId, traceId: traceId);
+          events.add(
+            RouteChanged(
+              eventId: 'churn-$index',
+              timestamp: now,
+              snapshot: SdkRouteSnapshot(
+                peerId: peerId,
+                routeType: NetworkRouteType.quicDirect,
+              ),
+            ),
+          );
+          await _settle();
+        }
+
+        var records = (await harness
+            .recordsByName())[TelemetryEvents.networkQuicConnected.name]!;
+        expect(records, hasLength(churnCount));
+
+        // The oldest entry is evicted after the 257th successful operation,
+        // while the newest entry remains deduplicated at the same instant.
+        now = start.add(const Duration(milliseconds: churnCount));
+        traces.bindPeer(peerId: 'peer-0', traceId: 'trace-0');
+        events.add(
+          RouteChanged(
+            eventId: 'evicted',
+            timestamp: now,
+            snapshot: const SdkRouteSnapshot(
+              peerId: 'peer-0',
+              routeType: NetworkRouteType.quicDirect,
+            ),
+          ),
+        );
+        await _settle();
+        records = (await harness
+            .recordsByName())[TelemetryEvents.networkQuicConnected.name]!;
+        expect(records, hasLength(churnCount + 1));
+
+        traces.bindPeer(peerId: 'peer-256', traceId: 'trace-256');
+        events.add(
+          RouteChanged(
+            eventId: 'duplicate',
+            timestamp: now,
+            snapshot: const SdkRouteSnapshot(
+              peerId: 'peer-256',
+              routeType: NetworkRouteType.quicDirect,
+            ),
+          ),
+        );
+        await _settle();
+        records = (await harness
+            .recordsByName())[TelemetryEvents.networkQuicConnected.name]!;
+        expect(records, hasLength(churnCount + 1));
+
+        now = now.add(traces.bindingTtl + const Duration(milliseconds: 1));
+        traces.bindPeer(peerId: 'peer-256', traceId: 'trace-256');
+        events.add(
+          RouteChanged(
+            eventId: 'expired',
+            timestamp: now,
+            snapshot: const SdkRouteSnapshot(
+              peerId: 'peer-256',
+              routeType: NetworkRouteType.quicDirect,
+            ),
+          ),
+        );
+        await _settle();
+        records = (await harness
+            .recordsByName())[TelemetryEvents.networkQuicConnected.name]!;
+        expect(records, hasLength(churnCount + 2));
+        expect(
+          records.where((record) => record.traceId == 'trace-0'),
+          hasLength(2),
+        );
+        expect(
+          records.where((record) => record.traceId == 'trace-256'),
+          hasLength(2),
+        );
+      },
+    );
+
+    test(
       'route evaluated as relay records relay connected with shared trace',
       () async {
         traces.bindPeer(peerId: 'peer-a', traceId: 'trace-a');
