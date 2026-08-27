@@ -449,7 +449,7 @@ func (s *MySQLStore) QueryOverview(ctx context.Context, filter QueryFilter) (*Ov
 	// Trends
 	trendWhere, trendArgs := combineWhere("")
 	trendQuery := `
-		SELECT DATE_FORMAT(received_at, '%Y-%m-%d %H:00') as hr, COUNT(*)
+		SELECT DATE_FORMAT(received_at, '%Y-%m-%dT%H:00:00Z') as hr, COUNT(*)
 		FROM telemetry_events
 	` + trendWhere + `
 		GROUP BY hr
@@ -470,7 +470,7 @@ func (s *MySQLStore) QueryOverview(ctx context.Context, filter QueryFilter) (*Ov
 
 	errWhere, errArgs := combineWhere("severity IN ('error', 'critical')")
 	errQuery := `
-		SELECT DATE_FORMAT(received_at, '%Y-%m-%d %H:00') as hr, COUNT(*)
+		SELECT DATE_FORMAT(received_at, '%Y-%m-%dT%H:00:00Z') as hr, COUNT(*)
 		FROM telemetry_events
 	` + errWhere + `
 		GROUP BY hr
@@ -529,6 +529,7 @@ func (s *MySQLStore) GetSettings(ctx context.Context) (*TelemetrySettings, error
 }
 
 func (s *MySQLStore) SaveSettings(ctx context.Context, settings TelemetrySettings) error {
+	SanitizeSettings(&settings)
 	now := time.Now().UTC()
 	settings.UpdatedAt = now
 	data, err := json.Marshal(settings)

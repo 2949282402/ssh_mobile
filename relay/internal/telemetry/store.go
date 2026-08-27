@@ -294,7 +294,7 @@ func (m *MemoryStore) QueryOverview(ctx context.Context, filter QueryFilter) (*O
 			}
 		}
 
-		hourKey := env.ReceivedAt.Format("2006-01-02 15:00")
+		hourKey := env.ReceivedAt.UTC().Format("2006-01-02T15:00:00Z")
 		hourlyEvents[hourKey]++
 		if env.Severity == SeverityError || env.Severity == SeverityCritical {
 			hourlyErrors[hourKey]++
@@ -343,10 +343,10 @@ func (m *MemoryStore) QueryOverview(ctx context.Context, filter QueryFilter) (*O
 		EventsTrend:              eventsTrend,
 		ErrorsTrend:              errorsTrend,
 		PipelineHealth: PipelineHealthStats{
-			Status:                "healthy",
-			ServerIngestLatencyMs: 12.5,
+			Status:                "degraded",
+			ServerIngestLatencyMs: 1.5,
 			ServerIngestErrorRate: 0.0,
-			RedisCacheStatus:      "active",
+			RedisCacheStatus:      "disabled",
 		},
 	}, nil
 }
@@ -361,6 +361,7 @@ func (m *MemoryStore) GetSettings(ctx context.Context) (*TelemetrySettings, erro
 func (m *MemoryStore) SaveSettings(ctx context.Context, settings TelemetrySettings) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	SanitizeSettings(&settings)
 	settings.UpdatedAt = time.Now().UTC()
 	m.settings = settings
 	return nil

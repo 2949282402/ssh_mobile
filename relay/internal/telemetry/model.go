@@ -138,3 +138,31 @@ func DefaultSettings() TelemetrySettings {
 		UpdatedAt:            time.Now().UTC(),
 	}
 }
+
+// SanitizeSettings validates and clamps configuration values to safe bounds.
+func SanitizeSettings(s *TelemetrySettings) {
+	if s.Policy.BatchSizeThreshold < 1 {
+		s.Policy.BatchSizeThreshold = 50
+	}
+	if s.Policy.TimeIntervalSeconds < 5 {
+		s.Policy.TimeIntervalSeconds = 60
+	}
+	if s.Policy.MaxBatchSize < 1 {
+		s.Policy.MaxBatchSize = 100
+	}
+	if s.Policy.ClientMaxLocalRecords < 100 {
+		s.Policy.ClientMaxLocalRecords = 10000
+	}
+	if s.RetentionDays < 1 {
+		s.RetentionDays = 30
+	}
+	if s.RetentionMaxRows < 1000 {
+		s.RetentionMaxRows = 500000
+	}
+	if s.RedisMaxRecords < 10 {
+		s.RedisMaxRecords = 1000
+	}
+	if s.UpdatedAt.IsZero() {
+		s.UpdatedAt = time.Now().UTC()
+	}
+}

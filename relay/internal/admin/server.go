@@ -3,6 +3,7 @@
 package admin
 
 import (
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -56,7 +57,7 @@ func NewServerWithClientAndTelemetry(config Config, client RelayManagementClient
 			var err error
 			store, err = telemetry.NewMySQLStoreFromDSN(config.TelemetryMySQLDSN, catalog)
 			if err != nil {
-				// Fallback to memory store if MySQL connection fails
+				log.Printf("[admin-telemetry] WARNING: Failed to connect to MySQL (%v), falling back to degraded in-memory store", err)
 				store = telemetry.NewMemoryStore(catalog)
 			}
 		} else {
@@ -68,6 +69,7 @@ func NewServerWithClientAndTelemetry(config Config, client RelayManagementClient
 			var err error
 			redisCache, err = telemetry.NewRedisClientCacheFromURL(config.TelemetryRedisURL, "")
 			if err != nil {
+				log.Printf("[admin-telemetry] WARNING: Failed to connect to Redis (%v), falling back to NoopRedisCache", err)
 				redisCache = &telemetry.NoopRedisCache{}
 			}
 		} else {
