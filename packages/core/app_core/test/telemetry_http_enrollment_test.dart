@@ -110,6 +110,62 @@ void main() {
     },
   );
 
+  test('rejects a 2xx upload response that omits results', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) async {
+      await utf8.decodeStream(request);
+      request.response
+        ..statusCode = HttpStatus.ok
+        ..headers.contentType = ContentType.json
+        ..write('{}');
+      await request.response.close();
+    });
+    final httpClient = HttpClient();
+    final transport = HttpTelemetryTransport(
+      client: httpClient,
+      allowLoopbackHttp: true,
+    );
+    final event = TelemetryEvents.sshSessionStarted;
+    final record = TelemetryEventRecord(
+      eventId: 'evt-missing-results',
+      recordType: event.recordType,
+      eventName: event.name,
+      eventVersion: event.version,
+      deviceId: 'device-http',
+      sessionId: 'session-http',
+      traceId: 'trace-http',
+      occurredAt: DateTime.utc(2026, 8, 28),
+      feature: event.feature,
+      severity: event.severity,
+      appVersion: '1.0.0',
+      buildNumber: '1',
+      platform: 'linux',
+    );
+    addTearDown(() async {
+      await subscription.cancel();
+      await server.close(force: true);
+      httpClient.close(force: true);
+    });
+
+    await expectLater(
+      transport.uploadBatch(
+        baseUrl: 'http://127.0.0.1:${server.port}',
+        authToken: 'test-token',
+        deviceId: 'device-http',
+        records: [record],
+      ),
+      throwsA(
+        isA<TelemetryUploadException>()
+            .having((error) => error.statusCode, 'statusCode', 502)
+            .having(
+              (error) => error.errorCode,
+              'errorCode',
+              'INVALID_RESPONSE',
+            ),
+      ),
+    );
+  });
+
   test(
     'does not replay enrollment credentials across an HTTP redirect',
     () async {

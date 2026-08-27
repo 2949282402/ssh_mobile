@@ -257,12 +257,202 @@ void main() {
         await client.dispose();
       },
     );
+
+    test(
+      'gates a queued trigger behind the failed upload retry delay',
+      () async {
+        final timers = _FakeTelemetryTimerFactory();
+        final transport = _ScriptedTelemetryTransport(
+          firstUploadGate: Completer<void>(),
+          uploadOutcomes: [
+            const TelemetryUploadException(
+              'rate limited',
+              statusCode: 429,
+              retryAfterSeconds: 7,
+            ),
+            null,
+          ],
+        );
+        final client = _buildClient(timers, transport);
+
+        await client.record(event: TelemetryEvents.sshSessionStarted);
+        final first = client.flush();
+        await transport.firstUploadStarted.future;
+
+        await client.record(
+          event: TelemetryEvents.sshSessionStarted,
+          properties: const {'session_type': 'queued-after-failure'},
+        );
+        final queued = client.flush();
+        expect(identical(first, queued), isTrue);
+
+        transport.firstUploadGate!.complete();
+        await timers.oneShotScheduled.future;
+
+        expect(transport.uploadCalls, 1);
+        expect(timers.oneShotTimers, hasLength(1));
+        expect(
+          timers.oneShotTimers.single.duration,
+          const Duration(seconds: 7),
+        );
+        expect(timers.oneShotTimers.single.isActive, isTrue);
+
+        await timers.oneShotTimers.single.fire();
+        await Future.wait([first, queued]);
+
+        expect(transport.uploadCalls, 2);
+        expect(await client.storage.fetchPendingBatch(10), isEmpty);
+
+        await client.dispose();
+      },
+    );
+
+    test(
+      'partial ACKs sync acknowledged rows and retry unacknowledged rows',
+      () async {
+        final timers = _FakeTelemetryTimerFactory();
+        final transport = _ScriptedTelemetryTransport();
+        final client = _buildClient(timers, transport);
+
+        await client.record(event: TelemetryEvents.sshSessionStarted);
+        await client.record(
+          event: TelemetryEvents.sshSessionStarted,
+          properties: const {'session_type': 'partial-ack'},
+        );
+        final pending = await client.storage.fetchPendingBatch(10);
+        transport.ackResultOutcomes.add([
+          TelemetryAckResult(
+            eventId: pending.first.eventId,
+            status: 'accepted',
+          ),
+        ]);
+        transport.ackResultOutcomes.add(null);
+
+        await client.flush();
+
+        expect(transport.uploadCalls, 1);
+        expect(await client.storage.fetchPendingBatch(10), hasLength(1));
+        expect(timers.oneShotTimers, hasLength(1));
+        expect(timers.oneShotTimers.single.isActive, isTrue);
+
+        await timers.oneShotTimers.single.fire();
+
+        expect(transport.uploadCalls, 2);
+        expect(await client.storage.fetchPendingBatch(10), isEmpty);
+
+        await client.dispose();
+      },
+    );
+
+    test('empty ACK results remain pending and schedule a retry', () async {
+      final timers = _FakeTelemetryTimerFactory();
+      final transport = _ScriptedTelemetryTransport(
+        ackResultOutcomes: [const <TelemetryAckResult>[], null],
+      );
+      final client = _buildClient(timers, transport);
+
+      await client.record(event: TelemetryEvents.sshSessionStarted);
+      await client.flush();
+
+      expect(transport.uploadCalls, 1);
+      expect(await client.storage.fetchPendingBatch(10), hasLength(1));
+      expect(timers.oneShotTimers, hasLength(1));
+      expect(timers.oneShotTimers.single.isActive, isTrue);
+
+      await timers.oneShotTimers.single.fire();
+
+      expect(transport.uploadCalls, 2);
+      expect(await client.storage.fetchPendingBatch(10), isEmpty);
+
+      await client.dispose();
+    });
+
+    test(
+      'flush waits for replay cleanup and its queued follow-up drain',
+      () async {
+        final timers = _FakeTelemetryTimerFactory();
+        final transport = _ScriptedTelemetryTransport(
+          firstUploadGate: Completer<void>(),
+          secondUploadGate: Completer<void>(),
+        );
+        final client = _buildClient(timers, transport);
+
+        await client.record(event: TelemetryEvents.sshSessionStarted);
+        final replay = client.replayAllLocalRecords();
+        await transport.firstUploadStarted.future;
+
+        await client.record(
+          event: TelemetryEvents.sshSessionStarted,
+          properties: const {'session_type': 'replay-follow-up'},
+        );
+        expect(transport.uploadCalls, 1);
+        expect(await client.storage.fetchPendingBatch(10), hasLength(2));
+        final flush = client.flush();
+        var flushCompleted = false;
+        unawaited(flush.then((_) => flushCompleted = true));
+        var replayCompleted = false;
+        unawaited(replay.then((_) => replayCompleted = true));
+
+        transport.firstUploadGate!.complete();
+        await transport.secondUploadStarted.future;
+        await Future<void>.value();
+
+        expect(flushCompleted, isFalse);
+        expect(replayCompleted, isFalse);
+
+        transport.secondUploadGate!.complete();
+        await Future.wait([flush, replay]);
+        expect(flushCompleted, isTrue);
+        expect(replayCompleted, isTrue);
+        expect(transport.uploadCalls, 2);
+        expect(await client.storage.fetchPendingBatch(10), isEmpty);
+
+        await client.dispose();
+      },
+    );
+
+    test(
+      'stale policy 401 does not clear a newer token from upload recovery',
+      () async {
+        final timers = _FakeTelemetryTimerFactory();
+        final transport = _StalePolicyTelemetryTransport();
+        final client = _buildClient(timers, transport);
+
+        await client.record(event: TelemetryEvents.sshSessionStarted);
+        await client.flush();
+        expect(transport.authCalls, 1);
+
+        final policyRefresh = client.refreshPolicy();
+        await transport.policyRequestStarted.future;
+
+        await client.record(
+          event: TelemetryEvents.sshSessionStarted,
+          properties: const {'session_type': 'upload-reauth'},
+        );
+        await client.flush();
+        expect(transport.authCalls, 2);
+
+        transport.policyRequestGate.complete();
+        expect(await policyRefresh, isFalse);
+
+        await client.record(
+          event: TelemetryEvents.sshSessionStarted,
+          properties: const {'session_type': 'token-retained'},
+        );
+        await client.flush();
+
+        expect(transport.authCalls, 2);
+        expect(await client.storage.fetchPendingBatch(10), isEmpty);
+
+        await client.dispose();
+      },
+    );
   });
 }
 
 TelemetryClient _buildClient(
   _FakeTelemetryTimerFactory timers,
-  _ScriptedTelemetryTransport transport, {
+  TelemetryTransport transport, {
   TelemetryStorage? storage,
   TelemetryClientConfig? config,
   int policyFetchIntervalSeconds = 0,
@@ -308,6 +498,7 @@ TelemetryUploadPolicy _policy({int intervalSeconds = 10}) =>
 final class _FakeTelemetryTimerFactory implements TelemetryTimerFactory {
   final List<_FakeTelemetryTimer> oneShotTimers = [];
   final List<_FakeTelemetryTimer> periodicTimers = [];
+  final Completer<void> oneShotScheduled = Completer<void>();
 
   Iterable<_FakeTelemetryTimer> get activeTimers sync* {
     yield* oneShotTimers.where((timer) => timer.isActive);
@@ -318,6 +509,7 @@ final class _FakeTelemetryTimerFactory implements TelemetryTimerFactory {
   TelemetryTimer schedule(Duration duration, TelemetryTimerCallback callback) {
     final timer = _FakeTelemetryTimer(duration, callback, periodic: false);
     oneShotTimers.add(timer);
+    if (!oneShotScheduled.isCompleted) oneShotScheduled.complete();
     return timer;
   }
 
@@ -358,13 +550,21 @@ final class _FakeTelemetryTimer implements TelemetryTimer {
 final class _ScriptedTelemetryTransport implements TelemetryTransport {
   _ScriptedTelemetryTransport({
     this.firstUploadGate,
+    this.secondUploadGate,
     Iterable<TelemetryUploadException?> uploadOutcomes = const [],
+    Iterable<List<TelemetryAckResult>?> ackResultOutcomes = const [],
     this.remotePolicy,
-  }) : uploadOutcomes = List<TelemetryUploadException?>.from(uploadOutcomes);
+  }) : uploadOutcomes = List<TelemetryUploadException?>.from(uploadOutcomes),
+       ackResultOutcomes = List<List<TelemetryAckResult>?>.from(
+         ackResultOutcomes,
+       );
 
   final Completer<void>? firstUploadGate;
+  final Completer<void>? secondUploadGate;
   final Completer<void> firstUploadStarted = Completer<void>();
+  final Completer<void> secondUploadStarted = Completer<void>();
   final List<TelemetryUploadException?> uploadOutcomes;
+  final List<List<TelemetryAckResult>?> ackResultOutcomes;
   final TelemetryUploadPolicy? remotePolicy;
   final List<List<TelemetryEventRecord>> uploadedBatches = [];
   int uploadCalls = 0;
@@ -418,11 +618,90 @@ final class _ScriptedTelemetryTransport implements TelemetryTransport {
       firstUploadStarted.complete();
       await firstUploadGate!.future;
     }
+    if (uploadCalls == 2 && secondUploadGate != null) {
+      secondUploadStarted.complete();
+      await secondUploadGate!.future;
+    }
     if (uploadOutcomes.isNotEmpty) {
       final outcome = uploadOutcomes.removeAt(0);
       if (outcome != null) throw outcome;
     }
     uploadedBatches.add(List<TelemetryEventRecord>.from(records));
+    if (ackResultOutcomes.isNotEmpty) {
+      final ackResults = ackResultOutcomes.removeAt(0);
+      if (ackResults != null) {
+        return TelemetryBatchUploadResult(ackResults: ackResults);
+      }
+    }
+    return TelemetryBatchUploadResult(
+      ackResults: [
+        for (final record in records)
+          TelemetryAckResult(eventId: record.eventId, status: 'accepted'),
+      ],
+    );
+  }
+}
+
+final class _StalePolicyTelemetryTransport implements TelemetryTransport {
+  final Completer<void> policyRequestGate = Completer<void>();
+  final Completer<void> policyRequestStarted = Completer<void>();
+  int authCalls = 0;
+  int uploadCalls = 0;
+
+  @override
+  Future<TelemetryAuthResult?> authenticateDevice({
+    required String baseUrl,
+    required String deviceId,
+    required String platform,
+    required String appVersion,
+    String? authSecret,
+    int? expEpoch,
+  }) async {
+    authCalls++;
+    return TelemetryAuthResult(
+      token: 'policy-token-$authCalls',
+      expiresInSeconds: 3600,
+    );
+  }
+
+  @override
+  Future<TelemetryEnrollmentResult?> enrollDevice({
+    required String baseUrl,
+    required String deviceId,
+    required TelemetryDeviceEnrollmentRequest request,
+  }) async => null;
+
+  @override
+  Future<TelemetryEnrollmentResult?> rotateDevice({
+    required String baseUrl,
+    required String deviceId,
+    required TelemetryDeviceEnrollmentRequest request,
+  }) async => null;
+
+  @override
+  Future<TelemetryUploadPolicy?> fetchRemotePolicy({
+    required String baseUrl,
+    required String authToken,
+  }) async {
+    policyRequestStarted.complete();
+    await policyRequestGate.future;
+    throw const TelemetryUploadException('stale policy token', statusCode: 401);
+  }
+
+  @override
+  Future<TelemetryBatchUploadResult> uploadBatch({
+    required String baseUrl,
+    required String authToken,
+    required String deviceId,
+    required List<TelemetryEventRecord> records,
+  }) async {
+    uploadCalls++;
+    if (authToken == 'policy-token-1' && uploadCalls == 2) {
+      throw const TelemetryUploadException(
+        'expired upload token',
+        statusCode: 401,
+      );
+    }
     return TelemetryBatchUploadResult(
       ackResults: [
         for (final record in records)

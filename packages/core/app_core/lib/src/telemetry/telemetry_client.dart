@@ -624,15 +624,30 @@ class HttpTelemetryTransport implements TelemetryTransport {
     if (res.statusCode >= 200 && res.statusCode < 300) {
       try {
         final data = jsonDecode(resBody) as Map<String, dynamic>;
-        final resultsJson = data['results'] as List<dynamic>? ?? [];
-        return TelemetryBatchUploadResult(
-          ackResults: resultsJson
-              .map(
-                (item) =>
-                    TelemetryAckResult.fromJson(item as Map<String, dynamic>),
-              )
-              .toList(),
-        );
+        final rawResults = data['results'];
+        if (rawResults is! List<dynamic>) {
+          throw const FormatException('missing telemetry upload results');
+        }
+        final expectedIds = records.map((record) => record.eventId).toSet();
+        final seenIds = <String>{};
+        final resultsJson = rawResults.map((item) {
+          if (item is! Map) {
+            throw const FormatException('invalid telemetry upload result');
+          }
+          final result = Map<String, dynamic>.from(item);
+          final eventId = result['eventId'];
+          final status = result['status'];
+          if (eventId is! String ||
+              eventId.isEmpty ||
+              status is! String ||
+              !_isKnownTelemetryAckStatus(status) ||
+              !expectedIds.contains(eventId) ||
+              !seenIds.add(eventId)) {
+            throw const FormatException('invalid telemetry upload ACK');
+          }
+          return TelemetryAckResult.fromJson(result);
+        }).toList();
+        return TelemetryBatchUploadResult(ackResults: resultsJson);
       } on Object {
         throw const TelemetryUploadException(
           'Telemetry upload response is invalid',
@@ -740,6 +755,9 @@ String? _safeTelemetryErrorCode(Object? value) {
   return value;
 }
 
+bool _isKnownTelemetryAckStatus(String status) =>
+    status == 'accepted' || status == 'already_seen' || status == 'rejected';
+
 /// 客户端事件构建与上传分发器。
 ///
 /// 状态机：
@@ -791,6 +809,7 @@ class TelemetryClient {
   String? _telemetrySecret;
   String? _authToken;
   DateTime? _authTokenExpiresAt;
+  int _authTokenGeneration = 0;
   Future<void>? _authenticationFuture;
   Future<void>? _uploadFuture;
   Future<bool>? _policyRefreshFuture;
@@ -807,6 +826,7 @@ class TelemetryClient {
   Future<void>? _disposeFuture;
   bool _uploadRequested = false;
   bool _policyRefreshRequested = false;
+  Completer<void>? _retryWaitCompleter;
   TelemetryTimer? _periodicFlushTimer;
   TelemetryTimer? _retryTimer;
   TelemetryTimer? _policyRefreshTimer;
@@ -847,6 +867,18 @@ class TelemetryClient {
       _authToken!.isNotEmpty &&
       _authTokenExpiresAt != null &&
       _authTokenExpiresAt!.isAfter(_now());
+
+  void _clearAuthToken() {
+    _authToken = null;
+    _authTokenExpiresAt = null;
+    _authTokenGeneration++;
+  }
+
+  void _setAuthToken(String token, DateTime expiresAt) {
+    _authToken = token;
+    _authTokenExpiresAt = expiresAt;
+    _authTokenGeneration++;
+  }
 
   /// Records an event using the generated definition as the only metadata
   /// source. Business callers cannot override name, version, record type,
@@ -1126,15 +1158,20 @@ class TelemetryClient {
   }
 
   Future<bool> _refreshPolicyOnce() async {
+    String? requestedToken;
+    var requestedTokenGeneration = _authTokenGeneration;
     try {
       await _ensureAuthenticated();
       if (!_hasValidToken) {
         return false;
       }
 
+      requestedToken = _authToken;
+      requestedTokenGeneration = _authTokenGeneration;
+
       final policy = await transport.fetchRemotePolicy(
         baseUrl: config.baseUrl,
-        authToken: _authToken!,
+        authToken: requestedToken!,
       );
 
       if (policy != null) {
@@ -1145,9 +1182,12 @@ class TelemetryClient {
       }
     } catch (e) {
       _lastSyncError = _describeError(e);
-      if (e is TelemetryUploadException && e.isUnauthorized) {
-        _authToken = null;
-        _authTokenExpiresAt = null;
+      if (e is TelemetryUploadException &&
+          e.isUnauthorized &&
+          requestedToken != null &&
+          requestedTokenGeneration == _authTokenGeneration &&
+          requestedToken == _authToken) {
+        _clearAuthToken();
       }
     }
     return false;
@@ -1174,8 +1214,7 @@ class TelemetryClient {
   Future<void> _authenticate() async {
     // A failed refresh must not leave an expired token usable by a caller that
     // only checks for a non-empty string.
-    _authToken = null;
-    _authTokenExpiresAt = null;
+    _clearAuthToken();
     var secret = _telemetrySecret;
     if (secret == null || secret.isEmpty) {
       try {
@@ -1223,9 +1262,9 @@ class TelemetryClient {
 
     // The server response is the source of truth. Do not substitute
     // TelemetryClientConfig.authTokenTtlSeconds here.
-    _authToken = result.token;
-    _authTokenExpiresAt = _now().add(
-      Duration(seconds: result.expiresInSeconds),
+    _setAuthToken(
+      result.token,
+      _now().add(Duration(seconds: result.expiresInSeconds)),
     );
   }
 
@@ -1330,10 +1369,15 @@ class TelemetryClient {
     }
 
     _uploadRequested = true;
-    _cancelRetryTimer();
 
     final inFlight = _uploadFuture;
     if (inFlight != null) return inFlight;
+
+    // An explicit trigger is allowed to supersede a retry that is already
+    // waiting, but a trigger that arrived during the failed upload is already
+    // represented by the in-flight future above and must not cancel that
+    // retry window.
+    _cancelRetryTimer();
 
     _isUploading = true;
     final operation = _drainUploadRequests();
@@ -1347,6 +1391,12 @@ class TelemetryClient {
     while (_uploadRequested) {
       _uploadRequested = false;
       await _flushWithToken();
+
+      final retryWait = _retryWaitCompleter?.future;
+      if (_retryTimer != null && _uploadRequested && retryWait != null) {
+        await retryWait;
+      }
+      if (_retryTimer != null) return;
     }
   }
 
@@ -1354,7 +1404,10 @@ class TelemetryClient {
     if (!identical(_uploadFuture, operation)) return;
     _uploadFuture = null;
     _isUploading = false;
-    if (_uploadRequested && !_isDisposed && activePolicy.uploadEnabled) {
+    if (_uploadRequested &&
+        _retryTimer == null &&
+        !_isDisposed &&
+        activePolicy.uploadEnabled) {
       // A timer or replay trigger can race the final completion callback. Keep
       // that request durable by starting another shared drain immediately.
       unawaited(_requestUpload());
@@ -1408,7 +1461,7 @@ class TelemetryClient {
         records: pending,
       );
 
-      if (!await _applyUploadResult(result)) return;
+      if (!await _applyUploadResult(result, records: pending)) return;
 
       _cancelRetryTimer();
       _lastSyncTime = _now();
@@ -1417,8 +1470,7 @@ class TelemetryClient {
     } on TelemetryUploadException catch (e) {
       if (e.isUnauthorized) {
         // 清除失效令牌，只重认证一次后重试本批。
-        _authToken = null;
-        _authTokenExpiresAt = null;
+        _clearAuthToken();
         try {
           await _ensureAuthenticated();
         } catch (authError) {
@@ -1436,7 +1488,7 @@ class TelemetryClient {
             deviceId: config.deviceId,
             records: pending,
           );
-          if (!await _applyUploadResult(retried)) return;
+          if (!await _applyUploadResult(retried, records: pending)) return;
           _cancelRetryTimer();
           _lastSyncTime = _now();
           _lastSyncError = null;
@@ -1481,10 +1533,48 @@ class TelemetryClient {
 
   Future<bool> _applyUploadResult(
     TelemetryBatchUploadResult result, {
+    required List<TelemetryEventRecord> records,
     bool purge = true,
   }) async {
+    final expectedIds = records.map((record) => record.eventId).toSet();
+    final acknowledgedIds = <String>{};
+    final validAcks = <TelemetryAckResult>[];
+    var invalidResponse = expectedIds.length != records.length;
+    for (final ack in result.ackResults) {
+      if (!_isKnownTelemetryAckStatus(ack.status) ||
+          !expectedIds.contains(ack.eventId) ||
+          !acknowledgedIds.add(ack.eventId)) {
+        invalidResponse = true;
+        continue;
+      }
+      validAcks.add(ack);
+    }
+
+    const invalidAckError = TelemetryUploadException(
+      'Telemetry upload response is invalid',
+      statusCode: 502,
+      errorCode: 'INVALID_RESPONSE',
+    );
+    if (invalidResponse) {
+      // Any ambiguous ACK (duplicate, unknown ID, or unknown status) is
+      // fail-closed: do not advance even the otherwise valid subset.
+      await _handleUploadFailure(records, invalidAckError);
+      return false;
+    }
+
+    final unacknowledged = records
+        .where((record) => !acknowledgedIds.contains(record.eventId))
+        .toList();
     try {
-      await storage.applyAckResults(result.ackResults);
+      if (validAcks.isNotEmpty) {
+        await storage.applyAckResults(validAcks);
+      }
+      if (unacknowledged.isNotEmpty) {
+        // A valid partial response is useful progress, but only its
+        // acknowledged rows may advance. Retry the missing rows independently.
+        await _handleUploadFailure(unacknowledged, invalidAckError);
+        return false;
+      }
       if (purge) {
         await storage.purgeOldSyncedRecords(
           targetCapacity: activePolicy.clientMaxLocalRecords,
@@ -1554,16 +1644,28 @@ class TelemetryClient {
 
     if (_isDisposed) return;
     _cancelRetryTimer();
+    _retryWaitCompleter = Completer<void>();
     _retryTimer = _timerFactory.schedule(Duration(milliseconds: delayMs), () {
       _retryTimer = null;
+      final retryWait = _retryWaitCompleter;
+      _retryWaitCompleter = null;
+      if (retryWait != null && !retryWait.isCompleted) {
+        retryWait.complete();
+      }
       if (_isDisposed) return Future<void>.value();
-      return _requestUpload();
+      if (_uploadFuture == null) return _requestUpload();
+      return Future<void>.value();
     });
   }
 
   void _cancelRetryTimer() {
     _retryTimer?.cancel();
     _retryTimer = null;
+    final retryWait = _retryWaitCompleter;
+    _retryWaitCompleter = null;
+    if (retryWait != null && !retryWait.isCompleted) {
+      retryWait.complete();
+    }
   }
 
   static String _describeError(Object error) {
@@ -1589,10 +1691,19 @@ class TelemetryClient {
     _cancelRetryTimer();
     _isUploading = true;
 
-    final operation = _replayAllLocalRecords();
+    final operation = _replayAndDrainFollowUps();
     final trackedOperation = operation.then<void>((_) {});
     _uploadFuture = trackedOperation;
     return operation.whenComplete(() => _completeUpload(trackedOperation));
+  }
+
+  Future<int> _replayAndDrainFollowUps() async {
+    final replayed = await _replayAllLocalRecords();
+    // A normal flush may have been requested while replay held the single
+    // flight. Keep that request on the same completion future so callers do
+    // not observe replay completion before the follow-up batch is drained.
+    await _drainUploadRequests();
+    return replayed;
   }
 
   Future<int> _replayAllLocalRecords() async {
@@ -1630,7 +1741,9 @@ class TelemetryClient {
           records: batch,
         );
 
-        if (!await _applyUploadResult(result, purge: false)) return 0;
+        if (!await _applyUploadResult(result, records: batch, purge: false)) {
+          return 0;
+        }
         totalReplayed += batch.length;
       }
 
@@ -1649,8 +1762,7 @@ class TelemetryClient {
     } catch (e) {
       _lastSyncError = _describeError(e);
       if (e is TelemetryUploadException && e.isUnauthorized) {
-        _authToken = null;
-        _authTokenExpiresAt = null;
+        _clearAuthToken();
       }
       return 0;
     }
