@@ -25,6 +25,14 @@ const TIME_RANGES: Array<{ label: string; value: TelemetryFilter['timeRange'] }>
   { label: '全部', value: 'all' },
 ];
 
+const TIME_RANGE_SECONDS: Record<TelemetryFilter['timeRange'], number | null> = {
+  '1h': 3600,
+  '24h': 86400,
+  '7d': 604800,
+  '30d': 2592000,
+  all: null,
+};
+
 function formatTrendTime(timestamp: string): string {
   try {
     const isoStr = timestamp.includes('T') ? timestamp : `${timestamp.replace(' ', 'T')}Z`;
@@ -36,6 +44,44 @@ function formatTrendTime(timestamp: string): string {
   } catch {
     return timestamp;
   }
+}
+
+function formatLatency(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '无数据';
+  if (value >= 1000) return `${(value / 1000).toFixed(2)}s`;
+  return `${value.toFixed(0)}ms`;
+}
+
+function formatThroughput(events: number, seconds: number | null): string {
+  if (events <= 0) return '0/s';
+  if (seconds === null || seconds <= 0) {
+    // For "all time" the window span is unknown; report the total count instead.
+    return `${events}`;
+  }
+  const perSecond = events / seconds;
+  if (perSecond >= 100) return `${Math.round(perSecond)}/s`;
+  if (perSecond >= 10) return `${perSecond.toFixed(1)}/s`;
+  return `${perSecond.toFixed(2)}/s`;
+}
+
+function latencyDetailLabel(samples: number | undefined): string {
+  if (!samples || samples <= 0) {
+    return 'No operations recorded in this time range';
+  }
+  return `基于 ${samples} 次完成操作采样`;
+}
+
+function redisStatusDetail(status: string): string {
+  if (status === 'active') return '最近诊断日志实时缓存正常';
+  if (status === 'fallback_mysql') return 'Redis 探活失败，诊断流已降级至 MySQL 存储';
+  return 'Redis 未启用，诊断流直接查询 MySQL 持久层';
+}
+
+function latencyAccent(value: number | undefined): 'teal' | 'amber' | 'coral' {
+  if (!value || value <= 0) return 'teal';
+  if (value < 500) return 'teal';
+  if (value < 1500) return 'amber';
+  return 'coral';
 }
 
 export function TelemetryDashboardPage() {
@@ -135,7 +181,7 @@ export function TelemetryDashboardPage() {
           <MetricTile
             label="Redis 诊断流状态"
             value={health.redisCacheStatus}
-            detail={health.redisCacheStatus === 'active' ? '最近诊断日志实时缓存正常' : '降级至 MySQL 存储'}
+            detail={redisStatusDetail(health.redisCacheStatus)}
             accent={health.redisCacheStatus === 'active' ? 'teal' : 'amber'}
             mono
           />
@@ -194,6 +240,44 @@ export function TelemetryDashboardPage() {
         />
       </section>
 
+      {/* Latency Percentiles */}
+      <div className="section-heading" style={{ marginTop: '1.5rem' }}>
+        <div>
+          <p className="eyebrow">Completion Latency</p>
+          <h2>完成操作延迟分位</h2>
+        </div>
+      </div>
+      <section className="metric-grid" aria-label="完成操作延迟分位">
+        <MetricTile
+          label="P50 中位延迟"
+          value={formatLatency(data.latency?.p50Ms ?? 0)}
+          detail={latencyDetailLabel(data.latency?.samples)}
+          accent="teal"
+          mono
+        />
+        <MetricTile
+          label="P95 延迟"
+          value={formatLatency(data.latency?.p95Ms ?? 0)}
+          detail="95% 完成操作不超过该耗时"
+          accent={latencyAccent(data.latency?.p95Ms)}
+          mono
+        />
+        <MetricTile
+          label="P99 延迟"
+          value={formatLatency(data.latency?.p99Ms ?? 0)}
+          detail="99% 完成操作不超过该耗时"
+          accent={latencyAccent(data.latency?.p99Ms)}
+          mono
+        />
+        <MetricTile
+          label="事件吞吐"
+          value={formatThroughput(data.totalEvents, TIME_RANGE_SECONDS[timeRange] ?? TIME_RANGE_SECONDS.all)}
+          detail={`${timeRange === 'all' ? '全部时间' : timeRange} 窗口内上报速率`}
+          accent="teal"
+          mono
+        />
+      </section>
+
       {/* Trend Visualizer */}
       <div className="overview-grid" style={{ marginTop: '1.5rem' }}>
         <section className="panel">
@@ -205,7 +289,7 @@ export function TelemetryDashboardPage() {
             <BarChart3 size={18} aria-hidden="true" />
           </div>
           {data.eventsTrend.length === 0 ? (
-            <p style={{ color: 'var(--muted)', padding: '1rem 0' }}>暂无时间窗口内的趋势采样数据</p>
+            <p style={{ color: 'var(--muted)', padding: '1rem 0' }}>No operations recorded in this time range</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1rem' }}>
               {data.eventsTrend.map((point) => (
@@ -239,7 +323,7 @@ export function TelemetryDashboardPage() {
             <AlertTriangle size={18} aria-hidden="true" />
           </div>
           {data.errorsTrend.length === 0 ? (
-            <p style={{ color: 'var(--muted)', padding: '1rem 0' }}>暂无异常错误趋势采样数据</p>
+            <p style={{ color: 'var(--muted)', padding: '1rem 0' }}>No operations recorded in this time range</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1rem' }}>
               {data.errorsTrend.map((point) => (

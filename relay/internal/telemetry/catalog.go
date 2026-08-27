@@ -3,11 +3,28 @@
 package telemetry
 
 import (
+	"bytes"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 	"sync"
+)
+
+//go:embed contracts/telemetry/events.json
+var defaultEventsJSON []byte
+
+//go:embed contracts/telemetry/error_codes.json
+var defaultErrorCodesJSON []byte
+
+// ContractPaths are the canonical contract source paths relative to the repo
+// root. They are used by LoadContractCatalog for environments that ship the
+// contracts directory (development and the repo CI) and by the stale-checker
+// helpers that keep the embedded copies in sync.
+const (
+	ContractEventsPath = "contracts/telemetry/events.json"
+	ContractErrorsPath = "contracts/telemetry/error_codes.json"
 )
 
 type AllowedProperty struct {
@@ -70,16 +87,35 @@ func LoadCatalogFromFiles(eventsPath, errorsPath string) (*Catalog, error) {
 		return nil, fmt.Errorf("read error codes file: %w", err)
 	}
 
+	return catalogFromJSON(eventsData, errorsData)
+}
+
+// LoadCatalogFromBytes parses catalog definitions from in-memory JSON bytes.
+func LoadCatalogFromBytes(eventsJSON, errorsJSON []byte) (*Catalog, error) {
 	var ep eventsPayload
-	if err := json.Unmarshal(eventsData, &ep); err != nil {
+	if err := json.Unmarshal(eventsJSON, &ep); err != nil {
 		return nil, fmt.Errorf("unmarshal events JSON: %w", err)
 	}
-
 	var ecp errorCodesPayload
-	if err := json.Unmarshal(errorsData, &ecp); err != nil {
+	if err := json.Unmarshal(errorsJSON, &ecp); err != nil {
 		return nil, fmt.Errorf("unmarshal error codes JSON: %w", err)
 	}
+	return catalogFromPayloads(&ep, &ecp), nil
+}
 
+func catalogFromJSON(eventsJSON, errorsJSON []byte) (*Catalog, error) {
+	var ep eventsPayload
+	if err := json.Unmarshal(eventsJSON, &ep); err != nil {
+		return nil, fmt.Errorf("unmarshal events JSON: %w", err)
+	}
+	var ecp errorCodesPayload
+	if err := json.Unmarshal(errorsJSON, &ecp); err != nil {
+		return nil, fmt.Errorf("unmarshal error codes JSON: %w", err)
+	}
+	return catalogFromPayloads(&ep, &ecp), nil
+}
+
+func catalogFromPayloads(ep *eventsPayload, ecp *errorCodesPayload) *Catalog {
 	c := NewCatalog()
 	for _, ev := range ep.Events {
 		c.events[ev.Name] = ev
@@ -87,8 +123,41 @@ func LoadCatalogFromFiles(eventsPath, errorsPath string) (*Catalog, error) {
 	for _, ec := range ecp.ErrorCodes {
 		c.errorCodes[ec.Code] = ec
 	}
+	return c
+}
 
-	return c, nil
+// DefaultCatalog returns the catalog bundled from contracts/telemetry at build
+// time. It is used only as a fallback for package-local constructors; the Admin
+// server wires a contract catalog explicitly.
+func DefaultCatalog() *Catalog {
+	c, err := catalogFromJSON(defaultEventsJSON, defaultErrorCodesJSON)
+	if err != nil {
+		// The embedded contract artifacts are validated by contract_test.go
+		// before release; a parse failure here is a packaging defect.
+		panic(fmt.Sprintf("embedded telemetry contract catalog is invalid: %v", err))
+	}
+	return c
+}
+
+// LoadContractCatalog loads the canonical catalog from the repository contracts
+// directory. It is used by the Admin entry point at runtime.
+func LoadContractCatalog(eventsPath, errorsPath string) (*Catalog, error) {
+	return LoadCatalogFromFiles(eventsPath, errorsPath)
+}
+
+// DefaultCatalogMatchesContract reports whether the embedded catalog is
+// byte-for-byte identical to the contract files at the given paths. It is used
+// by tests and CI to detect contract drift.
+func DefaultCatalogMatchesContract(eventsPath, errorsPath string) bool {
+	eventsData, err := os.ReadFile(eventsPath)
+	if err != nil {
+		return false
+	}
+	errorsData, err := os.ReadFile(errorsPath)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(eventsData, defaultEventsJSON) && bytes.Equal(errorsData, defaultErrorCodesJSON)
 }
 
 // RegisterEvent adds or updates an event definition in the catalog.
@@ -170,297 +239,6 @@ func (c *Catalog) ValidateErrorCode(code string) error {
 		return fmt.Errorf("unregistered error code: %q", code)
 	}
 	return nil
-}
-
-// DefaultCatalog returns a pre-populated Catalog with all standard core events.
-func DefaultCatalog() *Catalog {
-	c := NewCatalog()
-	// Populate default events
-	events := []EventDefinition{
-		{
-			Name:        "app.lifecycle.started",
-			Version:     1,
-			RecordType:  RecordTypeAnalytics,
-			Feature:     "app",
-			Severity:    SeverityInfo,
-			Description: "App started",
-			AllowedProperties: []AllowedProperty{
-				{Name: "start_type", Type: "string"},
-				{Name: "cold_start", Type: "boolean"},
-			},
-		},
-		{
-			Name:        "app.lifecycle.backgrounded",
-			Version:     1,
-			RecordType:  RecordTypeAnalytics,
-			Feature:     "app",
-			Severity:    SeverityInfo,
-			Description: "App backgrounded",
-			AllowedProperties: []AllowedProperty{
-				{Name: "active_sessions", Type: "integer"},
-			},
-		},
-		{
-			Name:        "app.lifecycle.foregrounded",
-			Version:     1,
-			RecordType:  RecordTypeAnalytics,
-			Feature:     "app",
-			Severity:    SeverityInfo,
-			Description: "App foregrounded",
-			AllowedProperties: []AllowedProperty{
-				{Name: "background_duration_ms", Type: "integer"},
-			},
-		},
-		{
-			Name:        "network.quic.connected",
-			Version:     1,
-			RecordType:  RecordTypeAnalytics,
-			Feature:     "network",
-			Severity:    SeverityInfo,
-			Description: "QUIC connected",
-			AllowedProperties: []AllowedProperty{
-				{Name: "rtt_ms", Type: "integer"},
-				{Name: "protocol_version", Type: "string"},
-			},
-		},
-		{
-			Name:        "network.quic.failed",
-			Version:     1,
-			RecordType:  RecordTypeDiagnostic,
-			Feature:     "network",
-			Severity:    SeverityWarn,
-			Description: "QUIC failed",
-			AllowedProperties: []AllowedProperty{
-				{Name: "reason", Type: "string"},
-				{Name: "fallback_used", Type: "boolean"},
-			},
-		},
-		{
-			Name:        "network.relay.connected",
-			Version:     1,
-			RecordType:  RecordTypeAnalytics,
-			Feature:     "network",
-			Severity:    SeverityInfo,
-			Description: "Relay connected",
-			AllowedProperties: []AllowedProperty{
-				{Name: "relay_region", Type: "string"},
-			},
-		},
-		{
-			Name:        "network.relay.fallback",
-			Version:     1,
-			RecordType:  RecordTypeDiagnostic,
-			Feature:     "network",
-			Severity:    SeverityWarn,
-			Description: "Relay fallback",
-			AllowedProperties: []AllowedProperty{
-				{Name: "direct_error", Type: "string"},
-			},
-		},
-		{
-			Name:        "ssh.session.started",
-			Version:     1,
-			RecordType:  RecordTypeAnalytics,
-			Feature:     "ssh",
-			Severity:    SeverityInfo,
-			Description: "SSH session started",
-			AllowedProperties: []AllowedProperty{
-				{Name: "session_type", Type: "string"},
-				{Name: "auth_method", Type: "string"},
-			},
-		},
-		{
-			Name:        "ssh.session.terminated",
-			Version:     1,
-			RecordType:  RecordTypeAnalytics,
-			Feature:     "ssh",
-			Severity:    SeverityInfo,
-			Description: "SSH session terminated",
-			AllowedProperties: []AllowedProperty{
-				{Name: "duration_ms", Type: "integer"},
-				{Name: "exit_code", Type: "integer"},
-			},
-		},
-		{
-			Name:        "ssh.session.failed",
-			Version:     1,
-			RecordType:  RecordTypeDiagnostic,
-			Feature:     "ssh",
-			Severity:    SeverityError,
-			Description: "SSH session failed",
-			AllowedProperties: []AllowedProperty{
-				{Name: "stage", Type: "string"},
-				{Name: "retry_count", Type: "integer"},
-			},
-		},
-		{
-			Name:        "sftp.transfer.started",
-			Version:     1,
-			RecordType:  RecordTypeAnalytics,
-			Feature:     "sftp",
-			Severity:    SeverityInfo,
-			Description: "SFTP transfer started",
-			AllowedProperties: []AllowedProperty{
-				{Name: "direction", Type: "string", Required: true},
-				{Name: "file_size_bytes", Type: "integer"},
-			},
-		},
-		{
-			Name:        "sftp.transfer.completed",
-			Version:     1,
-			RecordType:  RecordTypeAnalytics,
-			Feature:     "sftp",
-			Severity:    SeverityInfo,
-			Description: "SFTP transfer completed",
-			AllowedProperties: []AllowedProperty{
-				{Name: "direction", Type: "string", Required: true},
-				{Name: "bytes_transferred", Type: "integer", Required: true},
-				{Name: "duration_ms", Type: "integer"},
-			},
-		},
-		{
-			Name:        "sftp.transfer.failed",
-			Version:     1,
-			RecordType:  RecordTypeDiagnostic,
-			Feature:     "sftp",
-			Severity:    SeverityError,
-			Description: "SFTP transfer failed",
-			AllowedProperties: []AllowedProperty{
-				{Name: "direction", Type: "string", Required: true},
-				{Name: "bytes_transferred", Type: "integer"},
-				{Name: "stage", Type: "string"},
-			},
-		},
-		{
-			Name:        "lan.discovery.peer_found",
-			Version:     1,
-			RecordType:  RecordTypeAnalytics,
-			Feature:     "lan_share",
-			Severity:    SeverityInfo,
-			Description: "LAN peer found",
-			AllowedProperties: []AllowedProperty{
-				{Name: "peer_count", Type: "integer"},
-			},
-		},
-		{
-			Name:        "lan.transfer.completed",
-			Version:     1,
-			RecordType:  RecordTypeAnalytics,
-			Feature:     "lan_share",
-			Severity:    SeverityInfo,
-			Description: "LAN transfer completed",
-			AllowedProperties: []AllowedProperty{
-				{Name: "bytes_transferred", Type: "integer", Required: true},
-				{Name: "duration_ms", Type: "integer"},
-			},
-		},
-		{
-			Name:        "ai.chat.request",
-			Version:     1,
-			RecordType:  RecordTypeAnalytics,
-			Feature:     "ai",
-			Severity:    SeverityInfo,
-			Description: "AI chat request",
-			AllowedProperties: []AllowedProperty{
-				{Name: "model_type", Type: "string"},
-				{Name: "token_estimate", Type: "integer"},
-			},
-		},
-		{
-			Name:        "ai.chat.response",
-			Version:     1,
-			RecordType:  RecordTypeAnalytics,
-			Feature:     "ai",
-			Severity:    SeverityInfo,
-			Description: "AI chat response",
-			AllowedProperties: []AllowedProperty{
-				{Name: "latency_ms", Type: "integer"},
-				{Name: "status", Type: "string"},
-			},
-		},
-		{
-			Name:        "ai.chat.failed",
-			Version:     1,
-			RecordType:  RecordTypeDiagnostic,
-			Feature:     "ai",
-			Severity:    SeverityError,
-			Description: "AI chat failed",
-			AllowedProperties: []AllowedProperty{
-				{Name: "provider", Type: "string"},
-				{Name: "http_status", Type: "integer"},
-			},
-		},
-		{
-			Name:        "app.diagnostic.log",
-			Version:     1,
-			RecordType:  RecordTypeDiagnostic,
-			Feature:     "app",
-			Severity:    SeverityWarn,
-			Description: "General diagnostic log",
-			AllowedProperties: []AllowedProperty{
-				{Name: "message", Type: "string"},
-				{Name: "category", Type: "string"},
-				{Name: "stage", Type: "string"},
-				{Name: "direct_error", Type: "string"},
-				{Name: "details", Type: "string"},
-			},
-		},
-		{
-			Name:        "telemetry.batch.uploaded",
-			Version:     1,
-			RecordType:  RecordTypeAnalytics,
-			Feature:     "telemetry",
-			Severity:    SeverityInfo,
-			Description: "Telemetry uploaded",
-			AllowedProperties: []AllowedProperty{
-				{Name: "record_count", Type: "integer", Required: true},
-				{Name: "duration_ms", Type: "integer"},
-			},
-		},
-		{
-			Name:        "telemetry.batch.failed",
-			Version:     1,
-			RecordType:  RecordTypeDiagnostic,
-			Feature:     "telemetry",
-			Severity:    SeverityWarn,
-			Description: "Telemetry upload failed",
-			AllowedProperties: []AllowedProperty{
-				{Name: "error_type", Type: "string"},
-				{Name: "http_status", Type: "integer"},
-				{Name: "retry_count", Type: "integer"},
-			},
-		},
-	}
-
-	for _, ev := range events {
-		c.events[ev.Name] = ev
-	}
-
-	// Error codes
-	errors := []ErrorCodeDefinition{
-		{Code: "NET_QUIC_CONN_REFUSED", Category: "network", TerminalFailure: false},
-		{Code: "NET_QUIC_TIMEOUT", Category: "network", TerminalFailure: false},
-		{Code: "NET_RELAY_UNAVAILABLE", Category: "network", TerminalFailure: true},
-		{Code: "SSH_AUTH_FAILED", Category: "ssh", TerminalFailure: true},
-		{Code: "SSH_HOST_KEY_MISMATCH", Category: "ssh", TerminalFailure: true},
-		{Code: "SSH_TIMEOUT", Category: "ssh", TerminalFailure: true},
-		{Code: "SFTP_PERMISSION_DENIED", Category: "sftp", TerminalFailure: true},
-		{Code: "SFTP_FILE_NOT_FOUND", Category: "sftp", TerminalFailure: true},
-		{Code: "SFTP_TRANSFER_ABORTED", Category: "sftp", TerminalFailure: true},
-		{Code: "LAN_PEER_DISCONNECTED", Category: "lan", TerminalFailure: false},
-		{Code: "LAN_HANDSHAKE_FAILED", Category: "lan", TerminalFailure: true},
-		{Code: "AI_RATE_LIMITED", Category: "ai", TerminalFailure: false},
-		{Code: "AI_SERVICE_UNAVAILABLE", Category: "ai", TerminalFailure: true},
-		{Code: "TELEMETRY_AUTH_FAILED", Category: "telemetry", TerminalFailure: true},
-		{Code: "TELEMETRY_NETWORK_ERROR", Category: "telemetry", TerminalFailure: false},
-		{Code: "TELEMETRY_STORAGE_FULL", Category: "telemetry", TerminalFailure: false},
-	}
-
-	for _, ec := range errors {
-		c.errorCodes[ec.Code] = ec
-	}
-
-	return c
 }
 
 // ValidateEnvelope performs full validation on an incoming TelemetryEnvelope.

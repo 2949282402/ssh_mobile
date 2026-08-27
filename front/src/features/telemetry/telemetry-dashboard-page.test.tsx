@@ -29,6 +29,7 @@ const mockOverviewData = {
     { timestamp: '2026-08-27T00:00:00Z', value: 3 },
     { timestamp: '2026-08-27T06:00:00Z', value: 9 },
   ],
+  latency: { p50Ms: 120, p95Ms: 340, p99Ms: 512, samples: 128 },
   pipelineHealth: {
     status: 'healthy',
     serverIngestLatencyMs: 3.8,
@@ -77,6 +78,29 @@ describe('TelemetryDashboardPage', () => {
     expect(screen.getByText('3.80 ms')).toBeInTheDocument();
     expect(screen.getByText('0.10%')).toBeInTheDocument();
     expect(screen.getByText('active')).toBeInTheDocument();
+
+    // Check latency percentiles and throughput rendering
+    expect(screen.getByText('120ms')).toBeInTheDocument();
+    expect(screen.getByText('340ms')).toBeInTheDocument();
+    expect(screen.getByText('512ms')).toBeInTheDocument();
+    expect(screen.getByText('基于 128 次完成操作采样')).toBeInTheDocument();
+    // 1250 events over 24h = 0.0145 events/s -> formatted as "0.01/s"
+    expect(screen.getByText('0.01/s')).toBeInTheDocument();
+  });
+
+  it('renders latency as no-data when samples are zero', async () => {
+    const noLatency = {
+      ...mockOverviewData,
+      latency: { p50Ms: 0, p95Ms: 0, p99Ms: 0, samples: 0 },
+    };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(noLatency));
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderDashboard();
+    await waitFor(() => expect(screen.getByText('1250')).toBeInTheDocument());
+
+    expect(screen.getAllByText('无数据')).toHaveLength(3);
+    expect(screen.getByText('No operations recorded in this time range')).toBeInTheDocument();
   });
 
   it('allows changing time range and refetches metrics', async () => {

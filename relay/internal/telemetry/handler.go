@@ -3,7 +3,10 @@
 package telemetry
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,6 +15,7 @@ import (
 
 const MaxRequestBodyBytes = 1 << 20 // 1MB maximum body
 
+// Handler exposes telemetry HTTP endpoints backed by a Service.
 type Handler struct {
 	service *Service
 }
@@ -31,6 +35,7 @@ func (h *Handler) RegisterAdminRoutes(mux *http.ServeMux, adminAuth func(http.Ha
 	mux.HandleFunc(RouteAdminEvents, adminAuth(h.handleAdminEvents))
 	mux.HandleFunc(RouteAdminDiagnostics, adminAuth(h.handleAdminDiagnostics))
 	mux.HandleFunc(RouteAdminSettings, adminAuth(h.handleAdminSettings))
+	mux.HandleFunc(RouteAdminRegisterDevice, adminAuth(h.handleAdminRegisterDevice))
 }
 
 func (h *Handler) writeJSON(w http.ResponseWriter, status int, v any) {
@@ -52,26 +57,43 @@ func (h *Handler) writeError(w http.ResponseWriter, status int, code, message st
 	})
 }
 
-// handlePublicAuth issues a scoped telemetry token for a given deviceId.
+// handlePublicAuth verifies device proof-of-possession of its enrolled secret
+// and issues a short-lived scoped token bound to the device.
 func (h *Handler) handlePublicAuth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		h.writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
+		return
+	}
+	if h.service == nil || !h.service.Available() {
+		h.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "telemetry service unavailable")
 		return
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 	var body struct {
 		DeviceID string `json:"deviceId"`
-		Secret   string `json:"secret"`
+		Proof    string `json:"proof"`
+		ExpEpoch int64  `json:"expEpoch"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.DeviceID) == "" {
 		h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid request: missing or empty deviceId")
 		return
 	}
+	if !isValidDeviceID(body.DeviceID) {
+		h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid request: invalid deviceId format")
+		return
+	}
 
-	token, expiresIn, err := h.service.AuthenticateDevice(r.Context(), body.DeviceID, body.Secret)
+	token, expiresIn, err := h.service.AuthenticateDevice(r.Context(), body.DeviceID, body.Proof, body.ExpEpoch)
 	if err != nil {
-		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", err.Error())
+		switch {
+		case errors.Is(err, ErrDeviceNotRegistered):
+			h.writeError(w, http.StatusUnauthorized, "DEVICE_NOT_REGISTERED", "device not registered")
+		case errors.Is(err, ErrAuthFailed):
+			h.writeError(w, http.StatusUnauthorized, "AUTH_FAILED", "device authentication failed")
+		default:
+			h.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "telemetry service unavailable")
+		}
 		return
 	}
 
@@ -88,8 +110,12 @@ func (h *Handler) handlePublicIngest(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
 		return
 	}
+	if h.service == nil || !h.service.Available() {
+		h.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "telemetry service unavailable")
+		return
+	}
 
-	// 1. Authenticate Device
+	// 1. Authenticate Device: token must be valid and bound to X-Device-Id.
 	deviceID := strings.TrimSpace(r.Header.Get("X-Device-Id"))
 	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
 	token := strings.TrimPrefix(authHeader, "Bearer ")
@@ -117,10 +143,11 @@ func (h *Handler) handlePublicIngest(w http.ResponseWriter, r *http.Request) {
 		req.Records[i].DeviceID = deviceID
 	}
 
-	// 3. Process Batch Ingest
+	// 3. Process Batch Ingest: server stamps receive time and persists atomically.
+	// Any backing-store error surfaces as 503 so the client retries later.
 	results, err := h.service.IngestBatch(r.Context(), req.Records)
 	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, "INGEST_ERROR", "ingest processing error: "+err.Error())
+		h.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "ingest processing error: "+err.Error())
 		return
 	}
 
@@ -133,6 +160,10 @@ func (h *Handler) handlePublicPolicy(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
 		return
 	}
+	if h.service == nil || !h.service.StoreAvailable() {
+		h.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "telemetry service unavailable")
+		return
+	}
 
 	policy, err := h.service.GetPolicy(r.Context())
 	if err != nil {
@@ -141,6 +172,52 @@ func (h *Handler) handlePublicPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeJSON(w, http.StatusOK, policy)
+}
+
+// handleAdminRegisterDevice enrolls a telemetry device and returns a one-time
+// secret the device uses to prove ownership during authentication.
+//
+//	POST /api/admin/v1/telemetry/devices
+//	{"deviceId": "..."}  ->  201 {"deviceId": "...", "secret": "<32-byte hex>"}
+func (h *Handler) handleAdminRegisterDevice(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
+		return
+	}
+	if h.service == nil {
+		h.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "telemetry service unavailable")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+	var body struct {
+		DeviceID string `json:"deviceId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.DeviceID) == "" {
+		h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid request: missing or empty deviceId")
+		return
+	}
+	if !isValidDeviceID(body.DeviceID) {
+		h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid request: invalid deviceId format")
+		return
+	}
+	deviceID := strings.TrimSpace(body.DeviceID)
+
+	randomSecret := make([]byte, 32)
+	if _, err := rand.Read(randomSecret); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to generate device secret")
+		return
+	}
+	secret := hex.EncodeToString(randomSecret)
+	if err := h.service.RegisterDeviceCredential(r.Context(), deviceID, hashSecret(secret)); err != nil {
+		h.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "failed to persist device credential: "+err.Error())
+		return
+	}
+
+	h.writeJSON(w, http.StatusCreated, map[string]any{
+		"deviceId": deviceID,
+		"secret":   secret,
+	})
 }
 
 func parseQueryFilter(r *http.Request) QueryFilter {
@@ -210,6 +287,10 @@ func (h *Handler) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
 		return
 	}
+	if h.service == nil || !h.service.StoreAvailable() {
+		h.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "telemetry service unavailable")
+		return
+	}
 
 	filter := parseQueryFilter(r)
 	metrics, err := h.service.QueryOverview(r.Context(), filter)
@@ -225,6 +306,10 @@ func (h *Handler) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleAdminEvents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		h.writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
+		return
+	}
+	if h.service == nil || !h.service.StoreAvailable() {
+		h.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "telemetry service unavailable")
 		return
 	}
 
@@ -249,6 +334,10 @@ func (h *Handler) handleAdminDiagnostics(w http.ResponseWriter, r *http.Request)
 		h.writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
 		return
 	}
+	if h.service == nil || !h.service.StoreAvailable() {
+		h.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "telemetry service unavailable")
+		return
+	}
 
 	filter := parseQueryFilter(r)
 	items, total, source, err := h.service.QueryDiagnostics(r.Context(), filter)
@@ -270,6 +359,10 @@ func (h *Handler) handleAdminDiagnostics(w http.ResponseWriter, r *http.Request)
 func (h *Handler) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		if h.service == nil || !h.service.StoreAvailable() {
+			h.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "telemetry service unavailable")
+			return
+		}
 		settings, err := h.service.GetSettings(r.Context())
 		if err != nil {
 			h.writeError(w, http.StatusInternalServerError, "GET_SETTINGS_ERROR", "get settings error: "+err.Error())
@@ -277,6 +370,10 @@ func (h *Handler) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		h.writeJSON(w, http.StatusOK, settings)
 	case http.MethodPut:
+		if h.service == nil || !h.service.StoreAvailable() {
+			h.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "telemetry service unavailable")
+			return
+		}
 		r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 		var settings TelemetrySettings
 		if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {

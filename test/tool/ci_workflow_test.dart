@@ -77,6 +77,20 @@ void main() {
     'admin-api-contract 必须运行真实 Go handler → Front schema 门禁',
   );
 
+  final telemetryContract = _jobSection(workflow, 'telemetry-contract');
+  _expect(
+    telemetryContract.contains('actions/setup-go@v5') &&
+        telemetryContract.contains('actions/setup-node@v4') &&
+        telemetryContract.contains('subosito/flutter-action@v2'),
+    'telemetry-contract 必须同时安装 Go、Node.js 与 Flutter',
+  );
+  _expect(
+    telemetryContract.contains(
+      'bash scripts/bash/contracts/telemetry_contract.sh',
+    ),
+    'telemetry-contract 必须运行跨语言 Telemetry 数据契约门禁',
+  );
+
   for (final jobName in const ['android-build', 'macos-build', 'ios-build']) {
     final job = _jobSection(workflow, jobName);
     _expect(
@@ -141,6 +155,18 @@ void main() {
   _expect(
     architectureCheck.contains('dart run test/tool/ci_workflow_test.dart'),
     'architecture-check 必须运行 CI workflow 合同回归测试',
+  );
+  _expect(
+    architectureCheck.contains(
+      'dart run tool/check_telemetry_contract_generated.dart',
+    ),
+    'architecture-check 必须运行 Telemetry 契约生成检查器',
+  );
+  _expect(
+    architectureCheck.contains(
+      'dart run test/tool/telemetry_contract_codegen_test.dart',
+    ),
+    'architecture-check 必须运行 Telemetry 契约代码生成回归测试',
   );
   _expect(
     architectureCheck.contains('dart run tool/check_module_dependencies.dart'),
@@ -439,6 +465,12 @@ void _verifyFullTestScripts(Directory root) {
     ),
     'full_test.sh 缺少 Network V2 schema parity check step',
   );
+  _expect(
+    bashFullTest.contains(
+      "step 'Check Telemetry data contract across Go, Front, and Dart' bash \"\$ROOT_DIR/scripts/bash/contracts/telemetry_contract.sh\"",
+    ),
+    'full_test.sh 缺少 Telemetry contract check step',
+  );
 
   _expect(
     powerShellFullTest.contains(
@@ -452,11 +484,18 @@ void _verifyFullTestScripts(Directory root) {
     ),
     'full_test.ps1 缺少 Network V2 schema parity check',
   );
+  _expect(
+    powerShellFullTest.contains(
+      "Script (Join-Path \$PSScriptRoot '..\\contracts\\telemetry_contract.ps1')",
+    ),
+    'full_test.ps1 缺少 Telemetry contract check',
+  );
 }
 
 const _requiredWorkflowMarkers = <String>[
   'architecture-check:',
   'admin-api-contract:',
+  'telemetry-contract:',
   'sdk-dart-quality:',
   'lan-network-v2-targeted:',
   'native-network-quality:',
@@ -478,10 +517,13 @@ const _requiredWorkflowMarkers = <String>[
   'dart run tool/architecture_check.dart',
   'dart run tool/check_agent_docs.dart',
   'dart run test/tool/agent_docs_check_test.dart',
+  'dart run tool/check_telemetry_contract_generated.dart',
+  'dart run test/tool/telemetry_contract_codegen_test.dart',
   'dart run tool/check_module_dependencies.dart',
   'dart run tool/check_resource_owners.dart',
   'dart run tool/compatibility_check.dart',
   'dart run tool/duplicate_implementation_check.dart',
+  'bash scripts/bash/contracts/telemetry_contract.sh',
   'dart run melos run analyze',
   'dart run melos run test',
   'flutter build apk --debug --no-pub',

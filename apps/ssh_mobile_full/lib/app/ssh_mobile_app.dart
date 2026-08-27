@@ -22,6 +22,7 @@ import '../features/startup/viewmodels/startup_viewmodel.dart';
 import 'package:ssh_mobile/features/home/views/home_screen.dart';
 import 'package:ssh_mobile/features/startup/views/startup_screen.dart';
 import '../services/app_settings.dart';
+import '../services/telemetry/app_telemetry_contract.dart';
 import 'package:app_ui/app_ui.dart';
 import 'app_runtime.dart';
 import 'connection_feature_adapters.dart';
@@ -147,10 +148,14 @@ class _SshMobileAppState extends State<SshMobileApp>
       _runtime.telemetryClient?.onAppForeground();
       unawaited(
         _runtime.telemetryClient?.recordEvent(
-          eventName: 'app.lifecycle.foregrounded',
-          eventVersion: 1,
-          feature: 'app',
-          severity: app_core.TelemetrySeverity.info,
+          eventName: AppTelemetryEvents.appLifecycleForegrounded.name,
+          eventVersion: AppTelemetryEvents
+              .appLifecycleForegrounded
+              .version,
+          feature: AppTelemetryEvents.appLifecycleForegrounded.feature,
+          severity: AppTelemetryEvents
+              .appLifecycleForegrounded
+              .severity,
           properties: {
             'background_duration_ms': bgDuration,
           },
@@ -165,10 +170,14 @@ class _SshMobileAppState extends State<SshMobileApp>
       _runtime.telemetryClient?.onAppBackground();
       unawaited(
         _runtime.telemetryClient?.recordEvent(
-          eventName: 'app.lifecycle.backgrounded',
-          eventVersion: 1,
-          feature: 'app',
-          severity: app_core.TelemetrySeverity.info,
+          eventName: AppTelemetryEvents.appLifecycleBackgrounded.name,
+          eventVersion: AppTelemetryEvents
+              .appLifecycleBackgrounded
+              .version,
+          feature: AppTelemetryEvents.appLifecycleBackgrounded.feature,
+          severity: AppTelemetryEvents
+              .appLifecycleBackgrounded
+              .severity,
           properties: {
             'active_sessions': _runtime.sshService.activeSubscriptionCount,
           },

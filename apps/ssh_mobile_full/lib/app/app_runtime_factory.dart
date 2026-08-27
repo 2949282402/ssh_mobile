@@ -20,6 +20,14 @@ import '../core/services/data_protection_service.dart';
 import '../services/app_bootstrap_coordinator.dart';
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
+import '../services/telemetry/app_crash_telemetry_bridge.dart';
+import '../services/telemetry/app_telemetry_contract.dart';
+import '../services/telemetry/build_metadata_provider.dart';
+import '../services/telemetry/drift_telemetry_storage.dart';
+import '../services/telemetry/network_telemetry_bridge.dart';
+import '../services/telemetry/telemetry_database.dart';
+import '../services/telemetry/telemetry_database/telemetry_database_constants.dart';
+import '../services/telemetry/telemetry_factory.dart';
 import '../services/display_mode_service.dart';
 import '../services/network/network_identity_service.dart';
 import '../services/network/network_service.dart';
@@ -460,30 +468,51 @@ final class AppRuntimeFactory {
       const ragDatabaseName = 'rag.db';
       const mcpDatabaseName = 'mcp.db';
       const lanShareDatabaseName = 'lan_share.db';
-      const telemetryDatabaseName = 'telemetry_events.jsonl';
+      // telemetryDatabaseName 由 telemetry_database_constants.dart 提供。
 
-      final telemetryStorage = FileTelemetryStorage(
-        filePath:
-            '${supportDirectory.path}${Platform.pathSeparator}telemetry${Platform.pathSeparator}$telemetryDatabaseName',
+      // 生产遥测存储：SQLite（Drift），绝不使用内存或 JSONL。
+      final telemetryDatabase = TelemetryDatabase();
+      cleanup.add(
+        telemetryDatabase.dispose,
+        priority: _CleanupPriority.module,
       );
-      final telemetryClient = TelemetryClient(
-        config: TelemetryClientConfig(
-          baseUrl: appSettings.relayEndpoint,
-          deviceId: appSettings.lanDeviceId,
-          appVersion: '1.0.0',
-          buildNumber: '100',
-          platform: Platform.operatingSystem,
-          releaseChannel: 'prod',
-        ),
+      final telemetryStorage = DriftTelemetryStorage(database: telemetryDatabase);
+      final telemetryBuildMetadata = await DeviceInfoBuildMetadataProvider()
+          .load();
+      final telemetryRuntime = await createTelemetryRuntime(
+        deviceId: appSettings.lanDeviceId,
+        relayEndpoint: appSettings.relayEndpoint,
+        buildMetadata: telemetryBuildMetadata,
         storage: telemetryStorage,
       );
+      final telemetryClient = telemetryRuntime.client;
       cleanup.add(telemetryClient.dispose, priority: _CleanupPriority.module);
+      // 业务遥测生产者挂载：SSH / SFTP / 网络路由回退 / 崩溃捕获。
+      sshService.telemetryClient = telemetryClient;
+      sftpService.telemetryClient = telemetryClient;
+      final networkTelemetryBridge = NetworkTelemetryBridge(
+        telemetryClient: telemetryClient,
+        events: networkFacade.events,
+      );
+      networkTelemetryBridge.attach();
+      cleanup.add(
+        networkTelemetryBridge.dispose,
+        priority: _CleanupPriority.adapter,
+      );
+      final crashTelemetryBridge = AppCrashTelemetryBridge(
+        telemetryClient: telemetryClient,
+      );
+      crashTelemetryBridge.install();
+      cleanup.add(
+        crashTelemetryBridge.dispose,
+        priority: _CleanupPriority.module,
+      );
       pendingInitialization.add(
         start: (_) => telemetryClient.recordEvent(
-          eventName: 'app.lifecycle.started',
-          eventVersion: 1,
-          feature: 'app',
-          severity: TelemetrySeverity.info,
+          eventName: AppTelemetryEvents.appLifecycleStarted.name,
+          eventVersion: AppTelemetryEvents.appLifecycleStarted.version,
+          feature: AppTelemetryEvents.appLifecycleStarted.feature,
+          severity: AppTelemetryEvents.appLifecycleStarted.severity,
           properties: {
             'start_type': 'cold',
             'cold_start': true,

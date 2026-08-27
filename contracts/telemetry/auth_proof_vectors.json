@@ -1,0 +1,18 @@
+{
+  "messagePattern": "telemetry:auth:<deviceId>:<expEpoch>",
+  "keyDerivation": "sha256Hex(secret) lowercase",
+  "vectors": [
+    {
+      "secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "deviceId": "device-alpha",
+      "expEpoch": 1756300000,
+      "proof": "ede2f7b05a8332c542b9fce8506291a53bc1b2cfab2ef5668a1ddabe22540e49"
+    },
+    {
+      "secret": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      "deviceId": "device-beta",
+      "expEpoch": 1756400000,
+      "proof": "3e9943d1ead25e129634e58416006453f7e1c7f433f76ecee57d386b619e76ee"
+    }
+  ]
+}

@@ -1,9 +1,10 @@
-import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
-
 import 'telemetry_model.dart';
 
+/// 单条记录的上传确认结果。
+///
+/// [status] 为服务端返回的 `accepted`、`already_seen` 或 `rejected`；
+/// `accepted` 与 `already_seen` 都表示记录已经被服务端幂等收据记录，
+/// 客户端应当推进到 `synced + logicalDeletedAt = now`。
 class TelemetryAckResult {
   const TelemetryAckResult({
     required this.eventId,
@@ -27,6 +28,7 @@ class TelemetryAckResult {
   }
 }
 
+/// 本地存储健康快照。
 class TelemetryStorageHealth {
   const TelemetryStorageHealth({
     required this.localPendingCount,
@@ -43,17 +45,32 @@ class TelemetryStorageHealth {
   final bool cacheOverflow;
 }
 
+/// 客户端遥测记录的本地持久化契约。
+///
+/// 生产实现必须保证：
+/// - 任何写/插入/更新失败都必须抛出，绝不静默吞掉（调用方依赖异常做重试决策）。
+/// - `purgeOldSyncedRecords` 只允许物理删除 `synced + logicalDeletedAt != null`
+///   的记录；`pending` 与 `rejected` 记录永不因 FIFO 淘汰而物理删除。
 abstract class TelemetryStorage {
   Future<void> insertRecord(TelemetryEventRecord record);
   Future<List<TelemetryEventRecord>> fetchPendingBatch(int limit);
   Future<void> applyAckResults(List<TelemetryAckResult> results);
+  Future<void> applyRetryCount(
+    List<String> eventIds, {
+    required int increment,
+  });
   Future<List<TelemetryEventRecord>> fetchAllForReplay();
   Future<int> purgeOldSyncedRecords({required int targetCapacity});
   Future<TelemetryStorageHealth> getHealthStats({required int targetCapacity});
+  TelemetryStorageHealth? get cachedHealthStats => null;
   Future<void> clearAll();
   Future<void> close();
 }
 
+/// 纯内存测试替身。
+///
+/// 仅用于单元测试；生产路径必须使用 SQLite/Drift 实现，绝不使用内存或
+/// JSONL 存储。
 class MemoryTelemetryStorage implements TelemetryStorage {
   final List<TelemetryEventRecord> _records = [];
 
@@ -84,6 +101,7 @@ class MemoryTelemetryStorage implements TelemetryStorage {
         _records[i] = rec.copyWith(
           syncState: TelemetrySyncState.synced,
           logicalDeletedAt: now,
+          retryCount: 0,
         );
       } else if (ack.isRejected) {
         _records[i] = rec.copyWith(
@@ -91,6 +109,19 @@ class MemoryTelemetryStorage implements TelemetryStorage {
           clearLogicalDeletedAt: true,
         );
       }
+    }
+  }
+
+  @override
+  Future<void> applyRetryCount(
+    List<String> eventIds, {
+    required int increment,
+  }) async {
+    final idSet = eventIds.toSet();
+    for (var i = 0; i < _records.length; i++) {
+      if (!idSet.contains(_records[i].eventId)) continue;
+      final rec = _records[i];
+      _records[i] = rec.copyWith(retryCount: rec.retryCount + increment);
     }
   }
 
@@ -105,7 +136,7 @@ class MemoryTelemetryStorage implements TelemetryStorage {
     final total = _records.length;
     if (total <= targetCapacity) return 0;
 
-    // Collect all synced records sorted by occurredAt / logicalDeletedAt ascending (oldest first)
+    // 只允许淘汰 synced + logicalDeletedAt != null 的记录。
     final syncedRecords =
         _records
             .where(
@@ -135,6 +166,7 @@ class MemoryTelemetryStorage implements TelemetryStorage {
     return toDeleteCount;
   }
 
+  /// 同步统计健康快照，供 Developer 面板的同步读取路径使用。
   TelemetryStorageHealth getHealthStatsSync({required int targetCapacity}) {
     var pending = 0;
     var rejected = 0;
@@ -142,6 +174,7 @@ class MemoryTelemetryStorage implements TelemetryStorage {
 
     for (final r in _records) {
       switch (r.syncState) {
+        case TelemetrySyncState.new_:
         case TelemetrySyncState.pending:
           pending++;
           break;
@@ -167,6 +200,10 @@ class MemoryTelemetryStorage implements TelemetryStorage {
   }
 
   @override
+  TelemetryStorageHealth? get cachedHealthStats =>
+      getHealthStatsSync(targetCapacity: 1000);
+
+  @override
   Future<TelemetryStorageHealth> getHealthStats({
     required int targetCapacity,
   }) async {
@@ -180,210 +217,4 @@ class MemoryTelemetryStorage implements TelemetryStorage {
 
   @override
   Future<void> close() async {}
-}
-
-class _AsyncLock {
-  Future<void> _last = Future.value();
-
-  Future<T> synchronized<T>(Future<T> Function() action) {
-    final completer = Completer<T>();
-    _last = _last.then((_) async {
-      try {
-        final result = await action();
-        completer.complete(result);
-      } catch (e, st) {
-        completer.completeError(e, st);
-      }
-    });
-    return completer.future;
-  }
-}
-
-class FileTelemetryStorage implements TelemetryStorage {
-  FileTelemetryStorage({required this.filePath}) {
-    _memory = MemoryTelemetryStorage();
-  }
-
-  final String filePath;
-  late final MemoryTelemetryStorage _memory;
-  MemoryTelemetryStorage get memory => _memory;
-  final _AsyncLock _lock = _AsyncLock();
-  bool _loaded = false;
-
-  TelemetryStorageHealth getHealthStatsSync({required int targetCapacity}) {
-    if (!_loaded) {
-      _ensureLoadedSync();
-    }
-    return _memory.getHealthStatsSync(targetCapacity: targetCapacity);
-  }
-
-  void _ensureLoadedSync() {
-    if (_loaded) return;
-    try {
-      final file = File(filePath);
-      if (file.existsSync()) {
-        final lines = file.readAsLinesSync();
-        for (final line in lines) {
-          if (line.trim().isEmpty) continue;
-          try {
-            final jsonMap = jsonDecode(line) as Map<String, dynamic>;
-            final rec = TelemetryEventRecord.fromJson(jsonMap).copyWith(
-              syncState: TelemetrySyncState.fromWireValue(
-                jsonMap['syncState'] as String? ?? 'pending',
-              ),
-              logicalDeletedAt: jsonMap['logicalDeletedAt'] != null
-                  ? DateTime.parse(jsonMap['logicalDeletedAt'] as String)
-                  : null,
-              retryCount: jsonMap['retryCount'] as int? ?? 0,
-            );
-            _memory.insertRecord(rec);
-          } catch (_) {
-            // Ignore malformed line
-          }
-        }
-      }
-      _loaded = true;
-    } catch (_) {}
-  }
-
-  Future<void> _ensureLoaded() async {
-    if (_loaded) return;
-    try {
-      final file = File(filePath);
-      if (await file.exists()) {
-        final lines = await file.readAsLines();
-        for (final line in lines) {
-          if (line.trim().isEmpty) continue;
-          try {
-            final jsonMap = jsonDecode(line) as Map<String, dynamic>;
-            final rec = TelemetryEventRecord.fromJson(jsonMap).copyWith(
-              syncState: TelemetrySyncState.fromWireValue(
-                jsonMap['syncState'] as String? ?? 'pending',
-              ),
-              logicalDeletedAt: jsonMap['logicalDeletedAt'] != null
-                  ? DateTime.parse(jsonMap['logicalDeletedAt'] as String)
-                  : null,
-              retryCount: jsonMap['retryCount'] as int? ?? 0,
-            );
-            await _memory.insertRecord(rec);
-          } catch (_) {
-            // Ignore malformed line
-          }
-        }
-      }
-      _loaded = true;
-    } catch (_) {}
-  }
-
-  Future<void> _persistToDisk() async {
-    if (!_loaded) return;
-    try {
-      final file = File(filePath);
-      await file.parent.create(recursive: true);
-      final records = await _memory.fetchAllForReplay();
-      final sink = file.openWrite(mode: FileMode.writeOnly);
-      for (final r in records) {
-        final map = r.toJson();
-        map['syncState'] = r.syncState.wireValue;
-        if (r.logicalDeletedAt != null) {
-          map['logicalDeletedAt'] = r.logicalDeletedAt!
-              .toUtc()
-              .toIso8601String();
-        }
-        map['retryCount'] = r.retryCount;
-        sink.writeln(jsonEncode(map));
-      }
-      await sink.flush();
-      await sink.close();
-    } catch (_) {}
-  }
-
-  @override
-  Future<void> insertRecord(TelemetryEventRecord record) async {
-    return _lock.synchronized(() async {
-      await _ensureLoaded();
-      await _memory.insertRecord(record);
-      try {
-        final file = File(filePath);
-        await file.parent.create(recursive: true);
-        final map = record.toJson();
-        map['syncState'] = record.syncState.wireValue;
-        if (record.logicalDeletedAt != null) {
-          map['logicalDeletedAt'] = record.logicalDeletedAt!
-              .toUtc()
-              .toIso8601String();
-        }
-        map['retryCount'] = record.retryCount;
-        final sink = file.openWrite(mode: FileMode.append);
-        sink.writeln(jsonEncode(map));
-        await sink.flush();
-        await sink.close();
-      } catch (_) {}
-    });
-  }
-
-  @override
-  Future<List<TelemetryEventRecord>> fetchPendingBatch(int limit) async {
-    return _lock.synchronized(() async {
-      await _ensureLoaded();
-      return _memory.fetchPendingBatch(limit);
-    });
-  }
-
-  @override
-  Future<void> applyAckResults(List<TelemetryAckResult> results) async {
-    return _lock.synchronized(() async {
-      await _ensureLoaded();
-      await _memory.applyAckResults(results);
-      await _persistToDisk();
-    });
-  }
-
-  @override
-  Future<List<TelemetryEventRecord>> fetchAllForReplay() async {
-    return _lock.synchronized(() async {
-      await _ensureLoaded();
-      return _memory.fetchAllForReplay();
-    });
-  }
-
-  @override
-  Future<int> purgeOldSyncedRecords({required int targetCapacity}) async {
-    return _lock.synchronized(() async {
-      await _ensureLoaded();
-      final count = await _memory.purgeOldSyncedRecords(
-        targetCapacity: targetCapacity,
-      );
-      if (count > 0) {
-        await _persistToDisk();
-      }
-      return count;
-    });
-  }
-
-  @override
-  Future<TelemetryStorageHealth> getHealthStats({
-    required int targetCapacity,
-  }) async {
-    return _lock.synchronized(() async {
-      await _ensureLoaded();
-      return _memory.getHealthStats(targetCapacity: targetCapacity);
-    });
-  }
-
-  @override
-  Future<void> clearAll() async {
-    return _lock.synchronized(() async {
-      await _ensureLoaded();
-      await _memory.clearAll();
-      await _persistToDisk();
-    });
-  }
-
-  @override
-  Future<void> close() async {
-    return _lock.synchronized(() async {
-      await _memory.close();
-    });
-  }
 }

@@ -57,11 +57,14 @@ func NewServerWithClientAndTelemetry(config Config, client RelayManagementClient
 			var err error
 			store, err = telemetry.NewMySQLStoreFromDSN(config.TelemetryMySQLDSN, catalog)
 			if err != nil {
-				log.Printf("[admin-telemetry] WARNING: Failed to connect to MySQL (%v), falling back to degraded in-memory store", err)
-				store = telemetry.NewMemoryStore(catalog)
+				// Fail-closed: never fall back to an in-memory store in production.
+				// The telemetry service stays unavailable and its endpoints return 503.
+				log.Printf("[admin-telemetry] WARNING: telemetry MySQL unavailable (%v); telemetry endpoints will return 503", err)
+				store = nil
 			}
 		} else {
-			store = telemetry.NewMemoryStore(catalog)
+			log.Printf("[admin-telemetry] WARNING: TELEMETRY_MYSQL_DSN is empty; telemetry endpoints will return 503")
+			store = nil
 		}
 
 		var redisCache telemetry.RedisCache

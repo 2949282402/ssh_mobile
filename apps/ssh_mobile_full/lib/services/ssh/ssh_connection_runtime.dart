@@ -146,6 +146,7 @@ extension _SshConnectionRuntime on SshService {
       session.state = SshConnectionState.connected;
       session.errorMessage = null;
       session.updatedAt = DateTime.now();
+      _recordSessionConnectedTelemetry(session);
 
       final completer = _connectCompleters.remove(session.id);
       if (completer != null && !completer.isCompleted) completer.complete();

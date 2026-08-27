@@ -22,15 +22,7 @@ final class ScopedLogger implements AppLogger {
         ? scopeName
         : '$scopeName/${record.source}';
     _delegate.log(
-      LogRecord(
-        timestamp: record.timestamp,
-        level: record.level,
-        message: record.message,
-        source: source,
-        details: record.details,
-        error: record.error,
-        stackTrace: record.stackTrace,
-      ),
+      record.copyWith(source: source),
     );
   }
 

@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:app_core/app_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -267,21 +265,33 @@ void main() {
       },
     );
 
-    test('FileTelemetryStorage synchronously reports health stats and persists records', () async {
-      final tempDir = await Directory.systemTemp.createTemp('telemetry_file_test_');
-      final filePath = '${tempDir.path}/telemetry_events.jsonl';
-
-      try {
-        final fileStorage = FileTelemetryStorage(filePath: filePath);
+    test(
+      'applyRetryCount increments retryCount only for matching eventIds',
+      () async {
         final r1 = TelemetryEventRecord(
-          eventId: 'file-evt-1',
+          eventId: 'retry-1',
           recordType: TelemetryRecordType.analytics,
           eventName: 'ssh.session.started',
           eventVersion: 1,
           deviceId: 'dev-1',
           sessionId: 'sess-1',
           traceId: 'trace-1',
-          occurredAt: DateTime.now().toUtc(),
+          occurredAt: DateTime.now(),
+          feature: 'ssh',
+          severity: TelemetrySeverity.info,
+          appVersion: '1.0.0',
+          buildNumber: '100',
+          platform: 'android',
+        );
+        final r2 = TelemetryEventRecord(
+          eventId: 'retry-2',
+          recordType: TelemetryRecordType.analytics,
+          eventName: 'ssh.session.started',
+          eventVersion: 1,
+          deviceId: 'dev-1',
+          sessionId: 'sess-1',
+          traceId: 'trace-1',
+          occurredAt: DateTime.now(),
           feature: 'ssh',
           severity: TelemetrySeverity.info,
           appVersion: '1.0.0',
@@ -289,30 +299,85 @@ void main() {
           platform: 'android',
         );
 
-        await fileStorage.insertRecord(r1);
+        await storage.insertRecord(r1);
+        await storage.insertRecord(r2);
 
-        // Synchronous health check before another instance does async load
-        final healthSync = fileStorage.getHealthStatsSync(targetCapacity: 100);
-        expect(healthSync.localPendingCount, 1);
-        expect(healthSync.totalCount, 1);
+        await storage.applyRetryCount(['retry-1'], increment: 1);
+        await storage.applyRetryCount(['retry-1', 'retry-2'], increment: 2);
 
-        // Re-open storage on same file to test _ensureLoadedSync
-        final fileStorage2 = FileTelemetryStorage(filePath: filePath);
-        final healthSync2 = fileStorage2.getHealthStatsSync(targetCapacity: 100);
-        expect(healthSync2.localPendingCount, 1);
-        expect(healthSync2.totalCount, 1);
+        final all = await storage.fetchAllForReplay();
+        final byId = {for (final r in all) r.eventId: r};
+        expect(byId['retry-1']!.retryCount, 3);
+        expect(byId['retry-2']!.retryCount, 2);
+      },
+    );
 
-        final pending = await fileStorage2.fetchPendingBatch(10);
-        expect(pending.length, 1);
-        expect(pending[0].eventId, 'file-evt-1');
-
-        await fileStorage.close();
-        await fileStorage2.close();
-      } finally {
-        if (await tempDir.exists()) {
-          await tempDir.delete(recursive: true);
+    test(
+      'purge with no purgeable synced records deletes 0 and reports overflow',
+      () async {
+        // 全是 pending，targetCapacity 更小，但没有可淘汰的 synced 记录。
+        final now = DateTime.now();
+        for (var i = 0; i < 5; i++) {
+          await storage.insertRecord(
+            TelemetryEventRecord(
+              eventId: 'pending-$i',
+              recordType: TelemetryRecordType.analytics,
+              eventName: 'ssh.session.started',
+              eventVersion: 1,
+              deviceId: 'dev-1',
+              sessionId: 'sess-1',
+              traceId: 'trace-1',
+              occurredAt: now,
+              feature: 'ssh',
+              severity: TelemetrySeverity.info,
+              appVersion: '1.0.0',
+              buildNumber: '100',
+              platform: 'android',
+            ),
+          );
         }
-      }
-    });
+
+        final purged = await storage.purgeOldSyncedRecords(targetCapacity: 2);
+        expect(purged, 0);
+
+        final stats = await storage.getHealthStats(targetCapacity: 2);
+        expect(stats.localPendingCount, 5);
+        expect(stats.localRejectedCount, 0);
+        expect(stats.cacheOverflow, isTrue);
+      },
+    );
+
+    test(
+      'accepted ACK resets retryCount to 0 along with synced transition',
+      () async {
+        final r1 = TelemetryEventRecord(
+          eventId: 'evt-reset-1',
+          recordType: TelemetryRecordType.analytics,
+          eventName: 'ssh.session.started',
+          eventVersion: 1,
+          deviceId: 'dev-1',
+          sessionId: 'sess-1',
+          traceId: 'trace-1',
+          occurredAt: DateTime.now(),
+          feature: 'ssh',
+          severity: TelemetrySeverity.info,
+          appVersion: '1.0.0',
+          buildNumber: '100',
+          platform: 'android',
+          retryCount: 4,
+        );
+
+        await storage.insertRecord(r1);
+
+        await storage.applyAckResults([
+          const TelemetryAckResult(eventId: 'evt-reset-1', status: 'accepted'),
+        ]);
+
+        final all = await storage.fetchAllForReplay();
+        expect(all[0].syncState, TelemetrySyncState.synced);
+        expect(all[0].logicalDeletedAt, isNotNull);
+        expect(all[0].retryCount, 0);
+      },
+    );
   });
 }

@@ -22,6 +22,7 @@ describe('telemetryApi', () => {
       errorFreeSessionRate: 0.95,
       eventsTrend: [{ timestamp: '2026-08-27T00:00:00Z', value: 100 }],
       errorsTrend: [{ timestamp: '2026-08-27T00:00:00Z', value: 2 }],
+      latency: { p50Ms: 120, p95Ms: 340, p99Ms: 512, samples: 12 },
       pipelineHealth: {
         status: 'healthy',
         serverIngestLatencyMs: 4.2,

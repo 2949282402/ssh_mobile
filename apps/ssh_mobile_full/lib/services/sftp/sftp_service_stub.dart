@@ -1,6 +1,7 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
 import 'package:connection_core/connection_core.dart';
+import 'package:app_core/app_core.dart';
+import 'package:flutter/foundation.dart';
 import '../sftp_service.dart';
 import '../sftp_path_history_store.dart';
 
@@ -19,7 +20,11 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     SftpPathHistoryStore? pathHistoryStore,
     dynamic nativeStreamConnector,
     dynamic peerIdResolver,
+    this.telemetryClient,
   });
+
+  /// 可选遥测客户端；桌面/移动 IO 实现使用，Web stub 仅持有该字段保持一致。
+  TelemetryClient? telemetryClient;
 
   String? _activeConnectionId;
   SftpConnectionState _state = SftpConnectionState.disconnected;

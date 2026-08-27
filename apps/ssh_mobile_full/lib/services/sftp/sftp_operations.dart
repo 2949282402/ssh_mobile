@@ -127,6 +127,14 @@ extension SftpServiceOperations on SftpService {
         return cachedBytes;
       }
 
+      final transferId = '${config.id}-dl-${DateTime.now().millisecondsSinceEpoch}';
+      final transfer = SftpTransferState(
+        id: transferId,
+        name: p.basename(absolutePath),
+        totalBytes: attrs.size ?? 0,
+        isUpload: false,
+      );
+      _startTransferTelemetry(transferId, transfer);
       SftpFile? file;
       try {
         file = await sftp.open(absolutePath, mode: SftpFileOpenMode.read);
@@ -150,7 +158,20 @@ extension SftpServiceOperations on SftpService {
           bytes,
         );
 
+        _completeTransferTelemetry(
+          transferId,
+          transfer.copyWith(bytesTransferred: bytes.length),
+        );
         return bytes;
+      } catch (e) {
+        _failTransferTelemetry(
+          transferId,
+          transfer.copyWith(bytesTransferred: transfer.bytesTransferred),
+          errorCode: SftpService._mapSftpErrorCode(e, isUpload: false),
+          stage: 'download',
+          errorMessage: '$e',
+        );
+        rethrow;
       } finally {
         await _closeFileQuietly(file);
       }
@@ -228,6 +249,14 @@ extension SftpServiceOperations on SftpService {
     _assertWithinMemoryLimit(bytes.length, 'upload', maxBytes: maxBytes);
     await _withDetachedSftp(connectionId, (sftp, config, targetBinding) async {
       final absolutePath = await sftp.absolute(path);
+      final transferId = '${config.id}-up-${DateTime.now().millisecondsSinceEpoch}';
+      final transfer = SftpTransferState(
+        id: transferId,
+        name: p.basename(absolutePath),
+        totalBytes: bytes.length,
+        isUpload: true,
+      );
+      _startTransferTelemetry(transferId, transfer);
       SftpFile? file;
       try {
         file = await sftp.open(
@@ -253,6 +282,19 @@ extension SftpServiceOperations on SftpService {
             bytes: bytes.length,
           ),
         );
+        _completeTransferTelemetry(
+          transferId,
+          transfer.copyWith(bytesTransferred: bytes.length),
+        );
+      } catch (e) {
+        _failTransferTelemetry(
+          transferId,
+          transfer.copyWith(bytesTransferred: transfer.bytesTransferred),
+          errorCode: SftpService._mapSftpErrorCode(e, isUpload: true),
+          stage: 'upload',
+          errorMessage: '$e',
+        );
+        rethrow;
       } finally {
         await _closeFileQuietly(file);
       }

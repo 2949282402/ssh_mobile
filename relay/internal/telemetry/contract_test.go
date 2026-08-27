@@ -6,6 +6,38 @@ import (
 	"testing"
 )
 
+func TestEmbeddedCatalogMatchesContractFiles(t *testing.T) {
+	// The embedded catalog must stay byte-for-byte in sync with the canonical
+	// contracts so the Go backend never hardcodes a divergent event/error set.
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working dir: %v", err)
+	}
+	rootDir := filepath.Clean(filepath.Join(wd, "..", "..", ".."))
+	eventsPath := filepath.Join(rootDir, "contracts", "telemetry", "events.json")
+	errorsPath := filepath.Join(rootDir, "contracts", "telemetry", "error_codes.json")
+	if !DefaultCatalogMatchesContract(eventsPath, errorsPath) {
+		t.Fatalf("embedded telemetry catalog drifted from contracts/telemetry; regenerate relay/internal/telemetry/contracts")
+	}
+
+	// Both loaders agree on the event/error sets.
+	embedded := DefaultCatalog()
+	fileLoaded, err := LoadCatalogFromFiles(eventsPath, errorsPath)
+	if err != nil {
+		t.Fatalf("failed to load contract files: %v", err)
+	}
+	for _, name := range []string{"ssh.session.started", "telemetry.batch.uploaded"} {
+		def, ok := embedded.GetEvent(name)
+		if !ok {
+			t.Fatalf("embedded catalog missing event %s", name)
+		}
+		fileDef, fileOK := fileLoaded.GetEvent(name)
+		if !fileOK || def.Name != fileDef.Name || def.Version != fileDef.Version || def.Feature != fileDef.Feature || len(def.AllowedProperties) != len(fileDef.AllowedProperties) {
+			t.Fatalf("event %s differs between embedded and file catalog", name)
+		}
+	}
+}
+
 func TestTelemetryContractValidation(t *testing.T) {
 	// Find root directory
 	wd, err := os.Getwd()

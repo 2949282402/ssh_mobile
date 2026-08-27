@@ -16,10 +16,10 @@ Docker Compose:
 
 2. **Admin Backend** (`cmd/admin`, `internal/admin`):
    - Exposes public REST API (`/api/admin/v1/*`) for administrator login, session management,
-     overview, device listing, revocation, and enrollment token rotation.
+     overview, device listing, revocation, enrollment token rotation, and telemetry administrative management (`/api/admin/v1/telemetry/*`).
    - Communicates with Relay via `RelayManagementClient` calling `/internal/v2/*`.
    - Maintains memory-local session store with single-replica constraint.
-   - Holds no database, Redis, or signing keys.
+   - In MySQL storage mode, telemetry administrative queries are served directly from the shared MySQL `telemetry.Store` and Redis cache.
 
 Device-plane durable state (enrollment, revocation) is behind a `Storage`
 interface: the default `memory` mode is process-local and restart clears it;
@@ -160,6 +160,9 @@ Current boundaries:
 - Telemetry & Observability Pipeline (`internal/telemetry`) is decoupled from Relay core:
   - Ingestion (`POST /api/v1/telemetry/ingest`), authentication (`POST /api/v1/telemetry/auth`),
     and dynamic policy (`GET /api/v1/telemetry/policy`) run on dedicated HTTP endpoints.
+  - Device authentication uses HMAC-SHA256 proofs (`telemetry:auth:<deviceId>:<expEpoch>` signed with `sha256Hex(secret)` derived key) within ±120s clock skew window and issues 2-hour scoped bearer tokens `<exp>.<hmac(tokenKey, "telemetry:auth:<deviceId>:<exp>")>`. Device ID is validated against `^[A-Za-z0-9._-]{1,64}$` to prevent delimiter-collision forgery.
+  - Ingestion enforces device binding via `X-Device-Id` and token HMAC verification.
+  - Fail-closed guarantees: missing/short `TELEMETRY_AUTH_SECRET` (<16 chars) or MySQL store failure returns 503 Service Unavailable, preserving client-side pending telemetry records.
   - Ingestion processes batch records atomically: each record writes to `telemetry_events` (or
     `telemetry_diagnostics`) and inserts permanent `telemetry_ingest_receipts` (with
     `event_id`, `received_at`, `status`). Duplicate `event_id`s return `already_seen` without

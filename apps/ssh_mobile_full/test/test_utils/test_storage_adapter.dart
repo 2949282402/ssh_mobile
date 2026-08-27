@@ -536,23 +536,31 @@ class TestStorageAdapter extends ChangeNotifier
 SshService createTestSshService(
   TestStorageAdapter storage, {
   AppSettings? appSettings,
+  TelemetryClient? telemetryClient,
+  ssh_core.SshNativeStreamConnector? nativeStreamConnector,
+  ssh_core.SshPeerIdResolver? peerIdResolver,
 }) => SshService(
   connectionRepository: storage.connectionRepository,
   credentialRepository: storage.credentialRepository,
   hostKeyRepository: storage.hostKeyRepository,
   terminalMetadataStore: storage.terminalMetadataStore,
   appSettings: appSettings,
+  telemetryClient: telemetryClient,
+  nativeStreamConnector: nativeStreamConnector,
+  peerIdResolver: peerIdResolver,
 );
 
 /// 创建使用测试夹具中显式 Repository 的旧 App SFTP 服务。
 SftpService createTestSftpService(
   TestStorageAdapter storage, {
   SftpPathHistoryStore? pathHistoryStore,
+  TelemetryClient? telemetryClient,
 }) => SftpService(
   connectionRepository: storage.connectionRepository,
   credentialRepository: storage.credentialRepository,
   hostKeyRepository: storage.hostKeyRepository,
   pathHistoryStore: pathHistoryStore ?? storage.sftpPathHistory,
+  telemetryClient: telemetryClient,
 );
 
 /// 创建使用测试夹具中显式 Ports 的 Monitoring Feature 服务。

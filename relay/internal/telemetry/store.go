@@ -41,7 +41,18 @@ type OverviewMetrics struct {
 	ErrorFreeSessionRate     float64                `json:"errorFreeSessionRate"`
 	EventsTrend              []TelemetryMetricPoint `json:"eventsTrend"`
 	ErrorsTrend              []TelemetryMetricPoint `json:"errorsTrend"`
+	Latency                  LatencyStats           `json:"latency"`
 	PipelineHealth           PipelineHealthStats    `json:"pipelineHealth"`
+}
+
+// LatencyStats holds completion latency percentiles (in milliseconds) for
+// terminal operations in the queried time range. Samples == 0 means no latency
+// data is available.
+type LatencyStats struct {
+	P50Ms   float64 `json:"p50Ms"`
+	P95Ms   float64 `json:"p95Ms"`
+	P99Ms   float64 `json:"p99Ms"`
+	Samples int64   `json:"samples"`
 }
 
 type TelemetryMetricPoint struct {
@@ -96,6 +107,14 @@ type MemoryStore struct {
 	receipts    map[string]time.Time // eventId -> receivedAt (never purged)
 	credentials map[string]string    // deviceId -> secretHash
 	settings    TelemetrySettings
+	redisCache  RedisCache
+}
+
+// SetRedisCache wires a cache used for pipeline health probing in QueryOverview.
+func (m *MemoryStore) SetRedisCache(cache RedisCache) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.redisCache = cache
 }
 
 // NewMemoryStore creates an initialized MemoryStore.
@@ -253,8 +272,9 @@ func (m *MemoryStore) QueryOverview(ctx context.Context, filter QueryFilter) (*O
 	sessionTotal := make(map[string]struct{})
 	sessionErrors := make(map[string]struct{})
 
-	var coreOperationsTotal int64
-	var coreOperationsSuccess int64
+	var succeededCount int64
+	var failedCount int64
+	var latencyValues []float64
 
 	hourlyEvents := make(map[string]float64)
 	hourlyErrors := make(map[string]float64)
@@ -286,12 +306,18 @@ func (m *MemoryStore) QueryOverview(ctx context.Context, filter QueryFilter) (*O
 
 		sessionTotal[env.SessionID] = struct{}{}
 
-		// Core operations (SSH/SFTP sessions)
-		if strings.HasPrefix(env.EventName, "ssh.session.") || strings.HasPrefix(env.EventName, "sftp.transfer.") {
-			coreOperationsTotal++
-			if env.EventName == "ssh.session.terminated" || env.EventName == "sftp.transfer.completed" {
-				coreOperationsSuccess++
-			}
+		// Terminal outcome classification: successRate = succeeded / (succeeded + failed).
+		// In-progress events (started/request) count toward neither denominator.
+		switch {
+		case isTerminalFailureEvent(&env):
+			failedCount++
+		case isTerminalSuccessEvent(&env):
+			succeededCount++
+		}
+
+		// Latency samples from terminal successful operations carrying duration_ms/latency_ms.
+		if d, ok := extractLatencyFromProps(env.Properties); ok {
+			latencyValues = append(latencyValues, d)
 		}
 
 		hourKey := env.ReceivedAt.UTC().Format("2006-01-02T15:00:00Z")
@@ -301,10 +327,12 @@ func (m *MemoryStore) QueryOverview(ctx context.Context, filter QueryFilter) (*O
 		}
 	}
 
-	var coreSuccessRate float64 = 1.0
-	if coreOperationsTotal > 0 {
-		coreSuccessRate = float64(coreOperationsSuccess) / float64(coreOperationsTotal)
+	coreSuccessRate := 1.0
+	if terminalTotal := succeededCount + failedCount; terminalTotal > 0 {
+		coreSuccessRate = float64(succeededCount) / float64(terminalTotal)
 	}
+
+	latency := latencyStats(latencyValues)
 
 	var errorFreeSessionRate float64 = 1.0
 	if len(sessionTotal) > 0 {
@@ -331,6 +359,19 @@ func (m *MemoryStore) QueryOverview(ctx context.Context, filter QueryFilter) (*O
 		return errorsTrend[i].Timestamp < errorsTrend[j].Timestamp
 	})
 
+	// Live service health for the in-memory store: MySQL is not backed by a real
+	// database so only the cache status is reported dynamically.
+	redisStatus := redisHealthStatus(ctx, m.redisCache)
+	status := "healthy"
+	if redisStatus != "active" {
+		status = "degraded"
+	}
+
+	var ingestErrorRate float64
+	if terminalTotal := succeededCount + failedCount; terminalTotal > 0 {
+		ingestErrorRate = float64(failedCount) / float64(terminalTotal)
+	}
+
 	return &OverviewMetrics{
 		TotalEvents:              totalEvents,
 		TotalDiagnostics:         totalDiagnostics,
@@ -342,11 +383,12 @@ func (m *MemoryStore) QueryOverview(ctx context.Context, filter QueryFilter) (*O
 		ErrorFreeSessionRate:     errorFreeSessionRate,
 		EventsTrend:              eventsTrend,
 		ErrorsTrend:              errorsTrend,
+		Latency:                  latency,
 		PipelineHealth: PipelineHealthStats{
-			Status:                "degraded",
-			ServerIngestLatencyMs: 1.5,
-			ServerIngestErrorRate: 0.0,
-			RedisCacheStatus:      "disabled",
+			Status:                status,
+			ServerIngestLatencyMs: latency.P50Ms,
+			ServerIngestErrorRate: ingestErrorRate,
+			RedisCacheStatus:      redisStatus,
 		},
 	}, nil
 }
@@ -413,7 +455,7 @@ func (m *MemoryStore) GetDeviceCredential(ctx context.Context, deviceID string) 
 	defer m.mu.RUnlock()
 	hash, ok := m.credentials[deviceID]
 	if !ok {
-		return "", fmt.Errorf("device credential not found")
+		return "", fmt.Errorf("%w: %s", ErrDeviceCredentialNotFound, deviceID)
 	}
 	return hash, nil
 }

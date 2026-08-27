@@ -45,6 +45,7 @@ describe('telemetry hooks', () => {
       errorFreeSessionRate: 0.9,
       eventsTrend: [],
       errorsTrend: [],
+      latency: { p50Ms: 0, p95Ms: 0, p99Ms: 0, samples: 0 },
       pipelineHealth: {
         status: 'healthy',
         serverIngestLatencyMs: 2.5,

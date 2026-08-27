@@ -19,11 +19,11 @@ new implementation goes to the owning package.
 
 Feature/Core persistence is split by owner. There is no shared business
 database, and a production database-open failure must not silently fall back to
-an in-memory database. Client Telemetry uses dedicated `FileTelemetryStorage`
-persisted to `${supportDirectory}/telemetry/telemetry.json` with synchronous
-flush and in-memory cache, isolated from other business databases. Local FIFO
-eviction purges only `synced` records and preserves `pending` and `rejected`
-records upon capacity overflow.
+an in-memory database. Client Telemetry uses dedicated `DriftTelemetryStorage`
+persisted to `${supportDirectory}/telemetry.sqlite` with SQLite transactional
+operations, isolated from other business databases. Local FIFO eviction purges
+only `synced` records and preserves `pending` and `rejected` records upon
+capacity overflow.
 
 Network runtime and public network-contract work is routed through the
 [SDK domain](../sdk/current-state.md), even when `AppRuntime` creates the

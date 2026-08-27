@@ -94,6 +94,14 @@ export const TelemetryMetricPointSchema = z.object({
 });
 export type TelemetryMetricPoint = z.infer<typeof TelemetryMetricPointSchema>;
 
+export const TelemetryLatencyStatsSchema = z.object({
+  p50Ms: z.number(),
+  p95Ms: z.number(),
+  p99Ms: z.number(),
+  samples: z.number(),
+});
+export type TelemetryLatencyStats = z.infer<typeof TelemetryLatencyStatsSchema>;
+
 export const TelemetryOverviewResponseSchema = z.object({
   totalEvents: z.number(),
   totalDiagnostics: z.number(),
@@ -105,6 +113,12 @@ export const TelemetryOverviewResponseSchema = z.object({
   errorFreeSessionRate: z.number(),
   eventsTrend: z.array(TelemetryMetricPointSchema),
   errorsTrend: z.array(TelemetryMetricPointSchema),
+  latency: TelemetryLatencyStatsSchema.optional().default({
+    p50Ms: 0,
+    p95Ms: 0,
+    p99Ms: 0,
+    samples: 0,
+  }),
   pipelineHealth: z.object({
     status: z.enum(['healthy', 'degraded', 'unhealthy']),
     serverIngestLatencyMs: z.number(),

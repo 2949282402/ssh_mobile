@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 // ignore: depend_on_referenced_packages
+import 'package:app_core/app_core.dart';
 import 'package:crypto/crypto.dart';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:connection_core/connection_core.dart';
@@ -19,6 +20,8 @@ import '../../core/services/data_protection_service.dart';
 import '../connection_target_binding.dart';
 import '../remote_target_scope.dart';
 import '../sftp_path_history_store.dart';
+import '../telemetry/app_telemetry_contract.dart';
+import '../telemetry/telemetry_span.dart';
 import '../tool_secret_policy.dart';
 import '../sftp_service.dart';
 import 'sftp_entry_parser.dart';
@@ -68,6 +71,17 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   SftpTransferState? _activeTransfer;
   String? _cancelTransferId;
 
+  /// 可选遥测客户端；由 Composition Root 在 SFTP 服务创建后注入。
+  ///
+  /// transfer span 共享同一个 traceId（started -> completed/failed），便于
+  /// 端到端关联。本地路径、远程路径不写入事件属性，避免泄露服务器布局。
+  TelemetryClient? telemetryClient;
+
+  // 传输 span：键为 transferId，沿用 UUID traceId；跨 completed/failed
+  // 端点保持会话内关联。
+  final Map<String, String> _telemetryTransferTraceIds = {};
+  final Map<String, DateTime> _telemetryTransferStartedAt = {};
+
   @override
   SftpTransferState? get activeTransfer => _activeTransfer;
   @override
@@ -80,6 +94,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     SftpPathHistoryStore? pathHistoryStore,
     this._nativeStreamConnector,
     this._peerIdResolver,
+    this.telemetryClient,
   }) : _pathHistoryStore = pathHistoryStore ?? InMemorySftpPathHistoryStore();
 
   @visibleForTesting
@@ -269,6 +284,110 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // 业务遥测：SFTP 传输生命周期 span。
+  // ---------------------------------------------------------------------------
+
+  void _startTransferTelemetry(String transferId, SftpTransferState transfer) {
+    final client = telemetryClient;
+    if (client == null) return;
+    final traceId = _telemetryTransferTraceIds[transferId] ??=
+        newTelemetryTraceId();
+    _telemetryTransferStartedAt[transferId] = DateTime.now();
+    unawaited(
+      client.recordEvent(
+        eventName: AppTelemetryEvents.sftpTransferStarted.name,
+        eventVersion: AppTelemetryEvents.sftpTransferStarted.version,
+        feature: AppTelemetryEvents.sftpTransferStarted.feature,
+        severity: AppTelemetryEvents.sftpTransferStarted.severity,
+        traceId: traceId,
+        properties: {
+          'direction': transfer.isUpload ? 'upload' : 'download',
+          'file_size_bytes': transfer.totalBytes,
+        },
+      ),
+    );
+  }
+
+  void _completeTransferTelemetry(
+    String transferId,
+    SftpTransferState transfer,
+  ) {
+    final client = telemetryClient;
+    if (client == null) return;
+    final traceId = _telemetryTransferTraceIds.remove(transferId);
+    final startedAt = _telemetryTransferStartedAt.remove(transferId);
+    unawaited(
+      client.recordEvent(
+        eventName: AppTelemetryEvents.sftpTransferCompleted.name,
+        eventVersion: AppTelemetryEvents.sftpTransferCompleted.version,
+        feature: AppTelemetryEvents.sftpTransferCompleted.feature,
+        severity: AppTelemetryEvents.sftpTransferCompleted.severity,
+        traceId: traceId,
+        properties: {
+          'direction': transfer.isUpload ? 'upload' : 'download',
+          'bytes_transferred': transfer.bytesTransferred,
+          'duration_ms': telemetryElapsedMs(startedAt),
+        },
+      ),
+    );
+  }
+
+  void _failTransferTelemetry(
+    String transferId,
+    SftpTransferState transfer, {
+    required String errorCode,
+    required String stage,
+    String? errorMessage,
+  }) {
+    final client = telemetryClient;
+    if (client == null) return;
+    final traceId = _telemetryTransferTraceIds.remove(transferId);
+    _telemetryTransferStartedAt.remove(transferId);
+    unawaited(
+      client.recordEvent(
+        eventName: AppTelemetryEvents.sftpTransferFailed.name,
+        eventVersion: AppTelemetryEvents.sftpTransferFailed.version,
+        feature: AppTelemetryEvents.sftpTransferFailed.feature,
+        severity: AppTelemetryEvents.sftpTransferFailed.severity,
+        traceId: traceId,
+        errorCode: errorCode,
+        errorMessage: errorMessage,
+        properties: {
+          'direction': transfer.isUpload ? 'upload' : 'download',
+          'bytes_transferred': transfer.bytesTransferred,
+          'stage': stage,
+        },
+      ),
+    );
+  }
+
+  /// 将传输异常映射到 contract 已注册的 SFTP 错误码。
+  static String _mapSftpErrorCode(Object error, {required bool isUpload}) {
+    final message = error.toString().toLowerCase();
+    if (message.contains('permission') ||
+        message.contains('denied') ||
+        message.contains('access')) {
+      return AppTelemetryErrorCodes.sftpPermissionDenied.code;
+    }
+    if (message.contains('not found') ||
+        message.contains('no such file') ||
+        message.contains('exists')) {
+      return AppTelemetryErrorCodes.sftpFileNotFound.code;
+    }
+    if (message.contains('quota') ||
+        message.contains('no space') ||
+        message.contains('full')) {
+      // contract 没有 sftpQuotaExceeded 码，映射到最接近的权限类终止错误，
+      // 让失败事件能通过 catalog 校验并在后端按 category 归类。
+      return AppTelemetryErrorCodes.sftpPermissionDenied.code;
+    }
+    if (message.contains('cancel') || message.contains('abort')) {
+      return AppTelemetryErrorCodes.sftpTransferAborted.code;
+    }
+    return AppTelemetryErrorCodes.sftpTransferAborted.code;
+  }
+
   @override
   Future<void> uploadFile({
     required String localPath,
@@ -299,6 +418,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     _cancelTransferId = null;
     activeSession.state = SftpConnectionState.loading;
     notifyListeners();
+    _startTransferTelemetry(transferId, transfer);
 
     RandomAccessFile? raf;
     SftpFile? remoteFile;
@@ -351,6 +471,10 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
           bytes: totalSize,
         ),
       );
+      _completeTransferTelemetry(
+        transferId,
+        transfer.copyWith(bytesTransferred: totalSize),
+      );
       await _openPath(activeSession, activeSession.currentPath);
     } catch (e) {
       if (e is SftpTransferCancelledException) {
@@ -366,6 +490,13 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
           await sftp.remove(remotePath);
         } catch (_) {}
         activeSession.state = SftpConnectionState.connected;
+        _failTransferTelemetry(
+          transferId,
+          transfer.copyWith(bytesTransferred: transfer.bytesTransferred),
+          errorCode: AppTelemetryErrorCodes.sftpTransferAborted.code,
+          stage: 'upload',
+          errorMessage: 'Transfer cancelled by user',
+        );
       } else {
         AppLogService.instance.error(
           'SFTP upload failed',
@@ -378,6 +509,13 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
         );
         activeSession.state = SftpConnectionState.error;
         activeSession.errorMessage = 'Upload failed: $e';
+        _failTransferTelemetry(
+          transferId,
+          transfer.copyWith(bytesTransferred: transfer.bytesTransferred),
+          errorCode: _mapSftpErrorCode(e, isUpload: true),
+          stage: 'upload',
+          errorMessage: '$e',
+        );
       }
       notifyListeners();
       rethrow;
@@ -417,6 +555,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     _cancelTransferId = null;
     session.state = SftpConnectionState.loading;
     notifyListeners();
+    _startTransferTelemetry(transferId, transfer);
 
     RandomAccessFile? raf;
     SftpFile? remoteFile;
@@ -471,6 +610,10 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
 
       session.state = SftpConnectionState.connected;
       notifyListeners();
+      _completeTransferTelemetry(
+        transferId,
+        transfer.copyWith(bytesTransferred: offset),
+      );
     } catch (e) {
       shouldDeletePartialLocalFile = true;
 
@@ -485,6 +628,13 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
           ),
         );
         session.state = SftpConnectionState.connected;
+        _failTransferTelemetry(
+          transferId,
+          transfer.copyWith(bytesTransferred: transfer.bytesTransferred),
+          errorCode: AppTelemetryErrorCodes.sftpTransferAborted.code,
+          stage: 'download',
+          errorMessage: 'Transfer cancelled by user',
+        );
       } else {
         AppLogService.instance.error(
           'SFTP download failed',
@@ -498,6 +648,13 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
         );
         session.state = SftpConnectionState.error;
         session.errorMessage = 'Download failed: $e';
+        _failTransferTelemetry(
+          transferId,
+          transfer.copyWith(bytesTransferred: transfer.bytesTransferred),
+          errorCode: _mapSftpErrorCode(e, isUpload: false),
+          stage: 'download',
+          errorMessage: '$e',
+        );
       }
       notifyListeners();
       rethrow;
@@ -536,6 +693,14 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     notifyListeners();
 
     final remotePath = _joinRemotePath(session.currentPath, filename);
+    final transferId = DateTime.now().millisecondsSinceEpoch.toString();
+    final transfer = SftpTransferState(
+      id: transferId,
+      name: filename,
+      totalBytes: bytes.length,
+      isUpload: true,
+    );
+    _startTransferTelemetry(transferId, transfer);
     SftpFile? file;
     try {
       file = await sftp.open(
@@ -564,6 +729,10 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
           bytes: bytes.length,
         ),
       );
+      _completeTransferTelemetry(
+        transferId,
+        transfer.copyWith(bytesTransferred: bytes.length),
+      );
       await _openPath(session, session.currentPath);
     } catch (e) {
       AppLogService.instance.error(
@@ -574,6 +743,13 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
           path: remotePath,
           error: e,
         ),
+      );
+      _failTransferTelemetry(
+        transferId,
+        transfer.copyWith(bytesTransferred: transfer.bytesTransferred),
+        errorCode: _mapSftpErrorCode(e, isUpload: true),
+        stage: 'upload',
+        errorMessage: '$e',
       );
       session.state = SftpConnectionState.error;
       session.errorMessage = 'Upload failed: $e';
@@ -671,6 +847,14 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       notifyListeners();
     }
 
+    final transferId = '${entry.connectionId}-${DateTime.now().millisecondsSinceEpoch}';
+    final transfer = SftpTransferState(
+      id: transferId,
+      name: entry.name,
+      totalBytes: entry.size ?? 0,
+      isUpload: false,
+    );
+    _startTransferTelemetry(transferId, transfer);
     SftpFile? file;
     try {
       file = await sftp.open(entry.path, mode: SftpFileOpenMode.read);
@@ -694,6 +878,10 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
         bytes,
       );
 
+      _completeTransferTelemetry(
+        transferId,
+        transfer.copyWith(bytesTransferred: bytes.length),
+      );
       if (updateState) {
         session.state = SftpConnectionState.connected;
         notifyListeners();
@@ -708,6 +896,13 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
           path: entry.path,
           error: e,
         ),
+      );
+      _failTransferTelemetry(
+        transferId,
+        transfer.copyWith(bytesTransferred: transfer.bytesTransferred),
+        errorCode: _mapSftpErrorCode(e, isUpload: false),
+        stage: 'download',
+        errorMessage: '$e',
       );
       if (updateState) {
         session.state = SftpConnectionState.error;

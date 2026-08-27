@@ -31,6 +31,11 @@ enum TelemetrySeverity {
 }
 
 enum TelemetrySyncState {
+  /// 尚未写入本地存储的新记录（wire 值 `new`）。
+  ///
+  /// 调用方在插入时应当把它转换为 [pending]；该状态仅用于统一表达
+  /// “新建但尚未进入上传队列”的瞬间。
+  new_('new'),
   pending('pending'),
   synced('synced'),
   rejected('rejected');

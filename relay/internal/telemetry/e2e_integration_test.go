@@ -21,7 +21,7 @@ func TestTelemetry_EndToEnd_SystemLifecycle(t *testing.T) {
 	defer store.Close()
 
 	redisCache := &NoopRedisCache{}
-	service := NewService(store, catalog, redisCache)
+	service := NewServiceWithSecret(store, catalog, redisCache, testAuthSecret)
 	handler := NewHandler(service)
 
 	mux := http.NewServeMux()
@@ -35,10 +35,16 @@ func TestTelemetry_EndToEnd_SystemLifecycle(t *testing.T) {
 	deviceID := "device-e2e-client-1"
 	var bearerToken string
 
+	// Pre-register the device credential (normally done via the Admin API).
+	_, deviceHash := registerDevice(t, store, deviceID)
+
 	// 2. Client Device Authentication (/api/v1/telemetry/auth)
 	t.Run("1_Device_Authentication", func(t *testing.T) {
-		authBody, _ := json.Marshal(map[string]string{
+		expEpoch := futureEpoch()
+		authBody, _ := json.Marshal(map[string]any{
 			"deviceId": deviceID,
+			"proof":    deviceProof(deviceID, deviceHash, expEpoch),
+			"expEpoch": expEpoch,
 		})
 		resp, err := http.Post(server.URL+PathPublicAuth, "application/json", bytes.NewReader(authBody))
 		if err != nil {

@@ -842,6 +842,11 @@ job_admin_api_contract() {
   step 'Check Front ↔ Relay administrator API contract' bash "$ROOT_DIR/scripts/bash/contracts/admin_api_contract.sh"
 }
 
+job_telemetry_contract() {
+  need dart go npm flutter || return "$SKIP_STATUS"
+  step 'Check Telemetry data contract across Go, Front, and Dart' bash "$ROOT_DIR/scripts/bash/contracts/telemetry_contract.sh"
+}
+
 job_native() {
   need cargo || return "$SKIP_STATUS"
   step 'Check Rust formatting' run_in native/network_core cargo fmt --all -- --check
@@ -991,6 +996,8 @@ job_architecture() {
   step 'Check agent documentation' dart run tool/check_agent_docs.dart
   step 'Test agent documentation checker' dart run test/tool/agent_docs_check_test.dart
   step 'Test CI workflow contract' dart run test/tool/ci_workflow_test.dart
+  step 'Check telemetry contract generated' dart run tool/check_telemetry_contract_generated.dart
+  step 'Test telemetry contract codegen' dart run test/tool/telemetry_contract_codegen_test.dart
   step 'Check architecture guard' dart run tool/architecture_check.dart
   step 'Check module dependencies' dart run tool/check_module_dependencies.dart
   step 'Check resource owners' dart run tool/check_resource_owners.dart
@@ -1166,6 +1173,7 @@ job_features() {
 PRE_JOBS=(
   'front-quality:job_front'
   'admin-api-contract:job_admin_api_contract'
+  'telemetry-contract:job_telemetry_contract'
   'native-network-quality:job_native'
   'sdk-dart-quality:job_sdk'
   'lan-network-v2-targeted:job_lan_network_v2'

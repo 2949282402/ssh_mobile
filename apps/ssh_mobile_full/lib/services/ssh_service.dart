@@ -6,6 +6,7 @@ import 'dart:collection';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:app_core/app_core.dart';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:connection_core/connection_core.dart' as connection_core;
 import 'package:flutter/foundation.dart';
@@ -21,6 +22,8 @@ import '../core/services/ssh_host_key_policy.dart';
 import 'connection_target_binding.dart';
 import 'remote_target_scope.dart';
 import 'remote_command_decoder.dart';
+import 'telemetry/app_telemetry_contract.dart';
+import 'telemetry/telemetry_span.dart';
 import 'terminal_session_metadata_store.dart' as terminal_metadata;
 import 'terminal_history_service.dart';
 import 'ssh/ssh_background_event_bridge.dart';
@@ -118,6 +121,10 @@ class SshService extends ChangeNotifier
   final Map<String, ConnectionTargetBinding> _sessionTargetBindings = {};
   final Map<String, _LocalSshRuntime> _localRuntimes = {};
   final SshSessionConnectGate _localConnectGate = SshSessionConnectGate();
+  // 业务遥测：连接生命周期 span 共享同一个 traceId，跨 started -> connected ->
+  // terminated/failed 端到端关联。键为 sessionId。
+  final Map<String, String> _telemetryTraceIds = {};
+  final Map<String, DateTime> _telemetrySpanStartedAt = {};
   final Map<String, Completer<void>> _connectCompleters = {};
   final Map<String, Future<void>> _connectOperations = {};
   final Map<String, String> _connectOperationTargets = {};
@@ -142,6 +149,12 @@ class SshService extends ChangeNotifier
   Future<void>? _initFuture;
   Future<void>? _managerCloseFuture;
 
+  /// 可选遥测客户端；由 Composition Root 在 SSH 服务创建后注入。
+  ///
+  /// 业务生产者仅在客户端非空时上报，用户名/私钥/密码等敏感字段绝不写入
+  /// properties；host/port 也不会出现在事件属性中，避免泄露凭据或内网地址。
+  TelemetryClient? telemetryClient;
+
   SshService({
     required connection_core.ConnectionRepository connectionRepository,
     required connection_core.CredentialRepository credentialRepository,
@@ -151,6 +164,7 @@ class SshService extends ChangeNotifier
     AppSettings? appSettings,
     ssh_core.SshNativeStreamConnector? nativeStreamConnector,
     ssh_core.SshPeerIdResolver? peerIdResolver,
+    this.telemetryClient,
   }) : _connectionRepository = connectionRepository,
        _credentialRepository = credentialRepository,
        _hostKeyRepository = hostKeyRepository,
@@ -733,6 +747,7 @@ class SshService extends ChangeNotifier
     session.updatedAt = DateTime.now();
     _lastErrorMessage = null;
     _lastSessionId = id;
+    _startSessionTelemetry(session, config);
     final launchMode = _effectiveLaunchMode(config);
     final connectCompleter = Completer<void>();
     _connectCompleters[id] = connectCompleter;
@@ -832,6 +847,12 @@ class SshService extends ChangeNotifier
         'Session connect timed out',
         details: 'sessionId=$id connection=${config.name}',
       );
+      _failSessionTelemetry(
+        _sessions[id] ?? session,
+        'connect',
+        errorCode: AppTelemetryErrorCodes.sshTimeout.code,
+        errorMessage: 'Connection timed out',
+      );
       _setSessionError(id, connectionId, config.name, 'Connection timed out');
     } catch (e, stackTrace) {
       if (_shutdownRequested) return;
@@ -842,6 +863,13 @@ class SshService extends ChangeNotifier
         error: e,
         stackTrace: stackTrace,
         details: 'sessionId=$id connection=${config.name}',
+      );
+      final errorCode = _mapSshErrorCode(e, config);
+      _failSessionTelemetry(
+        _sessions[id] ?? session,
+        'connect',
+        errorCode: errorCode,
+        errorMessage: '$e',
       );
       _setSessionError(id, connectionId, config.name, 'Connection failed: $e');
     }
@@ -864,6 +892,7 @@ class SshService extends ChangeNotifier
       session.state = SshConnectionState.disconnected;
       session.errorMessage = 'Closed by user';
       session.updatedAt = DateTime.now();
+      _terminateSessionTelemetry(session);
       _schedulePersistence(
         () => _saveTerminalHistoryRecord(session),
         description: 'Failed to save terminal history record',
@@ -1056,8 +1085,15 @@ class SshService extends ChangeNotifier
     session.updatedAt = DateTime.now();
 
     if (state == SshConnectionState.connected) {
+      _recordSessionConnectedTelemetry(session);
       _connectCompleters.remove(sessionId)?.complete();
     } else if (state == SshConnectionState.error) {
+      _failSessionTelemetry(
+        session,
+        'connect',
+        errorCode: _mapBackgroundErrorCode(error),
+        errorMessage: error ?? 'Connection failed',
+      );
       _connectCompleters
           .remove(sessionId)
           ?.completeError(StateError(error ?? 'Connection failed'));
