@@ -67,7 +67,7 @@ void main() {
 
       // The server's one-second expiresIn must drive refresh. The enrollment
       // secret is already persisted and must be reused for the second HMAC.
-      await Future<void>.delayed(const Duration(milliseconds: 1200));
+      await Future<void>.delayed(const Duration(seconds: 2));
       await client.record(event: TelemetryEvents.sshSessionStarted);
       await client.flush();
 
@@ -113,26 +113,10 @@ void main() {
   test(
     'does not replay enrollment credentials across an HTTP redirect',
     () async {
-      final target = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-      final source = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-      var sourceRequests = 0;
-      var targetRequests = 0;
-      source.listen((request) async {
-        sourceRequests++;
-        await utf8.decodeStream(request);
-        request.response
-          ..statusCode = HttpStatus.temporaryRedirect
-          ..headers.set(
-            HttpHeaders.locationHeader,
-            'http://127.0.0.1:${target.port}/capture',
-          );
-        await request.response.close();
-      });
-      target.listen((request) async {
-        targetRequests++;
-        await utf8.decodeStream(request);
-        await request.response.close();
-      });
+      final server = await _RedirectServer.start(
+        sourcePath: TelemetryEndpoints.publicEnrollPath,
+        statusCode: HttpStatus.temporaryRedirect,
+      );
       final httpClient = HttpClient();
       final transport = HttpTelemetryTransport(
         client: httpClient,
@@ -140,13 +124,12 @@ void main() {
       );
       addTearDown(() async {
         httpClient.close(force: true);
-        await source.close(force: true);
-        await target.close(force: true);
+        await server.close();
       });
 
       await expectLater(
         transport.enrollDevice(
-          baseUrl: 'http://127.0.0.1:${source.port}',
+          baseUrl: server.origin,
           deviceId: 'device-http',
           request: const TelemetryDeviceEnrollmentRequest(
             deviceId: 'device-http',
@@ -166,34 +149,17 @@ void main() {
         ),
       );
 
-      expect(sourceRequests, 1);
-      expect(targetRequests, 0);
+      expect(server.sourceRequests, 1);
+      expect(server.captureRequests, 0);
+      expect(server.errors, isEmpty);
     },
   );
 
   test('does not replay bearer credentials across an HTTP redirect', () async {
-    final target = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    final source = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    var sourceRequests = 0;
-    var targetRequests = 0;
-    String? targetAuthorization;
-    source.listen((request) async {
-      sourceRequests++;
-      request.response
-        ..statusCode = HttpStatus.found
-        ..headers.contentLength = 0
-        ..headers.set(
-          HttpHeaders.locationHeader,
-          'http://127.0.0.1:${target.port}/capture',
-        );
-      await request.response.close();
-    });
-    target.listen((request) async {
-      targetRequests++;
-      targetAuthorization = request.headers.value('authorization');
-      request.response.headers.contentLength = 0;
-      await request.response.close();
-    });
+    final server = await _RedirectServer.start(
+      sourcePath: TelemetryEndpoints.publicPolicyPath,
+      statusCode: HttpStatus.found,
+    );
     final httpClient = HttpClient();
     final transport = HttpTelemetryTransport(
       client: httpClient,
@@ -201,13 +167,12 @@ void main() {
     );
     addTearDown(() async {
       httpClient.close(force: true);
-      await source.close(force: true);
-      await target.close(force: true);
+      await server.close();
     });
 
     await expectLater(
       transport.fetchRemotePolicy(
-        baseUrl: 'http://127.0.0.1:${source.port}',
+        baseUrl: server.origin,
         authToken: 'bearer-secret',
       ),
       throwsA(
@@ -219,10 +184,106 @@ void main() {
       ),
     );
 
-    expect(sourceRequests, 1);
-    expect(targetRequests, 0);
-    expect(targetAuthorization, isNull);
+    expect(server.sourceRequests, 1);
+    expect(server.captureRequests, 0);
+    expect(server.captureAuthorization, isNull);
+    expect(server.errors, isEmpty);
   });
+}
+
+final class _RedirectServer {
+  _RedirectServer._({
+    required this._server,
+    required this.sourcePath,
+    required this.statusCode,
+  });
+
+  static Future<_RedirectServer> start({
+    required String sourcePath,
+    required int statusCode,
+  }) async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final redirectServer = _RedirectServer._(
+      server: server,
+      sourcePath: sourcePath,
+      statusCode: statusCode,
+    );
+    redirectServer._subscription = server.listen(redirectServer._onRequest);
+    return redirectServer;
+  }
+
+  final HttpServer _server;
+  final String sourcePath;
+  final int statusCode;
+  late final StreamSubscription<HttpRequest> _subscription;
+  final Set<Future<void>> _activeRequests = <Future<void>>{};
+  final List<Object> errors = <Object>[];
+  int sourceRequests = 0;
+  int captureRequests = 0;
+  String? captureAuthorization;
+  String? captureBody;
+
+  String get origin => 'http://127.0.0.1:${_server.port}';
+
+  void _onRequest(HttpRequest request) {
+    late final Future<void> operation;
+    operation = _handle(request);
+    _activeRequests.add(operation);
+    unawaited(operation.whenComplete(() => _activeRequests.remove(operation)));
+  }
+
+  Future<void> _handle(HttpRequest request) async {
+    try {
+      if (request.uri.path == sourcePath) {
+        sourceRequests++;
+        if (request.method == 'POST') {
+          await utf8.decodeStream(request);
+        }
+        request.response
+          ..statusCode = statusCode
+          ..headers.contentLength = 0
+          ..headers.set(HttpHeaders.locationHeader, '$origin/capture');
+        await request.response.close();
+        return;
+      }
+
+      if (request.uri.path == '/capture') {
+        captureRequests++;
+        captureAuthorization = request.headers.value(
+          HttpHeaders.authorizationHeader,
+        );
+        captureBody = await utf8.decodeStream(request);
+        request.response
+          ..statusCode = HttpStatus.ok
+          ..headers.contentLength = 0;
+        await request.response.close();
+        return;
+      }
+
+      request.response
+        ..statusCode = HttpStatus.notFound
+        ..headers.contentLength = 0;
+      await request.response.close();
+    } on Object catch (error) {
+      errors.add(error);
+      try {
+        request.response
+          ..statusCode = HttpStatus.internalServerError
+          ..headers.contentLength = 0;
+        await request.response.close();
+      } on Object {
+        // The request may already be closed; preserve the original failure.
+      }
+    }
+  }
+
+  Future<void> close() async {
+    await _subscription.cancel();
+    if (_activeRequests.isNotEmpty) {
+      await Future.wait<void>(List<Future<void>>.of(_activeRequests));
+    }
+    await _server.close(force: true);
+  }
 }
 
 final class _HttpEnrollmentProvider

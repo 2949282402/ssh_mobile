@@ -217,7 +217,7 @@ void main() {
 
     await client.record(event: TelemetryEvents.sshSessionStarted);
     await client.flush();
-    await Future<void>.delayed(const Duration(milliseconds: 1100));
+    await Future<void>.delayed(const Duration(seconds: 2));
     await client.record(event: TelemetryEvents.sshSessionStarted);
     await client.flush();
 
