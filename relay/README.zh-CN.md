@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-27
+> 最新更新时间：2026-08-28
 
 # SSH Mobile 控制、Relay 与 Admin 后端服务
 
@@ -60,6 +60,16 @@ React + Vite + TypeScript 前端控制台位于 `../front/`，在 Caddy 背后�
 - `POST /api/v1/telemetry/auth` — 客户端设备认证与临时 Token 签发。
 - `GET /api/v1/telemetry/policy` — 动态获取最新上报策略。
 - `POST /api/v1/telemetry/ingest` — 批量上报事件/诊断日志（HMAC 验签与持久幂等收据）。
+
+Telemetry 上报针对 2C4G 部署做了有界保护：请求体上限为 1 MiB，单批最多
+100 条记录，默认最多并发 4 个数据库写入（配置值会限制在 4–8）。已通过
+Bearer Token 验证的设备使用带 TTL 清理的有界令牌桶，限流键取认证 Token
+绑定的设备身份，不取请求体中的设备字段。写入槽位耗尽或设备突发额度耗尽时
+返回 `429 Too Many Requests`、有界整数 `Retry-After` 以及结构化的
+`INGEST_OVERLOADED` 或 `INGEST_RATE_LIMITED` 错误；请求体/批次超限在持久化
+前返回 `413 Request Entity Too Large`。可通过 `TELEMETRY_MAX_*`、
+`TELEMETRY_RATE_LIMIT_*` 与 `TELEMETRY_RETRY_AFTER_SECONDS` 在硬上限内调整，
+详见 `.env.example`。
 
 ## 容器部署
 

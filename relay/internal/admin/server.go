@@ -86,7 +86,7 @@ func NewServerWithClientAndTelemetry(config Config, client RelayManagementClient
 	if candidate, ok := client.(telemetry.DeviceAttestor); ok {
 		attestor = candidate
 	}
-	telemetryHandler := telemetry.NewHandler(telemetryService, attestor)
+	telemetryHandler := telemetry.NewHandlerWithConfig(telemetryService, config.TelemetryIngest, attestor)
 	telemetryWorker := telemetry.NewRetentionWorker(telemetryService, 1*time.Hour)
 	telemetryWorker.Start()
 

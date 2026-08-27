@@ -1,4 +1,4 @@
-> Last updated: 2026-08-27
+> Last updated: 2026-08-28
 
 # Backend Current State
 
@@ -167,6 +167,14 @@ Current boundaries:
     `telemetry_diagnostics`) and inserts permanent `telemetry_ingest_receipts` (with
     `event_id`, `received_at`, `status`). Duplicate `event_id`s return `already_seen` without
     mutating data rows.
+  - Public ingest is bounded before persistence: request bodies are capped at 1 MiB, batches at
+    100 records, database writers use a non-blocking 4-slot semaphore (configurable only within
+    4–8), and authenticated device token buckets use bounded cardinality plus TTL cleanup. Writer
+    saturation and per-device bursts return 429 with bounded `Retry-After`; body and batch limits
+    return 413. MySQL ingests valid records with one batched receipt lookup and one transaction
+    containing multi-row event and receipt inserts, with a unique raw-event `event_id` index and
+    bounded retry for concurrent receipt races. Memory and MySQL stores preserve partial rejected,
+    duplicate, and accepted ACKs with the same event-id receipt semantics.
   - Scheduled retention background worker purges data based on trusted server `received_at`
     (time window and row count bounds) while preserving all idempotency receipts permanently.
   - Redis Stream hot cache provides sub-millisecond retrieval of recent diagnostic logs for

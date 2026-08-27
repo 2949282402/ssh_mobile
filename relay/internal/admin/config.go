@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ssh-mobile/relay/internal/telemetry"
 )
 
 const (
@@ -57,6 +59,7 @@ type Config struct {
 	TelemetryMySQLDSN   string
 	TelemetryRedisURL   string
 	TelemetryAuthSecret string
+	TelemetryIngest     telemetry.IngestConfig
 }
 
 // ConfigFromEnvironment loads and validates Admin backend configuration from environment variables.
@@ -143,6 +146,10 @@ func ConfigFromEnvironment() (Config, error) {
 		TelemetryMySQLDSN:   strings.TrimSpace(os.Getenv("TELEMETRY_MYSQL_DSN")),
 		TelemetryRedisURL:   strings.TrimSpace(os.Getenv("TELEMETRY_REDIS_URL")),
 		TelemetryAuthSecret: strings.TrimSpace(os.Getenv("TELEMETRY_AUTH_SECRET")),
+	}
+	config.TelemetryIngest, err = telemetry.IngestConfigFromEnvironment()
+	if err != nil {
+		return Config{}, err
 	}
 
 	if parseErr != nil {

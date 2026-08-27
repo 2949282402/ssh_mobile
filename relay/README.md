@@ -1,4 +1,4 @@
-> Last updated: 2026-08-27
+> Last updated: 2026-08-28
 
 # SSH Mobile Control, Relay, and Admin Backend Services
 
@@ -62,6 +62,19 @@ There is no `/v1/connect` route; only the V2 control and relay data routes are s
 - `POST /api/v1/telemetry/auth` — Client device authentication and short-lived token issuance.
 - `GET /api/v1/telemetry/policy` — Fetch active dynamic upload policy.
 - `POST /api/v1/telemetry/ingest` — Ingest batch events/diagnostics with HMAC and idempotency.
+
+Telemetry ingest is bounded for the supported 2C4G deployment: request bodies
+are limited to 1 MiB, batches to 100 records, and at most four database writer
+operations run concurrently by default (the writer limit is clamped to 4–8).
+Authenticated devices use bounded token-bucket admission with TTL cleanup; the
+bucket key is the device identity bound by the verified bearer token, never a
+body-supplied identity. A full writer gate or exhausted device bucket returns
+`429 Too Many Requests` with a bounded integer `Retry-After` header and a
+structured `INGEST_OVERLOADED` or `INGEST_RATE_LIMITED` error. Body and batch
+limits return `413 Request Entity Too Large` before persistence. Optional
+`TELEMETRY_MAX_*`, `TELEMETRY_RATE_LIMIT_*`, and
+`TELEMETRY_RETRY_AFTER_SECONDS` variables tune these limits within their hard
+bounds; see `.env.example`.
 
 ## Deployment
 

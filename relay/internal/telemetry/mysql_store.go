@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -65,6 +66,12 @@ func NewMySQLStoreFromDSN(dsn string, catalog *Catalog) (*MySQLStore, error) {
 }
 
 func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("%w: mysql telemetry store is unavailable", ErrServiceUnavailable)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS telemetry_events (
 			id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -86,6 +93,7 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 			properties_json JSON DEFAULT NULL,
 			error_json JSON DEFAULT NULL,
 			created_at DATETIME(3) NOT NULL,
+			UNIQUE KEY uq_telemetry_event_id (event_id),
 			INDEX idx_telemetry_device (device_id),
 			INDEX idx_telemetry_trace (trace_id),
 			INDEX idx_telemetry_name_received (event_name, received_at),
@@ -120,6 +128,34 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 			return fmt.Errorf("failed executing telemetry schema DDL: %w", err)
 		}
 	}
+	if err := s.ensureEventIDUniqueIndex(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ensureEventIDUniqueIndex upgrades telemetry databases created before event
+// idempotency was enforced by the raw-events table. Existing duplicate rows
+// intentionally fail this migration instead of silently deleting telemetry or
+// weakening receipt semantics.
+func (s *MySQLStore) ensureEventIDUniqueIndex(ctx context.Context) error {
+	var count int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM information_schema.statistics
+		WHERE table_schema = DATABASE()
+		  AND table_name = 'telemetry_events'
+		  AND index_name = 'uq_telemetry_event_id'
+	`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check telemetry event id index: %w", err)
+	}
+	if count > 0 {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, "ALTER TABLE telemetry_events ADD UNIQUE KEY uq_telemetry_event_id (event_id)"); err != nil {
+		return fmt.Errorf("add telemetry event id index: %w", err)
+	}
 	return nil
 }
 
@@ -131,9 +167,20 @@ func isDuplicateKeyError(err error) bool {
 	return strings.Contains(msg, "1062") || strings.Contains(msg, "duplicate entry") || strings.Contains(msg, "unique constraint")
 }
 
+var errConcurrentIngestDuplicate = errors.New("concurrent telemetry ingest duplicate")
+
 func (s *MySQLStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnvelope) ([]IngestRecordResult, error) {
+	if s == nil || s.db == nil || s.catalog == nil {
+		return nil, fmt.Errorf("%w: mysql telemetry store is unavailable", ErrServiceUnavailable)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	now := time.Now().UTC()
 	results := make([]IngestRecordResult, len(envelopes))
+	valid := make([]TelemetryEnvelope, 0, len(envelopes))
+	validIndexes := make([]int, 0, len(envelopes))
+	seenInput := make(map[string]struct{}, len(envelopes))
 
 	for i, env := range envelopes {
 		if err := s.catalog.ValidateEnvelope(&env); err != nil {
@@ -147,95 +194,195 @@ func (s *MySQLStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnvel
 
 		// Server receive time is authoritative; client-supplied receivedAt is ignored.
 		env.ReceivedAt = now
-
-		// Check receipt idempotency
-		var existingID string
-		err := s.db.QueryRowContext(ctx, "SELECT event_id FROM telemetry_ingest_receipts WHERE event_id = ?", env.EventID).Scan(&existingID)
-		if err == nil && existingID != "" {
+		if _, duplicate := seenInput[env.EventID]; duplicate {
 			results[i] = IngestRecordResult{
 				EventID: env.EventID,
 				Status:  StatusAlreadySeen,
 			}
 			continue
-		} else if err != nil && err != sql.ErrNoRows {
-			return nil, fmt.Errorf("query receipt error: %w", err)
 		}
-
-		var propsJSON []byte
-		if env.Properties != nil {
-			propsJSON, _ = json.Marshal(env.Properties)
-		}
-
-		var errJSON []byte
-		var errCode sql.NullString
-		if env.Error != nil {
-			errJSON, _ = json.Marshal(env.Error)
-			errCode = sql.NullString{String: env.Error.ErrorCode, Valid: true}
-		}
-
-		// Atomic insert into telemetry_events and telemetry_ingest_receipts
-		tx, err := s.db.BeginTx(ctx, nil)
-		if err != nil {
-			return nil, fmt.Errorf("begin ingest tx: %w", err)
-		}
-
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO telemetry_events (
-				event_id, record_type, event_name, event_version, device_id, session_id,
-				trace_id, occurred_at, received_at, feature, severity, error_code,
-				app_version, build_number, platform, properties_json, error_json, created_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`,
-			env.EventID, string(env.RecordType), env.EventName, env.EventVersion, env.DeviceID, env.SessionID,
-			env.TraceID, env.OccurredAt, env.ReceivedAt, env.Feature, string(env.Severity), errCode,
-			env.AppVersion, env.BuildNumber, env.Platform, string(propsJSON), string(errJSON), now,
-		)
-		if err != nil {
-			_ = tx.Rollback()
-			if isDuplicateKeyError(err) {
-				results[i] = IngestRecordResult{
-					EventID: env.EventID,
-					Status:  StatusAlreadySeen,
-				}
-				continue
-			}
-			return nil, fmt.Errorf("insert raw event: %w", err)
-		}
-
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO telemetry_ingest_receipts (event_id, device_id, received_at)
-			VALUES (?, ?, ?)
-		`, env.EventID, env.DeviceID, env.ReceivedAt)
-		if err != nil {
-			_ = tx.Rollback()
-			if isDuplicateKeyError(err) {
-				results[i] = IngestRecordResult{
-					EventID: env.EventID,
-					Status:  StatusAlreadySeen,
-				}
-				continue
-			}
-			return nil, fmt.Errorf("insert receipt: %w", err)
-		}
-
-		if err := tx.Commit(); err != nil {
-			if isDuplicateKeyError(err) {
-				results[i] = IngestRecordResult{
-					EventID: env.EventID,
-					Status:  StatusAlreadySeen,
-				}
-				continue
-			}
-			return nil, fmt.Errorf("commit ingest tx: %w", err)
-		}
-
-		results[i] = IngestRecordResult{
-			EventID: env.EventID,
-			Status:  StatusAccepted,
-		}
+		seenInput[env.EventID] = struct{}{}
+		valid = append(valid, env)
+		validIndexes = append(validIndexes, i)
 	}
 
-	return results, nil
+	if len(valid) == 0 {
+		return results, nil
+	}
+
+	// A concurrent request can win the receipt race after our locking read in
+	// deployments that use READ COMMITTED or an older schema. Retry the whole
+	// bounded batch once the winner commits; the next locking read then reports
+	// the winner as already_seen without losing unrelated records.
+	for attempt := 0; attempt < 3; attempt++ {
+		statuses, err := s.ingestValidBatch(ctx, valid, now)
+		if errors.Is(err, errConcurrentIngestDuplicate) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		for i := range valid {
+			results[validIndexes[i]] = IngestRecordResult{
+				EventID: valid[i].EventID,
+				Status:  statuses[valid[i].EventID],
+			}
+		}
+		return results, nil
+	}
+	return nil, fmt.Errorf("ingest batch retry exhausted: %w", errConcurrentIngestDuplicate)
+}
+
+func (s *MySQLStore) ingestValidBatch(ctx context.Context, envelopes []TelemetryEnvelope, now time.Time) (map[string]IngestStatus, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin ingest tx: %w", err)
+	}
+	rollback := func() {
+		_ = tx.Rollback()
+	}
+
+	placeholders := mysqlPlaceholders(len(envelopes))
+	rows, err := tx.QueryContext(ctx,
+		"SELECT event_id FROM telemetry_ingest_receipts WHERE event_id IN ("+placeholders+") FOR UPDATE",
+		telemetryEventIDs(envelopes)...,
+	)
+	if err != nil {
+		rollback()
+		return nil, fmt.Errorf("query receipts: %w", err)
+	}
+	existing := make(map[string]struct{}, len(envelopes))
+	for rows.Next() {
+		var eventID string
+		if err := rows.Scan(&eventID); err != nil {
+			_ = rows.Close()
+			rollback()
+			return nil, fmt.Errorf("scan receipt: %w", err)
+		}
+		existing[eventID] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		rollback()
+		return nil, fmt.Errorf("iterate receipts: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		rollback()
+		return nil, fmt.Errorf("close receipts: %w", err)
+	}
+
+	statuses := make(map[string]IngestStatus, len(envelopes))
+	newEnvelopes := make([]TelemetryEnvelope, 0, len(envelopes))
+	for _, env := range envelopes {
+		if _, ok := existing[env.EventID]; ok {
+			statuses[env.EventID] = StatusAlreadySeen
+			continue
+		}
+		newEnvelopes = append(newEnvelopes, env)
+	}
+	if len(newEnvelopes) == 0 {
+		if err := tx.Commit(); err != nil {
+			return nil, fmt.Errorf("commit receipt lookup: %w", err)
+		}
+		return statuses, nil
+	}
+
+	eventArgs, err := telemetryEventInsertArgs(newEnvelopes, now)
+	if err != nil {
+		rollback()
+		return nil, err
+	}
+	eventSQL := `INSERT INTO telemetry_events (
+		event_id, record_type, event_name, event_version, device_id, session_id,
+		trace_id, occurred_at, received_at, feature, severity, error_code,
+		app_version, build_number, platform, properties_json, error_json, created_at
+	) VALUES ` + mysqlValueTuples(len(newEnvelopes), 18)
+	if _, err := tx.ExecContext(ctx, eventSQL, eventArgs...); err != nil {
+		rollback()
+		if isDuplicateKeyError(err) {
+			return nil, errConcurrentIngestDuplicate
+		}
+		return nil, fmt.Errorf("insert raw events: %w", err)
+	}
+
+	receiptArgs := make([]any, 0, len(newEnvelopes)*3)
+	for _, env := range newEnvelopes {
+		receiptArgs = append(receiptArgs, env.EventID, env.DeviceID, env.ReceivedAt)
+	}
+	receiptSQL := `INSERT INTO telemetry_ingest_receipts (event_id, device_id, received_at) VALUES ` + mysqlValueTuples(len(newEnvelopes), 3)
+	if _, err := tx.ExecContext(ctx, receiptSQL, receiptArgs...); err != nil {
+		rollback()
+		if isDuplicateKeyError(err) {
+			return nil, errConcurrentIngestDuplicate
+		}
+		return nil, fmt.Errorf("insert receipts: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		if isDuplicateKeyError(err) {
+			return nil, errConcurrentIngestDuplicate
+		}
+		return nil, fmt.Errorf("commit ingest tx: %w", err)
+	}
+	for _, env := range newEnvelopes {
+		statuses[env.EventID] = StatusAccepted
+	}
+	return statuses, nil
+}
+
+func telemetryEventIDs(envelopes []TelemetryEnvelope) []any {
+	args := make([]any, len(envelopes))
+	for i := range envelopes {
+		args[i] = envelopes[i].EventID
+	}
+	return args
+}
+
+func telemetryEventInsertArgs(envelopes []TelemetryEnvelope, now time.Time) ([]any, error) {
+	args := make([]any, 0, len(envelopes)*18)
+	for _, env := range envelopes {
+		var propsJSON []byte
+		if env.Properties != nil {
+			encoded, err := json.Marshal(env.Properties)
+			if err != nil {
+				return nil, fmt.Errorf("marshal properties for %q: %w", env.EventID, err)
+			}
+			propsJSON = encoded
+		}
+		var errJSON []byte
+		var errorCode any
+		if env.Error != nil {
+			encoded, err := json.Marshal(env.Error)
+			if err != nil {
+				return nil, fmt.Errorf("marshal error for %q: %w", env.EventID, err)
+			}
+			errJSON = encoded
+			errorCode = env.Error.ErrorCode
+		}
+		args = append(args,
+			env.EventID, string(env.RecordType), env.EventName, env.EventVersion, env.DeviceID, env.SessionID,
+			env.TraceID, env.OccurredAt, env.ReceivedAt, env.Feature, string(env.Severity), errorCode,
+			env.AppVersion, env.BuildNumber, env.Platform, propsJSON, errJSON, now,
+		)
+	}
+	return args, nil
+}
+
+func mysqlPlaceholders(count int) string {
+	placeholders := make([]string, count)
+	for i := range placeholders {
+		placeholders[i] = "?"
+	}
+	return strings.Join(placeholders, ", ")
+}
+
+func mysqlValueTuples(rows, columns int) string {
+	tuples := make([]string, rows)
+	values := strings.TrimSuffix(strings.Repeat("?, ", columns), ", ")
+	for i := range tuples {
+		tuples[i] = "(" + values + ")"
+	}
+	return strings.Join(tuples, ", ")
 }
 
 func (s *MySQLStore) QueryEvents(ctx context.Context, filter QueryFilter) ([]TelemetryEnvelope, int, error) {

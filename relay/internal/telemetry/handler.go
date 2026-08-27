@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -19,17 +21,34 @@ const MaxRequestBodyBytes = 1 << 20 // 1MB maximum body
 type Handler struct {
 	service  *Service
 	attestor DeviceAttestor
+	config   IngestConfig
+	writer   chan struct{}
+	limiter  *deviceRateLimiter
 }
 
 // NewHandler creates a telemetry handler. The optional attestor keeps existing
 // callers source-compatible while allowing Admin to inject the Relay-backed
 // device identity capability.
 func NewHandler(service *Service, attestors ...DeviceAttestor) *Handler {
+	return NewHandlerWithConfig(service, DefaultIngestConfig(), attestors...)
+}
+
+// NewHandlerWithConfig creates a telemetry handler with explicit bounded
+// ingestion limits. The config is normalized to safe hard bounds before any
+// request can acquire a writer slot or create a rate-limit entry.
+func NewHandlerWithConfig(service *Service, config IngestConfig, attestors ...DeviceAttestor) *Handler {
+	config = normalizeIngestConfig(config)
 	var attestor DeviceAttestor
 	if len(attestors) > 0 {
 		attestor = attestors[0]
 	}
-	return &Handler{service: service, attestor: attestor}
+	return &Handler{
+		service:  service,
+		attestor: attestor,
+		config:   config,
+		writer:   make(chan struct{}, config.MaxConcurrentWriters),
+		limiter:  newDeviceRateLimiter(config),
+	}
 }
 
 func (h *Handler) RegisterPublicRoutes(mux *http.ServeMux) {
@@ -187,10 +206,18 @@ func (h *Handler) handlePublicIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reject a known oversize body before authentication, JSON decoding, or any
+	// request-specific state allocation. Chunked/unknown-length bodies are
+	// bounded below by MaxBytesReader and classified after decoding.
+	if r.ContentLength > h.config.MaxBodyBytes {
+		h.writeError(w, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", fmt.Sprintf("telemetry request body exceeds %d bytes", h.config.MaxBodyBytes))
+		return
+	}
+
 	// 1. Authenticate Device: token must be valid and bound to X-Device-Id.
 	deviceID := strings.TrimSpace(r.Header.Get("X-Device-Id"))
 	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
-	token := strings.TrimPrefix(authHeader, "Bearer ")
+	token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
 
 	if deviceID == "" || token == "" || !h.service.VerifyDeviceToken(deviceID, token) {
 		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized telemetry device credential")
@@ -198,15 +225,57 @@ func (h *Handler) handlePublicIngest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2. Decode Batch Body
-	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodyBytes)
+	r.Body = http.MaxBytesReader(w, r.Body, h.config.MaxBodyBytes+1)
 	var req IngestBatchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&req); err != nil {
+		if isMaxBytesError(err) {
+			h.writeError(w, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", fmt.Sprintf("telemetry request body exceeds %d bytes", h.config.MaxBodyBytes))
+			return
+		}
+		h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid batch payload: "+err.Error())
+		return
+	}
+	// Decode exactly one JSON value. This also makes a chunked body containing
+	// trailing data subject to the same bounded-body classification.
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if isMaxBytesError(err) {
+			h.writeError(w, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", fmt.Sprintf("telemetry request body exceeds %d bytes", h.config.MaxBodyBytes))
+			return
+		}
+		if err == nil {
+			h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid batch payload: multiple JSON values")
+			return
+		}
 		h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid batch payload: "+err.Error())
 		return
 	}
 
 	if len(req.Records) == 0 {
 		h.writeJSON(w, http.StatusOK, IngestBatchResponse{Results: []IngestRecordResult{}})
+		return
+	}
+	if len(req.Records) > h.config.MaxBatchSize {
+		h.writeError(w, http.StatusRequestEntityTooLarge, "BATCH_TOO_LARGE", fmt.Sprintf("telemetry batch contains %d records; maximum is %d", len(req.Records), h.config.MaxBatchSize))
+		return
+	}
+
+	// Admission is intentionally after token verification. The client-provided
+	// header cannot create or consume a bucket for another device, and invalid
+	// credentials never consume bounded rate-limit state.
+	if allowed, retryAfter := h.limiter.allow(deviceID, h.config.Clock()); !allowed {
+		h.writeIngestRetryError(w, ErrIngestRateLimited, retryAfter)
+		return
+	}
+
+	// Try the bounded writer gate without waiting. A waiting HTTP request would
+	// consume a server goroutine and permit an otherwise avoidable queue to grow.
+	select {
+	case h.writer <- struct{}{}:
+		defer func() { <-h.writer }()
+	default:
+		h.writeIngestRetryError(w, ErrIngestOverloaded, time.Duration(h.config.RetryAfterSeconds)*time.Second)
 		return
 	}
 
@@ -224,6 +293,23 @@ func (h *Handler) handlePublicIngest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeJSON(w, http.StatusOK, IngestBatchResponse{Results: results})
+}
+
+func isMaxBytesError(err error) bool {
+	var maxErr *http.MaxBytesError
+	return errors.As(err, &maxErr)
+}
+
+func (h *Handler) writeIngestRetryError(w http.ResponseWriter, err *ingestAdmissionError, retryAfter time.Duration) {
+	seconds := int(retryAfter.Round(time.Second) / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+	if seconds > maxIngestRetryAfterSeconds {
+		seconds = maxIngestRetryAfterSeconds
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(seconds))
+	h.writeError(w, http.StatusTooManyRequests, err.Code(), fmt.Sprintf("%s; retry after %d seconds", err.Error(), seconds))
 }
 
 // handlePublicPolicy returns the current upload policy for clients.
