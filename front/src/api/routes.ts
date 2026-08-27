@@ -21,4 +21,10 @@ export const AdminApiRoutes = {
     token: `${ADMIN_API_PREFIX}/access/enrollment-token`,
     rotateToken: `${ADMIN_API_PREFIX}/access/enrollment-token/rotate`,
   },
+  telemetry: {
+    overview: `${ADMIN_API_PREFIX}/telemetry/overview`,
+    events: `${ADMIN_API_PREFIX}/telemetry/events`,
+    diagnostics: `${ADMIN_API_PREFIX}/telemetry/diagnostics`,
+    settings: `${ADMIN_API_PREFIX}/telemetry/settings`,
+  },
 } as const;

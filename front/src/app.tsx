@@ -9,6 +9,10 @@ import { LoginPage } from './features/auth/login-page';
 import { OverviewPage } from './features/overview/overview-page';
 import { DevicesPage } from './features/devices/devices-page';
 import { AccessPage } from './features/access/access-page';
+import { TelemetryDashboardPage } from './features/telemetry/telemetry-dashboard-page';
+import { TelemetryEventsPage } from './features/telemetry/telemetry-events-page';
+import { TelemetryDiagnosticsPage } from './features/telemetry/telemetry-diagnostics-page';
+import { TelemetrySettingsPage } from './features/telemetry/telemetry-settings-page';
 import { LoadingScreen } from './components/ui';
 import { ToastProvider } from './components/toast';
 
@@ -32,7 +36,9 @@ function AuthGate() {
   useEffect(() => {
     const handleUnauthorized = () => {
       void queryClient.cancelQueries({ queryKey: ['relay'] });
+      void queryClient.cancelQueries({ queryKey: ['telemetry'] });
       queryClient.removeQueries({ queryKey: ['relay'] });
+      queryClient.removeQueries({ queryKey: ['telemetry'] });
       queryClient.setQueryData(queryKeys.auth, {
         authenticated: false,
         username: '',
@@ -59,6 +65,10 @@ function AuthGate() {
           <Route path="/overview" element={<OverviewPage />} />
           <Route path="/devices" element={<DevicesPage />} />
           <Route path="/access" element={<AccessPage />} />
+          <Route path="/telemetry" element={<TelemetryDashboardPage />} />
+          <Route path="/telemetry/events" element={<TelemetryEventsPage />} />
+          <Route path="/telemetry/diagnostics" element={<TelemetryDiagnosticsPage />} />
+          <Route path="/telemetry/settings" element={<TelemetrySettingsPage />} />
           <Route path="*" element={<Navigate to="/overview" replace />} />
         </Route>
       </Routes>

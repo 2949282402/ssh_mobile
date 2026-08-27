@@ -227,4 +227,39 @@ describe('AuthGate', () => {
     expect(document.querySelector('.content-shell')).not.toHaveAttribute('inert');
     expect(openButton).toHaveFocus();
   });
+
+  it('renders telemetry dashboard when navigating to /telemetry', async () => {
+    window.history.pushState({}, '', '/telemetry');
+    const fetchMock = vi.fn().mockImplementation((path: string) => {
+      if (path.endsWith('/auth/session')) {
+        return Promise.resolve(jsonResponse({ authenticated: true, username: 'admin' }));
+      }
+      if (path.includes('/telemetry/overview')) {
+        return Promise.resolve(jsonResponse({
+          totalEvents: 100,
+          totalDiagnostics: 20,
+          recentActiveDevices: 5,
+          errorCount: 0,
+          criticalErrorCount: 0,
+          affectedDevicesCount: 0,
+          coreOperationSuccessRate: 1.0,
+          errorFreeSessionRate: 1.0,
+          eventsTrend: [],
+          errorsTrend: [],
+          pipelineHealth: {
+            status: 'healthy',
+            serverIngestLatencyMs: 3.5,
+            serverIngestErrorRate: 0.0,
+            redisCacheStatus: 'active',
+          },
+        }));
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderApp();
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: '数据埋点概览' })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('100')).toBeInTheDocument());
+  });
 });
