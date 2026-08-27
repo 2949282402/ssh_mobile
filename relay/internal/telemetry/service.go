@@ -21,17 +21,25 @@ type Service struct {
 }
 
 func NewService(store Store, catalog *Catalog, redisCache RedisCache) *Service {
+	return NewServiceWithSecret(store, catalog, redisCache, "")
+}
+
+func NewServiceWithSecret(store Store, catalog *Catalog, redisCache RedisCache, authSecret string) *Service {
 	if catalog == nil {
 		catalog = DefaultCatalog()
 	}
 	if redisCache == nil {
 		redisCache = &NoopRedisCache{}
 	}
+	key := []byte("telemetry-device-auth-secret-v1")
+	if len(strings.TrimSpace(authSecret)) >= 16 {
+		key = []byte(strings.TrimSpace(authSecret))
+	}
 	return &Service{
 		store:      store,
 		catalog:    catalog,
 		redisCache: redisCache,
-		tokenKey:   []byte("telemetry-device-auth-secret-v1"),
+		tokenKey:   key,
 	}
 }
 

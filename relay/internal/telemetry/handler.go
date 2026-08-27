@@ -155,6 +155,27 @@ func parseQueryFilter(r *http.Request) QueryFilter {
 		}
 	}
 
+	if f.StartTime.IsZero() && f.TimeRange != "" && f.TimeRange != "all" {
+		now := time.Now().UTC()
+		switch f.TimeRange {
+		case "1h":
+			f.StartTime = now.Add(-1 * time.Hour)
+		case "24h":
+			f.StartTime = now.Add(-24 * time.Hour)
+		case "7d":
+			f.StartTime = now.Add(-7 * 24 * time.Hour)
+		case "30d":
+			f.StartTime = now.Add(-30 * 24 * time.Hour)
+		default:
+			if d, err := time.ParseDuration(f.TimeRange); err == nil && d > 0 {
+				f.StartTime = now.Add(-d)
+			}
+		}
+		if !f.StartTime.IsZero() && f.EndTime.IsZero() {
+			f.EndTime = now
+		}
+	}
+
 	if p, err := strconv.Atoi(q.Get("page")); err == nil && p > 0 {
 		f.Page = p
 	} else {

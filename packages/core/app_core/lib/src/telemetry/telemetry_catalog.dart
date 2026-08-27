@@ -203,6 +203,20 @@ class TelemetryCatalog {
         allowedProperties: {'provider', 'http_status'},
       ),
       const TelemetryEventDefinition(
+        name: 'app.diagnostic.log',
+        version: 1,
+        recordType: TelemetryRecordType.diagnostic,
+        feature: 'app',
+        severity: TelemetrySeverity.warn,
+        allowedProperties: {
+          'message',
+          'category',
+          'stage',
+          'direct_error',
+          'details',
+        },
+      ),
+      const TelemetryEventDefinition(
         name: 'telemetry.batch.uploaded',
         version: 1,
         recordType: TelemetryRecordType.analytics,

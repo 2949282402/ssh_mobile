@@ -318,6 +318,7 @@ class TelemetryClient {
   Future<bool> recordDiagnostic({
     required String message,
     required TelemetrySeverity severity,
+    String? eventName,
     String? feature,
     String? category,
     String? stackTrace,
@@ -341,24 +342,34 @@ class TelemetryClient {
       );
     }
 
+    final resolvedEventName = eventName ?? 'app.diagnostic.log';
+    final resolvedFeature = feature ?? 'app';
     final record = TelemetryEventRecord(
       eventId: eventId,
       recordType: TelemetryRecordType.diagnostic,
-      eventName: 'network.relay.fallback',
+      eventName: resolvedEventName,
       eventVersion: 1,
       deviceId: config.deviceId,
       sessionId:
           'sess_${config.deviceId.substring(0, min(8, config.deviceId.length))}',
       traceId: 'tr_${now.millisecondsSinceEpoch}',
       occurredAt: now,
-      feature: feature ?? 'network',
+      feature: resolvedFeature,
       severity: severity,
       appVersion: config.appVersion,
       buildNumber: config.buildNumber,
       platform: config.platform,
-      properties: {'direct_error': message, ...?properties},
+      properties: {
+        'message': message,
+        if (category != null) 'category': category,
+        ...?properties,
+      },
       error: errorDetail,
     );
+
+    if (!catalog.isValidRecord(record)) {
+      return false;
+    }
 
     await storage.insertRecord(record);
     return true;
@@ -521,6 +532,53 @@ class TelemetryClient {
     if (activePolicy.triggerNetworkRecovered) {
       unawaited(flush());
     }
+  }
+
+  /// Synchronously retrieves latest diagnostics and storage health snapshot.
+  TelemetryDiagnosticsSnapshot get latestDiagnostics {
+    var pending = 0;
+    var rejected = 0;
+    var synced = 0;
+    var total = 0;
+    var overflow = false;
+
+    if (storage is FileTelemetryStorage) {
+      final health = (storage as FileTelemetryStorage).getHealthStatsSync(
+        targetCapacity: activePolicy.clientMaxLocalRecords,
+      );
+      pending = health.localPendingCount;
+      rejected = health.localRejectedCount;
+      synced = health.localSyncedCount;
+      total = health.totalCount;
+      overflow = health.cacheOverflow;
+    } else if (storage is MemoryTelemetryStorage) {
+      final health = (storage as MemoryTelemetryStorage).getHealthStatsSync(
+        targetCapacity: activePolicy.clientMaxLocalRecords,
+      );
+      pending = health.localPendingCount;
+      rejected = health.localRejectedCount;
+      synced = health.localSyncedCount;
+      total = health.totalCount;
+      overflow = health.cacheOverflow;
+    }
+
+    return TelemetryDiagnosticsSnapshot(
+      localPendingCount: pending,
+      localRejectedCount: rejected,
+      localSyncedCount: synced,
+      totalCount: total,
+      cacheOverflow: overflow,
+      uploadEnabled: activePolicy.uploadEnabled,
+      policyVersion: activePolicy.policyVersion,
+      batchSizeThreshold: activePolicy.batchSizeThreshold,
+      timeIntervalSeconds: activePolicy.timeIntervalSeconds,
+      maxBatchSize: activePolicy.maxBatchSize,
+      clientMaxLocalRecords: activePolicy.clientMaxLocalRecords,
+      lastSyncTime: _lastSyncTime,
+      lastSyncError: _lastSyncError,
+      lastPolicyFetchTime: _lastPolicyFetchTime,
+      isUploading: _isUploading,
+    );
   }
 
   /// Retrieves current diagnostics and storage health.

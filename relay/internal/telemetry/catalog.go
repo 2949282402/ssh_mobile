@@ -391,6 +391,21 @@ func DefaultCatalog() *Catalog {
 			},
 		},
 		{
+			Name:        "app.diagnostic.log",
+			Version:     1,
+			RecordType:  RecordTypeDiagnostic,
+			Feature:     "app",
+			Severity:    SeverityWarn,
+			Description: "General diagnostic log",
+			AllowedProperties: []AllowedProperty{
+				{Name: "message", Type: "string"},
+				{Name: "category", Type: "string"},
+				{Name: "stage", Type: "string"},
+				{Name: "direct_error", Type: "string"},
+				{Name: "details", Type: "string"},
+			},
+		},
+		{
 			Name:        "telemetry.batch.uploaded",
 			Version:     1,
 			RecordType:  RecordTypeAnalytics,

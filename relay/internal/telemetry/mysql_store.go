@@ -28,6 +28,32 @@ func NewMySQLStore(db *sql.DB, catalog *Catalog) *MySQLStore {
 	}
 }
 
+// NewMySQLStoreFromDSN opens a MySQL database connection, verifies ping, and ensures schemas exist.
+func NewMySQLStoreFromDSN(dsn string, catalog *Catalog) (*MySQLStore, error) {
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open mysql error: %w", err)
+	}
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("ping mysql error: %w", err)
+	}
+
+	store := NewMySQLStore(db, catalog)
+	if err := store.EnsureSchema(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("ensure schema error: %w", err)
+	}
+	return store, nil
+}
+
 func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS telemetry_events (
@@ -85,6 +111,14 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func isDuplicateKeyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "1062") || strings.Contains(msg, "duplicate entry") || strings.Contains(msg, "unique constraint")
 }
 
 func (s *MySQLStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnvelope) ([]IngestRecordResult, error) {
@@ -149,6 +183,13 @@ func (s *MySQLStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnvel
 		)
 		if err != nil {
 			_ = tx.Rollback()
+			if isDuplicateKeyError(err) {
+				results[i] = IngestRecordResult{
+					EventID: env.EventID,
+					Status:  StatusAlreadySeen,
+				}
+				continue
+			}
 			return nil, fmt.Errorf("insert raw event: %w", err)
 		}
 
@@ -158,10 +199,24 @@ func (s *MySQLStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnvel
 		`, env.EventID, env.DeviceID, env.ReceivedAt)
 		if err != nil {
 			_ = tx.Rollback()
+			if isDuplicateKeyError(err) {
+				results[i] = IngestRecordResult{
+					EventID: env.EventID,
+					Status:  StatusAlreadySeen,
+				}
+				continue
+			}
 			return nil, fmt.Errorf("insert receipt: %w", err)
 		}
 
 		if err := tx.Commit(); err != nil {
+			if isDuplicateKeyError(err) {
+				results[i] = IngestRecordResult{
+					EventID: env.EventID,
+					Status:  StatusAlreadySeen,
+				}
+				continue
+			}
 			return nil, fmt.Errorf("commit ingest tx: %w", err)
 		}
 
@@ -303,10 +358,21 @@ func (s *MySQLStore) QueryDiagnostics(ctx context.Context, filter QueryFilter) (
 }
 
 func (s *MySQLStore) QueryOverview(ctx context.Context, filter QueryFilter) (*OverviewMetrics, error) {
-	now := time.Now().UTC()
-	cutoff := now.Add(-24 * time.Hour)
+	var whereClauses []string
+	var args []any
+
 	if !filter.StartTime.IsZero() {
-		cutoff = filter.StartTime
+		whereClauses = append(whereClauses, "received_at >= ?")
+		args = append(args, filter.StartTime)
+	}
+	if !filter.EndTime.IsZero() {
+		whereClauses = append(whereClauses, "received_at <= ?")
+		args = append(args, filter.EndTime)
+	}
+
+	whereSQL := ""
+	if len(whereClauses) > 0 {
+		whereSQL = " WHERE " + strings.Join(whereClauses, " AND ")
 	}
 
 	var totalEvents int64
@@ -316,21 +382,80 @@ func (s *MySQLStore) QueryOverview(ctx context.Context, filter QueryFilter) (*Ov
 	var recentActiveDevices int64
 	var affectedDevicesCount int64
 
-	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM telemetry_events WHERE record_type = 'analytics'").Scan(&totalEvents)
-	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM telemetry_events WHERE record_type = 'diagnostic'").Scan(&totalDiagnostics)
-	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM telemetry_events WHERE severity IN ('error', 'critical')").Scan(&errorCount)
-	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM telemetry_events WHERE severity = 'critical'").Scan(&criticalCount)
-	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(DISTINCT device_id) FROM telemetry_events WHERE received_at >= ?", cutoff).Scan(&recentActiveDevices)
-	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(DISTINCT device_id) FROM telemetry_events WHERE severity IN ('error', 'critical')").Scan(&affectedDevicesCount)
+	var coreOperationsTotal int64
+	var coreOperationsSuccess int64
+	var totalSessions int64
+	var errorSessions int64
+
+	combineWhere := func(condition string) (string, []any) {
+		if whereSQL == "" {
+			if condition == "" {
+				return "", nil
+			}
+			return " WHERE " + condition, nil
+		}
+		if condition == "" {
+			return whereSQL, args
+		}
+		combinedArgs := make([]any, len(args))
+		copy(combinedArgs, args)
+		return whereSQL + " AND (" + condition + ")", combinedArgs
+	}
+
+	w, qArgs := combineWhere("record_type = 'analytics'")
+	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM telemetry_events"+w, qArgs...).Scan(&totalEvents)
+
+	w, qArgs = combineWhere("record_type = 'diagnostic'")
+	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM telemetry_events"+w, qArgs...).Scan(&totalDiagnostics)
+
+	w, qArgs = combineWhere("severity IN ('error', 'critical')")
+	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM telemetry_events"+w, qArgs...).Scan(&errorCount)
+
+	w, qArgs = combineWhere("severity = 'critical'")
+	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM telemetry_events"+w, qArgs...).Scan(&criticalCount)
+
+	w, qArgs = combineWhere("")
+	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(DISTINCT device_id) FROM telemetry_events"+w, qArgs...).Scan(&recentActiveDevices)
+
+	w, qArgs = combineWhere("severity IN ('error', 'critical')")
+	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(DISTINCT device_id) FROM telemetry_events"+w, qArgs...).Scan(&affectedDevicesCount)
+
+	w, qArgs = combineWhere("event_name LIKE 'ssh.session.%' OR event_name LIKE 'sftp.transfer.%'")
+	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM telemetry_events"+w, qArgs...).Scan(&coreOperationsTotal)
+
+	w, qArgs = combineWhere("event_name = 'ssh.session.terminated' OR event_name = 'sftp.transfer.completed'")
+	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM telemetry_events"+w, qArgs...).Scan(&coreOperationsSuccess)
+
+	w, qArgs = combineWhere("")
+	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(DISTINCT session_id) FROM telemetry_events"+w, qArgs...).Scan(&totalSessions)
+
+	w, qArgs = combineWhere("severity IN ('error', 'critical')")
+	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(DISTINCT session_id) FROM telemetry_events"+w, qArgs...).Scan(&errorSessions)
+
+	var coreSuccessRate float64 = 1.0
+	if coreOperationsTotal > 0 {
+		coreSuccessRate = float64(coreOperationsSuccess) / float64(coreOperationsTotal)
+	}
+
+	var errorFreeSessionRate float64 = 1.0
+	if totalSessions > 0 {
+		errorFree := totalSessions - errorSessions
+		if errorFree < 0 {
+			errorFree = 0
+		}
+		errorFreeSessionRate = float64(errorFree) / float64(totalSessions)
+	}
 
 	// Trends
-	rows, err := s.db.QueryContext(ctx, `
+	trendWhere, trendArgs := combineWhere("")
+	trendQuery := `
 		SELECT DATE_FORMAT(received_at, '%Y-%m-%d %H:00') as hr, COUNT(*)
 		FROM telemetry_events
-		WHERE received_at >= ?
+	` + trendWhere + `
 		GROUP BY hr
 		ORDER BY hr ASC
-	`, cutoff)
+	`
+	rows, err := s.db.QueryContext(ctx, trendQuery, trendArgs...)
 	var eventsTrend []TelemetryMetricPoint
 	if err == nil {
 		defer rows.Close()
@@ -343,13 +468,15 @@ func (s *MySQLStore) QueryOverview(ctx context.Context, filter QueryFilter) (*Ov
 		}
 	}
 
-	errRows, err := s.db.QueryContext(ctx, `
+	errWhere, errArgs := combineWhere("severity IN ('error', 'critical')")
+	errQuery := `
 		SELECT DATE_FORMAT(received_at, '%Y-%m-%d %H:00') as hr, COUNT(*)
 		FROM telemetry_events
-		WHERE received_at >= ? AND severity IN ('error', 'critical')
+	` + errWhere + `
 		GROUP BY hr
 		ORDER BY hr ASC
-	`, cutoff)
+	`
+	errRows, err := s.db.QueryContext(ctx, errQuery, errArgs...)
 	var errorsTrend []TelemetryMetricPoint
 	if err == nil {
 		defer errRows.Close()
@@ -369,8 +496,8 @@ func (s *MySQLStore) QueryOverview(ctx context.Context, filter QueryFilter) (*Ov
 		ErrorCount:               errorCount,
 		CriticalErrorCount:       criticalCount,
 		AffectedDevicesCount:     affectedDevicesCount,
-		CoreOperationSuccessRate: 100.0,
-		ErrorFreeSessionRate:     100.0,
+		CoreOperationSuccessRate: coreSuccessRate,
+		ErrorFreeSessionRate:     errorFreeSessionRate,
 		EventsTrend:              eventsTrend,
 		ErrorsTrend:              errorsTrend,
 		PipelineHealth: PipelineHealthStats{

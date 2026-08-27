@@ -51,8 +51,30 @@ func NewServerWithClientAndTelemetry(config Config, client RelayManagementClient
 
 	if telemetryService == nil {
 		catalog := telemetry.DefaultCatalog()
-		store := telemetry.NewMemoryStore(catalog)
-		telemetryService = telemetry.NewService(store, catalog, &telemetry.NoopRedisCache{})
+		var store telemetry.Store
+		if config.TelemetryMySQLDSN != "" {
+			var err error
+			store, err = telemetry.NewMySQLStoreFromDSN(config.TelemetryMySQLDSN, catalog)
+			if err != nil {
+				// Fallback to memory store if MySQL connection fails
+				store = telemetry.NewMemoryStore(catalog)
+			}
+		} else {
+			store = telemetry.NewMemoryStore(catalog)
+		}
+
+		var redisCache telemetry.RedisCache
+		if config.TelemetryRedisURL != "" {
+			var err error
+			redisCache, err = telemetry.NewRedisClientCacheFromURL(config.TelemetryRedisURL, "")
+			if err != nil {
+				redisCache = &telemetry.NoopRedisCache{}
+			}
+		} else {
+			redisCache = &telemetry.NoopRedisCache{}
+		}
+
+		telemetryService = telemetry.NewServiceWithSecret(store, catalog, redisCache, config.TelemetryAuthSecret)
 	}
 
 	telemetryHandler := telemetry.NewHandler(telemetryService)

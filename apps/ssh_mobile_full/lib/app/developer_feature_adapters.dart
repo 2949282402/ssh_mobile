@@ -260,20 +260,21 @@ final class AppDeveloperDiagnosticsAdapter extends ChangeNotifier
         ),
         telemetry: telemetryClient == null
             ? null
-            : developer.DeveloperTelemetrySnapshot(
-                localPendingCount: 0,
-                localRejectedCount: 0,
-                localSyncedCount: 0,
-                totalCount: 0,
-                cacheOverflow: false,
-                uploadEnabled: telemetryClient!.activePolicy.uploadEnabled,
-                policyVersion: telemetryClient!.activePolicy.policyVersion,
-                batchSizeThreshold:
-                    telemetryClient!.activePolicy.batchSizeThreshold,
-                timeIntervalSeconds:
-                    telemetryClient!.activePolicy.timeIntervalSeconds,
-                isUploading: false,
-              ),
+            : () {
+                final diag = telemetryClient!.latestDiagnostics;
+                return developer.DeveloperTelemetrySnapshot(
+                  localPendingCount: diag.localPendingCount,
+                  localRejectedCount: diag.localRejectedCount,
+                  localSyncedCount: diag.localSyncedCount,
+                  totalCount: diag.totalCount,
+                  cacheOverflow: diag.cacheOverflow,
+                  uploadEnabled: diag.uploadEnabled,
+                  policyVersion: diag.policyVersion,
+                  batchSizeThreshold: diag.batchSizeThreshold,
+                  timeIntervalSeconds: diag.timeIntervalSeconds,
+                  isUploading: diag.isUploading,
+                );
+              }(),
       );
 
   @override

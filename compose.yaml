@@ -70,8 +70,12 @@ services:
       ADMIN_TRUSTED_PROXY_CIDRS: ${ADMIN_TRUSTED_PROXY_CIDRS:-}
       ADMIN_RELAY_URL: "http://relay:${RELAY_INTERNAL_PORT:-8080}"
       ADMIN_RELAY_INTERNAL_TOKEN: ${ADMIN_RELAY_INTERNAL_TOKEN:-${RELAY_INTERNAL_TOKEN:?set internal token}}
+      TELEMETRY_MYSQL_DSN: ${TELEMETRY_MYSQL_DSN:-}
+      TELEMETRY_REDIS_URL: ${TELEMETRY_REDIS_URL:-}
+      TELEMETRY_AUTH_SECRET: ${TELEMETRY_AUTH_SECRET:-}
     networks:
       - relay_internal
+      - relay_state
 
   # MySQL storage for durable enrollment/revocation (RELAY_STORAGE_MODE=mysql).
   mysql:

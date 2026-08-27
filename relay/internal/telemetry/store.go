@@ -256,20 +256,18 @@ func (m *MemoryStore) QueryOverview(ctx context.Context, filter QueryFilter) (*O
 	var coreOperationsTotal int64
 	var coreOperationsSuccess int64
 
-	// Cutoff for recent active devices (e.g. within 24h or filter window)
-	now := time.Now().UTC()
-	cutoff := now.Add(-24 * time.Hour)
-	if !filter.StartTime.IsZero() {
-		cutoff = filter.StartTime
-	}
-
 	hourlyEvents := make(map[string]float64)
 	hourlyErrors := make(map[string]float64)
 
 	for _, env := range m.rawEvents {
-		if env.ReceivedAt.After(cutoff) {
-			devicesSet[env.DeviceID] = struct{}{}
+		if !filter.StartTime.IsZero() && env.ReceivedAt.Before(filter.StartTime) {
+			continue
 		}
+		if !filter.EndTime.IsZero() && env.ReceivedAt.After(filter.EndTime) {
+			continue
+		}
+
+		devicesSet[env.DeviceID] = struct{}{}
 
 		if env.RecordType == RecordTypeAnalytics {
 			totalEvents++
@@ -303,18 +301,18 @@ func (m *MemoryStore) QueryOverview(ctx context.Context, filter QueryFilter) (*O
 		}
 	}
 
-	var coreSuccessRate float64 = 100.0
+	var coreSuccessRate float64 = 1.0
 	if coreOperationsTotal > 0 {
-		coreSuccessRate = (float64(coreOperationsSuccess) / float64(coreOperationsTotal)) * 100.0
+		coreSuccessRate = float64(coreOperationsSuccess) / float64(coreOperationsTotal)
 	}
 
-	var errorFreeSessionRate float64 = 100.0
+	var errorFreeSessionRate float64 = 1.0
 	if len(sessionTotal) > 0 {
 		errorFreeSessions := len(sessionTotal) - len(sessionErrors)
 		if errorFreeSessions < 0 {
 			errorFreeSessions = 0
 		}
-		errorFreeSessionRate = (float64(errorFreeSessions) / float64(len(sessionTotal))) * 100.0
+		errorFreeSessionRate = float64(errorFreeSessions) / float64(len(sessionTotal))
 	}
 
 	var eventsTrend []TelemetryMetricPoint

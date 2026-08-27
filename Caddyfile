@@ -24,6 +24,10 @@
     @admin_api path /api/admin/v1 /api/admin/v1/*
     reverse_proxy @admin_api admin-api:{$ADMIN_INTERNAL_PORT}
 
+    # Public Telemetry Ingest, Auth & Policy API -> admin-api service
+    @telemetry_api path /api/v1/telemetry /api/v1/telemetry/*
+    reverse_proxy @telemetry_api admin-api:{$ADMIN_INTERNAL_PORT}
+
     # Relay Health Probe -> relay service (strictly Relay health, not Frontend SPA)
     @relay_health path /healthz
     reverse_proxy @relay_health relay:{$RELAY_INTERNAL_PORT}

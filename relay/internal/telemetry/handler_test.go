@@ -174,7 +174,7 @@ func TestTelemetryAdminHTTPHandlers(t *testing.T) {
 	})
 
 	// 1. GET /api/admin/v1/telemetry/overview
-	ovReq := httptest.NewRequest(http.MethodGet, "/api/admin/v1/telemetry/overview", nil)
+	ovReq := httptest.NewRequest(http.MethodGet, "/api/admin/v1/telemetry/overview?timeRange=24h", nil)
 	ovRec := httptest.NewRecorder()
 	mux.ServeHTTP(ovRec, ovReq)
 	if ovRec.Code != http.StatusOK {
@@ -184,6 +184,16 @@ func TestTelemetryAdminHTTPHandlers(t *testing.T) {
 	_ = json.Unmarshal(ovRec.Body.Bytes(), &ovResp)
 	if ovResp.TotalEvents != 1 || ovResp.TotalDiagnostics != 1 || ovResp.ErrorCount != 1 {
 		t.Errorf("unexpected overview metrics: %+v", ovResp)
+	}
+
+	// Test 1h filter vs empty future window
+	futureReq := httptest.NewRequest(http.MethodGet, "/api/admin/v1/telemetry/overview?startTime=2099-01-01T00:00:00Z", nil)
+	futureRec := httptest.NewRecorder()
+	mux.ServeHTTP(futureRec, futureReq)
+	var futureResp OverviewMetrics
+	_ = json.Unmarshal(futureRec.Body.Bytes(), &futureResp)
+	if futureResp.TotalEvents != 0 {
+		t.Errorf("expected 0 events in future window, got %d", futureResp.TotalEvents)
 	}
 
 	// 2. GET /api/admin/v1/telemetry/events

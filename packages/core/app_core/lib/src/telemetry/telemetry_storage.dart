@@ -135,10 +135,7 @@ class MemoryTelemetryStorage implements TelemetryStorage {
     return toDeleteCount;
   }
 
-  @override
-  Future<TelemetryStorageHealth> getHealthStats({
-    required int targetCapacity,
-  }) async {
+  TelemetryStorageHealth getHealthStatsSync({required int targetCapacity}) {
     var pending = 0;
     var rejected = 0;
     var synced = 0;
@@ -170,12 +167,36 @@ class MemoryTelemetryStorage implements TelemetryStorage {
   }
 
   @override
+  Future<TelemetryStorageHealth> getHealthStats({
+    required int targetCapacity,
+  }) async {
+    return getHealthStatsSync(targetCapacity: targetCapacity);
+  }
+
+  @override
   Future<void> clearAll() async {
     _records.clear();
   }
 
   @override
   Future<void> close() async {}
+}
+
+class _AsyncLock {
+  Future<void> _last = Future.value();
+
+  Future<T> synchronized<T>(Future<T> Function() action) {
+    final completer = Completer<T>();
+    _last = _last.then((_) async {
+      try {
+        final result = await action();
+        completer.complete(result);
+      } catch (e, st) {
+        completer.completeError(e, st);
+      }
+    });
+    return completer.future;
+  }
 }
 
 class FileTelemetryStorage implements TelemetryStorage {
@@ -185,7 +206,13 @@ class FileTelemetryStorage implements TelemetryStorage {
 
   final String filePath;
   late final MemoryTelemetryStorage _memory;
+  MemoryTelemetryStorage get memory => _memory;
+  final _AsyncLock _lock = _AsyncLock();
   bool _loaded = false;
+
+  TelemetryStorageHealth getHealthStatsSync({required int targetCapacity}) {
+    return _memory.getHealthStatsSync(targetCapacity: targetCapacity);
+  }
 
   Future<void> _ensureLoaded() async {
     if (_loaded) return;
@@ -240,59 +267,90 @@ class FileTelemetryStorage implements TelemetryStorage {
 
   @override
   Future<void> insertRecord(TelemetryEventRecord record) async {
-    await _ensureLoaded();
-    await _memory.insertRecord(record);
-    await _persistToDisk();
+    return _lock.synchronized(() async {
+      await _ensureLoaded();
+      await _memory.insertRecord(record);
+      try {
+        final file = File(filePath);
+        await file.parent.create(recursive: true);
+        final map = record.toJson();
+        map['syncState'] = record.syncState.wireValue;
+        if (record.logicalDeletedAt != null) {
+          map['logicalDeletedAt'] = record.logicalDeletedAt!
+              .toUtc()
+              .toIso8601String();
+        }
+        map['retryCount'] = record.retryCount;
+        final sink = file.openWrite(mode: FileMode.append);
+        sink.writeln(jsonEncode(map));
+        await sink.flush();
+        await sink.close();
+      } catch (_) {}
+    });
   }
 
   @override
   Future<List<TelemetryEventRecord>> fetchPendingBatch(int limit) async {
-    await _ensureLoaded();
-    return _memory.fetchPendingBatch(limit);
+    return _lock.synchronized(() async {
+      await _ensureLoaded();
+      return _memory.fetchPendingBatch(limit);
+    });
   }
 
   @override
   Future<void> applyAckResults(List<TelemetryAckResult> results) async {
-    await _ensureLoaded();
-    await _memory.applyAckResults(results);
-    await _persistToDisk();
+    return _lock.synchronized(() async {
+      await _ensureLoaded();
+      await _memory.applyAckResults(results);
+      await _persistToDisk();
+    });
   }
 
   @override
   Future<List<TelemetryEventRecord>> fetchAllForReplay() async {
-    await _ensureLoaded();
-    return _memory.fetchAllForReplay();
+    return _lock.synchronized(() async {
+      await _ensureLoaded();
+      return _memory.fetchAllForReplay();
+    });
   }
 
   @override
   Future<int> purgeOldSyncedRecords({required int targetCapacity}) async {
-    await _ensureLoaded();
-    final count = await _memory.purgeOldSyncedRecords(
-      targetCapacity: targetCapacity,
-    );
-    if (count > 0) {
-      await _persistToDisk();
-    }
-    return count;
+    return _lock.synchronized(() async {
+      await _ensureLoaded();
+      final count = await _memory.purgeOldSyncedRecords(
+        targetCapacity: targetCapacity,
+      );
+      if (count > 0) {
+        await _persistToDisk();
+      }
+      return count;
+    });
   }
 
   @override
   Future<TelemetryStorageHealth> getHealthStats({
     required int targetCapacity,
   }) async {
-    await _ensureLoaded();
-    return _memory.getHealthStats(targetCapacity: targetCapacity);
+    return _lock.synchronized(() async {
+      await _ensureLoaded();
+      return _memory.getHealthStats(targetCapacity: targetCapacity);
+    });
   }
 
   @override
   Future<void> clearAll() async {
-    await _ensureLoaded();
-    await _memory.clearAll();
-    await _persistToDisk();
+    return _lock.synchronized(() async {
+      await _ensureLoaded();
+      await _memory.clearAll();
+      await _persistToDisk();
+    });
   }
 
   @override
   Future<void> close() async {
-    await _memory.close();
+    return _lock.synchronized(() async {
+      await _memory.close();
+    });
   }
 }

@@ -28,6 +28,19 @@ func NewRedisClientCache(client *redis.Client) *RedisClientCache {
 	return &RedisClientCache{client: client}
 }
 
+// NewRedisClientCacheFromURL parses a Redis URL and verifies connectivity.
+func NewRedisClientCacheFromURL(redisURL, password string) (*RedisClientCache, error) {
+	opt, err := redis.ParseURL(redisURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse redis url error: %w", err)
+	}
+	if password != "" {
+		opt.Password = password
+	}
+	client := redis.NewClient(opt)
+	return &RedisClientCache{client: client}, nil
+}
+
 func (r *RedisClientCache) PushDiagnostic(ctx context.Context, env TelemetryEnvelope, maxRecords int) error {
 	if r.client == nil {
 		return nil
