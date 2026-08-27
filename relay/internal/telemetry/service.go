@@ -5,6 +5,7 @@ package telemetry
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -42,7 +43,25 @@ var (
 	ErrAuthFailed = errors.New("device authentication failed")
 	// ErrDeviceCredentialNotFound is wrapped by stores when no credential exists.
 	ErrDeviceCredentialNotFound = errors.New("device credential not found")
+	// ErrEnrollmentInvalidRequest indicates a malformed device proof request.
+	ErrEnrollmentInvalidRequest = errors.New("invalid telemetry enrollment request")
+	// ErrEnrollmentProofFailed indicates that Relay did not attest the existing
+	// device identity. The underlying reason is intentionally not exposed.
+	ErrEnrollmentProofFailed = errors.New("telemetry enrollment proof failed")
+	// ErrDeviceAttestorUnavailable distinguishes a Relay outage from a rejected
+	// proof without exposing credential-bearing response details.
+	ErrDeviceAttestorUnavailable = errors.New("device attestor unavailable")
+	// ErrEnrollmentAlreadyExists prevents implicit credential rotation on
+	// retries, including retries after a client lost the first response.
+	ErrEnrollmentAlreadyExists = errors.New("telemetry credential already enrolled")
+	// ErrEnrollmentCredentialMissing indicates that explicit rotation has no
+	// existing telemetry credential to replace.
+	ErrEnrollmentCredentialMissing = errors.New("telemetry credential is not enrolled")
 )
+
+type credentialCreator interface {
+	CreateDeviceCredential(context.Context, string, string) error
+}
 
 // Service aggregates telemetry persistence, contract validation, caching and auth.
 type Service struct {
@@ -222,6 +241,110 @@ func (s *Service) RegisterDeviceCredential(ctx context.Context, deviceID, secret
 		return ErrServiceUnavailable
 	}
 	return s.store.RegisterDeviceCredential(ctx, deviceID, secretHash)
+}
+
+// EnrollDevice verifies an existing Relay device identity and creates one
+// telemetry credential. The plaintext secret is returned only once; only its
+// SHA-256-derived hash is handed to the backing store. The creator capability
+// is intentionally separate from RegisterDeviceCredential's legacy upsert.
+func (s *Service) EnrollDevice(ctx context.Context, request TelemetryEnrollmentRequest, attestor DeviceAttestor) (TelemetryEnrollmentResponse, error) {
+	return s.issueDeviceCredential(ctx, request, attestor, false)
+}
+
+// RotateDevice explicitly replaces an existing telemetry credential after a
+// fresh Relay proof. It is intentionally a separate route from EnrollDevice so
+// retries and replayed proofs never rotate a credential implicitly.
+func (s *Service) RotateDevice(ctx context.Context, request TelemetryEnrollmentRequest, attestor DeviceAttestor) (TelemetryEnrollmentResponse, error) {
+	if s == nil || !s.Available() {
+		return TelemetryEnrollmentResponse{}, ErrServiceUnavailable
+	}
+	if err := validEnrollmentRequestForService(request, attestor); err != nil {
+		return TelemetryEnrollmentResponse{}, err
+	}
+	return s.issueDeviceCredential(ctx, request, attestor, true)
+}
+
+func (s *Service) issueDeviceCredential(ctx context.Context, request TelemetryEnrollmentRequest, attestor DeviceAttestor, rotate bool) (TelemetryEnrollmentResponse, error) {
+	if s == nil || !s.Available() {
+		return TelemetryEnrollmentResponse{}, ErrServiceUnavailable
+	}
+	if err := validEnrollmentRequestForService(request, attestor); err != nil {
+		return TelemetryEnrollmentResponse{}, err
+	}
+	transcriptPath := PathPublicEnroll
+	if rotate {
+		transcriptPath = PathPublicRotate
+	}
+	var creator credentialCreator
+	if candidate, ok := s.store.(credentialCreator); ok {
+		creator = candidate
+	} else if !rotate {
+		return TelemetryEnrollmentResponse{}, ErrServiceUnavailable
+	}
+
+	attestation, err := attestor.ValidateDeviceCredential(ctx, DeviceAttestationRequest{
+		DeviceID:        request.DeviceID,
+		RelayCredential: request.RelayCredential,
+		PublicKey:       request.PublicKey,
+		Timestamp:       request.Timestamp,
+		Nonce:           request.Nonce,
+		Signature:       request.Signature,
+		TranscriptPath:  transcriptPath,
+	})
+	if err != nil {
+		if errors.Is(err, ErrDeviceAttestorUnavailable) {
+			return TelemetryEnrollmentResponse{}, ErrServiceUnavailable
+		}
+		return TelemetryEnrollmentResponse{}, ErrEnrollmentProofFailed
+	}
+	if attestation.DeviceID != request.DeviceID {
+		return TelemetryEnrollmentResponse{}, ErrEnrollmentProofFailed
+	}
+
+	secretBytes := make([]byte, 32)
+	if _, err := rand.Read(secretBytes); err != nil {
+		return TelemetryEnrollmentResponse{}, ErrServiceUnavailable
+	}
+	secret := hex.EncodeToString(secretBytes)
+	var storeErr error
+	if rotate {
+		if _, err := s.store.GetDeviceCredential(ctx, request.DeviceID); err != nil {
+			if errors.Is(err, ErrDeviceCredentialNotFound) {
+				return TelemetryEnrollmentResponse{}, ErrEnrollmentCredentialMissing
+			}
+			return TelemetryEnrollmentResponse{}, ErrServiceUnavailable
+		}
+		storeErr = s.store.RegisterDeviceCredential(ctx, request.DeviceID, hashSecret(secret))
+	} else {
+		storeErr = creator.CreateDeviceCredential(ctx, request.DeviceID, hashSecret(secret))
+	}
+	if storeErr != nil {
+		if errors.Is(storeErr, ErrDeviceCredentialAlreadyExists) {
+			return TelemetryEnrollmentResponse{}, ErrEnrollmentAlreadyExists
+		}
+		return TelemetryEnrollmentResponse{}, ErrServiceUnavailable
+	}
+	return TelemetryEnrollmentResponse{DeviceID: request.DeviceID, Secret: secret}, nil
+}
+
+func validEnrollmentRequestForService(request TelemetryEnrollmentRequest, attestor DeviceAttestor) error {
+	if attestor == nil {
+		return ErrServiceUnavailable
+	}
+	if !validEnrollmentRequest(request) {
+		return ErrEnrollmentInvalidRequest
+	}
+	return nil
+}
+
+func validEnrollmentRequest(request TelemetryEnrollmentRequest) bool {
+	return isValidDeviceID(request.DeviceID) &&
+		strings.TrimSpace(request.DeviceID) == request.DeviceID &&
+		strings.TrimSpace(request.RelayCredential) != "" &&
+		strings.TrimSpace(request.PublicKey) != "" &&
+		request.Timestamp > 0 &&
+		strings.TrimSpace(request.Nonce) != "" &&
+		strings.TrimSpace(request.Signature) != ""
 }
 
 func (s *Service) IngestBatch(ctx context.Context, envelopes []TelemetryEnvelope) ([]IngestRecordResult, error) {

@@ -10,6 +10,8 @@ import (
 type Config struct {
 	MySQLDSN              string
 	RedisURL              string
+	EnrollRoute           string
+	RotateRoute           string
 	AuthRoute             string
 	IngestRoute           string
 	PolicyRoute           string
@@ -25,6 +27,8 @@ func DefaultConfig() Config {
 	return Config{
 		MySQLDSN:              os.Getenv("TELEMETRY_MYSQL_DSN"),
 		RedisURL:              os.Getenv("TELEMETRY_REDIS_URL"),
+		EnrollRoute:           RoutePublicEnroll,
+		RotateRoute:           RoutePublicRotate,
 		AuthRoute:             RoutePublicAuth,
 		IngestRoute:           RoutePublicIngest,
 		PolicyRoute:           RoutePublicPolicy,

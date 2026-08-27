@@ -25,9 +25,10 @@ const (
 	PathRotateToken     = "/api/admin/v1/access/enrollment-token/rotate"
 
 	// Relay internal management endpoints consumed by Admin backend.
-	RelayInternalPathStatus       = "/internal/v2/status"
-	RelayInternalPathDevices      = "/internal/v2/devices"
-	RelayInternalPathToken        = "/internal/v2/access/enrollment-token"
-	RelayInternalPathRotateToken  = "/internal/v2/access/enrollment-token/rotate"
-	RelayInternalPathRevokePrefix = "/internal/v2/devices/"
+	RelayInternalPathStatus          = "/internal/v2/status"
+	RelayInternalPathDevices         = "/internal/v2/devices"
+	RelayInternalPathToken           = "/internal/v2/access/enrollment-token"
+	RelayInternalPathRotateToken     = "/internal/v2/access/enrollment-token/rotate"
+	RelayInternalPathRevokePrefix    = "/internal/v2/devices/"
+	RelayInternalPathTelemetryAttest = "/internal/v2/telemetry/attest"
 )

@@ -3,8 +3,56 @@
 package telemetry
 
 import (
+	"context"
 	"time"
 )
+
+// TelemetryEnrollmentRequest is the public request used to bootstrap a
+// telemetry credential from the existing Relay device identity. All proof
+// fields are request-only and are never persisted by the telemetry service.
+type TelemetryEnrollmentRequest struct {
+	DeviceID        string `json:"deviceId"`
+	RelayCredential string `json:"relayCredential"`
+	PublicKey       string `json:"publicKey"`
+	Timestamp       int64  `json:"timestamp"`
+	Nonce           string `json:"nonce"`
+	Signature       string `json:"signature"`
+}
+
+// TelemetryEnrollmentResponse contains the one-time plaintext secret. The
+// caller must persist it in platform secure storage immediately; the service
+// only retains its derived hash.
+type TelemetryEnrollmentResponse struct {
+	DeviceID string `json:"deviceId"`
+	Secret   string `json:"secret"`
+}
+
+// DeviceAttestationRequest is the proof forwarded by Admin to Relay. Keeping
+// this capability in the telemetry package avoids a direct Relay dependency.
+type DeviceAttestationRequest struct {
+	DeviceID        string
+	RelayCredential string
+	PublicKey       string
+	Timestamp       int64
+	Nonce           string
+	Signature       string
+	// TranscriptPath binds the proof to the public operation. Empty values
+	// default to the initial enrollment path for compatibility with callers.
+	TranscriptPath string
+}
+
+// DeviceAttestation is the non-secret result of a successful Relay proof.
+type DeviceAttestation struct {
+	DeviceID             string
+	EnrollmentGeneration int64
+	ProtocolVersion      uint32
+}
+
+// DeviceAttestor validates an existing Relay enrollment without giving
+// telemetry access to Relay storage or credential-signing keys.
+type DeviceAttestor interface {
+	ValidateDeviceCredential(context.Context, DeviceAttestationRequest) (DeviceAttestation, error)
+}
 
 type RecordType string
 

@@ -926,6 +926,24 @@ func (s *MySQLStore) RegisterDeviceCredential(ctx context.Context, deviceID, sec
 	return err
 }
 
+// CreateDeviceCredential atomically creates a telemetry credential and refuses
+// to overwrite an existing one. The public enrollment endpoint uses this
+// create-only operation so a replay cannot rotate a secret implicitly.
+func (s *MySQLStore) CreateDeviceCredential(ctx context.Context, deviceID, secretHash string) error {
+	if strings.TrimSpace(deviceID) == "" || strings.TrimSpace(secretHash) == "" {
+		return fmt.Errorf("invalid deviceId or secretHash")
+	}
+	now := time.Now().UTC()
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO telemetry_device_credentials (device_id, secret_hash, created_at, updated_at)
+		VALUES (?, ?, ?, ?)
+	`, deviceID, secretHash, now, now)
+	if isDuplicateKeyError(err) {
+		return ErrDeviceCredentialAlreadyExists
+	}
+	return err
+}
+
 func (s *MySQLStore) GetDeviceCredential(ctx context.Context, deviceID string) (string, error) {
 	var secretHash string
 	err := s.db.QueryRowContext(ctx, "SELECT secret_hash FROM telemetry_device_credentials WHERE device_id = ?", deviceID).Scan(&secretHash)

@@ -17,17 +17,89 @@ const MaxRequestBodyBytes = 1 << 20 // 1MB maximum body
 
 // Handler exposes telemetry HTTP endpoints backed by a Service.
 type Handler struct {
-	service *Service
+	service  *Service
+	attestor DeviceAttestor
 }
 
-func NewHandler(service *Service) *Handler {
-	return &Handler{service: service}
+// NewHandler creates a telemetry handler. The optional attestor keeps existing
+// callers source-compatible while allowing Admin to inject the Relay-backed
+// device identity capability.
+func NewHandler(service *Service, attestors ...DeviceAttestor) *Handler {
+	var attestor DeviceAttestor
+	if len(attestors) > 0 {
+		attestor = attestors[0]
+	}
+	return &Handler{service: service, attestor: attestor}
 }
 
 func (h *Handler) RegisterPublicRoutes(mux *http.ServeMux) {
+	mux.HandleFunc(RoutePublicEnroll, h.handlePublicEnroll)
+	mux.HandleFunc(RoutePublicRotate, h.handlePublicRotate)
 	mux.HandleFunc(RoutePublicAuth, h.handlePublicAuth)
 	mux.HandleFunc(RoutePublicIngest, h.handlePublicIngest)
 	mux.HandleFunc(RoutePublicPolicy, h.handlePublicPolicy)
+}
+
+// handlePublicEnroll creates the telemetry credential for a device that proves
+// possession of its existing Relay enrollment. Relay validates the proof; the
+// telemetry service never receives or persists Relay signing material.
+func (h *Handler) handlePublicEnroll(w http.ResponseWriter, r *http.Request) {
+	h.handlePublicCredential(w, r, false)
+}
+
+func (h *Handler) handlePublicRotate(w http.ResponseWriter, r *http.Request) {
+	h.handlePublicCredential(w, r, true)
+}
+
+func (h *Handler) handlePublicCredential(w http.ResponseWriter, r *http.Request, rotate bool) {
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
+		return
+	}
+	if h.service == nil || !h.service.Available() {
+		h.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "telemetry service unavailable")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+	var request TelemetryEnrollmentRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid enrollment request")
+		return
+	}
+	if strings.TrimSpace(request.DeviceID) == "" || !isValidDeviceID(request.DeviceID) || strings.TrimSpace(request.DeviceID) != request.DeviceID {
+		h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid request: invalid deviceId format")
+		return
+	}
+
+	var response TelemetryEnrollmentResponse
+	var err error
+	if rotate {
+		response, err = h.service.RotateDevice(r.Context(), request, h.attestor)
+	} else {
+		response, err = h.service.EnrollDevice(r.Context(), request, h.attestor)
+	}
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrEnrollmentInvalidRequest), errors.Is(err, ErrEnrollmentProofFailed):
+			h.writeError(w, http.StatusUnauthorized, "AUTH_FAILED", "device enrollment proof failed")
+		case errors.Is(err, ErrEnrollmentAlreadyExists):
+			h.writeError(w, http.StatusConflict, "ALREADY_ENROLLED", "telemetry credential already enrolled")
+		case errors.Is(err, ErrEnrollmentCredentialMissing):
+			h.writeError(w, http.StatusNotFound, "NOT_ENROLLED", "telemetry credential is not enrolled")
+		default:
+			h.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "telemetry service unavailable")
+		}
+		return
+	}
+
+	w.Header().Set("Cache-Control", "no-store")
+	status := http.StatusCreated
+	if rotate {
+		status = http.StatusOK
+	}
+	h.writeJSON(w, status, response)
 }
 
 func (h *Handler) RegisterAdminRoutes(mux *http.ServeMux, adminAuth func(http.HandlerFunc) http.HandlerFunc) {

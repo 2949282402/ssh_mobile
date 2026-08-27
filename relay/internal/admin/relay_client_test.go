@@ -2,11 +2,16 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/ssh-mobile/relay/internal/telemetry"
 )
 
 func TestRelayManagementClientRevokeDeviceEscapesPath(t *testing.T) {
@@ -129,5 +134,89 @@ func TestAdminRevokeDeviceSpecialCharactersForwarding(t *testing.T) {
 				t.Errorf("relay path = %q, want %q", relayReceivedPath, expectedRelayPath)
 			}
 		})
+	}
+}
+
+func TestRelayManagementClientValidatesDeviceCredential(t *testing.T) {
+	var received telemetry.DeviceAttestationRequest
+	var receivedAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != RelayInternalPathTelemetryAttest {
+			t.Fatalf("path = %q, want %q", r.URL.Path, RelayInternalPathTelemetryAttest)
+		}
+		receivedAuth = r.Header.Get("Authorization")
+		var body struct {
+			DeviceID        string `json:"device_id"`
+			RelayCredential string `json:"relay_credential"`
+			PublicKey       string `json:"public_key"`
+			Timestamp       int64  `json:"timestamp"`
+			Nonce           string `json:"nonce"`
+			Signature       string `json:"signature"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode attestation request: %v", err)
+		}
+		received = telemetry.DeviceAttestationRequest{
+			DeviceID:        body.DeviceID,
+			RelayCredential: body.RelayCredential,
+			PublicKey:       body.PublicKey,
+			Timestamp:       body.Timestamp,
+			Nonce:           body.Nonce,
+			Signature:       body.Signature,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"device_id":             "device-a",
+			"enrollment_generation": int64(42),
+			"protocol_version":      uint32(2),
+		})
+	}))
+	defer server.Close()
+
+	client := NewRelayManagementClient(server.URL, "internal-token")
+	attestor, ok := client.(telemetry.DeviceAttestor)
+	if !ok {
+		t.Fatal("RelayManagementClient must expose the telemetry attestation capability")
+	}
+	got, err := attestor.ValidateDeviceCredential(context.Background(), telemetry.DeviceAttestationRequest{
+		DeviceID:        "device-a",
+		RelayCredential: "credential",
+		PublicKey:       "public-key",
+		Timestamp:       123,
+		Nonce:           "nonce",
+		Signature:       "signature",
+	})
+	if err != nil {
+		t.Fatalf("ValidateDeviceCredential failed: %v", err)
+	}
+	if got.DeviceID != "device-a" || got.EnrollmentGeneration != 42 || got.ProtocolVersion != 2 {
+		t.Fatalf("unexpected attestation: %+v", got)
+	}
+	if receivedAuth != "Bearer internal-token" {
+		t.Fatalf("Authorization = %q, want Bearer internal-token", receivedAuth)
+	}
+	if received.DeviceID != "device-a" || received.RelayCredential != "credential" || received.PublicKey != "public-key" || received.Timestamp != 123 || received.Nonce != "nonce" || received.Signature != "signature" {
+		t.Fatalf("unexpected forwarded attestation request: %+v", received)
+	}
+}
+
+func TestRelayManagementClientMapsAttestationOutageWithoutEchoingProof(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer server.Close()
+	client, ok := NewRelayManagementClient(server.URL, "internal-token").(telemetry.DeviceAttestor)
+	if !ok {
+		t.Fatal("RelayManagementClient must expose the telemetry attestation capability")
+	}
+	_, err := client.ValidateDeviceCredential(context.Background(), telemetry.DeviceAttestationRequest{
+		DeviceID:        "device-a",
+		RelayCredential: "private-proof-material",
+	})
+	if !errors.Is(err, ErrRelayUnavailable) {
+		t.Fatalf("error = %v, want ErrRelayUnavailable", err)
+	}
+	if strings.Contains(err.Error(), "private-proof-material") {
+		t.Fatal("attestation error echoed proof material")
 	}
 }

@@ -2,9 +2,54 @@ package telemetry
 
 import (
 	"context"
+	"errors"
+	"os"
 	"testing"
 	"time"
 )
+
+func TestTelemetryCredentialStoresAreCreateOnly(t *testing.T) {
+	store := NewMemoryStore(DefaultCatalog())
+	if err := store.CreateDeviceCredential(context.Background(), "device-create-only", "hash-one"); err != nil {
+		t.Fatalf("first create failed: %v", err)
+	}
+	if err := store.CreateDeviceCredential(context.Background(), "device-create-only", "hash-two"); !errors.Is(err, ErrDeviceCredentialAlreadyExists) {
+		t.Fatalf("second create error = %v, want ErrDeviceCredentialAlreadyExists", err)
+	}
+	stored, err := store.GetDeviceCredential(context.Background(), "device-create-only")
+	if err != nil || stored != "hash-one" {
+		t.Fatalf("create-only store changed existing hash: value=%q err=%v", stored, err)
+	}
+}
+
+func TestMySQLTelemetryCredentialStoreCreateOnlyWhenDSNAvailable(t *testing.T) {
+	dsn := os.Getenv("TELEMETRY_TEST_MYSQL_DSN")
+	if dsn == "" {
+		dsn = os.Getenv("TELEMETRY_MYSQL_DSN")
+	}
+	if dsn == "" {
+		t.Skip("TELEMETRY_TEST_MYSQL_DSN or TELEMETRY_MYSQL_DSN not set; skipping MySQL integration test")
+	}
+
+	store, err := NewMySQLStoreFromDSN(dsn, DefaultCatalog())
+	if err != nil {
+		t.Fatalf("open telemetry MySQL store: %v", err)
+	}
+	defer store.Close()
+	deviceID := "test-create-only-mysql"
+	_, _ = store.db.ExecContext(context.Background(), "DELETE FROM telemetry_device_credentials WHERE device_id = ?", deviceID)
+	if err := store.CreateDeviceCredential(context.Background(), deviceID, "hash-one"); err != nil {
+		t.Fatalf("first MySQL create failed: %v", err)
+	}
+	if err := store.CreateDeviceCredential(context.Background(), deviceID, "hash-two"); !errors.Is(err, ErrDeviceCredentialAlreadyExists) {
+		t.Fatalf("second MySQL create error = %v, want ErrDeviceCredentialAlreadyExists", err)
+	}
+	stored, err := store.GetDeviceCredential(context.Background(), deviceID)
+	if err != nil || stored != "hash-one" {
+		t.Fatalf("MySQL create-only store changed existing hash: value=%q err=%v", stored, err)
+	}
+	_, _ = store.db.ExecContext(context.Background(), "DELETE FROM telemetry_device_credentials WHERE device_id = ?", deviceID)
+}
 
 func TestTelemetryStoreIngestAndIdempotency(t *testing.T) {
 	ctx := context.Background()

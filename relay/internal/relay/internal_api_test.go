@@ -39,6 +39,7 @@ func TestInternalAPIAuthentication(t *testing.T) {
 		{http.MethodPost, PathInternalRevokeDeviceV2 + "dev-1/revoke"},
 		{http.MethodGet, PathInternalTokenV2},
 		{http.MethodPost, PathInternalRotateTokenV2},
+		{http.MethodPost, PathInternalTelemetryAttest},
 	}
 
 	for _, ep := range endpoints {

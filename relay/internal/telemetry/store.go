@@ -4,12 +4,18 @@ package telemetry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 )
+
+// ErrDeviceCredentialAlreadyExists is returned by the create-only enrollment
+// operation when a device already has a telemetry credential. Existing admin
+// registration remains an explicit upsert for backward compatibility.
+var ErrDeviceCredentialAlreadyExists = errors.New("device telemetry credential already exists")
 
 // QueryFilter defines filtering criteria for telemetry queries.
 type QueryFilter struct {
@@ -108,6 +114,27 @@ type MemoryStore struct {
 	credentials map[string]string    // deviceId -> secretHash
 	settings    TelemetrySettings
 	redisCache  RedisCache
+}
+
+// CreateDeviceCredential persists a credential hash exactly once. It is
+// separate from RegisterDeviceCredential because public device enrollment must
+// never silently rotate a credential after a replay or lost response.
+func (m *MemoryStore) CreateDeviceCredential(ctx context.Context, deviceID, secretHash string) error {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if strings.TrimSpace(deviceID) == "" || strings.TrimSpace(secretHash) == "" {
+		return fmt.Errorf("invalid deviceId or secretHash")
+	}
+	if _, exists := m.credentials[deviceID]; exists {
+		return ErrDeviceCredentialAlreadyExists
+	}
+	m.credentials[deviceID] = secretHash
+	return nil
 }
 
 // SetRedisCache wires a cache used for pipeline health probing in QueryOverview.

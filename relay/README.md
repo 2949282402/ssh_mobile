@@ -39,6 +39,7 @@ There is no `/v1/connect` route; only the V2 control and relay data routes are s
 - `POST /internal/v2/devices/{deviceId}/revoke` — Authoritative device revocation across storage and sockets.
 - `GET /internal/v2/access/enrollment-token` — Active enrollment token.
 - `POST /internal/v2/access/enrollment-token/rotate` — Rotates enrollment token (memory mode).
+- `POST /internal/v2/telemetry/attest` — Attests an existing Relay device proof for Admin telemetry; returns no secret and writes no Analytics state.
 
 ### Admin Public Endpoints (`/api/admin/v1/*`)
 - `POST /api/admin/v1/auth/login` — Administrator login (sets HttpOnly session cookie).
@@ -56,6 +57,8 @@ There is no `/v1/connect` route; only the V2 control and relay data routes are s
 - `PUT /api/admin/v1/telemetry/settings` — Update dynamic policy and retention settings.
 
 ### Telemetry Public Endpoints (`/api/v1/telemetry/*`)
+- `POST /api/v1/telemetry/enroll` — Device proof-of-possession enrollment; returns a one-time telemetry secret and stores only its hash.
+- `POST /api/v1/telemetry/enroll/rotate` — Explicit credential rotation bound to a fresh Relay proof.
 - `POST /api/v1/telemetry/auth` — Client device authentication and short-lived token issuance.
 - `GET /api/v1/telemetry/policy` — Fetch active dynamic upload policy.
 - `POST /api/v1/telemetry/ingest` — Ingest batch events/diagnostics with HMAC and idempotency.

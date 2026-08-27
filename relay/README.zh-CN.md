@@ -37,6 +37,7 @@ React + Vite + TypeScript 前端控制台位于 `../front/`，在 Caddy 背后�
 - `POST /internal/v2/devices/{deviceId}/revoke` — 权威吊销设备（断开 socket、写入墓碑、广播事件）。
 - `GET /internal/v2/access/enrollment-token` — 查询当前有效注册 Token。
 - `POST /internal/v2/access/enrollment-token/rotate` — 轮换注册 Token（内存模式）。
+- `POST /internal/v2/telemetry/attest` — 为 Admin Telemetry 校验既有 Relay 设备证明；不返回密钥、不写入 Analytics。
 
 ### Admin 公开端点 (`/api/admin/v1/*`)
 - `POST /api/admin/v1/auth/login` — 管理员登录（设置 HttpOnly Session Cookie）。
@@ -54,6 +55,8 @@ React + Vite + TypeScript 前端控制台位于 `../front/`，在 Caddy 背后�
 - `PUT /api/admin/v1/telemetry/settings` — 更新动态上报策略与数据保留配置。
 
 ### 埋点采集公开端点 (`/api/v1/telemetry/*`)
+- `POST /api/v1/telemetry/enroll` — 设备使用既有 Relay 身份证明并一次性获取 Telemetry 密钥；服务端只存储哈希。
+- `POST /api/v1/telemetry/enroll/rotate` — 使用新的 Relay 证明显式轮换 Telemetry 密钥。
 - `POST /api/v1/telemetry/auth` — 客户端设备认证与临时 Token 签发。
 - `GET /api/v1/telemetry/policy` — 动态获取最新上报策略。
 - `POST /api/v1/telemetry/ingest` — 批量上报事件/诊断日志（HMAC 验签与持久幂等收据）。

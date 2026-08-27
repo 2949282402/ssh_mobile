@@ -3,6 +3,8 @@
 package telemetry
 
 const (
+	RoutePublicEnroll = "/api/v1/telemetry/enroll"
+	RoutePublicRotate = "/api/v1/telemetry/enroll/rotate"
 	RoutePublicAuth   = "/api/v1/telemetry/auth"
 	RoutePublicIngest = "/api/v1/telemetry/ingest"
 	RoutePublicPolicy = "/api/v1/telemetry/policy"
@@ -16,6 +18,8 @@ const (
 	RouteTelemetryDevices = "/api/admin/v1/telemetry/devices"
 
 	PathPublicAuth   = "/api/v1/telemetry/auth"
+	PathPublicEnroll = "/api/v1/telemetry/enroll"
+	PathPublicRotate = "/api/v1/telemetry/enroll/rotate"
 	PathPublicIngest = "/api/v1/telemetry/ingest"
 	PathPublicPolicy = "/api/v1/telemetry/policy"
 
