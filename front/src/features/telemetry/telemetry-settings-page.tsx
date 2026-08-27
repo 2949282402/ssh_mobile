@@ -66,14 +66,22 @@ export function TelemetrySettingsPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await updateMutation.mutateAsync({
+      const sanitizedSettings = {
         ...form,
         policy: {
           ...form.policy,
+          batchSizeThreshold: Math.min(1000, Math.max(1, form.policy.batchSizeThreshold || 50)),
+          timeIntervalSeconds: Math.min(3600, Math.max(5, form.policy.timeIntervalSeconds || 60)),
+          maxBatchSize: Math.min(1000, Math.max(1, form.policy.maxBatchSize || 100)),
+          clientMaxLocalRecords: Math.min(1000000, Math.max(100, form.policy.clientMaxLocalRecords || 10000)),
           policyVersion: form.policy.policyVersion + 1,
         },
+        retentionDays: Math.min(3650, Math.max(1, form.retentionDays || 30)),
+        retentionMaxRows: Math.min(100000000, Math.max(1000, form.retentionMaxRows || 500000)),
+        redisMaxRecords: Math.min(10000, Math.max(10, form.redisMaxRecords || 1000)),
         updatedAt: new Date().toISOString(),
-      });
+      };
+      await updateMutation.mutateAsync(sanitizedSettings);
       toast.push('埋点与保留配置已更新。', 'success');
     } catch (err) {
       const msg = err instanceof ApiRequestError ? err.message : '更新配置失败，请检查参数。';

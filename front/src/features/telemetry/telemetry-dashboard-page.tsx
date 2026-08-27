@@ -25,6 +25,19 @@ const TIME_RANGES: Array<{ label: string; value: TelemetryFilter['timeRange'] }>
   { label: '全部', value: 'all' },
 ];
 
+function formatTrendTime(timestamp: string): string {
+  try {
+    const isoStr = timestamp.includes('T') ? timestamp : `${timestamp.replace(' ', 'T')}Z`;
+    const date = new Date(isoStr);
+    if (isNaN(date.getTime())) {
+      return timestamp;
+    }
+    return date.toLocaleDateString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return timestamp;
+  }
+}
+
 export function TelemetryDashboardPage() {
   const [timeRange, setTimeRange] = useState<TelemetryFilter['timeRange']>('24h');
   const overviewQuery = useTelemetryOverview({ timeRange });
@@ -198,7 +211,7 @@ export function TelemetryDashboardPage() {
               {data.eventsTrend.map((point) => (
                 <div key={point.timestamp} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span className="type-mono" style={{ fontSize: '0.85rem', color: 'var(--ink-soft)' }}>
-                    {new Date(point.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {formatTrendTime(point.timestamp)}
                   </span>
                   <div style={{ flex: 1, margin: '0 1rem', background: 'var(--canvas)', height: '12px', borderRadius: '6px', overflow: 'hidden' }}>
                     <div
@@ -232,7 +245,7 @@ export function TelemetryDashboardPage() {
               {data.errorsTrend.map((point) => (
                 <div key={point.timestamp} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span className="type-mono" style={{ fontSize: '0.85rem', color: 'var(--ink-soft)' }}>
-                    {new Date(point.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {formatTrendTime(point.timestamp)}
                   </span>
                   <div style={{ flex: 1, margin: '0 1rem', background: 'var(--canvas)', height: '12px', borderRadius: '6px', overflow: 'hidden' }}>
                     <div
