@@ -36,6 +36,7 @@ const Set<String> _sourceExtensions = <String>{
 /// checks every event and error-code literal loaded from YAML.
 List<String> scanForViolations(Directory repoRoot) {
   final contractNames = _contractNames(repoRoot);
+  final generatedSources = _expectedGeneratedSources(repoRoot);
   final violations = <String>[];
 
   for (final relativeRoot in _producerRoots) {
@@ -46,9 +47,15 @@ List<String> scanForViolations(Directory repoRoot) {
     for (final entity in entities) {
       if (entity is! File || !_isSourceFile(entity.path)) continue;
       if (_isTestFile(entity.path)) continue;
-      if (_isGeneratedPath(entity.path)) continue;
       final relativePath = _relativePath(repoRoot, entity.path);
       final source = entity.readAsStringSync();
+      if (_isVerifiedGeneratedArtifact(
+        relativePath,
+        source,
+        generatedSources,
+      )) {
+        continue;
+      }
       final code = _withoutComments(source);
 
       if (_basename(entity.path) == 'app_telemetry_contract.dart') {
@@ -121,6 +128,27 @@ List<String> scanForViolations(Directory repoRoot) {
   }
 
   return violations;
+}
+
+Map<String, String> _expectedGeneratedSources(Directory repoRoot) {
+  try {
+    return expectedFiles(repoRoot);
+  } on Object {
+    // Keep structural checks useful for isolated fixture roots that omit the
+    // contract YAML. A complete checkout is checked by the contract gate.
+    return const <String, String>{};
+  }
+}
+
+bool _isVerifiedGeneratedArtifact(
+  String relativePath,
+  String source,
+  Map<String, String> expectedSources,
+) {
+  final expected = expectedSources[_canonicalRelativePath(relativePath)];
+  return expected != null &&
+      source.startsWith(generatedHeader) &&
+      source == expected;
 }
 
 void main() {
@@ -537,20 +565,8 @@ bool _isTestFile(String path) {
       name.endsWith('.spec.tsx');
 }
 
-bool _isGeneratedPath(String path) {
-  final lowerPath = path.toLowerCase();
-  final name = _basename(lowerPath);
-  return lowerPath.split(Platform.pathSeparator).contains('generated') ||
-      name.endsWith('.g.dart') ||
-      name.endsWith('.gen.dart') ||
-      name.endsWith('.generated.dart') ||
-      name.endsWith('.gen.go') ||
-      name.endsWith('.generated.go') ||
-      name.endsWith('.gen.ts') ||
-      name.endsWith('.generated.ts') ||
-      name.endsWith('.gen.js') ||
-      name.endsWith('.generated.js');
-}
+String _canonicalRelativePath(String path) =>
+    path.replaceAll(Platform.pathSeparator, '/');
 
 String _relativePath(Directory root, String path) => path.substring(
   root.path.length + (root.path.endsWith(Platform.pathSeparator) ? 0 : 1),

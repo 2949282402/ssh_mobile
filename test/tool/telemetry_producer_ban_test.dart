@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import '../../tool/check_telemetry_producers.dart';
+import '../../tool/gen_telemetry_contract.dart' as telemetry_codegen;
 
 /// Regression tests for the telemetry producer source boundary.
 ///
@@ -14,6 +15,7 @@ void main() {
     _testMirrorAndLegacyApiAreRejected(root);
     _testRawContractLiteralsAreRejected(root);
     _testRawContractLiteralsInTemplatesAndConcatsAreRejected(root);
+    _testGeneratedNameSpoofsAreRejected(root);
     _testRawContractLiteralsInLoggingAllowlistsAreRejected(root);
     _testFrontRootContractImportsAreRejected(root);
     stdout.writeln('Telemetry producer source-ban tests passed.');
@@ -49,13 +51,14 @@ errorCodes:
 void _testCleanGeneratedSourceIsAllowed(Directory root) {
   final generated = Directory('${root.path}/front/src/generated')
     ..createSync(recursive: true);
-  File('${generated.path}/telemetry_contract.ts').writeAsStringSync('''
-// GENERATED DO NOT EDIT
-export const eventName = 'ssh.session.started';
-''');
+  final generatedPath = 'front/src/generated/telemetry_contract.ts';
+  final expected = telemetry_codegen.renderAll(
+    telemetry_codegen.loadContract(root),
+  )[generatedPath];
+  File('${generated.path}/telemetry_contract.ts').writeAsStringSync(expected!);
   _expect(
     scanForViolations(root).isEmpty,
-    'generated contract output should be excluded from producer bans',
+    'verified generated contract output should be excluded from producer bans',
   );
 }
 
@@ -176,10 +179,59 @@ const generatedCode = 'SSH_' + 'CONNECT_FAILED';
     'JavaScript template telemetry literals should be rejected',
   );
   _expect(
-    violations.every(
-      (violation) => !violation.contains('front/src/generated/producer_raw.ts'),
+    violations.any(
+      (violation) =>
+          violation.contains('front/src/generated/producer_raw.ts') &&
+          violation.contains('ssh.session.started'),
     ),
-    'generated producer artifacts should remain excluded',
+    'unverified generated-directory files should not be excluded',
+  );
+}
+
+void _testGeneratedNameSpoofsAreRejected(Directory root) {
+  final source = Directory('${root.path}/apps/ssh_mobile_full/lib/generated')
+    ..createSync(recursive: true);
+  File('${source.path}/handwritten.g.dart').writeAsStringSync('''
+// GENERATED DO NOT EDIT
+const eventName = 'ssh.session.started';
+''');
+  final suffixSource = Directory('${root.path}/front/src/contracts')
+    ..createSync(recursive: true);
+  File('${suffixSource.path}/handwritten.generated.ts').writeAsStringSync('''
+// GENERATED DO NOT EDIT
+const eventName = 'ssh.session.started';
+''');
+  final exactPath = Directory('${root.path}/front/src/generated')
+    ..createSync(recursive: true);
+  File('${exactPath.path}/telemetry_contract.ts').writeAsStringSync('''
+// GENERATED DO NOT EDIT
+const eventName = 'ssh.session.started';
+''');
+
+  final violations = scanForViolations(root);
+  _expect(
+    violations.any(
+      (violation) =>
+          violation.contains('handwritten.g.dart') &&
+          violation.contains('ssh.session.started'),
+    ),
+    'spoofed generated suffix files should be rejected',
+  );
+  _expect(
+    violations.any(
+      (violation) =>
+          violation.contains('handwritten.generated.ts') &&
+          violation.contains('ssh.session.started'),
+    ),
+    'spoofed generated headers should be rejected without verified path/content',
+  );
+  _expect(
+    violations.any(
+      (violation) =>
+          violation.contains('front/src/generated/telemetry_contract.ts') &&
+          violation.contains('ssh.session.started'),
+    ),
+    'known generated paths should still require exact generated content',
   );
 }
 

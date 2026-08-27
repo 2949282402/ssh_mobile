@@ -39,11 +39,19 @@ final class TelemetryRedactor {
     caseSensitive: false,
   );
   static final RegExp _secretAssignment = RegExp(
-    r'''(["']?\b(?:password|passwd|pwd|passphrase|private[_-]?key|api[_-]?key|x-api-key|access[_-]?token|refresh[_-]?token|client[_-]?secret|token|secret|username|user[_-]?name|user|login|host|host[_-]?name|ssh[_-]?host|ip|ip[_-]?address|command|command[_-]?line|args?|arguments?|content|path|filename|credential(?:s)?|auth(?:orization)?|jwt|bearer)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^,\s}\]]+)''',
+    r'''(["']?(?:[A-Za-z][A-Za-z0-9]*[_-])*(?:password|passwd|pwd|passphrase|private[_-]?key|api[_-]?key|x-api-key|access[_-]?token|refresh[_-]?token|client[_-]?secret|session[_-]?token|auth[_-]?token|token|secret|username|user[_-]?name|user|login|host|host[_-]?name|ssh[_-]?host|ip|ip[_-]?address|command|command[_-]?line|args?|arguments?|content|path|filename|credential(?:s)?|auth(?:orization)?|jwt|bearer)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^,\s}\]]+)''',
+    caseSensitive: false,
+  );
+  static final RegExp _secretAssignmentWithSuffix = RegExp(
+    r'''(["']?(?:[A-Za-z][A-Za-z0-9]*[_-])*(?:password|passwd|pwd|passphrase|private[_-]?key|api[_-]?key|x-api-key|access[_-]?token|refresh[_-]?token|client[_-]?secret|session[_-]?token|auth[_-]?token|secret|credential(?:s)?|auth(?:orization)?|jwt|bearer)(?:[_-][A-Za-z0-9]+)+["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^,\s}\]]+)''',
     caseSensitive: false,
   );
   static final RegExp _secretWord = RegExp(
-    r'''(\b(?:password|passwd|pwd|passphrase|private[_-]?key|api[_-]?key|x-api-key|access[_-]?token|refresh[_-]?token|client[_-]?secret|token|secret|username|user[_-]?name|user|login|host|host[_-]?name|ssh[_-]?host|ip|ip[_-]?address|command|command[_-]?line|args?|arguments?|content|path|filename|credential(?:s)?|auth(?:orization)?|jwt|bearer)\s+)("[^"]*"|'[^']*'|[^,\s}\]]+)''',
+    r'''(\b(?:[A-Za-z][A-Za-z0-9]*[_-])*(?:password|passwd|pwd|passphrase|private[_-]?key|api[_-]?key|x-api-key|access[_-]?token|refresh[_-]?token|client[_-]?secret|session[_-]?token|auth[_-]?token|token|secret|username|user[_-]?name|user|login|host|host[_-]?name|ssh[_-]?host|ip|ip[_-]?address|command|command[_-]?line|args?|arguments?|content|path|filename|credential(?:s)?|auth(?:orization)?|jwt|bearer)\s+)("[^"]*"|'[^']*'|[^,\s}\]]+)''',
+    caseSensitive: false,
+  );
+  static final RegExp _secretWordWithSuffix = RegExp(
+    r'''(\b(?:[A-Za-z][A-Za-z0-9]*[_-])*(?:password|passwd|pwd|passphrase|private[_-]?key|api[_-]?key|x-api-key|access[_-]?token|refresh[_-]?token|client[_-]?secret|session[_-]?token|auth[_-]?token|secret|credential(?:s)?|auth(?:orization)?|jwt|bearer)(?:[_-][A-Za-z0-9]+)+\s+)("[^"]*"|'[^']*'|[^,\s}\]]+)''',
     caseSensitive: false,
   );
   static final RegExp _urlSecretQuery = RegExp(
@@ -94,11 +102,11 @@ final class TelemetryRedactor {
     caseSensitive: false,
   );
   static final RegExp _knownToken = RegExp(
-    r'\b(?:sk-(?:proj-)?[A-Za-z0-9_-]{12,}|ASIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{16,})\b',
+    r'\b(?:sk-(?:proj-)?[A-Za-z0-9_-]{12,}|ASIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{16,}|ghs_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{16,})\b',
     caseSensitive: false,
   );
   static final RegExp _environmentSecretAssignment = RegExp(
-    r'''(["']?\b(?:OPENAI_API_KEY|AWS_SECRET_ACCESS_KEY|AWS_ACCESS_KEY_ID|AZURE_CLIENT_SECRET|GOOGLE_APPLICATION_CREDENTIALS)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^,\s}\]]+)''',
+    r'''(["']?\b(?:OPENAI_API_KEY|AWS_SECRET_ACCESS_KEY|AWS_ACCESS_KEY_ID|AWS_SESSION_TOKEN|AZURE_CLIENT_SECRET|GOOGLE_APPLICATION_CREDENTIALS|GOOGLE_API_KEY|GITHUB_TOKEN)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^,\s}\]]+)''',
     caseSensitive: false,
   );
   static final RegExp _shellCommand = RegExp(
@@ -213,7 +221,13 @@ final class TelemetryRedactor {
     text = text.replaceAllMapped(_secretAssignment, (match) {
       return '${match.group(1)}$redacted';
     });
+    text = text.replaceAllMapped(_secretAssignmentWithSuffix, (match) {
+      return '${match.group(1)}$redacted';
+    });
     text = text.replaceAllMapped(_secretWord, (match) {
+      return '${match.group(1)}$redacted';
+    });
+    text = text.replaceAllMapped(_secretWordWithSuffix, (match) {
       return '${match.group(1)}$redacted';
     });
     text = text.replaceAllMapped(_urlSecretQuery, (match) {

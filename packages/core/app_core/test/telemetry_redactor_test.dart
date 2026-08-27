@@ -213,6 +213,47 @@ void main() {
     },
   );
 
+  test(
+    'redacts prefixed secret assignments without destroying lookalike metadata',
+    () {
+      final sanitized = redactor.sanitizeText(
+        [
+          'remote_password=remote-placeholder',
+          'ssh_username: ssh-placeholder',
+          'GITHUB_TOKEN=ghs_abcdefghijklmnop',
+          'AWS_SESSION_TOKEN=aws-session-placeholder',
+          'GOOGLE_API_KEY=google-api-placeholder',
+          'remote_password_alias=aliased-password-placeholder',
+          'remote_password remote-word-placeholder',
+          'AWS_SESSION_TOKEN aws-word-placeholder',
+          'token_count=42',
+          'passwordless_mode=true',
+          'user_count=7',
+        ].join(' | '),
+      );
+
+      for (final fragment in [
+        'remote-placeholder',
+        'ssh-placeholder',
+        'ghs_abcdefghijklmnop',
+        'aws-session-placeholder',
+        'google-api-placeholder',
+        'aliased-password-placeholder',
+        'remote-word-placeholder',
+        'aws-word-placeholder',
+      ]) {
+        expect(sanitized, isNot(contains(fragment)), reason: fragment);
+      }
+      for (final safeMetadata in [
+        'token_count=42',
+        'passwordless_mode=true',
+        'user_count=7',
+      ]) {
+        expect(sanitized, contains(safeMetadata), reason: safeMetadata);
+      }
+    },
+  );
+
   test('redacts exception and stack text and bounds long diagnostics', () {
     expect(
       redactor.sanitizeExceptionText('failure password=exception-placeholder'),
