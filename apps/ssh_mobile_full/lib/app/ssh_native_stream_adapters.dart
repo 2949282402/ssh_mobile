@@ -17,11 +17,16 @@ import 'package:network_transport/network_transport.dart';
 import 'package:ssh_core/ssh_core.dart';
 import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
 
+import '../services/telemetry/telemetry_span.dart';
+
 /// 打开 AppRuntime-owned native command gateway 的提供者。
 typedef SshNativeGatewayProvider = Future<NetworkCommandGateway> Function();
 
 /// 提供当前 runtime 的稳定本地设备身份。
 typedef SshNativeOpenerDeviceIdProvider = Future<String> Function();
+
+/// Lazily resolves the App-owned network facade after composition completes.
+typedef SshNetworkFacadeProvider = NetworkFacade? Function();
 
 /// 基于 native ReliableStream 的 SSH 流连接器。
 final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
@@ -36,14 +41,23 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
     required SshNativeGatewayProvider gatewayProvider,
     required SshNativeOpenerDeviceIdProvider openerDeviceIdProvider,
     NetworkFacade? facade,
+    SshNetworkFacadeProvider? facadeProvider,
+    TelemetryTraceRegistry? traceRegistry,
   }) : _gatewayProvider = gatewayProvider,
        _openerDeviceIdProvider = openerDeviceIdProvider,
-       _facade = facade;
+       _facade = facade,
+       _facadeProvider = facadeProvider,
+       _traceRegistry = traceRegistry;
 
   final SshNativeGatewayProvider _gatewayProvider;
   final SshNativeOpenerDeviceIdProvider _openerDeviceIdProvider;
   final NetworkFacade? _facade;
+  final SshNetworkFacadeProvider? _facadeProvider;
+  final TelemetryTraceRegistry? _traceRegistry;
   final Map<String, bool> _connectedPeers = <String, bool>{};
+  final Map<String, Future<void>> _peerConnectOperations =
+      <String, Future<void>>{};
+  final Map<String, String> _peerTraceIds = <String, String>{};
   final Map<NativeStreamHandle, _AppSshNativeStream> _streams =
       <NativeStreamHandle, _AppSshNativeStream>{};
   // 等待 native CommandResult 确认的 SshStreamOpen：commandId → StreamHandle。
@@ -65,14 +79,15 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
   Future<SshNativeStream> open({
     required String peerId,
     String service = kSshNativeStreamService,
+    String? traceId,
   }) async {
     _ensureOpen();
     final openerDeviceId = await _ensureOpenerDeviceId();
     _ensureOpen();
     final gateway = await _ensureGateway();
     _ensureOpen();
-    if (_facade != null) {
-      await _ensurePeerConnected(peerId);
+    if (_facade != null || _facadeProvider != null) {
+      await _ensurePeerConnected(peerId, traceId: traceId);
       _ensureOpen();
     }
 
@@ -85,6 +100,13 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
     _streams[handle] = stream;
     final commandId = _nextCommandId('ssh-open');
     _pendingOpens[commandId] = handle;
+    if (traceId != null && _traceRegistry != null) {
+      _traceRegistry.bindCommand(
+        commandId: commandId,
+        peerId: peerId,
+        traceId: traceId,
+      );
+    }
     final status = gateway.sendCommand(
       NativeNetworkProtocol.sshStreamOpenCommand(
         commandId: commandId,
@@ -96,6 +118,7 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
     if (status != TransportOperationStatus.success) {
       _streams.remove(handle);
       _pendingOpens.remove(commandId);
+      _traceRegistry?.completeCommand(commandId);
       throw StateError(
         'Failed to queue native SSH stream open: ${status.name}.',
       );
@@ -169,24 +192,55 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
     return future;
   }
 
-  Future<void> _ensurePeerConnected(String peerId) async {
-    if (_connectedPeers.containsKey(peerId)) return;
-    final facade = _facade;
+  Future<void> _ensurePeerConnected(String peerId, {String? traceId}) {
+    if (_connectedPeers.containsKey(peerId)) return Future<void>.value();
+    final existing = _peerConnectOperations[peerId];
+    if (existing != null) return existing;
+
+    late final Future<void> operation;
+    operation = _connectPeer(peerId, traceId: traceId).whenComplete(() {
+      if (identical(_peerConnectOperations[peerId], operation)) {
+        _peerConnectOperations.remove(peerId);
+      }
+    });
+    _peerConnectOperations[peerId] = operation;
+    return operation;
+  }
+
+  Future<void> _connectPeer(String peerId, {String? traceId}) async {
+    final facade = _facade ?? _facadeProvider?.call();
     if (facade == null) {
-      _connectedPeers[peerId] = true;
-      return;
-    }
-    final result = await facade.connectPeer(
-      peerId,
-      communicationClass: CommunicationClass.reliableStream,
-    );
-    if (result is SdkFailure<void>) {
       throw StateError(
-        'Failed to connect peer $peerId: ${result.error.message}',
+        'Native network facade is unavailable; cannot connect SSH peer.',
       );
     }
-    _ensureOpen();
-    _connectedPeers[peerId] = true;
+
+    if (traceId != null && _traceRegistry != null) {
+      _traceRegistry.bindPeer(peerId: peerId, traceId: traceId);
+      _peerTraceIds[peerId] = traceId;
+    }
+    try {
+      final result = await facade.connectPeer(
+        peerId,
+        communicationClass: CommunicationClass.reliableStream,
+      );
+      if (result is SdkFailure<void>) {
+        throw StateError(
+          'Failed to connect peer $peerId: ${result.error.message}',
+        );
+      }
+      _ensureOpen();
+      _connectedPeers[peerId] = true;
+    } catch (_) {
+      final operationTraceId = _peerTraceIds.remove(peerId);
+      if (operationTraceId != null) {
+        _traceRegistry?.releasePeerTrace(
+          peerId: peerId,
+          traceId: operationTraceId,
+        );
+      }
+      rethrow;
+    }
   }
 
   void _onRawEvent(Uint8List bytes) {
@@ -207,6 +261,11 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
         // accepted=false；必须让 open 返回的流立即失败，而不是被 default 丢弃
         // 导致 done 永久挂起。
         final handle = _pendingOpens.remove(commandId);
+        final retainPeerBinding = accepted;
+        _traceRegistry?.completeCommand(
+          commandId,
+          retainPeerBinding: retainPeerBinding,
+        );
         if (handle == null) break;
         final stream = _streams[handle];
         if (stream == null) break;
@@ -253,7 +312,14 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
   }
 
   _AppSshNativeStream? _removeStream(NativeStreamHandle handle) {
-    _pendingOpens.removeWhere((_, pendingHandle) => pendingHandle == handle);
+    final pendingCommands = _pendingOpens.entries
+        .where((entry) => entry.value == handle)
+        .map((entry) => entry.key)
+        .toList(growable: false);
+    for (final commandId in pendingCommands) {
+      _pendingOpens.remove(commandId);
+      _traceRegistry?.completeCommand(commandId);
+    }
     return _streams.remove(handle);
   }
 
@@ -276,6 +342,9 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
     _gatewayFuture = null;
     _openerDeviceIdFuture = null;
     final streams = _streams.values.toList();
+    for (final commandId in _pendingOpens.keys.toList(growable: false)) {
+      _traceRegistry?.completeCommand(commandId);
+    }
     _streams.clear();
     _pendingOpens.clear();
     for (final stream in streams) {
@@ -283,6 +352,20 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
     }
     _gateway = null;
     _connectedPeers.clear();
+    final peerOperations = _peerConnectOperations.values.toList(
+      growable: false,
+    );
+    try {
+      await Future.wait<void>(peerOperations, eagerError: false);
+    } catch (_) {
+      // Every peer operation observes `_closed` and releases its own trace;
+      // one failed operation must not prevent the remaining cleanup.
+    }
+    _peerConnectOperations.clear();
+    for (final entry in _peerTraceIds.entries) {
+      _traceRegistry?.releasePeerTrace(peerId: entry.key, traceId: entry.value);
+    }
+    _peerTraceIds.clear();
   }
 
   String _nextCommandId(String operation) {

@@ -4,8 +4,11 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:network_sdk/network_sdk.dart';
 import 'package:network_transport/network_transport.dart';
+import 'package:ssh_core/ssh_core.dart';
 import 'package:ssh_mobile/app/ssh_native_stream_adapters.dart';
+import 'package:ssh_mobile/services/telemetry/telemetry_span.dart';
 
 void main() {
   group('AppSshNativeStreamConnector', () {
@@ -316,6 +319,72 @@ void main() {
     });
 
     test(
+      'fails closed when the lazily supplied native facade is unavailable',
+      () async {
+        final gateway = _FakeGateway();
+        final traces = TelemetryTraceRegistry();
+        final connector = AppSshNativeStreamConnector(
+          gatewayProvider: () async => gateway,
+          openerDeviceIdProvider: () async => 'device-a',
+          facadeProvider: () => null,
+          traceRegistry: traces,
+        );
+
+        await expectLater(
+          connector.open(peerId: 'peer-a', traceId: 'trace-operation'),
+          throwsA(isA<StateError>()),
+        );
+        expect(gateway.commands, isEmpty);
+        expect(traces.traceForPeer('peer-a'), isNull);
+        await connector.closeAll();
+        traces.dispose();
+      },
+    );
+
+    test(
+      'coalesces concurrent peer connects and retains the SSH operation trace',
+      () async {
+        final gateway = _FakeGateway();
+        final connectResult = Completer<SdkResult<void>>();
+        final facade = _RecordingNetworkFacade(() {
+          return connectResult.future;
+        });
+        final traces = TelemetryTraceRegistry();
+        final connector = AppSshNativeStreamConnector(
+          gatewayProvider: () async => gateway,
+          openerDeviceIdProvider: () async => 'device-a',
+          facade: facade,
+          traceRegistry: traces,
+        );
+
+        final firstOpen = connector.open(
+          peerId: 'peer-a',
+          traceId: 'trace-operation',
+        );
+        while (facade.connectCalls == 0) {
+          await Future<void>.delayed(Duration.zero);
+        }
+        final secondOpen = connector.open(
+          peerId: 'peer-a',
+          traceId: 'trace-collision',
+        );
+        connectResult.complete(const SdkSuccess<void>(null));
+
+        final streams = await Future.wait(<Future<SshNativeStream>>[
+          firstOpen,
+          secondOpen,
+        ]);
+        expect(streams, hasLength(2));
+        expect(facade.connectCalls, 1);
+        expect(traces.traceForPeer('peer-a'), 'trace-operation');
+
+        await connector.closeAll();
+        expect(traces.traceForPeer('peer-a'), isNull);
+        traces.dispose();
+      },
+    );
+
+    test(
       'wraps stream IDs, skips occupied handles, and fails when exhausted',
       () async {
         final gateway = _FakeGateway();
@@ -528,4 +597,20 @@ final class _FakeGateway implements NetworkCommandGateway {
   }
 
   void push(Uint8List frame) => _events.add(frame);
+}
+
+final class _RecordingNetworkFacade extends Fake implements NetworkFacade {
+  _RecordingNetworkFacade(this._connect);
+
+  final Future<SdkResult<void>> Function() _connect;
+  int connectCalls = 0;
+
+  @override
+  Future<SdkResult<void>> connectPeer(
+    String peerId, {
+    CommunicationClass communicationClass = CommunicationClass.reliableStream,
+  }) {
+    connectCalls++;
+    return _connect();
+  }
 }

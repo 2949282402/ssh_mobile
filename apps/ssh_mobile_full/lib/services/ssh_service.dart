@@ -127,6 +127,10 @@ class SshService extends ChangeNotifier
   final Map<String, Completer<void>> _connectCompleters = {};
   final Map<String, Future<void>> _connectOperations = {};
   final Map<String, String> _connectOperationTargets = {};
+  // Mobile sessions may use the legacy background isolate when their target
+  // is not present in the enrolled LAN peer catalog. Keep that choice per
+  // session instead of globally disabling native wiring for the whole App.
+  final Map<String, bool> _sessionUsesBackgroundService = {};
   final Map<String, Future<void>> _reconnectOperations = {};
   final Set<Future<void>> _ownedSshOperations = <Future<void>>{};
   final Set<Future<void>> _persistenceOperations = <Future<void>>{};
@@ -282,6 +286,7 @@ class SshService extends ChangeNotifier
     final sessions = _sessions.values.toList(growable: false);
     _sessions.clear();
     _sessionTargetBindings.clear();
+    _sessionUsesBackgroundService.clear();
     _refreshSessionsView();
     for (final session in sessions) {
       await attempt(session.close);
@@ -333,19 +338,32 @@ class SshService extends ChangeNotifier
     }
   }
 
-  bool get _usesBackgroundService {
-    // native 传输（连接器 + peer 绑定解析器都已配置）时 SSH 走 UI isolate 的
-    // 本地路径（FFI handle 不是多 isolate 安全的）；否则移动端继续使用
-    // background service 原始 TCP，保持既有后台保活行为。
-    return !kIsWeb &&
-        (defaultTargetPlatform == TargetPlatform.android ||
-            defaultTargetPlatform == TargetPlatform.iOS) &&
-        !_canUseNativeTransport;
+  bool get _isMobilePlatform =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS);
+
+  /// The background bridge stays available on mobile for un-enrolled targets;
+  /// the actual transport is selected after resolving the current config.
+  bool get _usesBackgroundService => _isMobilePlatform;
+
+  String? _resolvePeerId(ConnectionConfig config) {
+    final peerId = _peerIdResolver?.call(config)?.trim();
+    return peerId == null || peerId.isEmpty ? null : peerId;
   }
+
+  bool _usesBackgroundForSession(String sessionId) =>
+      _sessionUsesBackgroundService[sessionId] ?? _usesBackgroundService;
 
   /// 是否已配置 native ReliableStream 传输（连接器 + peer 绑定解析器）。
   bool get _canUseNativeTransport =>
       _nativeStreamConnector != null && _peerIdResolver != null;
+
+  /// Test/diagnostic observation that the App composition root supplied both
+  /// native transport halves. Individual configs can still use the documented
+  /// raw-TCP/background fallback when no enrolled peer binding exists.
+  @visibleForTesting
+  bool get canUseNativeTransport => _canUseNativeTransport;
 
   @override
   List<SshSession> get sessions => _sessionsView;
@@ -688,6 +706,8 @@ class SshService extends ChangeNotifier
     }
     if (_shutdownRequested) return;
     final config = runtimeTarget.config;
+    final resolvedPeerId = _resolvePeerId(config);
+    final usesBackgroundService = _isMobilePlatform && resolvedPeerId == null;
     final credentials = SshCredentials(
       password: runtimeTarget.password,
       privateKey: runtimeTarget.privateKey,
@@ -740,6 +760,7 @@ class SshService extends ChangeNotifier
     }
 
     _sessionTargetBindings[id] = runtimeTarget.binding;
+    _sessionUsesBackgroundService[id] = usesBackgroundService;
     session.state = SshConnectionState.connecting;
     session.errorMessage = null;
     session.tmuxAutoDeleteSeconds = config.tmuxAutoDeleteSeconds;
@@ -747,6 +768,7 @@ class SshService extends ChangeNotifier
     _lastErrorMessage = null;
     _lastSessionId = id;
     _startSessionTelemetry(session, config);
+    final traceId = _telemetryTraceIds[id];
     final launchMode = _effectiveLaunchMode(config);
     final connectCompleter = Completer<void>();
     _connectCompleters[id] = connectCompleter;
@@ -781,12 +803,14 @@ class SshService extends ChangeNotifier
           details: 'sessionId=$id tmux=${session.tmuxSessionName}',
         );
       }
-      if (_usesBackgroundService) {
+      if (usesBackgroundService) {
         if (config.hostKeyFingerprint?.isNotEmpty != true) {
           await _verifyHostKeyBeforeBackground(
             config: config,
             credentials: credentials,
             onUnknownHostKey: onUnknownHostKey,
+            traceId: traceId,
+            peerId: resolvedPeerId,
           );
         }
         await BackgroundServiceManager.start(
@@ -810,7 +834,7 @@ class SshService extends ChangeNotifier
           'hostKeyFingerprint': config.hostKeyFingerprint,
           'hostKeyAlgorithm': config.hostKeyAlgorithm,
           'hostKeyTrustedAt': config.hostKeyTrustedAt?.toIso8601String(),
-          'peerId': _peerIdResolver?.call(config),
+          'peerId': resolvedPeerId,
           'showServerNameInNotification':
               _appSettings?.showServerNamesInNotifications ?? false,
           'terminalWidth': config.terminalWidth,
@@ -830,6 +854,8 @@ class SshService extends ChangeNotifier
           credentials: credentials,
           launchMode: launchMode,
           onUnknownHostKey: onUnknownHostKey,
+          peerId: resolvedPeerId,
+          traceId: traceId,
         );
       }
 
@@ -881,7 +907,7 @@ class SshService extends ChangeNotifier
       details: 'sessionId=$sessionId',
     );
     _closingSessionIds.add(sessionId);
-    if (_usesBackgroundService) {
+    if (_usesBackgroundForSession(sessionId)) {
       _backgroundService.invoke('sshDisconnect', {'sessionId': sessionId});
     } else {
       await _closeLocalSession(sessionId, destroyTmux: true);
@@ -900,6 +926,7 @@ class SshService extends ChangeNotifier
     await session?.close();
     await _terminalMetadataStore.removeRestorableTmuxSession(sessionId);
     _sessionTargetBindings.remove(sessionId);
+    _sessionUsesBackgroundService.remove(sessionId);
     final pendingConnect = _connectCompleters.remove(sessionId);
     if (pendingConnect != null && !pendingConnect.isCompleted) {
       pendingConnect.complete();
@@ -927,6 +954,7 @@ class SshService extends ChangeNotifier
     await session?.close();
     await _terminalMetadataStore.removeRestorableTmuxSession(sessionId);
     _sessionTargetBindings.remove(sessionId);
+    _sessionUsesBackgroundService.remove(sessionId);
     _connectCompleters.remove(sessionId);
     if (_lastSessionId == sessionId) {
       _lastSessionId = _sessions.isEmpty ? null : _sessions.keys.last;
@@ -943,10 +971,11 @@ class SshService extends ChangeNotifier
       details: 'count=${_sessions.length}',
     );
     _closingSessionIds.addAll(_sessions.keys);
-    if (_usesBackgroundService) {
+    if (_sessionUsesBackgroundService.values.any((uses) => uses)) {
       _backgroundService.invoke('sshDisconnectAll');
-    } else {
-      for (final sessionId in _sessions.keys.toList()) {
+    }
+    for (final sessionId in _sessions.keys.toList()) {
+      if (!_usesBackgroundForSession(sessionId)) {
         await _closeLocalSession(sessionId, destroyTmux: true);
       }
     }
@@ -962,6 +991,7 @@ class SshService extends ChangeNotifier
     }
     _sessions.clear();
     _sessionTargetBindings.clear();
+    _sessionUsesBackgroundService.clear();
     _refreshSessionsView();
     for (final completer in _connectCompleters.values) {
       if (!completer.isCompleted) completer.complete();
@@ -977,7 +1007,7 @@ class SshService extends ChangeNotifier
   void resizeTerminal(String sessionId, int width, int height) {
     final session = _sessions[sessionId];
     if (session?.isConnected == true) {
-      if (_usesBackgroundService) {
+      if (_usesBackgroundForSession(sessionId)) {
         _backgroundService.invoke('sshResize', {
           'sessionId': sessionId,
           'width': width,
@@ -993,7 +1023,7 @@ class SshService extends ChangeNotifier
   void sendData(String sessionId, String data) {
     final session = _sessions[sessionId];
     if (session?.isConnected == true) {
-      if (_usesBackgroundService) {
+      if (_usesBackgroundForSession(sessionId)) {
         _backgroundService.invoke('sshInput', {
           'sessionId': sessionId,
           'data': data,
@@ -1160,7 +1190,7 @@ class SshService extends ChangeNotifier
   void _refreshSessionsView() {
     final projection = _sessionProjection.project(_sessions.values);
     _sessionsView = projection.sessions;
-    if (!_usesBackgroundService) {
+    if (!_sessionUsesBackgroundService.values.any((uses) => uses)) {
       _serverOverviewSnapshot = projection.overview;
     }
   }

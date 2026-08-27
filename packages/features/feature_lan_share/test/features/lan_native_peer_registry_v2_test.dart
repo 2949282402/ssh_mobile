@@ -55,6 +55,46 @@ void main() {
     expect(facade.connectCalls, 0);
   });
 
+  test('resolves only the currently trusted direct native endpoint', () async {
+    final store = LanPeerTrustStore();
+    final facade = _RecordingFacade();
+    final registry = LanNativePeerRegistry(
+      trustStore: store,
+      networkFacade: facade,
+    );
+    addTearDown(store.dispose);
+    await store.save(_record('peer-a'));
+
+    expect(registry.peerIdForEndpoint('192.0.2.5', 43123), isNull);
+    await registry.updateDirectEndpoint('peer-a', '192.0.2.5:43123');
+    expect(registry.peerIdForEndpoint('192.0.2.5', 43123), 'peer-a');
+    expect(registry.peerIdForEndpoint('192.0.2.5', 22), isNull);
+    expect(registry.peerIdForHost('192.0.2.5'), 'peer-a');
+    expect(registry.peerIdForHost('192.0.2.5:22'), isNull);
+
+    await registry.invalidateDirectEndpoint('peer-a');
+    expect(registry.peerIdForEndpoint('192.0.2.5', 43123), isNull);
+    expect(registry.peerIdForHost('192.0.2.5'), isNull);
+  });
+
+  test('ambiguous endpoint ownership fails closed', () async {
+    final store = LanPeerTrustStore();
+    final facade = _RecordingFacade();
+    final registry = LanNativePeerRegistry(
+      trustStore: store,
+      networkFacade: facade,
+    );
+    addTearDown(store.dispose);
+    await store.save(_record('peer-a'));
+    await store.save(_record('peer-b'));
+
+    await registry.updateDirectEndpoint('peer-a', '192.0.2.5:43123');
+    await registry.updateDirectEndpoint('peer-b', '192.0.2.5:43123');
+
+    expect(registry.peerIdForEndpoint('192.0.2.5', 43123), isNull);
+    expect(registry.peerIdForHost('192.0.2.5'), isNull);
+  });
+
   test(
     'discovery sync uses only the ephemeral native port, never the HTTPS port',
     () async {

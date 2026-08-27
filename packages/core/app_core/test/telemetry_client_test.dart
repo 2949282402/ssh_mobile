@@ -218,6 +218,42 @@ void main() {
       },
     );
 
+    test('serializes concurrent record writes in invocation order', () async {
+      final first = client.record(
+        event: TelemetryEvents.sshSessionStarted,
+        traceId: 'trace-first',
+        properties: {'session_type': 'terminal'},
+      );
+      final second = client.record(
+        event: TelemetryEvents.sshSessionStarted,
+        traceId: 'trace-second',
+        properties: {'session_type': 'terminal'},
+      );
+
+      expect(await Future.wait([first, second]), [true, true]);
+      final records = await storage.fetchAllForReplay();
+      expect(records.map((record) => record.traceId), [
+        'trace-first',
+        'trace-second',
+      ]);
+    });
+
+    test('drains an accepted queued write before closing storage', () async {
+      final pending = client.record(
+        event: TelemetryEvents.sshSessionStarted,
+        traceId: 'trace-before-dispose',
+        properties: {'session_type': 'terminal'},
+      );
+
+      await client.dispose();
+
+      expect(await pending, isTrue);
+      expect(
+        (await storage.fetchAllForReplay()).single.traceId,
+        'trace-before-dispose',
+      );
+    });
+
     test(
       'record derives envelope metadata and error metadata from definitions',
       () async {

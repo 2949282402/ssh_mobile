@@ -178,7 +178,6 @@ extension SshSessionMetadataActions on SshService {
     unawaited(
       client.record(
         event: TelemetryEvents.sshSessionStarted,
-        sessionId: session.id,
         traceId: traceId,
         properties: {
           'auth_method': config.authMethod.name,
@@ -197,7 +196,6 @@ extension SshSessionMetadataActions on SshService {
     unawaited(
       client.record(
         event: TelemetryEvents.sshSessionTerminated,
-        sessionId: session.id,
         traceId: traceId,
         properties: {
           'duration_ms': _telemetryElapsedMs(startedAt),
@@ -216,7 +214,6 @@ extension SshSessionMetadataActions on SshService {
     unawaited(
       client.record(
         event: TelemetryEvents.sshSessionConnected,
-        sessionId: session.id,
         traceId: traceId,
         properties: {'session_type': 'terminal'},
       ),
@@ -238,7 +235,6 @@ extension SshSessionMetadataActions on SshService {
     unawaited(
       client.record(
         event: TelemetryEvents.sshSessionFailed,
-        sessionId: session.id,
         traceId: traceId,
         errorCode: errorCode,
         errorMessage: errorMessage,

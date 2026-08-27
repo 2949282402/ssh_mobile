@@ -569,6 +569,10 @@ class TelemetryClient {
   DateTime? _authTokenExpiresAt;
   Future<void>? _authenticationFuture;
   Future<void>? _uploadFuture;
+  // All producers share one storage-write queue. This makes the durable order
+  // of cross-layer spans deterministic even when callers intentionally use
+  // fire-and-forget `record` calls.
+  Future<void> _recordQueue = Future<void>.value();
   DateTime? _lastSyncTime;
   String? _lastSyncError;
   DateTime? _lastPolicyFetchTime;
@@ -621,9 +625,40 @@ class TelemetryClient {
     String? stackTrace,
     String? sessionId,
     String? traceId,
-  }) async {
-    if (_isDisposed) return false;
+  }) {
+    if (_isDisposed) return Future<bool>.value(false);
+    final previous = _recordQueue;
+    final queuedProperties = Map<String, dynamic>.from(properties);
+    late final Future<bool> operation;
+    operation = previous.then<bool>(
+      (_) => _recordNow(
+        event: event,
+        properties: queuedProperties,
+        errorCode: errorCode,
+        errorMessage: errorMessage,
+        stackTrace: stackTrace,
+        sessionId: sessionId,
+        traceId: traceId,
+      ),
+    );
+    _recordQueue = operation.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return operation;
+  }
 
+  Future<bool> _recordNow({
+    required TelemetryEventDefinition event,
+    required Map<String, dynamic> properties,
+    required TelemetryErrorCodeDefinition? errorCode,
+    required String? errorMessage,
+    required String? stackTrace,
+    required String? sessionId,
+    required String? traceId,
+  }) async {
+    // The public [record] gate runs before enqueueing. Once accepted, a
+    // queued write must still drain after dispose marks the client closed.
     final now = DateTime.now().toUtc();
     final eventId = 'evt_${_uuid.v4()}';
 
@@ -1232,6 +1267,19 @@ class TelemetryClient {
       }
     }
 
+    // A producer may have queued a record immediately before disposal. Drain
+    // those writes before closing the storage so no accepted span is lost or
+    // reordered at the lifecycle boundary.
+    await _recordQueue;
+    final uploadAfterRecords = _uploadFuture;
+    if (uploadAfterRecords != null) {
+      try {
+        await uploadAfterRecords;
+      } on Object {
+        // The upload path records its own diagnostic state; storage still
+        // closes after the final queued write settles.
+      }
+    }
     await storage.close();
   }
 }

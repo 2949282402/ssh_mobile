@@ -88,6 +88,7 @@ final class SshClientFactory {
     SshCredentials? credentials,
     SshHostKeyConfirmation? onUnknownHostKey,
     String? peerId,
+    String? traceId,
     bool persistHostKeyTrust = true,
   }) async {
     final resolved = credentials ?? await loadCredentials(config);
@@ -122,7 +123,12 @@ final class SshClientFactory {
           'connection=${config.name} host=${config.host}:${config.port} '
           'user=${config.username} authMethod=${config.authMethod.name}',
     );
-    final socket = await _openSocket(config, timeout: timeout, peerId: peerId);
+    final socket = await _openSocket(
+      config,
+      timeout: timeout,
+      peerId: peerId,
+      traceId: traceId,
+    );
     try {
       final client = SSHClient(
         socket,
@@ -167,6 +173,7 @@ final class SshClientFactory {
     ConnectionConfig config, {
     required Duration timeout,
     String? peerId,
+    String? traceId,
   }) async {
     final connector = nativeStreamConnector;
     if (connector == null) {
@@ -191,6 +198,7 @@ final class SshClientFactory {
     final stream = await connector.open(
       peerId: resolvedPeerId,
       service: kSshNativeStreamService,
+      traceId: traceId,
     );
     return SshNativeSocket(stream: stream);
   }

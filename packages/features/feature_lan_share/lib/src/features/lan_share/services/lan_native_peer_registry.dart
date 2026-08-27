@@ -48,6 +48,44 @@ final class LanNativePeerRegistry implements LanNativePeerPolicyPort {
     _directEndpoints.clear();
   }
 
+  /// Resolve a trusted native peer from its current discovery endpoint.
+  ///
+  /// Direct endpoints are runtime-generation state, so an unavailable or
+  /// ambiguous endpoint deliberately returns `null`. Callers must then keep
+  /// their existing non-native transport path instead of guessing a peer
+  /// identity from an SSH host name.
+  String? peerIdForEndpoint(String host, int port) {
+    final key = _endpointKey(host, port);
+    if (key == null) return null;
+
+    String? match;
+    for (final entry in _directEndpoints.entries) {
+      if (_endpointKeyFromEndpoint(entry.value) != key) continue;
+      if (match != null && match != entry.key) return null;
+      match = entry.key;
+    }
+    return match;
+  }
+
+  /// Resolve a trusted native peer by its current direct host.
+  ///
+  /// SSH's configured port is the remote SSH service port, while the native
+  /// stream endpoint uses its own advertised port. Consequently this lookup
+  /// intentionally ignores ports and succeeds only when exactly one active
+  /// trusted peer owns the host. Multiple peers on one host fail closed.
+  String? peerIdForHost(String host) {
+    final normalizedHost = _hostKey(host);
+    if (normalizedHost == null) return null;
+
+    String? match;
+    for (final entry in _directEndpoints.entries) {
+      if (_hostKeyFromEndpoint(entry.value) != normalizedHost) continue;
+      if (match != null && match != entry.key) return null;
+      match = entry.key;
+    }
+    return match;
+  }
+
   /// Restores all persisted trust records into the current native generation
   /// with peer-isolated failure handling.
   Future<LanPeerRestoreReport> restoreAll() async {
@@ -468,6 +506,60 @@ final class LanNativePeerRegistry implements LanNativePeerPolicyPort {
         ? '[$normalizedHost]'
         : normalizedHost;
     return '$renderedHost:$port';
+  }
+
+  static String? _endpointKey(String host, int port) {
+    if (port < 1 || port > 65535) return null;
+    final normalized = _hostKey(host);
+    return normalized == null ? null : '$normalized:$port';
+  }
+
+  static String? _hostKey(String host) {
+    var normalized = host.trim();
+    if (normalized.isEmpty) return null;
+    if (normalized.startsWith('[') && normalized.endsWith(']')) {
+      normalized = normalized.substring(1, normalized.length - 1);
+    }
+    if (normalized.isEmpty || normalized.contains('/')) return null;
+    return normalized.toLowerCase();
+  }
+
+  static String? _hostKeyFromEndpoint(String endpoint) {
+    final normalized = endpoint.trim();
+    if (normalized.isEmpty) return null;
+    if (normalized.startsWith('[')) {
+      final close = normalized.indexOf(']');
+      if (close <= 1 ||
+          close + 2 > normalized.length ||
+          normalized[close + 1] != ':') {
+        return null;
+      }
+      return _hostKey(normalized.substring(1, close));
+    }
+    final separator = normalized.lastIndexOf(':');
+    return separator <= 0 ? null : _hostKey(normalized.substring(0, separator));
+  }
+
+  static String? _endpointKeyFromEndpoint(String endpoint) {
+    final normalized = endpoint.trim();
+    if (normalized.isEmpty) return null;
+    if (normalized.startsWith('[')) {
+      final close = normalized.indexOf(']');
+      if (close <= 1 ||
+          close + 2 > normalized.length ||
+          normalized[close + 1] != ':') {
+        return null;
+      }
+      final host = normalized.substring(1, close);
+      final port = int.tryParse(normalized.substring(close + 2));
+      return port == null ? null : _endpointKey(host, port);
+    }
+    final separator = normalized.lastIndexOf(':');
+    if (separator <= 0 || separator == normalized.length - 1) return null;
+    final port = int.tryParse(normalized.substring(separator + 1));
+    return port == null
+        ? null
+        : _endpointKey(normalized.substring(0, separator), port);
   }
 
   NetworkFailure<void> _missingTrust(String deviceId) => NetworkFailure<void>(

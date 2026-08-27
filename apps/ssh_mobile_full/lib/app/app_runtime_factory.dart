@@ -27,6 +27,7 @@ import '../services/telemetry/network_telemetry_bridge.dart';
 import '../services/telemetry/telemetry_database.dart';
 import '../services/telemetry/telemetry_database/telemetry_database_constants.dart';
 import '../services/telemetry/telemetry_factory.dart';
+import '../services/telemetry/telemetry_span.dart';
 import '../services/display_mode_service.dart';
 import '../services/network/network_identity_service.dart';
 import '../services/network/network_service.dart';
@@ -127,6 +128,8 @@ final class AppRuntimeFactory {
         runtimeNetworkRuntime.dispose,
         priority: _CleanupPriority.network,
       );
+      final traceRegistry = TelemetryTraceRegistry();
+      cleanup.add(traceRegistry.dispose, priority: _CleanupPriority.adapter);
       final runtimeRealtimeClient = RealtimeClientImpl(
         backend: AppRealtimeSessionBackend(
           networkRuntime: runtimeNetworkRuntime,
@@ -203,12 +206,32 @@ final class AppRuntimeFactory {
         priority: _CleanupPriority.adapter,
       );
 
+      late final NetworkFacade networkFacade;
+      // The LAN Module owns the enrolled-peer trust/native endpoint catalog.
+      // Keep this late binding inside the composition root: SSH/SFTP are
+      // constructed before the facade-backed LAN Module, but no caller can
+      // use them until this factory returns and the module is initialized.
+      late final feature_lan_share.LanShareModule lanShareModule;
+
+      String? resolvePeerIdForConfig(connection_core.ConnectionConfig config) {
+        final moduleState = lanShareModule.state;
+        if (moduleState == ModuleState.registered ||
+            moduleState == ModuleState.disposed) {
+          return null;
+        }
+        return lanShareModule.coordinator.peerRegistry.peerIdForHost(
+          config.host,
+        );
+      }
+
       final sshNativeStreamConnector = AppSshNativeStreamConnector(
         gatewayProvider: () => runtimeNetworkRuntime.openCommandGateway(),
         openerDeviceIdProvider: () async {
           await appSettings.ensureLanIdentity();
           return appSettings.lanDeviceId;
         },
+        facadeProvider: () => networkFacade,
+        traceRegistry: traceRegistry,
       );
       cleanup.add(
         sshNativeStreamConnector.closeAll,
@@ -221,6 +244,7 @@ final class AppRuntimeFactory {
         terminalMetadataStore: terminalMetadataStore,
         appSettings: appSettings,
         nativeStreamConnector: sshNativeStreamConnector,
+        peerIdResolver: resolvePeerIdForConfig,
       );
       final terminalSshManager = AppTerminalSshSessionManager(sshService);
       cleanup.add(terminalSshManager.close, priority: _CleanupPriority.ssh);
@@ -309,6 +333,7 @@ final class AppRuntimeFactory {
         credentialRepository: runtimeCredentialRepository,
         hostKeyRepository: runtimeHostKeyRepository,
         nativeStreamConnector: sshNativeStreamConnector,
+        peerIdResolver: resolvePeerIdForConfig,
       );
       cleanup.add(sftpService.dispose, priority: _CleanupPriority.sftp);
       final monitoringModule = monitoring.MonitoringModule();
@@ -414,8 +439,9 @@ final class AppRuntimeFactory {
       await runtimeNetworkRuntime.ensureCapability(NetworkCapability.runtime);
       final networkSessions = NativeNetworkService.fromGateway(
         await runtimeNetworkRuntime.openCommandGateway(),
+        traceRegistry: traceRegistry,
       );
-      final networkFacade = NetworkFacadeImpl(
+      networkFacade = NetworkFacadeImpl(
         sessions: networkSessions,
         realtime: runtimeRealtimeClient,
       );
@@ -435,7 +461,7 @@ final class AppRuntimeFactory {
           '${configured.error.code.name}',
         );
       }
-      final lanShareModule = feature_lan_share.LanShareModule(
+      lanShareModule = feature_lan_share.LanShareModule(
         receiverEnabled: lanShareReceiverEnabled,
         databaseFactory: lanShareDatabaseFactory,
       );
@@ -500,6 +526,7 @@ final class AppRuntimeFactory {
       final networkTelemetryBridge = NetworkTelemetryBridge(
         telemetryClient: telemetryClient,
         events: networkFacade.events,
+        traceRegistry: traceRegistry,
       );
       networkTelemetryBridge.attach();
       cleanup.add(
@@ -633,6 +660,8 @@ final class AppRuntimeFactory {
         aiServerDiagnosticsAdapter: aiServerDiagnosticsAdapter,
         aiChatRuntimeFactory: aiChatRuntimeFactory,
         telemetryClient: telemetryClient,
+        networkTelemetryBridge: networkTelemetryBridge,
+        telemetryTraceRegistry: traceRegistry,
         awaitPendingInitialization: pendingInitialization.wait,
         lifecycleObserver: lifecycleObserver,
         disposeLogger: disposeLogger,

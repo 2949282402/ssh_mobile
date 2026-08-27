@@ -30,6 +30,8 @@ import '../services/sftp_service.dart';
 import '../services/shortcut_command_service.dart';
 import '../services/ssh_service.dart';
 import '../services/terminal_session_metadata_store.dart';
+import '../services/telemetry/network_telemetry_bridge.dart';
+import '../services/telemetry/telemetry_span.dart';
 
 /// 应用生命周期运行时，持有 App Scope 的基础设施和长期服务。
 ///
@@ -85,6 +87,8 @@ final class AppRuntime implements Disposable {
     required this.aiServerDiagnosticsAdapter,
     required this.aiChatRuntimeFactory,
     this.telemetryClient,
+    this.networkTelemetryBridge,
+    this.telemetryTraceRegistry,
     Future<void> Function()? awaitPendingInitialization,
     this.lifecycleObserver,
     this.disposeLogger = true,
@@ -220,6 +224,12 @@ final class AppRuntime implements Disposable {
   /// Telemetry 客户端运行时（若已启用）。
   final TelemetryClient? telemetryClient;
 
+  /// App Scope network telemetry borrower; disposed before its telemetry client.
+  final NetworkTelemetryBridge? networkTelemetryBridge;
+
+  /// App Scope owner for SSH↔network operation trace contexts.
+  final TelemetryTraceRegistry? telemetryTraceRegistry;
+
   /// AI Module 的唯一 App Scope Owner；ai.db 只在首次 AI 使用时打开。
   final feature_ai.AiModule aiModule;
 
@@ -329,6 +339,12 @@ final class AppRuntime implements Disposable {
       playbookConnectionCatalogAdapter.dispose,
     );
 
+    // Network telemetry must stop consuming events before its client is flushed.
+    await attempt(
+      'network-telemetry-bridge.dispose',
+      () => networkTelemetryBridge?.dispose() ?? Future<void>.value(),
+    );
+
     // App Scope Module 先停止对外提供服务，避免释放基础设施时仍有新请求进入。
     if (telemetryClient != null) {
       await attempt('telemetry.flush', () async {
@@ -391,6 +407,10 @@ final class AppRuntime implements Disposable {
         return true;
       }());
     });
+    await attempt(
+      'telemetry-trace-registry.dispose',
+      () => telemetryTraceRegistry?.dispose(),
+    );
 
     await attempt(
       'terminal-metadata.dispose',

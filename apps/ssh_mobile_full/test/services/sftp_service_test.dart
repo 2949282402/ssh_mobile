@@ -186,6 +186,7 @@ final class _ThrowingSshConnector implements ssh_core.SshNativeStreamConnector {
   Future<ssh_core.SshNativeStream> open({
     required String peerId,
     String service = ssh_core.kSshNativeStreamService,
+    String? traceId,
   }) {
     openedPeerIds.add(peerId);
     throw StateError('native stream open failed');

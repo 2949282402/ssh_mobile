@@ -18,7 +18,7 @@ extension _SshConnectionRuntime on SshService {
       config,
       credentials: credentials,
       onUnknownHostKey: onUnknownHostKey,
-      peerId: _peerIdResolver?.call(config),
+      peerId: _resolvePeerId(config),
     );
     try {
       final result = await client.runWithResult(command).timeout(timeout);
@@ -42,13 +42,16 @@ extension _SshConnectionRuntime on SshService {
     required ConnectionConfig config,
     required SshCredentials credentials,
     required SshHostKeyConfirmation? onUnknownHostKey,
+    String? peerId,
+    String? traceId,
   }) async {
     final client = await _clientFactory.connectClient(
       config,
       credentials: credentials,
       timeout: const Duration(seconds: 12),
       onUnknownHostKey: onUnknownHostKey,
-      peerId: _peerIdResolver?.call(config),
+      peerId: peerId,
+      traceId: traceId,
     );
     try {
       await client.ping().timeout(const Duration(seconds: 8));
@@ -67,6 +70,8 @@ extension _SshConnectionRuntime on SshService {
     required SshCredentials credentials,
     required TerminalLaunchMode launchMode,
     SshHostKeyConfirmation? onUnknownHostKey,
+    String? peerId,
+    String? traceId,
   }) async {
     final connectToken = _localConnectGate.begin(session.id);
     final owner = SshConnectionAttemptOwner();
@@ -86,7 +91,8 @@ extension _SshConnectionRuntime on SshService {
         config,
         credentials: credentials,
         onUnknownHostKey: onUnknownHostKey,
-        peerId: _peerIdResolver?.call(config),
+        peerId: peerId,
+        traceId: traceId,
       );
       owner.ownClient(client.close);
       _ensureLocalConnectCurrent(session, connectToken);
@@ -269,6 +275,7 @@ extension _SshConnectionRuntime on SshService {
           config: config,
           credentials: credentials,
           launchMode: launchMode,
+          traceId: _telemetryTraceIds[session.id],
         );
         return;
       } on _SshServiceClosing {

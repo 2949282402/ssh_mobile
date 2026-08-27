@@ -141,10 +141,12 @@ void main() {
             config,
             credentials: const SshCredentials(password: 'pw', privateKey: null),
             peerId: 'peer-a',
+            traceId: 'trace-a',
           ),
           throwsA(isA<StateError>()),
         );
         expect(connector.openedPeerIds, ['peer-a']);
+        expect(connector.openedTraceIds, ['trace-a']);
       },
     );
 
@@ -315,13 +317,16 @@ final class _FakeRuntime implements SshRuntimeAdapter {
 
 final class _ThrowingConnector implements SshNativeStreamConnector {
   final List<String> openedPeerIds = <String>[];
+  final List<String?> openedTraceIds = <String?>[];
 
   @override
   Future<SshNativeStream> open({
     required String peerId,
     String service = kSshNativeStreamService,
+    String? traceId,
   }) {
     openedPeerIds.add(peerId);
+    openedTraceIds.add(traceId);
     throw StateError('native stream open failed');
   }
 

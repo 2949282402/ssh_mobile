@@ -12,6 +12,7 @@ import 'package:network_transport/network_transport.dart';
 import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
 import 'package:ssh_mobile/services/network/network_protocol_v2_codec.dart';
 import 'package:ssh_mobile/services/network/network_service.dart';
+import 'package:ssh_mobile/services/telemetry/telemetry_span.dart';
 
 /// 执行 V2 命令接受与终态事件语义测试。
 void main() {
@@ -467,6 +468,48 @@ void main() {
         expect(relayResult.errorCode, NetworkErrorCode.relayError);
       },
     );
+
+    test(
+      'connect command inherits and releases the SSH operation trace',
+      () async {
+        final gateway = _FakeCommandGateway();
+        final traces = TelemetryTraceRegistry();
+        traces.bindPeer(peerId: 'peer-traced', traceId: 'trace-operation');
+        final service = NativeNetworkService.fromGateway(
+          gateway,
+          traceRegistry: traces,
+        );
+        addTearDown(() async {
+          await service.dispose();
+          traces.dispose();
+          await gateway.close();
+        });
+
+        final connectFuture = service.connect('peer-traced');
+        await Future<void>.delayed(Duration.zero);
+        final commandId = const NetworkProtocolV2Codec().commandId(
+          gateway.commands.single,
+        );
+        expect(traces.traceForCommand(commandId), 'trace-operation');
+
+        gateway.emit(
+          _eventFrame(10, <int>[
+            ..._bytesField(1, utf8.encode('peer-traced')),
+            ..._varintField(2, PeerConnectionState.connected.wireValue),
+            ..._varintField(3, NetworkRouteType.quicDirect.wireValue),
+          ]),
+        );
+        expect((await connectFuture).isSuccess, isTrue);
+        expect(traces.traceForCommand(commandId), isNull);
+        // The terminal event is still available to NetworkTelemetryBridge; the
+        // bridge releases the peer context after recording it.
+        expect(traces.traceForPeer('peer-traced'), 'trace-operation');
+        traces.releasePeerTrace(
+          peerId: 'peer-traced',
+          traceId: 'trace-operation',
+        );
+      },
+    );
   });
 }
 
@@ -484,6 +527,7 @@ final class _FakeCommandGateway implements NetworkCommandGateway {
   final StreamController<Uint8List> _events =
       StreamController<Uint8List>.broadcast();
   final NetworkProtocolV2Codec _codec = const NetworkProtocolV2Codec();
+  final List<Uint8List> commands = <Uint8List>[];
 
   @override
   Stream<Uint8List> get events => _events.stream;
@@ -491,6 +535,7 @@ final class _FakeCommandGateway implements NetworkCommandGateway {
   @override
   TransportOperationStatus sendCommand(Uint8List command) {
     if (status != TransportOperationStatus.success) return status;
+    commands.add(command);
     final commandId = _codec.commandId(command);
     scheduleMicrotask(() {
       if (!_events.isClosed) _events.add(_commandResultFrame(commandId));

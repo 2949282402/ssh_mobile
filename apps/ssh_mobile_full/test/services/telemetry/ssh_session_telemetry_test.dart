@@ -63,7 +63,8 @@ void main() {
 
       expect(startedRecord.traceId, isNotEmpty);
       expect(failedRecord.traceId, startedRecord.traceId);
-      expect(failedRecord.sessionId, startedRecord.sessionId);
+      expect(startedRecord.sessionId, harness.client.sessionId);
+      expect(failedRecord.sessionId, harness.client.sessionId);
 
       expect(
         startedRecord.properties,
@@ -102,13 +103,9 @@ void main() {
     });
 
     test('disconnect terminates a registered session with duration', () async {
-      // 先触发一次连接失败，拿到注册的 sessionId（started 事件属性）。
+      // 先触发一次连接失败，再使用 SSH registry 的 session id 断开。
       await sshService.connect('server-1');
-      final started =
-          (await harness
-                  .recordsByName())[TelemetryEvents.sshSessionStarted.name]!
-              .single;
-      final sessionId = started.sessionId;
+      final sessionId = sshService.sessions.single.id;
 
       // 失败路径结束后 session 仍在 registry 中；断开应输出 terminated。
       final existed = sshService.sessions.any((s) => s.id == sessionId);
@@ -120,7 +117,7 @@ void main() {
           .recordsByName())[TelemetryEvents.sshSessionTerminated.name];
       expect(terminated, hasLength(1));
       final terminatedRecord = terminated!.single;
-      expect(terminatedRecord.sessionId, sessionId);
+      expect(terminatedRecord.sessionId, harness.client.sessionId);
       expect(terminatedRecord.properties, containsPair('exit_code', 0));
       expect(terminatedRecord.properties['duration_ms'], isA<int>());
     });
@@ -160,6 +157,7 @@ final class _ThrowingSshConnector implements ssh_core.SshNativeStreamConnector {
   Future<ssh_core.SshNativeStream> open({
     required String peerId,
     String service = ssh_core.kSshNativeStreamService,
+    String? traceId,
   }) {
     throw StateError(errorMessage);
   }
