@@ -109,6 +109,120 @@ void main() {
       );
     },
   );
+
+  test(
+    'does not replay enrollment credentials across an HTTP redirect',
+    () async {
+      final target = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final source = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      var sourceRequests = 0;
+      var targetRequests = 0;
+      source.listen((request) async {
+        sourceRequests++;
+        await utf8.decodeStream(request);
+        request.response
+          ..statusCode = HttpStatus.temporaryRedirect
+          ..headers.set(
+            HttpHeaders.locationHeader,
+            'http://127.0.0.1:${target.port}/capture',
+          );
+        await request.response.close();
+      });
+      target.listen((request) async {
+        targetRequests++;
+        await utf8.decodeStream(request);
+        await request.response.close();
+      });
+      final httpClient = HttpClient();
+      final transport = HttpTelemetryTransport(
+        client: httpClient,
+        allowLoopbackHttp: true,
+      );
+      addTearDown(() async {
+        httpClient.close(force: true);
+        await source.close(force: true);
+        await target.close(force: true);
+      });
+
+      await expectLater(
+        transport.enrollDevice(
+          baseUrl: 'http://127.0.0.1:${source.port}',
+          deviceId: 'device-http',
+          request: const TelemetryDeviceEnrollmentRequest(
+            deviceId: 'device-http',
+            relayCredential: 'relay-proof',
+            publicKey: 'public-key',
+            timestamp: 1,
+            nonce: 'nonce',
+            signature: 'signature',
+          ),
+        ),
+        throwsA(
+          isA<TelemetryUploadException>().having(
+            (error) => error.statusCode,
+            'status',
+            HttpStatus.temporaryRedirect,
+          ),
+        ),
+      );
+
+      expect(sourceRequests, 1);
+      expect(targetRequests, 0);
+    },
+  );
+
+  test('does not replay bearer credentials across an HTTP redirect', () async {
+    final target = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final source = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    var sourceRequests = 0;
+    var targetRequests = 0;
+    String? targetAuthorization;
+    source.listen((request) async {
+      sourceRequests++;
+      request.response
+        ..statusCode = HttpStatus.found
+        ..headers.contentLength = 0
+        ..headers.set(
+          HttpHeaders.locationHeader,
+          'http://127.0.0.1:${target.port}/capture',
+        );
+      await request.response.close();
+    });
+    target.listen((request) async {
+      targetRequests++;
+      targetAuthorization = request.headers.value('authorization');
+      request.response.headers.contentLength = 0;
+      await request.response.close();
+    });
+    final httpClient = HttpClient();
+    final transport = HttpTelemetryTransport(
+      client: httpClient,
+      allowLoopbackHttp: true,
+    );
+    addTearDown(() async {
+      httpClient.close(force: true);
+      await source.close(force: true);
+      await target.close(force: true);
+    });
+
+    await expectLater(
+      transport.fetchRemotePolicy(
+        baseUrl: 'http://127.0.0.1:${source.port}',
+        authToken: 'bearer-secret',
+      ),
+      throwsA(
+        isA<TelemetryUploadException>().having(
+          (error) => error.statusCode,
+          'status',
+          HttpStatus.found,
+        ),
+      ),
+    );
+
+    expect(sourceRequests, 1);
+    expect(targetRequests, 0);
+    expect(targetAuthorization, isNull);
+  });
 }
 
 final class _HttpEnrollmentProvider

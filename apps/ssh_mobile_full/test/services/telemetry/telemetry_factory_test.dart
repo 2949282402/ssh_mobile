@@ -6,7 +6,10 @@ import 'package:cryptography/cryptography.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:network_sdk/network_sdk.dart';
+import 'package:ssh_mobile/services/telemetry/build_metadata_provider.dart';
 import 'package:ssh_mobile/services/telemetry/telemetry_factory.dart';
+import 'package:ssh_mobile/services/telemetry/drift_telemetry_storage.dart';
+import 'package:ssh_mobile/services/telemetry/telemetry_database.dart';
 import 'package:feature_lan_share/feature_lan_share.dart';
 
 void main() {
@@ -201,9 +204,47 @@ void main() {
       isNull,
     );
   });
+
+  test(
+    'does not enroll when secure-storage credential read is unavailable',
+    () async {
+      final secureStorage = _MemorySecureStorage(
+        readError: StateError('secure storage unavailable'),
+      );
+      final provider = _CountingEnrollmentProvider();
+      final database = TelemetryDatabase.forTesting();
+      final storage = DriftTelemetryStorage(database: database);
+      final runtime = await createTelemetryRuntime(
+        deviceId: 'device-a',
+        relayEndpoint: 'https://relay.example.test',
+        buildMetadata: const AppBuildMetadata(
+          appVersion: '1.0.0',
+          buildNumber: '1',
+          platform: 'linux',
+          releaseChannel: 'test',
+          deviceModel: 'test-device',
+        ),
+        secureStorage: secureStorage,
+        deviceEnrollmentProvider: provider,
+        storage: storage,
+        disableBackgroundPolicyFetch: true,
+      );
+      addTearDown(runtime.client.dispose);
+
+      expect(runtime.client.config.deviceEnrollmentProvider, isNull);
+      await runtime.client.record(event: TelemetryEvents.sshSessionStarted);
+      await runtime.client.flush();
+
+      expect(provider.requestCalls, 0);
+      expect(await storage.fetchPendingBatch(10), hasLength(1));
+    },
+  );
 }
 
 final class _MemorySecureStorage implements FlutterSecureStorage {
+  _MemorySecureStorage({this.readError});
+
+  final Object? readError;
   final Map<String, String> values = <String, String>{};
 
   @override
@@ -211,6 +252,7 @@ final class _MemorySecureStorage implements FlutterSecureStorage {
     final key = invocation.namedArguments[#key] as String?;
     switch (invocation.memberName) {
       case #read:
+        if (readError != null) throw readError!;
         return Future<String?>.value(key == null ? null : values[key]);
       case #write:
         final value = invocation.namedArguments[#value] as String?;
@@ -223,6 +265,23 @@ final class _MemorySecureStorage implements FlutterSecureStorage {
         throw UnimplementedError('Unexpected secure-storage call: $invocation');
     }
   }
+}
+
+final class _CountingEnrollmentProvider
+    implements TelemetryDeviceEnrollmentProvider {
+  int requestCalls = 0;
+
+  @override
+  Future<TelemetryDeviceEnrollmentRequest?> createRequest({
+    required String baseUrl,
+    required String deviceId,
+  }) async {
+    requestCalls++;
+    return null;
+  }
+
+  @override
+  Future<void> persistSecret(String secret) async {}
 }
 
 final class _FakeRelayEnrollment implements LanRelayEnrollmentPort {

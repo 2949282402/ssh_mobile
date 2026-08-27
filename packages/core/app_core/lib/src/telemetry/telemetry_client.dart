@@ -252,6 +252,7 @@ class HttpTelemetryTransport implements TelemetryTransport {
     };
 
     final req = await _client.postUrl(uri);
+    req.followRedirects = false;
     req.headers.set('Content-Type', 'application/json');
     req.headers.set('Accept', 'application/json');
     req.add(utf8.encode(jsonEncode(payload)));
@@ -352,6 +353,7 @@ class HttpTelemetryTransport implements TelemetryTransport {
       'signature': request.signature,
     };
     final req = await _client.postUrl(uri);
+    req.followRedirects = false;
     req.headers.set('Content-Type', 'application/json');
     req.headers.set('Accept', 'application/json');
     req.add(utf8.encode(jsonEncode(payload)));
@@ -393,6 +395,7 @@ class HttpTelemetryTransport implements TelemetryTransport {
   }) async {
     final uri = _resolveUri(baseUrl, TelemetryEndpoints.publicPolicyPath);
     final req = await _client.getUrl(uri);
+    req.followRedirects = false;
     if (authToken.isNotEmpty) {
       req.headers.set('Authorization', 'Bearer $authToken');
     }
@@ -426,6 +429,7 @@ class HttpTelemetryTransport implements TelemetryTransport {
   }) async {
     final uri = _resolveUri(baseUrl, TelemetryEndpoints.publicIngestPath);
     final req = await _client.postUrl(uri);
+    req.followRedirects = false;
     req.headers.set('Content-Type', 'application/json');
     req.headers.set('X-Device-Id', deviceId);
     if (authToken.isNotEmpty) {
@@ -564,12 +568,14 @@ class TelemetryClient {
   String? _authToken;
   DateTime? _authTokenExpiresAt;
   Future<void>? _authenticationFuture;
+  Future<void>? _uploadFuture;
   DateTime? _lastSyncTime;
   String? _lastSyncError;
   DateTime? _lastPolicyFetchTime;
 
   bool _isUploading = false;
   bool _isDisposed = false;
+  Future<void>? _disposeFuture;
   Timer? _flushTimer;
   Timer? _policyTimer;
 
@@ -866,15 +872,20 @@ class TelemetryClient {
   }
 
   /// 刷新待上传记录，内置单飞守卫、401 重认证、5xx/4xx 决策与重试退避。
-  Future<void> flush() async {
-    if (_isDisposed || _isUploading || !activePolicy.uploadEnabled) return;
+  Future<void> flush() {
+    if (_isDisposed || _isUploading || !activePolicy.uploadEnabled) {
+      return Future<void>.value();
+    }
     _isUploading = true;
 
-    try {
-      await _flushWithToken();
-    } finally {
+    final operation = _flushWithToken();
+    _uploadFuture = operation;
+    return operation.whenComplete(() {
+      if (identical(_uploadFuture, operation)) {
+        _uploadFuture = null;
+      }
       _isUploading = false;
-    }
+    });
   }
 
   Future<void> _flushWithToken() async {
@@ -944,7 +955,7 @@ class TelemetryClient {
           _lastSyncError = null;
           return;
         } on TelemetryUploadException catch (retryError) {
-          _handleUploadFailure(pending, retryError);
+          await _handleUploadFailure(pending, retryError);
           return;
         }
       } else if (e.isPermanentClientError) {
@@ -964,30 +975,28 @@ class TelemetryClient {
         return;
       } else {
         // 5xx / 503 / 连接错误：累计 retryCount，指数退避 + 抖动。
-        _handleUploadFailure(pending, e);
+        await _handleUploadFailure(pending, e);
         return;
       }
     } catch (e) {
       // 连接层及其他异常按服务器错误处理。
-      _handleUploadFailure(
+      await _handleUploadFailure(
         pending,
         TelemetryUploadException(_describeError(e)),
       );
     }
   }
 
-  void _handleUploadFailure(
+  Future<void> _handleUploadFailure(
     List<TelemetryEventRecord> records,
     TelemetryUploadException error,
-  ) {
+  ) async {
     _lastSyncError = _describeError(error);
     if (!error.isPermanentClientError) {
       // 递增 retryCount 并持久化，供后续退避决策使用。
-      unawaited(
-        storage.applyRetryCount(
-          records.map((r) => r.eventId).toList(),
-          increment: 1,
-        ),
+      await storage.applyRetryCount(
+        records.map((r) => r.eventId).toList(),
+        increment: 1,
       );
     }
     _scheduleBackoffRetry(records, error);
@@ -1040,10 +1049,22 @@ class TelemetryClient {
   }
 
   /// 以原始身份（eventId/sessionId/traceId）重放全部本地记录。
-  Future<int> replayAllLocalRecords() async {
-    if (_isDisposed || _isUploading) return 0;
+  Future<int> replayAllLocalRecords() {
+    if (_isDisposed || _isUploading) return Future<int>.value(0);
     _isUploading = true;
 
+    final operation = _replayAllLocalRecords();
+    final trackedOperation = operation.then<void>((_) {});
+    _uploadFuture = trackedOperation;
+    return operation.whenComplete(() {
+      if (identical(_uploadFuture, trackedOperation)) {
+        _uploadFuture = null;
+      }
+      _isUploading = false;
+    });
+  }
+
+  Future<int> _replayAllLocalRecords() async {
     try {
       final allRecords = await storage.fetchAllForReplay();
       if (allRecords.isEmpty) return 0;
@@ -1092,8 +1113,6 @@ class TelemetryClient {
         _authTokenExpiresAt = null;
       }
       return 0;
-    } finally {
-      _isUploading = false;
     }
   }
 
@@ -1177,11 +1196,42 @@ class TelemetryClient {
     );
   }
 
-  /// Closes timers and storage.
-  Future<void> dispose() async {
+  /// Stops new work, drains authentication/uploads, then closes storage.
+  /// Repeated calls share the same in-flight future and close storage once.
+  Future<void> dispose() {
+    final inFlight = _disposeFuture;
+    if (inFlight != null) return inFlight;
+
     _isDisposed = true;
     _flushTimer?.cancel();
     _policyTimer?.cancel();
+
+    final future = _disposeResources();
+    _disposeFuture = future;
+    return future;
+  }
+
+  Future<void> _disposeResources() async {
+    final authentication = _authenticationFuture;
+    if (authentication != null) {
+      try {
+        await authentication;
+      } on Object {
+        // Authentication failures are already reflected in client diagnostics;
+        // disposal must still drain the operation and close storage.
+      }
+    }
+
+    final upload = _uploadFuture;
+    if (upload != null) {
+      try {
+        await upload;
+      } on Object {
+        // Upload failures are reflected in pending records/diagnostics;
+        // disposal must still close storage after the operation settles.
+      }
+    }
+
     await storage.close();
   }
 }

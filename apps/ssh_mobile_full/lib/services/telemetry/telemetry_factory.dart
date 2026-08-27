@@ -180,9 +180,11 @@ Future<TelemetryRuntime> createTelemetryRuntime({
 
   // 读取设备注册密钥；测试或未配置时允许为空（匿名认证）。
   String? enrollmentSecret;
+  var secureStorageReadFailed = false;
   try {
     enrollmentSecret = await secure.read(key: telemetryDeviceSecretKey);
   } catch (_) {
+    secureStorageReadFailed = true;
     enrollmentSecret = null;
   }
 
@@ -196,7 +198,12 @@ Future<TelemetryRuntime> createTelemetryRuntime({
       platform: buildMetadata.platform,
       releaseChannel: buildMetadata.releaseChannel,
       deviceEnrollmentSecret: enrollmentSecret,
-      deviceEnrollmentProvider: deviceEnrollmentProvider,
+      // A secure-storage read failure is an unavailable state, not an empty
+      // credential. Never fall back to Relay enrollment/rotation because that
+      // would create a new secret while the existing one is inaccessible.
+      deviceEnrollmentProvider: secureStorageReadFailed
+          ? null
+          : deviceEnrollmentProvider,
       policyFetchIntervalSeconds: disableBackgroundPolicyFetch ? 0 : 3600,
     ),
     storage: driftStorage,
