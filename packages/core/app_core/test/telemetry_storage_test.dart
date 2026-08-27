@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:app_core/app_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -264,5 +266,53 @@ void main() {
         expect(stats.cacheOverflow, isTrue);
       },
     );
+
+    test('FileTelemetryStorage synchronously reports health stats and persists records', () async {
+      final tempDir = await Directory.systemTemp.createTemp('telemetry_file_test_');
+      final filePath = '${tempDir.path}/telemetry_events.jsonl';
+
+      try {
+        final fileStorage = FileTelemetryStorage(filePath: filePath);
+        final r1 = TelemetryEventRecord(
+          eventId: 'file-evt-1',
+          recordType: TelemetryRecordType.analytics,
+          eventName: 'ssh.session.started',
+          eventVersion: 1,
+          deviceId: 'dev-1',
+          sessionId: 'sess-1',
+          traceId: 'trace-1',
+          occurredAt: DateTime.now().toUtc(),
+          feature: 'ssh',
+          severity: TelemetrySeverity.info,
+          appVersion: '1.0.0',
+          buildNumber: '100',
+          platform: 'android',
+        );
+
+        await fileStorage.insertRecord(r1);
+
+        // Synchronous health check before another instance does async load
+        final healthSync = fileStorage.getHealthStatsSync(targetCapacity: 100);
+        expect(healthSync.localPendingCount, 1);
+        expect(healthSync.totalCount, 1);
+
+        // Re-open storage on same file to test _ensureLoadedSync
+        final fileStorage2 = FileTelemetryStorage(filePath: filePath);
+        final healthSync2 = fileStorage2.getHealthStatsSync(targetCapacity: 100);
+        expect(healthSync2.localPendingCount, 1);
+        expect(healthSync2.totalCount, 1);
+
+        final pending = await fileStorage2.fetchPendingBatch(10);
+        expect(pending.length, 1);
+        expect(pending[0].eventId, 'file-evt-1');
+
+        await fileStorage.close();
+        await fileStorage2.close();
+      } finally {
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      }
+    });
   });
 }

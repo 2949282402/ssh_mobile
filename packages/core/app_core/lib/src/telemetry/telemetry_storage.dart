@@ -211,12 +211,43 @@ class FileTelemetryStorage implements TelemetryStorage {
   bool _loaded = false;
 
   TelemetryStorageHealth getHealthStatsSync({required int targetCapacity}) {
+    if (!_loaded) {
+      _ensureLoadedSync();
+    }
     return _memory.getHealthStatsSync(targetCapacity: targetCapacity);
+  }
+
+  void _ensureLoadedSync() {
+    if (_loaded) return;
+    try {
+      final file = File(filePath);
+      if (file.existsSync()) {
+        final lines = file.readAsLinesSync();
+        for (final line in lines) {
+          if (line.trim().isEmpty) continue;
+          try {
+            final jsonMap = jsonDecode(line) as Map<String, dynamic>;
+            final rec = TelemetryEventRecord.fromJson(jsonMap).copyWith(
+              syncState: TelemetrySyncState.fromWireValue(
+                jsonMap['syncState'] as String? ?? 'pending',
+              ),
+              logicalDeletedAt: jsonMap['logicalDeletedAt'] != null
+                  ? DateTime.parse(jsonMap['logicalDeletedAt'] as String)
+                  : null,
+              retryCount: jsonMap['retryCount'] as int? ?? 0,
+            );
+            _memory.insertRecord(rec);
+          } catch (_) {
+            // Ignore malformed line
+          }
+        }
+      }
+      _loaded = true;
+    } catch (_) {}
   }
 
   Future<void> _ensureLoaded() async {
     if (_loaded) return;
-    _loaded = true;
     try {
       final file = File(filePath);
       if (await file.exists()) {
@@ -240,10 +271,12 @@ class FileTelemetryStorage implements TelemetryStorage {
           }
         }
       }
+      _loaded = true;
     } catch (_) {}
   }
 
   Future<void> _persistToDisk() async {
+    if (!_loaded) return;
     try {
       final file = File(filePath);
       await file.parent.create(recursive: true);

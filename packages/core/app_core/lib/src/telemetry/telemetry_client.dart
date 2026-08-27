@@ -401,7 +401,9 @@ class TelemetryClient {
         return true;
       }
     } catch (e) {
-      // Retain last known good policy
+      if (e.toString().contains('401') || e.toString().toLowerCase().contains('unauthorized')) {
+        _authToken = null;
+      }
     }
     return false;
   }
@@ -452,6 +454,9 @@ class TelemetryClient {
       _lastSyncError = null;
     } catch (e) {
       _lastSyncError = e.toString();
+      if (_lastSyncError!.contains('401') || _lastSyncError!.toLowerCase().contains('unauthorized')) {
+        _authToken = null;
+      }
     } finally {
       _isUploading = false;
     }
@@ -476,6 +481,11 @@ class TelemetryClient {
         );
       }
 
+      if (_authToken == null || _authToken!.isEmpty) {
+        _lastSyncError = 'Device authentication failed';
+        return 0;
+      }
+
       var totalReplayed = 0;
       final batchSize = activePolicy.maxBatchSize > 0
           ? activePolicy.maxBatchSize
@@ -487,7 +497,7 @@ class TelemetryClient {
 
         final ackResults = await transport.uploadBatch(
           baseUrl: config.baseUrl,
-          authToken: _authToken ?? '',
+          authToken: _authToken!,
           deviceId: config.deviceId,
           records: batch,
         );
@@ -504,6 +514,9 @@ class TelemetryClient {
       return totalReplayed;
     } catch (e) {
       _lastSyncError = e.toString();
+      if (_lastSyncError!.contains('401') || _lastSyncError!.toLowerCase().contains('unauthorized')) {
+        _authToken = null;
+      }
       return 0;
     } finally {
       _isUploading = false;

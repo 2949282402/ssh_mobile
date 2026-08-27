@@ -134,11 +134,46 @@ class _SshMobileAppState extends State<SshMobileApp>
     return runtime;
   }
 
+  DateTime? _pausedAt;
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.inactive ||
+    if (state == AppLifecycleState.resumed) {
+      final now = DateTime.now();
+      final bgDuration = _pausedAt != null
+          ? now.difference(_pausedAt!).inMilliseconds
+          : 0;
+      _pausedAt = null;
+      _runtime.telemetryClient?.onAppForeground();
+      unawaited(
+        _runtime.telemetryClient?.recordEvent(
+          eventName: 'app.lifecycle.foregrounded',
+          eventVersion: 1,
+          feature: 'app',
+          severity: app_core.TelemetrySeverity.info,
+          properties: {
+            'background_duration_ms': bgDuration,
+          },
+        ),
+      );
+    } else if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
+      if (_pausedAt == null && state == AppLifecycleState.paused) {
+        _pausedAt = DateTime.now();
+      }
+      _runtime.telemetryClient?.onAppBackground();
+      unawaited(
+        _runtime.telemetryClient?.recordEvent(
+          eventName: 'app.lifecycle.backgrounded',
+          eventVersion: 1,
+          feature: 'app',
+          severity: app_core.TelemetrySeverity.info,
+          properties: {
+            'active_sessions': _runtime.sshService.activeSubscriptionCount,
+          },
+        ),
+      );
       unawaited(_runtime.aiStorageAdapter.flushPendingWrites());
     }
     if (state == AppLifecycleState.detached) {

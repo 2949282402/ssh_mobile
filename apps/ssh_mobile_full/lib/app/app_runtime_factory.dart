@@ -478,6 +478,19 @@ final class AppRuntimeFactory {
         storage: telemetryStorage,
       );
       cleanup.add(telemetryClient.dispose, priority: _CleanupPriority.module);
+      pendingInitialization.add(
+        start: (_) => telemetryClient.recordEvent(
+          eventName: 'app.lifecycle.started',
+          eventVersion: 1,
+          feature: 'app',
+          severity: TelemetrySeverity.info,
+          properties: {
+            'start_type': 'cold',
+            'cold_start': true,
+          },
+        ),
+        description: 'Telemetry initial lifecycle event failed',
+      );
 
       final developerDiagnosticsAdapter = AppDeveloperDiagnosticsAdapter(
         sshService: sshService,
