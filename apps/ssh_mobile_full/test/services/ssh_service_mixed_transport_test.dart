@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_background_service_platform_interface/flutter_background_service_platform_interface.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:permission_handler_platform_interface/permission_handler_platform_interface.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_core/ssh_core.dart' as ssh_core;
 import 'package:ssh_mobile/services/ssh_service.dart';
 
@@ -23,6 +24,7 @@ void main() {
     late Future<void> nativeConnect;
 
     setUp(() async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
       previousBackgroundPlatform = _tryReadBackgroundPlatform();
       previousPermissionPlatform = PermissionHandlerPlatform.instance;
       debugDefaultTargetPlatformOverride = TargetPlatform.android;
