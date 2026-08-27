@@ -19,7 +19,7 @@ class MockTelemetryTransport implements TelemetryTransport {
   bool authRepeatedAfter401 = false;
 
   @override
-  Future<String?> authenticateDevice({
+  Future<TelemetryAuthResult?> authenticateDevice({
     required String baseUrl,
     required String deviceId,
     required String platform,
@@ -31,7 +31,7 @@ class MockTelemetryTransport implements TelemetryTransport {
     authExpEpochs.add(expEpoch);
     // 首次认证成功后，用于验证 401 后重认证是否发生。
     if (authRepeatedAfter401 && authCalls >= 2) {
-      return token;
+      return TelemetryAuthResult(token: token, expiresInSeconds: 2 * 60 * 60);
     }
     if (shouldFailAuth) {
       throw const TelemetryUploadException(
@@ -39,8 +39,22 @@ class MockTelemetryTransport implements TelemetryTransport {
         statusCode: 401,
       );
     }
-    return token;
+    return TelemetryAuthResult(token: token, expiresInSeconds: 2 * 60 * 60);
   }
+
+  @override
+  Future<TelemetryEnrollmentResult?> enrollDevice({
+    required String baseUrl,
+    required String deviceId,
+    required TelemetryDeviceEnrollmentRequest request,
+  }) async => null;
+
+  @override
+  Future<TelemetryEnrollmentResult?> rotateDevice({
+    required String baseUrl,
+    required String deviceId,
+    required TelemetryDeviceEnrollmentRequest request,
+  }) async => null;
 
   @override
   Future<TelemetryUploadPolicy?> fetchRemotePolicy({

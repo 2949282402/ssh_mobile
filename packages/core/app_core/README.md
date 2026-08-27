@@ -10,7 +10,9 @@
   有界 `LogBuffer` 和可释放的 `LogSink`；
 - Capability：按类型注册和读取的 `CapabilityRegistry`。
 - Telemetry：由 `contracts/telemetry/*.yaml` 生成的 `TelemetryEvents`、
-  `TelemetryErrorCodes` 和类型化 `TelemetryClient.record(event: ...)` 公共合约。
+  `TelemetryErrorCodes` 和类型化 `TelemetryClient.record(event: ...)` 公共合约；
+  `TelemetryTransport.authenticateDevice` 使用服务端返回的 `expiresIn`，缺少本地
+  遥测密钥时通过 App 注入的既有 Relay 身份 Provider 完成一次性 enrollment。
 
 本 Package 不依赖 Flutter UI、SSH、Drift 或任何 Feature。它只定义边界和轻量
 机制，具体平台日志实现由 AppRuntime 或 App 层通过依赖注入提供。

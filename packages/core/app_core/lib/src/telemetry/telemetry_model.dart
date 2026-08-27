@@ -51,6 +51,87 @@ enum TelemetrySyncState {
   }
 }
 
+/// The short-lived token returned by the telemetry authentication endpoint.
+///
+/// [expiresInSeconds] is authoritative. The client must not substitute a
+/// configured default when the server supplies a valid value.
+final class TelemetryAuthResult {
+  const TelemetryAuthResult({
+    required this.token,
+    required this.expiresInSeconds,
+  });
+
+  final String token;
+  final int expiresInSeconds;
+}
+
+/// A proof that the caller controls the existing Relay-enrolled device
+/// identity. The Relay credential and proof are request-only material; the
+/// telemetry service never persists them.
+final class TelemetryDeviceEnrollmentRequest {
+  const TelemetryDeviceEnrollmentRequest({
+    required this.deviceId,
+    required this.relayCredential,
+    required this.publicKey,
+    required this.timestamp,
+    required this.nonce,
+    required this.signature,
+    this.transcriptPath = '/api/v1/telemetry/enroll',
+  });
+
+  final String deviceId;
+  final String relayCredential;
+  final String publicKey;
+  final int timestamp;
+  final String nonce;
+  final String signature;
+
+  /// The exact public operation bound by [signature].
+  ///
+  /// Enrollment and explicit recovery rotation use different transcripts;
+  /// keeping the path on the request prevents a caller from accidentally
+  /// sending a proof for one operation to the other.
+  final String transcriptPath;
+}
+
+/// The one-time plaintext telemetry secret returned after Relay attestation.
+final class TelemetryEnrollmentResult {
+  const TelemetryEnrollmentResult({
+    required this.deviceId,
+    required this.secret,
+  });
+
+  final String deviceId;
+  final String secret;
+}
+
+/// App-owned boundary for reusing the existing Relay device identity when a
+/// telemetry secret is absent. Implementations must keep private material in
+/// platform secure storage and only return request fields to the client.
+abstract interface class TelemetryDeviceEnrollmentProvider {
+  Future<TelemetryDeviceEnrollmentRequest?> createRequest({
+    required String baseUrl,
+    required String deviceId,
+  });
+
+  /// Persists the one-time plaintext secret in platform secure storage.
+  Future<void> persistSecret(String secret);
+}
+
+/// Optional extension implemented by providers that can bind a fresh proof to
+/// an explicit operation path (currently enrollment or recovery rotation).
+///
+/// The base provider remains intentionally narrow for test and platform
+/// implementations that only support initial enrollment. The client fails
+/// closed before rotation when this capability is unavailable.
+abstract interface class TelemetryDeviceEnrollmentPathProvider {
+  Future<TelemetryDeviceEnrollmentRequest?> createRequestForPath({
+    required String baseUrl,
+    required String deviceId,
+    required String transcriptPath,
+  });
+}
+
 class TelemetryErrorDetail {
   const TelemetryErrorDetail({
     required this.errorCode,

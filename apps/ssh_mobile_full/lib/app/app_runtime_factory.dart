@@ -477,10 +477,19 @@ final class AppRuntimeFactory {
       );
       final telemetryBuildMetadata = await DeviceInfoBuildMetadataProvider()
           .load();
+      final relayEnrollmentService =
+          lanShareModule.coordinator.relayEnrollmentService;
+      final telemetryEnrollmentProvider = relayEnrollmentService == null
+          ? null
+          : RelayTelemetryEnrollmentProvider(
+              relayEnrollment: relayEnrollmentService,
+              expectedDeviceId: appSettings.lanDeviceId,
+            );
       final telemetryRuntime = await createTelemetryRuntime(
         deviceId: appSettings.lanDeviceId,
         relayEndpoint: appSettings.relayEndpoint,
         buildMetadata: telemetryBuildMetadata,
+        deviceEnrollmentProvider: telemetryEnrollmentProvider,
         storage: telemetryStorage,
       );
       final telemetryClient = telemetryRuntime.client;

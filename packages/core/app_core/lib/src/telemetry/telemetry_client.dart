@@ -20,13 +20,18 @@ class TelemetryUploadException implements Exception {
     this.message, {
     this.statusCode,
     this.retryAfterSeconds,
+    this.errorCode,
   });
 
   final String message;
   final int? statusCode;
   final int? retryAfterSeconds;
+  final String? errorCode;
 
   bool get isUnauthorized => statusCode == 401;
+  bool get isAlreadyEnrolled =>
+      statusCode == 409 &&
+      (errorCode == 'ALREADY_ENROLLED' || message == 'ALREADY_ENROLLED');
   bool get isRateLimited => statusCode == 429;
   bool get isPermanentClientError =>
       statusCode != null &&
@@ -40,7 +45,8 @@ class TelemetryUploadException implements Exception {
   @override
   String toString() =>
       'TelemetryUploadException($message, '
-      'statusCode: $statusCode, retryAfterSeconds: $retryAfterSeconds)';
+      'statusCode: $statusCode, retryAfterSeconds: $retryAfterSeconds, '
+      'errorCode: $errorCode)';
 }
 
 /// Configuration for TelemetryClient.
@@ -54,6 +60,7 @@ class TelemetryClientConfig {
     required this.releaseChannel,
     this.sessionId,
     this.deviceEnrollmentSecret,
+    this.deviceEnrollmentProvider,
     this.authTokenTtlSeconds = 2 * 60 * 60,
     this.policyFetchIntervalSeconds = 3600,
   });
@@ -71,7 +78,13 @@ class TelemetryClientConfig {
   /// 设备注册密钥，用于 HMAC-SHA256 认证证明。生产由安全存储读取。
   final String? deviceEnrollmentSecret;
 
-  /// 认证令牌缓存 TTL（秒），默认 2 小时。
+  /// App-owned provider for bootstrapping the telemetry secret from the
+  /// existing Relay enrollment. The provider owns all Relay credentials,
+  /// signing identity material, and secure-storage writes.
+  final TelemetryDeviceEnrollmentProvider? deviceEnrollmentProvider;
+
+  /// Legacy compatibility value; server-provided `expiresIn` is authoritative
+  /// and this value is intentionally ignored by [TelemetryClient].
   final int authTokenTtlSeconds;
 
   final int policyFetchIntervalSeconds;
@@ -123,13 +136,25 @@ class TelemetryBatchUploadResult {
 
 /// Abstract transport contract for Telemetry network operations.
 abstract class TelemetryTransport {
-  Future<String?> authenticateDevice({
+  Future<TelemetryAuthResult?> authenticateDevice({
     required String baseUrl,
     required String deviceId,
     required String platform,
     required String appVersion,
     String? authSecret,
     int? expEpoch,
+  });
+
+  Future<TelemetryEnrollmentResult?> enrollDevice({
+    required String baseUrl,
+    required String deviceId,
+    required TelemetryDeviceEnrollmentRequest request,
+  });
+
+  Future<TelemetryEnrollmentResult?> rotateDevice({
+    required String baseUrl,
+    required String deviceId,
+    required TelemetryDeviceEnrollmentRequest request,
   });
 
   Future<TelemetryUploadPolicy?> fetchRemotePolicy({
@@ -180,14 +205,20 @@ class HttpTelemetryTransport implements TelemetryTransport {
   HttpTelemetryTransport({
     HttpClient? client,
     TelemetryProofFactory? proofFactory,
+    this.allowLoopbackHttp = false,
   }) : _client = client ?? HttpClient(),
        _proofFactory = proofFactory ?? const HmacTelemetryProofFactory();
 
   final HttpClient _client;
   final TelemetryProofFactory _proofFactory;
 
+  /// Enables the repository's loopback-only HTTP exception for tests.
+  /// Production callers must leave this disabled so telemetry requests require
+  /// an HTTPS origin.
+  final bool allowLoopbackHttp;
+
   @override
-  Future<String?> authenticateDevice({
+  Future<TelemetryAuthResult?> authenticateDevice({
     required String baseUrl,
     required String deviceId,
     required String platform,
@@ -195,10 +226,7 @@ class HttpTelemetryTransport implements TelemetryTransport {
     String? authSecret,
     int? expEpoch,
   }) async {
-    final uri = TelemetryEndpoints.resolveUri(
-      baseUrl,
-      TelemetryEndpoints.publicAuthPath,
-    );
+    final uri = _resolveUri(baseUrl, TelemetryEndpoints.publicAuthPath);
 
     // 设备注册成功后，通过 HMAC 证明换取短期 bearer token。
     String? secret;
@@ -225,12 +253,33 @@ class HttpTelemetryTransport implements TelemetryTransport {
 
     final req = await _client.postUrl(uri);
     req.headers.set('Content-Type', 'application/json');
+    req.headers.set('Accept', 'application/json');
     req.add(utf8.encode(jsonEncode(payload)));
     final res = await req.close();
     final resBody = await utf8.decodeStream(res);
     if (res.statusCode >= 200 && res.statusCode < 300) {
-      final data = jsonDecode(resBody) as Map<String, dynamic>;
-      return data['token'] as String?;
+      try {
+        final data = jsonDecode(resBody) as Map<String, dynamic>;
+        final token = data['token'];
+        final expiresIn = data['expiresIn'];
+        if (token is! String ||
+            token.isEmpty ||
+            expiresIn is! num ||
+            !expiresIn.isFinite ||
+            expiresIn <= 0 ||
+            expiresIn != expiresIn.truncate()) {
+          throw const FormatException('invalid telemetry auth response');
+        }
+        return TelemetryAuthResult(
+          token: token,
+          expiresInSeconds: expiresIn.toInt(),
+        );
+      } on Object {
+        throw const TelemetryUploadException(
+          'Telemetry device authentication response is invalid',
+          statusCode: 502,
+        );
+      }
     }
     if (res.statusCode == 401) {
       throw const TelemetryUploadException(
@@ -239,10 +288,102 @@ class HttpTelemetryTransport implements TelemetryTransport {
       );
     }
     throw TelemetryUploadException(
-      'Telemetry device authentication failed with status '
-      '${res.statusCode}: $resBody',
+      'Telemetry device authentication failed',
       statusCode: res.statusCode,
+      errorCode: _errorCodeFromBody(resBody),
     );
+  }
+
+  @override
+  Future<TelemetryEnrollmentResult?> enrollDevice({
+    required String baseUrl,
+    required String deviceId,
+    required TelemetryDeviceEnrollmentRequest request,
+  }) => _enrollDevice(
+    baseUrl: baseUrl,
+    deviceId: deviceId,
+    request: request,
+    path: TelemetryEndpoints.publicEnrollPath,
+    expectedStatusCode: 201,
+  );
+
+  @override
+  Future<TelemetryEnrollmentResult?> rotateDevice({
+    required String baseUrl,
+    required String deviceId,
+    required TelemetryDeviceEnrollmentRequest request,
+  }) => _enrollDevice(
+    baseUrl: baseUrl,
+    deviceId: deviceId,
+    request: request,
+    path: TelemetryEndpoints.publicRotatePath,
+    expectedStatusCode: 200,
+  );
+
+  Future<TelemetryEnrollmentResult?> _enrollDevice({
+    required String baseUrl,
+    required String deviceId,
+    required TelemetryDeviceEnrollmentRequest request,
+    required String path,
+    required int expectedStatusCode,
+  }) async {
+    if (deviceId.isEmpty || request.deviceId != deviceId) {
+      throw const TelemetryUploadException(
+        'Telemetry enrollment device identity is invalid',
+        statusCode: 400,
+        errorCode: 'INVALID_REQUEST',
+      );
+    }
+    if (request.transcriptPath != path) {
+      throw const TelemetryUploadException(
+        'Telemetry enrollment proof is bound to a different operation',
+        statusCode: 400,
+        errorCode: 'INVALID_REQUEST',
+      );
+    }
+
+    final uri = _resolveUri(baseUrl, path);
+    final payload = <String, dynamic>{
+      'deviceId': request.deviceId,
+      'relayCredential': request.relayCredential,
+      'publicKey': request.publicKey,
+      'timestamp': request.timestamp,
+      'nonce': request.nonce,
+      'signature': request.signature,
+    };
+    final req = await _client.postUrl(uri);
+    req.headers.set('Content-Type', 'application/json');
+    req.headers.set('Accept', 'application/json');
+    req.add(utf8.encode(jsonEncode(payload)));
+    final res = await req.close();
+    final resBody = await utf8.decodeStream(res);
+    if (res.statusCode != expectedStatusCode) {
+      throw TelemetryUploadException(
+        'Telemetry enrollment request failed',
+        statusCode: res.statusCode,
+        errorCode: _errorCodeFromBody(resBody),
+      );
+    }
+
+    try {
+      final data = jsonDecode(resBody) as Map<String, dynamic>;
+      final responseDeviceId = data['deviceId'];
+      final secret = data['secret'];
+      if (responseDeviceId != deviceId ||
+          secret is! String ||
+          !_isTelemetrySecret(secret)) {
+        throw const FormatException('invalid telemetry enrollment response');
+      }
+      return TelemetryEnrollmentResult(
+        deviceId: responseDeviceId as String,
+        secret: secret,
+      );
+    } on Object {
+      throw const TelemetryUploadException(
+        'Telemetry enrollment response is invalid',
+        statusCode: 502,
+      );
+    }
   }
 
   @override
@@ -250,10 +391,7 @@ class HttpTelemetryTransport implements TelemetryTransport {
     required String baseUrl,
     required String authToken,
   }) async {
-    final uri = TelemetryEndpoints.resolveUri(
-      baseUrl,
-      TelemetryEndpoints.publicPolicyPath,
-    );
+    final uri = _resolveUri(baseUrl, TelemetryEndpoints.publicPolicyPath);
     final req = await _client.getUrl(uri);
     if (authToken.isNotEmpty) {
       req.headers.set('Authorization', 'Bearer $authToken');
@@ -261,12 +399,21 @@ class HttpTelemetryTransport implements TelemetryTransport {
     final res = await req.close();
     final resBody = await utf8.decodeStream(res);
     if (res.statusCode >= 200 && res.statusCode < 300) {
-      final data = jsonDecode(resBody) as Map<String, dynamic>;
-      return TelemetryUploadPolicy.fromJson(data);
+      try {
+        final data = jsonDecode(resBody) as Map<String, dynamic>;
+        return TelemetryUploadPolicy.fromJson(data);
+      } on Object {
+        throw const TelemetryUploadException(
+          'Telemetry policy response is invalid',
+          statusCode: 502,
+          errorCode: 'INVALID_RESPONSE',
+        );
+      }
     }
     throw TelemetryUploadException(
-      'Telemetry policy fetch failed with status ${res.statusCode}: $resBody',
+      'Telemetry policy fetch failed',
       statusCode: res.statusCode,
+      errorCode: _errorCodeFromBody(resBody),
     );
   }
 
@@ -277,10 +424,7 @@ class HttpTelemetryTransport implements TelemetryTransport {
     required String deviceId,
     required List<TelemetryEventRecord> records,
   }) async {
-    final uri = TelemetryEndpoints.resolveUri(
-      baseUrl,
-      TelemetryEndpoints.publicIngestPath,
-    );
+    final uri = _resolveUri(baseUrl, TelemetryEndpoints.publicIngestPath);
     final req = await _client.postUrl(uri);
     req.headers.set('Content-Type', 'application/json');
     req.headers.set('X-Device-Id', deviceId);
@@ -294,16 +438,24 @@ class HttpTelemetryTransport implements TelemetryTransport {
     final res = await req.close();
     final resBody = await utf8.decodeStream(res);
     if (res.statusCode >= 200 && res.statusCode < 300) {
-      final data = jsonDecode(resBody) as Map<String, dynamic>;
-      final resultsJson = data['results'] as List<dynamic>? ?? [];
-      return TelemetryBatchUploadResult(
-        ackResults: resultsJson
-            .map(
-              (item) =>
-                  TelemetryAckResult.fromJson(item as Map<String, dynamic>),
-            )
-            .toList(),
-      );
+      try {
+        final data = jsonDecode(resBody) as Map<String, dynamic>;
+        final resultsJson = data['results'] as List<dynamic>? ?? [];
+        return TelemetryBatchUploadResult(
+          ackResults: resultsJson
+              .map(
+                (item) =>
+                    TelemetryAckResult.fromJson(item as Map<String, dynamic>),
+              )
+              .toList(),
+        );
+      } on Object {
+        throw const TelemetryUploadException(
+          'Telemetry upload response is invalid',
+          statusCode: 502,
+          errorCode: 'INVALID_RESPONSE',
+        );
+      }
     }
 
     int? retryAfter;
@@ -316,11 +468,60 @@ class HttpTelemetryTransport implements TelemetryTransport {
     }
 
     throw TelemetryUploadException(
-      'Telemetry upload failed with status ${res.statusCode}: $resBody',
+      'Telemetry upload failed',
       statusCode: res.statusCode,
       retryAfterSeconds: retryAfter,
+      errorCode: _errorCodeFromBody(resBody),
     );
   }
+
+  Uri _resolveUri(String baseUrl, String path) {
+    final origin = TelemetryEndpoints.validateOrigin(
+      baseUrl,
+      allowLoopbackHttp: allowLoopbackHttp,
+    );
+    if (origin == null) {
+      throw const TelemetryUploadException(
+        'Telemetry endpoint origin is invalid',
+        statusCode: 400,
+        errorCode: 'INVALID_REQUEST',
+      );
+    }
+    return TelemetryEndpoints.resolveUri(origin.toString(), path);
+  }
+}
+
+final RegExp _telemetrySecretPattern = RegExp(r'^[0-9a-fA-F]{64}$');
+final RegExp _telemetryErrorCodePattern = RegExp(r'^[A-Z0-9_]{1,64}$');
+
+bool _isTelemetrySecret(String value) =>
+    _telemetrySecretPattern.hasMatch(value);
+
+/// Extract only a bounded, non-sensitive machine code from an error response.
+/// Response messages are deliberately ignored because a misconfigured server
+/// must never be able to echo credentials into client diagnostics.
+String? _errorCodeFromBody(String body) {
+  try {
+    final decoded = jsonDecode(body);
+    if (decoded is! Map<String, dynamic>) return null;
+    final error = decoded['error'];
+    final code = error is Map<String, dynamic>
+        ? error['code']
+        : decoded['code'];
+    return _safeTelemetryErrorCode(code);
+  } on Object {
+    // Invalid error bodies are represented by status code only.
+  }
+  return null;
+}
+
+String? _safeTelemetryErrorCode(Object? value) {
+  if (value is! String ||
+      !_telemetryErrorCodePattern.hasMatch(value) ||
+      _isTelemetrySecret(value)) {
+    return null;
+  }
+  return value;
 }
 
 /// 客户端事件构建与上传分发器。
@@ -341,6 +542,10 @@ class TelemetryClient {
        transport = transport ?? HttpTelemetryTransport(),
        activePolicy = initialPolicy ?? TelemetryUploadPolicy.defaultPolicy(),
        sessionId = config.sessionId ?? _uuid.v4() {
+    // Keep the credential in memory for the lifetime of this client.  The
+    // enrollment provider persists it for restart recovery, but a token
+    // refresh must reuse the just-enrolled secret rather than re-enrolling.
+    _telemetrySecret = config.deviceEnrollmentSecret;
     _startTimers();
   }
 
@@ -355,8 +560,10 @@ class TelemetryClient {
   final String sessionId;
 
   TelemetryUploadPolicy activePolicy;
+  String? _telemetrySecret;
   String? _authToken;
   DateTime? _authTokenExpiresAt;
+  Future<void>? _authenticationFuture;
   DateTime? _lastSyncTime;
   String? _lastSyncError;
   DateTime? _lastPolicyFetchTime;
@@ -469,7 +676,7 @@ class TelemetryClient {
     if (_isDisposed) return false;
     try {
       await _ensureAuthenticated();
-      if (_authToken == null || _authToken!.isEmpty) {
+      if (!_hasValidToken) {
         return false;
       }
 
@@ -485,7 +692,7 @@ class TelemetryClient {
         return true;
       }
     } catch (e) {
-      _lastSyncError = e.toString();
+      _lastSyncError = _describeError(e);
       if (e is TelemetryUploadException && e.isUnauthorized) {
         _authToken = null;
         _authTokenExpiresAt = null;
@@ -494,18 +701,60 @@ class TelemetryClient {
     return false;
   }
 
-  /// 确保存在未过期的认证令牌；使用设备注册密钥做 HMAC 证明（缺失密钥时 Fail-Closed）。
-  Future<void> _ensureAuthenticated() async {
-    if (_hasValidToken) return;
+  /// 确保存在未过期的认证令牌；缺失遥测密钥时先通过 App-owned Relay
+  /// identity provider 完成一次性 enrollment。所有 enrollment/proof 异常
+  /// 都在这里收敛为 fail-closed 的认证失败。
+  Future<void> _ensureAuthenticated() {
+    if (_hasValidToken) return Future<void>.value();
 
-    final secret = config.deviceEnrollmentSecret;
+    final inFlight = _authenticationFuture;
+    if (inFlight != null) return inFlight;
+
+    final future = _authenticate();
+    _authenticationFuture = future;
+    return future.whenComplete(() {
+      if (identical(_authenticationFuture, future)) {
+        _authenticationFuture = null;
+      }
+    });
+  }
+
+  Future<void> _authenticate() async {
+    // A failed refresh must not leave an expired token usable by a caller that
+    // only checks for a non-empty string.
+    _authToken = null;
+    _authTokenExpiresAt = null;
+    var secret = _telemetrySecret;
     if (secret == null || secret.isEmpty) {
-      _lastSyncError = 'Missing deviceEnrollmentSecret';
+      try {
+        secret = await _enrollTelemetrySecret();
+        if (secret != null && secret.isNotEmpty) {
+          _telemetrySecret = secret;
+        }
+      } on TelemetryUploadException catch (error) {
+        // Enrollment providers and transports are external boundaries. Keep
+        // only machine-readable status fields; their exception messages may
+        // contain platform or credential material.
+        throw TelemetryUploadException(
+          'Telemetry enrollment failed',
+          statusCode: error.statusCode,
+          retryAfterSeconds: error.retryAfterSeconds,
+          errorCode: _safeTelemetryErrorCode(error.errorCode),
+        );
+      } on Object {
+        // Provider implementations must not be able to surface secret-bearing
+        // platform exception text through the diagnostics field.
+        throw const TelemetryUploadException('Telemetry enrollment failed');
+      }
+    }
+
+    if (secret == null || secret.isEmpty) {
+      _lastSyncError = 'Missing telemetry enrollment secret';
       return;
     }
 
     final expEpoch = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000 + 60;
-    final token = await transport.authenticateDevice(
+    final result = await transport.authenticateDevice(
       baseUrl: config.baseUrl,
       deviceId: config.deviceId,
       platform: config.platform,
@@ -513,12 +762,107 @@ class TelemetryClient {
       authSecret: secret,
       expEpoch: expEpoch,
     );
-    if (token != null && token.isNotEmpty) {
-      _authToken = token;
-      _authTokenExpiresAt = DateTime.now().toUtc().add(
-        Duration(seconds: config.authTokenTtlSeconds),
+    if (result == null ||
+        result.token.isEmpty ||
+        result.expiresInSeconds <= 0) {
+      _lastSyncError = 'Device authentication failed';
+      return;
+    }
+
+    // The server response is the source of truth. Do not substitute
+    // TelemetryClientConfig.authTokenTtlSeconds here.
+    _authToken = result.token;
+    _authTokenExpiresAt = DateTime.now().toUtc().add(
+      Duration(seconds: result.expiresInSeconds),
+    );
+  }
+
+  Future<String?> _enrollTelemetrySecret() async {
+    final provider = config.deviceEnrollmentProvider;
+    if (provider == null) return null;
+
+    final initialRequest = await provider.createRequest(
+      baseUrl: config.baseUrl,
+      deviceId: config.deviceId,
+    );
+    if (!_isValidEnrollmentRequest(
+      initialRequest,
+      expectedPath: TelemetryEndpoints.publicEnrollPath,
+    )) {
+      return null;
+    }
+
+    TelemetryEnrollmentResult? result;
+    try {
+      result = await transport.enrollDevice(
+        baseUrl: config.baseUrl,
+        deviceId: config.deviceId,
+        request: initialRequest!,
+      );
+    } on TelemetryUploadException catch (error) {
+      if (!error.isAlreadyEnrolled) rethrow;
+
+      // A lost response must not retry create-only enrollment indefinitely or
+      // rotate implicitly. Recovery requires a provider that can make a fresh
+      // proof bound to the explicit rotate route.
+      if (provider is! TelemetryDeviceEnrollmentPathProvider) return null;
+      final pathProvider = provider as TelemetryDeviceEnrollmentPathProvider;
+      final rotationRequest = await pathProvider.createRequestForPath(
+        baseUrl: config.baseUrl,
+        deviceId: config.deviceId,
+        transcriptPath: TelemetryEndpoints.publicRotatePath,
+      );
+      if (!_isValidEnrollmentRequest(
+        rotationRequest,
+        expectedPath: TelemetryEndpoints.publicRotatePath,
+      )) {
+        return null;
+      }
+      result = await transport.rotateDevice(
+        baseUrl: config.baseUrl,
+        deviceId: config.deviceId,
+        request: rotationRequest!,
       );
     }
+
+    if (result == null ||
+        result.deviceId != config.deviceId ||
+        !_isTelemetrySecret(result.secret)) {
+      return null;
+    }
+
+    // The provider is the only owner allowed to persist this one-time secret.
+    // If secure storage fails, do not continue with an in-memory credential.
+    try {
+      await provider.persistSecret(result.secret);
+    } on Object {
+      throw const TelemetryUploadException(
+        'Telemetry enrollment persistence failed',
+        statusCode: 503,
+        errorCode: 'TELEMETRY_AUTH_FAILED',
+      );
+    }
+    return result.secret;
+  }
+
+  bool _isValidEnrollmentRequest(
+    TelemetryDeviceEnrollmentRequest? request, {
+    required String? expectedPath,
+  }) {
+    if (request == null ||
+        request.deviceId != config.deviceId ||
+        request.relayCredential.isEmpty ||
+        request.publicKey.isEmpty ||
+        request.timestamp <= 0 ||
+        request.nonce.isEmpty ||
+        request.signature.isEmpty) {
+      return false;
+    }
+    if (expectedPath != null && request.transcriptPath != expectedPath) {
+      return false;
+    }
+    return request.transcriptPath == TelemetryEndpoints.publicEnrollPath ||
+        request.transcriptPath == TelemetryEndpoints.publicRotatePath;
   }
 
   /// 刷新待上传记录，内置单飞守卫、401 重认证、5xx/4xx 决策与重试退避。
@@ -549,7 +893,7 @@ class TelemetryClient {
       _lastSyncError = _describeError(e);
       return;
     }
-    if (_authToken == null || _authToken!.isEmpty) {
+    if (!_hasValidToken) {
       _lastSyncError = 'Device authentication failed';
       return;
     }
@@ -581,7 +925,7 @@ class TelemetryClient {
           _lastSyncError = _describeError(authError);
           return; // 认证失败：记录保持 pending，绝不删除。
         }
-        if (_authToken == null || _authToken!.isEmpty) {
+        if (!_hasValidToken) {
           _lastSyncError = 'Device authentication failed';
           return;
         }
@@ -610,11 +954,13 @@ class TelemetryClient {
             TelemetryAckResult(
               eventId: r.eventId,
               status: 'rejected',
-              reason: e.message,
+              reason:
+                  _safeTelemetryErrorCode(e.errorCode) ??
+                  'Telemetry upload rejected',
             ),
         ];
         await storage.applyAckResults(results);
-        _lastSyncError = e.toString();
+        _lastSyncError = _describeError(e);
         return;
       } else {
         // 5xx / 503 / 连接错误：累计 retryCount，指数退避 + 抖动。
@@ -634,7 +980,7 @@ class TelemetryClient {
     List<TelemetryEventRecord> records,
     TelemetryUploadException error,
   ) {
-    _lastSyncError = error.toString();
+    _lastSyncError = _describeError(error);
     if (!error.isPermanentClientError) {
       // 递增 retryCount 并持久化，供后续退避决策使用。
       unawaited(
@@ -677,11 +1023,20 @@ class TelemetryClient {
   }
 
   static String _describeError(Object error) {
-    if (error is TelemetryUploadException) return error.toString();
-    if (error is HttpException) {
-      return 'Telemetry connection error: ${error.message}';
+    if (error is TelemetryUploadException) {
+      final code = _safeTelemetryErrorCode(error.errorCode);
+      final status = error.statusCode;
+      if (code != null && status != null) {
+        return 'Telemetry request failed ($code, HTTP $status)';
+      }
+      if (code != null) return 'Telemetry request failed ($code)';
+      if (status != null) {
+        return 'Telemetry request failed (HTTP $status)';
+      }
+      return 'Telemetry request failed';
     }
-    return error.toString();
+    if (error is HttpException) return 'Telemetry connection error';
+    return 'Telemetry operation failed';
   }
 
   /// 以原始身份（eventId/sessionId/traceId）重放全部本地记录。
@@ -699,7 +1054,7 @@ class TelemetryClient {
         _lastSyncError = _describeError(e);
         return 0;
       }
-      if (_authToken == null || _authToken!.isEmpty) {
+      if (!_hasValidToken) {
         _lastSyncError = 'Device authentication failed';
         return 0;
       }
