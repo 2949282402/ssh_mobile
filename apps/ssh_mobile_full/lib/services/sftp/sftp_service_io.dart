@@ -326,19 +326,19 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     );
   }
 
-  void _failTransferTelemetry(
+  Future<void> _failTransferTelemetry(
     String transferId,
     SftpTransferState transfer, {
     required TelemetryErrorCodeDefinition errorCode,
     required String stage,
     String? errorMessage,
-  }) {
+  }) async {
     final client = telemetryClient;
     if (client == null) return;
     final traceId = _telemetryTransferTraceIds.remove(transferId);
     _telemetryTransferStartedAt.remove(transferId);
-    unawaited(
-      client.record(
+    try {
+      await client.record(
         event: TelemetryEvents.sftpTransferFailed,
         traceId: traceId,
         errorCode: errorCode,
@@ -348,8 +348,10 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
           'bytes_transferred': transfer.bytesTransferred,
           'stage': stage,
         },
-      ),
-    );
+      );
+    } on Object {
+      // Telemetry storage failure must not replace the original SFTP error.
+    }
   }
 
   /// 将传输异常映射到 contract 已注册的 SFTP 错误码。
@@ -481,7 +483,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
           await sftp.remove(remotePath);
         } catch (_) {}
         activeSession.state = SftpConnectionState.connected;
-        _failTransferTelemetry(
+        await _failTransferTelemetry(
           transferId,
           transfer.copyWith(bytesTransferred: transfer.bytesTransferred),
           errorCode: TelemetryErrorCodes.sftpTransferAborted,
@@ -500,7 +502,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
         );
         activeSession.state = SftpConnectionState.error;
         activeSession.errorMessage = 'Upload failed: $e';
-        _failTransferTelemetry(
+        await _failTransferTelemetry(
           transferId,
           transfer.copyWith(bytesTransferred: transfer.bytesTransferred),
           errorCode: _mapSftpErrorCode(e, isUpload: true),
@@ -619,7 +621,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
           ),
         );
         session.state = SftpConnectionState.connected;
-        _failTransferTelemetry(
+        await _failTransferTelemetry(
           transferId,
           transfer.copyWith(bytesTransferred: transfer.bytesTransferred),
           errorCode: TelemetryErrorCodes.sftpTransferAborted,
@@ -639,7 +641,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
         );
         session.state = SftpConnectionState.error;
         session.errorMessage = 'Download failed: $e';
-        _failTransferTelemetry(
+        await _failTransferTelemetry(
           transferId,
           transfer.copyWith(bytesTransferred: transfer.bytesTransferred),
           errorCode: _mapSftpErrorCode(e, isUpload: false),
@@ -735,7 +737,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
           error: e,
         ),
       );
-      _failTransferTelemetry(
+      await _failTransferTelemetry(
         transferId,
         transfer.copyWith(bytesTransferred: transfer.bytesTransferred),
         errorCode: _mapSftpErrorCode(e, isUpload: true),
@@ -889,7 +891,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
           error: e,
         ),
       );
-      _failTransferTelemetry(
+      await _failTransferTelemetry(
         transferId,
         transfer.copyWith(bytesTransferred: transfer.bytesTransferred),
         errorCode: _mapSftpErrorCode(e, isUpload: false),

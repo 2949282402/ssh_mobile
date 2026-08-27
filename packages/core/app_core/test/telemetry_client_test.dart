@@ -289,6 +289,35 @@ void main() {
     );
 
     test(
+      'accepts generated SFTP failure metadata and mapped permission errors',
+      () async {
+        final success = await client.record(
+          event: TelemetryEvents.sftpTransferFailed,
+          properties: {
+            'direction': 'download',
+            'bytes_transferred': 0,
+            'stage': 'download',
+          },
+          errorCode: TelemetryErrorCodes.sftpPermissionDenied,
+          errorMessage: 'Bad state: Permission denied',
+        );
+
+        expect(success, isTrue);
+        final record = (await storage.fetchAllForReplay()).single;
+        expect(record.properties, {
+          'direction': 'download',
+          'bytes_transferred': 0,
+          'stage': 'download',
+        });
+        expect(
+          record.error?.errorCode,
+          TelemetryErrorCodes.sftpPermissionDenied.code,
+        );
+        expect(record.error?.message, 'Bad state: Permission denied');
+      },
+    );
+
+    test(
       'unregistered typed definitions are rejected by the catalog',
       () async {
         const unknownEvent = TelemetryEventDefinition(

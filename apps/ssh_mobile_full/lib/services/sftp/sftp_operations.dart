@@ -165,7 +165,7 @@ extension SftpServiceOperations on SftpService {
         );
         return bytes;
       } catch (e) {
-        _failTransferTelemetry(
+        await _failTransferTelemetry(
           transferId,
           transfer.copyWith(bytesTransferred: transfer.bytesTransferred),
           errorCode: SftpService._mapSftpErrorCode(e, isUpload: false),
@@ -289,7 +289,7 @@ extension SftpServiceOperations on SftpService {
           transfer.copyWith(bytesTransferred: bytes.length),
         );
       } catch (e) {
-        _failTransferTelemetry(
+        await _failTransferTelemetry(
           transferId,
           transfer.copyWith(bytesTransferred: transfer.bytesTransferred),
           errorCode: SftpService._mapSftpErrorCode(e, isUpload: true),
