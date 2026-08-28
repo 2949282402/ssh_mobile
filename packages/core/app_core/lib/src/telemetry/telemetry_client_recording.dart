@@ -48,10 +48,14 @@ mixin _TelemetryClientRecording on _TelemetryClientBase {
     final safeAppVersion = _sanitizeConfiguredMetadata(config.appVersion);
     final safeBuildNumber = _sanitizeConfiguredMetadata(config.buildNumber);
     final safePlatform = _sanitizeConfiguredMetadata(config.platform);
+    final safeReleaseChannel = _sanitizeConfiguredMetadata(
+      config.releaseChannel,
+    );
     if (safeDeviceId != config.deviceId ||
         safeAppVersion == null ||
         safeBuildNumber == null ||
-        safePlatform == null) {
+        safePlatform == null ||
+        safeReleaseChannel == null) {
       return false;
     }
 
@@ -89,6 +93,7 @@ mixin _TelemetryClientRecording on _TelemetryClientBase {
       appVersion: safeAppVersion,
       buildNumber: safeBuildNumber,
       platform: safePlatform,
+      releaseChannel: safeReleaseChannel,
       properties: safeProperties,
       error: errorDetail,
     );
@@ -170,7 +175,9 @@ mixin _TelemetryClientRecording on _TelemetryClientBase {
         traceId == null ||
         !_isSafePersistedMetadata(record.appVersion) ||
         !_isSafePersistedMetadata(record.buildNumber) ||
-        !_isSafePersistedMetadata(record.platform)) {
+        !_isSafePersistedMetadata(record.platform) ||
+        (record.releaseChannel != null &&
+            !_isSafePersistedMetadata(record.releaseChannel!))) {
       return null;
     }
 
@@ -209,6 +216,7 @@ mixin _TelemetryClientRecording on _TelemetryClientBase {
       appVersion: record.appVersion,
       buildNumber: record.buildNumber,
       platform: record.platform,
+      releaseChannel: record.releaseChannel,
       properties: properties,
       error: error,
       syncState: record.syncState,

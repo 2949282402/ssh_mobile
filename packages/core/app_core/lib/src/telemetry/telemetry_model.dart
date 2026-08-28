@@ -181,6 +181,7 @@ class TelemetryEventRecord {
     required this.appVersion,
     required this.buildNumber,
     required this.platform,
+    this.releaseChannel,
     this.properties = const {},
     this.error,
     this.syncState = TelemetrySyncState.pending,
@@ -201,6 +202,12 @@ class TelemetryEventRecord {
   final String appVersion;
   final String buildNumber;
   final String platform;
+
+  /// The distribution channel that produced the record, when available.
+  ///
+  /// This stays nullable so records persisted before release-channel support
+  /// remain valid and continue to round-trip without inventing a value.
+  final String? releaseChannel;
   final Map<String, dynamic> properties;
   final TelemetryErrorDetail? error;
   final TelemetrySyncState syncState;
@@ -221,6 +228,7 @@ class TelemetryEventRecord {
     String? appVersion,
     String? buildNumber,
     String? platform,
+    String? releaseChannel,
     Map<String, dynamic>? properties,
     TelemetryErrorDetail? error,
     TelemetrySyncState? syncState,
@@ -242,6 +250,7 @@ class TelemetryEventRecord {
       appVersion: appVersion ?? this.appVersion,
       buildNumber: buildNumber ?? this.buildNumber,
       platform: platform ?? this.platform,
+      releaseChannel: releaseChannel ?? this.releaseChannel,
       properties: properties ?? this.properties,
       error: error ?? this.error,
       syncState: syncState ?? this.syncState,
@@ -266,6 +275,7 @@ class TelemetryEventRecord {
     'appVersion': appVersion,
     'buildNumber': buildNumber,
     'platform': platform,
+    if (releaseChannel != null) 'releaseChannel': releaseChannel,
     'properties': properties,
     if (error != null) 'error': error!.toJson(),
   };
@@ -289,6 +299,7 @@ class TelemetryEventRecord {
       appVersion: json['appVersion'] as String? ?? '',
       buildNumber: json['buildNumber'] as String? ?? '',
       platform: json['platform'] as String? ?? '',
+      releaseChannel: json['releaseChannel'] as String?,
       properties: (json['properties'] as Map<String, dynamic>?) ?? {},
       error: json['error'] != null
           ? TelemetryErrorDetail.fromJson(json['error'] as Map<String, dynamic>)

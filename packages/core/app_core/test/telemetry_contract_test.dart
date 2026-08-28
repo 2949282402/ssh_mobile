@@ -35,6 +35,33 @@ void main() {
       expect(reconstructed.properties['session_type'], 'interactive');
     });
 
+    test('TelemetryEventRecord preserves optional release channel', () {
+      final record = TelemetryEventRecord(
+        eventId: '550e8400-e29b-41d4-a716-446655440002',
+        recordType: TelemetryRecordType.analytics,
+        eventName: 'ssh.session.started',
+        eventVersion: 1,
+        deviceId: 'dev_123456',
+        sessionId: 'sess_abcdef',
+        traceId: 'trace_xyz789',
+        occurredAt: DateTime.parse('2026-08-27T10:00:00.000Z'),
+        feature: 'ssh',
+        severity: TelemetrySeverity.info,
+        appVersion: '1.0.0',
+        buildNumber: '100',
+        platform: 'android',
+        releaseChannel: 'beta',
+      );
+
+      final json = record.toJson();
+      expect(json['releaseChannel'], 'beta');
+      expect(TelemetryEventRecord.fromJson(json).releaseChannel, 'beta');
+
+      final legacyJson = Map<String, dynamic>.from(json)
+        ..remove('releaseChannel');
+      expect(TelemetryEventRecord.fromJson(legacyJson).releaseChannel, isNull);
+    });
+
     test('TelemetryCatalog validates registered events and properties', () {
       final catalog = TelemetryCatalog.instance;
 

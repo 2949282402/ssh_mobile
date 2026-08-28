@@ -55,6 +55,23 @@ void main() {
       },
     );
 
+    test(
+      'records the configured release channel in the client envelope',
+      () async {
+        expect(
+          await client.record(
+            event: TelemetryEvents.sshSessionStarted,
+            properties: {'session_type': 'interactive'},
+          ),
+          isTrue,
+        );
+
+        final record = (await storage.fetchPendingBatch(10)).single;
+        expect(record.releaseChannel, 'beta');
+        expect(record.toJson()['releaseChannel'], 'beta');
+      },
+    );
+
     test('revalidates and re-sanitizes persisted rows before upload', () async {
       final persistedStorage = TestTelemetryStorage([
         persistedDiagnosticRecord(
