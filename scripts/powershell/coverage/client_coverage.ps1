@@ -14,7 +14,7 @@ $app = Join-Path $root 'apps\ssh_mobile_full'
 $run = Join-Path $temp ("client-coverage-{0}" -f [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $run -Force | Out-Null
 $environment = @{ HTTP_PROXY=''; HTTPS_PROXY=''; ALL_PROXY=''; SSH_MOBILE_WINDOWS_PROXY=''; NO_PROXY='localhost,127.0.0.1,::1'; APPDATA=(Join-Path $run 'appdata'); LOCALAPPDATA=(Join-Path $run 'localappdata') }
-$tests = @('test/services/network/network_protocol_v2_codec_test.dart','test/services/network/transfer_transport_test.dart','test/app/realtime_feature_adapters_test.dart','test/app/app_runtime_test.dart')
+$tests = @('test/services/network/network_protocol_v2_codec_test.dart','test/services/network/network_protocol_v2_codec_commands_test.dart','test/services/network/network_protocol_v2_codec_events_test.dart','test/services/network/network_protocol_v2_codec_stream_events_test.dart','test/services/network/network_protocol_v2_codec_transfer_progress_test.dart','test/services/network/transfer_transport_test.dart','test/services/network/transfer_transport_gateway_test.dart','test/services/network/network_identity_service_test.dart','test/app/realtime_feature_adapters_test.dart','test/app/app_runtime_test.dart')
 try {
   Write-Host "Client Network V2 coverage threshold: $Minimum%"
   $profiles = @()

@@ -56,7 +56,13 @@ cd "$APP_DIR"
 
 test_files=(
   test/services/network/network_protocol_v2_codec_test.dart
+  test/services/network/network_protocol_v2_codec_commands_test.dart
+  test/services/network/network_protocol_v2_codec_events_test.dart
+  test/services/network/network_protocol_v2_codec_stream_events_test.dart
+  test/services/network/network_protocol_v2_codec_transfer_progress_test.dart
   test/services/network/transfer_transport_test.dart
+  test/services/network/transfer_transport_gateway_test.dart
+  test/services/network/network_identity_service_test.dart
   test/app/realtime_feature_adapters_test.dart
   test/app/app_runtime_test.dart
 )

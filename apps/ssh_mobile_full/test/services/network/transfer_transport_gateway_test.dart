@@ -110,6 +110,12 @@ void main() {
         );
         expect((await service.connect('peer-a')).isSuccess, isTrue);
 
+        expect(
+          (await service.removePeer('')).errorCode,
+          NetworkErrorCode.invalidArgument,
+        );
+        expect((await service.removePeer('peer-a')).isSuccess, isTrue);
+
         final configureRelayFuture = service.configureRelay(
           RelayConfig(
             relayUrl: 'wss://relay.example.test/ws',
@@ -130,6 +136,59 @@ void main() {
         expect(
           (await service.cancel('transfer-a')).errorCode,
           NetworkErrorCode.cancelled,
+        );
+      },
+    );
+
+    test(
+      'relay failure invalidates relay routes and publishes peer disconnect',
+      () async {
+        final gateway = TransferFakeCommandGateway();
+        final service = NativeNetworkService.fromGateway(gateway);
+        addTearDown(() async {
+          await service.dispose();
+          await gateway.close();
+        });
+
+        gateway.emit(
+          transferEventFrame(17, <int>[
+            ...transferBytesField(1, utf8.encode('peer-relay')),
+            ...transferVarintField(2, NetworkRouteType.relay.wireValue),
+            ...transferBytesField(3, utf8.encode('relay.example.test:443')),
+          ]),
+        );
+        await Future<void>.delayed(Duration.zero);
+        final route = await service.state('peer-relay');
+        expect(route, isA<NetworkSuccess<RouteSnapshot>>());
+        expect(
+          (route as NetworkSuccess<RouteSnapshot>).data.routeType,
+          NetworkRouteType.relay,
+        );
+
+        final disconnectedFuture = firstPeerEvent(
+          service,
+          (event) =>
+              event.peerId == 'peer-relay' &&
+              event.state == PeerConnectionState.disconnected,
+        );
+        gateway.emit(
+          transferEventFrame(18, <int>[
+            ...transferVarintField(1, RelayConnectionState.failed.wireValue),
+            ...transferBytesField(2, <int>[
+              ...transferVarintField(1, NetworkErrorCode.relayError.wireValue),
+              ...transferBytesField(2, utf8.encode('relay unavailable')),
+            ]),
+          ]),
+        );
+
+        final disconnected = await disconnectedFuture.timeout(
+          const Duration(seconds: 1),
+        );
+        expect(disconnected.routeType, NetworkRouteType.unspecified);
+        expect(disconnected.error?.code, NetworkErrorCode.relayError);
+        expect(
+          (await service.state('peer-relay')).errorCode,
+          NetworkErrorCode.noRoute,
         );
       },
     );
