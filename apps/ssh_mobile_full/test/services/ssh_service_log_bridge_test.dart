@@ -30,7 +30,7 @@ void main() {
     });
 
     test(
-      'bridges background service logs and preserves details and normalizedLevel',
+      'bridges background service logs with redacted details and normalizedLevel',
       () {
         sshService.handleBackgroundLog({
           'level': 'service',
@@ -42,9 +42,40 @@ void main() {
         final entry = AppLogService.instance.entries.first;
         expect(entry.message, '[Background] TMUX session initialized');
         expect(entry.normalizedLevel, AppLogLevel.service);
-        expect(entry.details, 'sessionId=123 tmux=true host=example.com');
+        expect(entry.details, 'sessionId=123 tmux=true [REDACTED]=[REDACTED]');
       },
     );
+
+    test('does not retain SSH targets, identities, commands, or secrets', () {
+      const host = 'ops-bridge.example.test';
+      const username = 'deploy-user';
+      const command =
+          'ssh -p 2222 deploy-user@ops-bridge.example.test "cat /home/'
+          'deploy-user/.ssh/id_rsa"';
+      const token = 'bridge-token-placeholder';
+      const password = 'bridge-password-placeholder';
+
+      sshService.handleBackgroundLog({
+        'level': 'service',
+        'message':
+            'SSH command failed host=$host username=$username command=$command',
+        'details':
+            'host=$host username=$username command=$command token=$token '
+            'password=$password',
+      });
+
+      final entry = AppLogService.instance.entries.single;
+      final diagnostics = [entry.message, entry.details, entry.text].join('\n');
+
+      for (final fragment in [host, username, command, token, password]) {
+        expect(
+          diagnostics,
+          isNot(contains(fragment)),
+          reason: 'plaintext sensitive fragment leaked: $fragment',
+        );
+      }
+      expect(diagnostics, contains('[REDACTED]'));
+    });
 
     test('defaults to info level if none specified', () {
       sshService.handleBackgroundLog({
