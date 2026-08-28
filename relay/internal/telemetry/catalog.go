@@ -12,6 +12,7 @@ import (
 	"os"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -204,11 +205,11 @@ func isTelemetryInteger(value any) bool {
 	case uint64:
 		return value <= uint64(1<<63-1)
 	case json.Number:
-		if strings.ContainsAny(string(value), ".eE") {
-			return false
+		if _, err := value.Int64(); err == nil {
+			return true
 		}
-		_, err := value.Int64()
-		return err == nil
+		floatValue, err := strconv.ParseFloat(string(value), 64)
+		return err == nil && isWholeTelemetryFloat(floatValue)
 	case float32:
 		return isWholeTelemetryFloat(float64(value))
 	case float64:

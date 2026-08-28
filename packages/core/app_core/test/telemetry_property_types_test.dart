@@ -44,6 +44,12 @@ void main() {
       );
       expect(
         catalog.isValidRecord(
+          record(properties: {'rtt_ms': 15.0, 'protocol_version': 'v2'}),
+        ),
+        isTrue,
+      );
+      expect(
+        catalog.isValidRecord(
           record(properties: {'rtt_ms': '15', 'protocol_version': 'v2'}),
         ),
         isFalse,

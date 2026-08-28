@@ -88,6 +88,12 @@ describe('telemetry catalog validation boundaries', () => {
     expect(
       validateEventCatalogRecord({
         ...record,
+        properties: { rtt_ms: 15.0, protocol_version: 'v2' },
+      }),
+    ).toMatchObject({ valid: true });
+    expect(
+      validateEventCatalogRecord({
+        ...record,
         properties: { rtt_ms: 15, protocol_version: true },
       }),
     ).toMatchObject({ valid: false });

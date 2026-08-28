@@ -240,8 +240,8 @@ func TestTelemetryCatalogAcceptsIntegerRepresentations(t *testing.T) {
 		value any
 	}{
 		{name: "unsigned overflow", value: uint64(1 << 63)},
-		{name: "decimal json number", value: json.Number("1.0")},
-		{name: "exponent json number", value: json.Number("1e2")},
+		{name: "fractional json number", value: json.Number("1.5")},
+		{name: "fractional exponent json number", value: json.Number("1e-1")},
 		{name: "fractional float", value: 1.5},
 		{name: "nan", value: math.NaN()},
 		{name: "infinity", value: math.Inf(1)},

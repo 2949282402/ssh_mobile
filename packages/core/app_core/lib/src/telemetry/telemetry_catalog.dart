@@ -130,9 +130,13 @@ class TelemetryCatalog {
       case 'string':
         return value is String;
       case 'integer':
-        // Keep integer values distinct from doubles before JSON encoding can
-        // silently turn a fractional value into a generic number.
-        return value is int && value is! bool;
+        // JSON numbers are integer-valued when they have no fractional part;
+        // accept both Dart representations so decoded `1` and `1.0` agree
+        // with the Go and TypeScript catalog validators.
+        return value is int ||
+            (value is double &&
+                value.isFinite &&
+                value == value.truncateToDouble());
       case 'boolean':
         return value is bool;
       default:
