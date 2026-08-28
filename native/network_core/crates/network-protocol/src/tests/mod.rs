@@ -1,4 +1,5 @@
 use super::*;
+use prost::Message;
 
 #[test]
 fn network_error_code_additions_preserve_existing_values() {
