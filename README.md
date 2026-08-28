@@ -1,4 +1,4 @@
-> Last updated: 2026-08-25
+> Last updated: 2026-08-28
 
 <p align="center">
   <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile icon" width="112" />
@@ -107,17 +107,21 @@ administration console lives in `front/`; enrollment and dashboard credentials
 must be configured explicitly, and the service refuses to start with missing or
 weak secrets.
 
-Docker Compose with Caddy is the supported production deployment path. Follow the [relay deployment guide](relay/README.md), then run:
+Docker Compose with Caddy is the supported production deployment path. Follow the [relay deployment guide](relay/README.md), then run these commands from the repository root:
 
 ```powershell
-cd relay
 Copy-Item .env.example .env
-# Set the domain, all ports/runtime limits, and every token, key, and admin credential in .env.
-docker compose --env-file .env up --build
+# Replace every replace-with-* placeholder, including the Analytics MySQL/Redis
+# credentials, telemetry DSN/URL, telemetry auth secret, and admin credentials.
+docker compose --env-file .env --profile storage up -d --build
 ```
 
-This command builds and starts `front`, `relay`, and `caddy`, then keeps their
-combined logs attached. Caddy exposes the front-end SPA publicly and forwards
+The `storage` profile is required for the production Analytics MySQL and Redis
+services. Compose fails fast if any `TELEMETRY_MYSQL_DSN`,
+`TELEMETRY_REDIS_URL`, `TELEMETRY_AUTH_SECRET`, `ANALYTICS_MYSQL_PASSWORD`,
+`ANALYTICS_MYSQL_ROOT_PASSWORD`, or `ANALYTICS_REDIS_PASSWORD` value is absent;
+the example file contains placeholders only. This command builds and starts
+`front`, `relay`, `admin-api`, Analytics storage, and `caddy`. Caddy exposes the front-end SPA publicly and forwards
 `/api/admin/v1`, `/v1`, `/v2`, and `/healthz` to the internal Relay service. In
 the default `memory` mode a restart clears enrollment; in `mysql` mode enrollment
 and revocation persist while live connections are re-established. See the Relay

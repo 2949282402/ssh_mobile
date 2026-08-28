@@ -374,6 +374,8 @@ jobs:
         run: dart run test/tool/agent_docs_check_test.dart
       - name: Test CI workflow contract
         run: dart run test/tool/ci_workflow_test.dart
+      - name: Test CI production configuration
+        run: dart run test/tool/ci_production_config_test.dart
       - name: Check telemetry contract generated
         run: dart run tool/check_telemetry_contract_generated.dart
       - name: Test telemetry contract codegen

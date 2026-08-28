@@ -76,9 +76,17 @@ Bearer Token 验证的设备使用带 TTL 清理的有界令牌桶，限流键�
 使用项目根目录的 Docker Compose 部署：
 
 ```sh
+# 命令从仓库根目录执行。
 # 复制环境变量配置
 cp .env.example .env
+# 启动前替换所有 replace-with-* 占位符，尤其要让
+# TELEMETRY_MYSQL_DSN/TELEMETRY_REDIS_URL 与 Analytics 容器密码一致。
 
-# 构建并启动服务
-docker compose up -d --build
+# 构建并启动服务及持久化 Analytics 存储
+docker compose --env-file .env --profile storage up -d --build
 ```
+
+生产配置要求 `TELEMETRY_MYSQL_DSN`、`TELEMETRY_REDIS_URL`、
+`TELEMETRY_AUTH_SECRET`、`ANALYTICS_MYSQL_PASSWORD`、
+`ANALYTICS_MYSQL_ROOT_PASSWORD` 和 `ANALYTICS_REDIS_PASSWORD` 六项值；
+Compose 缺少任一项会快速失败，示例文件只提供占位符，不包含可预测密码。

@@ -85,9 +85,14 @@ bounds; see `.env.example`.
 Deploy using the root Docker Compose file:
 
 ```sh
-# Copy environment file
+# Run from the repository root.
 cp .env.example .env
+# Replace every replace-with-* placeholder before starting the stack. In
+# particular, TELEMETRY_MYSQL_DSN and TELEMETRY_REDIS_URL must use the same
+# generated credentials as ANALYTICS_MYSQL_PASSWORD and ANALYTICS_REDIS_PASSWORD.
+# The production stack requires all six analytics/telemetry values; Compose
+# fails fast instead of selecting a predictable default.
 
-# Start services
-docker compose up -d --build
+# Start services and durable Analytics storage.
+docker compose --env-file .env --profile storage up -d --build
 ```

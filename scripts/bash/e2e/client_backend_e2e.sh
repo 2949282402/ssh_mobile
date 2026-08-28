@@ -150,6 +150,7 @@ start_compose() {
   ENV_FILE="$TMP_ROOT/relay.env"
   local http_port https_port credential_key network_octet network_subnet caddy_ip
   local mysql_root_password mysql_user mysql_password redis_password relay_storage_mode relay_database_url relay_redis_url
+  local analytics_mysql_password analytics_mysql_root_password analytics_redis_password telemetry_auth_secret
   http_port="$(find_free_port)"
   https_port="$(find_free_port)"
   ENROLLMENT_TOKEN="$(random_hex 24)"
@@ -163,6 +164,10 @@ start_compose() {
   mysql_user="e2e_relay"
   mysql_password="$(random_hex 24)"
   redis_password="$(random_hex 24)"
+  analytics_mysql_password="$(random_hex 24)"
+  analytics_mysql_root_password="$(random_hex 24)"
+  analytics_redis_password="$(random_hex 24)"
+  telemetry_auth_secret="$(random_hex 24)"
   BASE_URL="http://127.0.0.1:${http_port}"
   network_octet=$((16 + $(od -An -N1 -tu1 /dev/urandom) % 16))
   while [[ "$network_octet" == 17 || "$network_octet" == 30 ]]; do
@@ -252,7 +257,13 @@ start_compose() {
     "MYSQL_ROOT_PASSWORD=$mysql_root_password" \
     'MYSQL_DATABASE=relay' \
     "MYSQL_USER=$mysql_user" \
-    "MYSQL_PASSWORD=$mysql_password" > "$ENV_FILE"
+    "MYSQL_PASSWORD=$mysql_password" \
+    "TELEMETRY_MYSQL_DSN=telemetry:${analytics_mysql_password}@tcp(analytics-mysql:3306)/telemetry?parseTime=true&loc=UTC" \
+    "TELEMETRY_REDIS_URL=redis://:${analytics_redis_password}@analytics-redis:6379/0" \
+    "TELEMETRY_AUTH_SECRET=$telemetry_auth_secret" \
+    "ANALYTICS_MYSQL_PASSWORD=$analytics_mysql_password" \
+    "ANALYTICS_MYSQL_ROOT_PASSWORD=$analytics_mysql_root_password" \
+    "ANALYTICS_REDIS_PASSWORD=$analytics_redis_password" > "$ENV_FILE"
 
   COMPOSE_STARTED=1
   compose up -d --build
