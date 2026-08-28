@@ -1,4 +1,4 @@
-package admin
+package admin_test
 
 import (
 	"bytes"
@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	. "github.com/ssh-mobile/relay/internal/admin"
 )
 
 // TestAdminTelemetryFailClosedNoMySQL verifies that with no TELEMETRY_MYSQL_DSN

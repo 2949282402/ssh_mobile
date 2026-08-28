@@ -1,4 +1,4 @@
-package telemetry
+package telemetry_test
 
 import (
 	"context"
@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	. "github.com/ssh-mobile/relay/internal/telemetry"
 )
 
 // testAuthSecret is a valid (>=16 char) token signing secret for tests.
@@ -34,6 +36,11 @@ func registerDevice(t *testing.T, store *MemoryStore, deviceID string) (string, 
 		t.Fatalf("register device credential: %v", err)
 	}
 	return secret, hash
+}
+
+func hashSecret(secret string) string {
+	digest := sha256.Sum256([]byte(secret))
+	return hex.EncodeToString(digest[:])
 }
 
 // deviceProof computes hex(HMAC-SHA256(key=storedHash, data="telemetry:auth:"+deviceID+":"+expEpoch)).

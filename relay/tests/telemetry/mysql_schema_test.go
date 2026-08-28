@@ -1,4 +1,4 @@
-package telemetry
+package telemetry_test
 
 import (
 	"context"
@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	. "github.com/ssh-mobile/relay/internal/telemetry"
 )
 
 const schemaProbeDriverName = "telemetry-schema-probe"

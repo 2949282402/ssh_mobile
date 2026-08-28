@@ -29,7 +29,7 @@ echo "Validating Telemetry contracts..."
 # 2. Go validation
 (
   cd "$ROOT_DIR/relay"
-  go test ./internal/telemetry -run '^TestTelemetryContract' -count=1
+  go test ./tests/telemetry -run '^TestTelemetryContract' -count=1
 )
 
 # 3. TypeScript / Front validation

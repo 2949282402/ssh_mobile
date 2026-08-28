@@ -1,4 +1,4 @@
-package telemetry
+package telemetry_test
 
 import (
 	"context"
@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	. "github.com/ssh-mobile/relay/internal/telemetry"
 )
 
 func TestTelemetryContractGeneratedCatalogMatchesFiles(t *testing.T) {

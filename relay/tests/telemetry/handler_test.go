@@ -1,4 +1,4 @@
-package telemetry
+package telemetry_test
 
 import (
 	"bytes"
@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	. "github.com/ssh-mobile/relay/internal/telemetry"
 )
 
 func TestTelemetryHTTPHandler(t *testing.T) {

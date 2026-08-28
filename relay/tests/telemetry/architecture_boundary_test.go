@@ -1,4 +1,4 @@
-package telemetry
+package telemetry_test
 
 import (
 	"os"
@@ -13,7 +13,10 @@ func TestTelemetryArchitectureBoundaries(t *testing.T) {
 		t.Fatalf("failed to get working dir: %v", err)
 	}
 
-	relayInternalDir := filepath.Clean(filepath.Join(wd, ".."))
+	// Tests live under relay/tests; resolve the repository root explicitly so
+	// this structural assertion remains valid after test-root isolation.
+	repoRoot := filepath.Clean(filepath.Join(wd, "..", "..", ".."))
+	relayInternalDir := filepath.Join(repoRoot, "relay", "internal")
 
 	forbiddenRelayImport := "github.com/ssh-mobile/relay" + "/internal/telemetry"
 	forbiddenTelemetryImport := "github.com/ssh-mobile/relay" + "/internal/relay"

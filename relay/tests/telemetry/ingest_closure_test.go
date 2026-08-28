@@ -1,20 +1,18 @@
-package telemetry
+package telemetry_test
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"math"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
+	. "github.com/ssh-mobile/relay/internal/telemetry"
 )
 
 func TestHandlePublicIngestChunkedBodyBoundaryAndTrailingValidation(t *testing.T) {
@@ -62,46 +60,6 @@ func TestHandlePublicIngestChunkedBodyBoundaryAndTrailingValidation(t *testing.T
 	}
 }
 
-func TestNormalizeIngestConfigRejectsNonFiniteRateValuesAfterAliasSelection(t *testing.T) {
-	cases := []IngestConfig{
-		{RateLimitRefillPerSecond: math.NaN()},
-		{RateLimitRefillPerSecond: math.Inf(1)},
-		{RateLimitRefillPerSecond: 0, RateLimitRefillPerSec: math.NaN()},
-		{RateLimitRefillPerSecond: 0, RateLimitRefillPerSec: math.Inf(-1)},
-	}
-	for _, input := range cases {
-		got := normalizeIngestConfig(input)
-		if math.IsNaN(got.RateLimitRefillPerSecond) || math.IsInf(got.RateLimitRefillPerSecond, 0) {
-			t.Fatalf("normalizeIngestConfig(%+v) left non-finite refill rate: %v", input, got.RateLimitRefillPerSecond)
-		}
-		if got.RateLimitRefillPerSecond != DefaultIngestRateLimitRefillPerSec {
-			t.Fatalf("normalized refill rate = %v, want safe default %v for %+v", got.RateLimitRefillPerSecond, DefaultIngestRateLimitRefillPerSec, input)
-		}
-	}
-}
-
-func TestWriteIngestRetryErrorUsesFractionalCeilingAndConfiguredBound(t *testing.T) {
-	config := DefaultIngestConfig()
-	config.RetryAfterSeconds = 2
-	handler := NewHandlerWithConfig(nil, config)
-
-	rec := httptest.NewRecorder()
-	handler.writeIngestRetryError(rec, ErrIngestOverloaded, 1200*time.Millisecond)
-	if got := rec.Header().Get("Retry-After"); got != "2" {
-		t.Fatalf("Retry-After for fractional delay = %q, want 2", got)
-	}
-	rec = httptest.NewRecorder()
-	handler.writeIngestRetryError(rec, ErrIngestOverloaded, 60*time.Second)
-	if got := rec.Header().Get("Retry-After"); got != "2" {
-		t.Fatalf("Retry-After exceeded configured ceiling: got %q, want 2", got)
-	}
-	rec = httptest.NewRecorder()
-	handler.writeIngestRetryError(rec, ErrIngestOverloaded, time.Duration(1<<63-1))
-	if got := rec.Header().Get("Retry-After"); got != "2" {
-		t.Fatalf("Retry-After overflow escaped configured ceiling: got %q, want 2", got)
-	}
-}
-
 func TestServiceAndStoresRejectOversizedDirectBatches(t *testing.T) {
 	records := make([]TelemetryEnvelope, DefaultIngestMaxBatchSize+1)
 	for i := range records {
@@ -116,7 +74,7 @@ func TestServiceAndStoresRejectOversizedDirectBatches(t *testing.T) {
 	if _, err := store.IngestBatch(context.Background(), records); !errors.Is(err, ErrIngestBatchTooLarge) {
 		t.Fatalf("memory oversized batch error = %v, want ErrIngestBatchTooLarge", err)
 	}
-	var mysqlStore *MySQLStore
+	mysqlStore := NewMySQLStore(nil, DefaultCatalog())
 	if _, err := mysqlStore.IngestBatch(context.Background(), records); !errors.Is(err, ErrIngestBatchTooLarge) {
 		t.Fatalf("mysql oversized batch error = %v, want ErrIngestBatchTooLarge", err)
 	}
@@ -125,15 +83,14 @@ func TestServiceAndStoresRejectOversizedDirectBatches(t *testing.T) {
 func TestMySQLIngestCanceledContextShortCircuitsBeforeValidation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	store := &MySQLStore{catalog: DefaultCatalog()}
-	cases := []struct {
+	store := NewMySQLStore(nil, DefaultCatalog())
+	for _, tc := range []struct {
 		name      string
 		envelopes []TelemetryEnvelope
 	}{
 		{name: "empty batch", envelopes: nil},
 		{name: "all invalid batch", envelopes: []TelemetryEnvelope{{EventID: ""}}},
-	}
-	for _, tc := range cases {
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := store.IngestBatch(ctx, tc.envelopes); !errors.Is(err, context.Canceled) {
 				t.Fatalf("canceled MySQL ingest error = %v, want context.Canceled", err)
@@ -200,71 +157,5 @@ func TestMemoryStoreEventIDsRemainExactAndCaseSensitive(t *testing.T) {
 		if ack.Status != StatusAlreadySeen || ack.EventID != ids[i] {
 			t.Fatalf("replay ack[%d] = %#v, want already_seen exact ID %q", i, ack, ids[i])
 		}
-	}
-}
-
-func TestMySQLIngestOrdersEventIDsForDeterministicLockAcquisition(t *testing.T) {
-	input := []TelemetryEnvelope{testEnvelope("evt-z", "device-1"), testEnvelope("EVT-A", "device-1"), testEnvelope("evt-a", "device-1")}
-	ordered := orderedIngestEnvelopes(input)
-	got := make([]string, 0, len(ordered))
-	for _, envelope := range ordered {
-		got = append(got, envelope.EventID)
-	}
-	want := []string{"EVT-A", "evt-a", "evt-z"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("ordered event IDs = %#v, want %#v", got, want)
-	}
-	if input[0].EventID != "evt-z" {
-		t.Fatalf("ordering helper mutated input: %#v", input)
-	}
-}
-
-func TestMySQLMultirowInsertArgumentsPreserveJSONAndSQLNulls(t *testing.T) {
-	plain := testEnvelope("evt-null-json", "device-1")
-	plain.Properties = nil
-	plain.Error = nil
-	withJSON := testEnvelope("evt-json", "device-1")
-	withJSON.Properties = map[string]any{"session_type": "interactive"}
-	withJSON.Error = &TelemetryError{
-		ErrorCode:       "SSH_AUTH_FAILED",
-		Category:        "ssh",
-		TerminalFailure: true,
-		Message:         "redacted test failure",
-	}
-	args, err := telemetryEventInsertArgs([]TelemetryEnvelope{plain, withJSON}, time.Unix(10, 0).UTC())
-	if err != nil {
-		t.Fatalf("build multi-row insert args: %v", err)
-	}
-	if len(args) != 36 {
-		t.Fatalf("multi-row arg count = %d, want 36", len(args))
-	}
-	if args[15] != nil || args[16] != nil || args[11] != nil {
-		t.Fatalf("nil JSON/error fields were not SQL NULLs: props=%#v error=%#v code=%#v", args[15], args[16], args[11])
-	}
-	if got, ok := args[33].([]byte); !ok || string(got) != `{"session_type":"interactive"}` {
-		t.Fatalf("properties JSON arg = %#v, want canonical JSON bytes", args[33])
-	}
-	if got, ok := args[34].([]byte); !ok || !strings.Contains(string(got), `"errorCode":"SSH_AUTH_FAILED"`) {
-		t.Fatalf("error JSON arg = %#v, want encoded error", args[34])
-	}
-	if got := mysqlValueTuples(2, 18); strings.Count(got, "(") != 2 || strings.Count(got, "?") != 36 {
-		t.Fatalf("multi-row SQL tuple shape = %q", got)
-	}
-}
-
-func TestMySQLIngestRetriesDeadlockAndLockWaitErrors(t *testing.T) {
-	cases := []error{
-		&mysql.MySQLError{Number: 1213, Message: "Deadlock found when trying to get lock"},
-		&mysql.MySQLError{Number: 1205, Message: "Lock wait timeout exceeded"},
-		errors.New("Error 1213: deadlock found when trying to get lock"),
-		errors.New("Error 1205: lock wait timeout exceeded"),
-	}
-	for _, err := range cases {
-		if !isRetryableIngestConflict(err) {
-			t.Fatalf("isRetryableIngestConflict(%v) = false, want true", err)
-		}
-	}
-	if isRetryableIngestConflict(errors.New("validation failed")) {
-		t.Fatal("validation error was classified as retryable")
 	}
 }

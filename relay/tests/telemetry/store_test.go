@@ -1,11 +1,14 @@
-package telemetry
+package telemetry_test
 
 import (
 	"context"
 	"errors"
 	"os"
+	"strconv"
 	"testing"
 	"time"
+
+	. "github.com/ssh-mobile/relay/internal/telemetry"
 )
 
 func TestTelemetryCredentialStoresAreCreateOnly(t *testing.T) {
@@ -36,8 +39,7 @@ func TestMySQLTelemetryCredentialStoreCreateOnlyWhenDSNAvailable(t *testing.T) {
 		t.Fatalf("open telemetry MySQL store: %v", err)
 	}
 	defer store.Close()
-	deviceID := "test-create-only-mysql"
-	_, _ = store.db.ExecContext(context.Background(), "DELETE FROM telemetry_device_credentials WHERE device_id = ?", deviceID)
+	deviceID := "test-create-only-mysql-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	if err := store.CreateDeviceCredential(context.Background(), deviceID, "hash-one"); err != nil {
 		t.Fatalf("first MySQL create failed: %v", err)
 	}
@@ -48,7 +50,6 @@ func TestMySQLTelemetryCredentialStoreCreateOnlyWhenDSNAvailable(t *testing.T) {
 	if err != nil || stored != "hash-one" {
 		t.Fatalf("MySQL create-only store changed existing hash: value=%q err=%v", stored, err)
 	}
-	_, _ = store.db.ExecContext(context.Background(), "DELETE FROM telemetry_device_credentials WHERE device_id = ?", deviceID)
 }
 
 func TestTelemetryStoreIngestAndIdempotency(t *testing.T) {

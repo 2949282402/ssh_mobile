@@ -2,8 +2,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { ToastProvider } from '../../components/toast';
-import { TelemetryEventsPage } from './telemetry-events-page';
+import { ToastProvider } from '../../src/components/toast';
+import { TelemetryEventsPage } from '../../src/features/telemetry/telemetry-events-page';
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {

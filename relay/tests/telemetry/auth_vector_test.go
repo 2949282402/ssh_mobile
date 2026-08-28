@@ -1,10 +1,12 @@
-package telemetry
+package telemetry_test
 
 import (
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+
+	. "github.com/ssh-mobile/relay/internal/telemetry"
 )
 
 type authVectorFile struct {

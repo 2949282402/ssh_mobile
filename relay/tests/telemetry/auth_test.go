@@ -1,4 +1,4 @@
-package telemetry
+package telemetry_test
 
 import (
 	"bytes"
@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	. "github.com/ssh-mobile/relay/internal/telemetry"
 )
 
 // Auth Flow Tests
@@ -137,11 +139,12 @@ func TestVerifyDeviceToken_LegacySinglePartTokenRejected(t *testing.T) {
 
 func TestVerifyDeviceToken_ExpiredTokenRejected(t *testing.T) {
 	service, _ := newTestService(testAuthSecret)
-	// Craft a token whose exp is already in the past.
-	pastExp := time.Now().UTC().Add(-2 * time.Hour).Unix()
-	token, exp := service.signToken("dev-expired", pastExp)
-	if exp != pastExp {
-		t.Fatalf("expected exp=%d, got %d", pastExp, exp)
+	// The public generator truncates to Unix seconds; a sub-second lifetime
+	// produces a token that is already expired without reaching private signing
+	// helpers or sleeping for a full token lifetime.
+	token, exp := service.GenerateDeviceToken("dev-expired", time.Nanosecond)
+	if exp <= 0 {
+		t.Fatalf("expected a generated expiry, got %d", exp)
 	}
 	if service.VerifyDeviceToken("dev-expired", token) {
 		t.Fatal("expected expired token to be rejected")

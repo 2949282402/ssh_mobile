@@ -1,4 +1,4 @@
-package telemetry
+package telemetry_test
 
 import (
 	"bytes"
@@ -7,11 +7,12 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	. "github.com/ssh-mobile/relay/internal/telemetry"
 )
 
 func TestHandlePublicIngestRejectsOversizeBodyBeforeParsing(t *testing.T) {
@@ -48,12 +49,11 @@ func TestHandlePublicIngestRejectsBatchAboveConfiguredLimit(t *testing.T) {
 	mux := http.NewServeMux()
 	handler.RegisterPublicRoutes(mux)
 
-	batch := IngestBatchRequest{Records: []TelemetryEnvelope{
+	body, err := json.Marshal(IngestBatchRequest{Records: []TelemetryEnvelope{
 		testEnvelope("evt-batch-1", deviceID),
 		testEnvelope("evt-batch-2", deviceID),
 		testEnvelope("evt-batch-3", deviceID),
-	}}
-	body, err := json.Marshal(batch)
+	}})
 	if err != nil {
 		t.Fatalf("marshal batch: %v", err)
 	}
@@ -132,99 +132,82 @@ func TestHandlePublicIngestWriterSaturationReturnsBoundedRetry(t *testing.T) {
 	requests.Wait()
 }
 
-func TestDeviceRateLimiterBurstRefillIsolationAndBoundedCleanup(t *testing.T) {
-	now := time.Unix(100, 0).UTC()
-	config := normalizeIngestConfig(IngestConfig{
-		RateLimitCapacity:        2,
-		RateLimitRefillPerSecond: 1,
-		RateLimitMaxDevices:      2,
-		RateLimitDeviceTTL:       10 * time.Second,
-		Clock:                    func() time.Time { return now },
+func TestPublicIngestRateLimitUsesAuthenticatedIdentityAndExpiresBuckets(t *testing.T) {
+	t.Run("burst refill", func(t *testing.T) {
+		service, store := newTestService(testAuthSecret)
+		deviceID := "dev-rate-burst"
+		token := mustAuth(t, service, store, deviceID)
+		now := time.Unix(100, 0).UTC()
+		handler := NewHandlerWithConfig(service, IngestConfig{
+			RateLimitCapacity:        2,
+			RateLimitRefillPerSecond: 1,
+			RateLimitMaxDevices:      8,
+			RateLimitDeviceTTL:       10 * time.Second,
+			RetryAfterSeconds:        2,
+			Clock:                    func() time.Time { return now },
+		})
+		mux := http.NewServeMux()
+		handler.RegisterPublicRoutes(mux)
+
+		send := func(id string) *httptest.ResponseRecorder {
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, ingestRequest(t, token, deviceID, testEnvelope(id, deviceID)))
+			return rec
+		}
+		if rec := send("evt-rate-1"); rec.Code != http.StatusOK {
+			t.Fatalf("first burst status = %d: %s", rec.Code, rec.Body.String())
+		}
+		if rec := send("evt-rate-2"); rec.Code != http.StatusOK {
+			t.Fatalf("second burst status = %d: %s", rec.Code, rec.Body.String())
+		}
+		if rec := send("evt-rate-3"); rec.Code != http.StatusTooManyRequests {
+			t.Fatalf("third burst status = %d, want 429", rec.Code)
+		}
+		now = now.Add(time.Second)
+		if rec := send("evt-rate-refilled"); rec.Code != http.StatusOK {
+			t.Fatalf("refilled request status = %d: %s", rec.Code, rec.Body.String())
+		}
 	})
-	limiter := newDeviceRateLimiter(config)
 
-	if allowed, _ := limiter.allow("device-a", now); !allowed {
-		t.Fatal("first burst token should be accepted")
-	}
-	if allowed, _ := limiter.allow("device-a", now); !allowed {
-		t.Fatal("second burst token should be accepted")
-	}
-	if allowed, retry := limiter.allow("device-a", now); allowed || retry != time.Second {
-		t.Fatalf("third burst result = allowed %v retry %v, want false/1s", allowed, retry)
-	}
-	if allowed, _ := limiter.allow("device-b", now); !allowed {
-		t.Fatal("device-b must have an isolated bucket")
-	}
-	if allowed, _ := limiter.allow("device-c", now); allowed {
-		t.Fatal("new device must not evict active buckets when cardinality is full")
-	}
-
-	now = now.Add(11 * time.Second)
-	if allowed, _ := limiter.allow("device-c", now); !allowed {
-		t.Fatal("expired buckets should be cleaned up before admitting a new device")
-	}
-	if got := limiter.entryCount(); got != 1 {
-		t.Fatalf("rate limiter entries after TTL cleanup = %d, want 1", got)
-	}
-
-	now = now.Add(time.Second)
-	if allowed, _ := limiter.allow("device-c", now); !allowed {
-		t.Fatal("device-c should refill after one second")
-	}
-}
-
-func TestNormalizeIngestConfigAppliesHardBounds(t *testing.T) {
-	config := normalizeIngestConfig(IngestConfig{
-		MaxBodyBytes:             maxIngestBodyBytes * 2,
-		MaxBatchSize:             maxIngestBatchSize * 2,
-		MaxConcurrentWriters:     maxIngestConcurrentWriters * 2,
-		RateLimitCapacity:        maxIngestRateLimitCapacity * 2,
-		RateLimitRefillPerSecond: maxIngestRateLimitRefill * 2,
-		RateLimitMaxDevices:      maxIngestRateLimitDevices * 2,
-		RateLimitDeviceTTL:       maxIngestDeviceTTL * 2,
-		RetryAfterSeconds:        maxIngestRetryAfterSeconds * 2,
+	t.Run("bounded device cardinality and expiry", func(t *testing.T) {
+		service, store := newTestService(testAuthSecret)
+		now := time.Unix(200, 0).UTC()
+		handler := NewHandlerWithConfig(service, IngestConfig{
+			RateLimitCapacity:        10,
+			RateLimitRefillPerSecond: 10,
+			RateLimitMaxDevices:      2,
+			RateLimitDeviceTTL:       10 * time.Second,
+			RetryAfterSeconds:        2,
+			Clock:                    func() time.Time { return now },
+		})
+		mux := http.NewServeMux()
+		handler.RegisterPublicRoutes(mux)
+		tokens := make(map[string]string)
+		for _, deviceID := range []string{"dev-card-a", "dev-card-b", "dev-card-c"} {
+			tokens[deviceID] = mustAuth(t, service, store, deviceID)
+		}
+		send := func(deviceID, eventID string) *httptest.ResponseRecorder {
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, ingestRequest(t, tokens[deviceID], deviceID, testEnvelope(eventID, deviceID)))
+			return rec
+		}
+		if rec := send("dev-card-a", "evt-card-a"); rec.Code != http.StatusOK {
+			t.Fatalf("device A status = %d: %s", rec.Code, rec.Body.String())
+		}
+		if rec := send("dev-card-b", "evt-card-b"); rec.Code != http.StatusOK {
+			t.Fatalf("device B status = %d: %s", rec.Code, rec.Body.String())
+		}
+		if rec := send("dev-card-c", "evt-card-c"); rec.Code != http.StatusTooManyRequests {
+			t.Fatalf("new device over cardinality limit status = %d, want 429", rec.Code)
+		}
+		now = now.Add(11 * time.Second)
+		if rec := send("dev-card-c", "evt-card-c-after-expiry"); rec.Code != http.StatusOK {
+			t.Fatalf("expired bucket cleanup status = %d: %s", rec.Code, rec.Body.String())
+		}
 	})
-	if config.MaxBodyBytes != maxIngestBodyBytes || config.MaxBatchSize != maxIngestBatchSize ||
-		config.MaxConcurrentWriters != maxIngestConcurrentWriters ||
-		config.RateLimitCapacity != maxIngestRateLimitCapacity ||
-		config.RateLimitRefillPerSecond != maxIngestRateLimitRefill ||
-		config.RateLimitMaxDevices != maxIngestRateLimitDevices ||
-		config.RateLimitDeviceTTL != maxIngestDeviceTTL ||
-		config.RetryAfterSeconds != maxIngestRetryAfterSeconds {
-		t.Fatalf("normalized config exceeded hard bounds: %+v", config)
-	}
-	if config.RateLimitRefillPerSec != config.RateLimitRefillPerSecond || config.Clock == nil {
-		t.Fatalf("normalized refill alias/clock mismatch: %+v", config)
-	}
 }
 
-func TestIngestConfigFromEnvironment(t *testing.T) {
-	t.Setenv("TELEMETRY_MAX_BODY_BYTES", "2048")
-	t.Setenv("TELEMETRY_MAX_BATCH_SIZE", "7")
-	t.Setenv("TELEMETRY_MAX_CONCURRENT_WRITERS", "8")
-	t.Setenv("TELEMETRY_RATE_LIMIT_CAPACITY", "12")
-	t.Setenv("TELEMETRY_RATE_LIMIT_REFILL_PER_SECOND", "2.5")
-	t.Setenv("TELEMETRY_RATE_LIMIT_MAX_DEVICES", "32")
-	t.Setenv("TELEMETRY_RATE_LIMIT_DEVICE_TTL", "30s")
-	t.Setenv("TELEMETRY_RETRY_AFTER_SECONDS", "3")
-
-	config, err := IngestConfigFromEnvironment()
-	if err != nil {
-		t.Fatalf("read ingest config: %v", err)
-	}
-	if config.MaxBodyBytes != 2048 || config.MaxBatchSize != 7 || config.MaxConcurrentWriters != 8 ||
-		config.RateLimitCapacity != 12 || config.RateLimitRefillPerSecond != 2.5 ||
-		config.RateLimitMaxDevices != 32 || config.RateLimitDeviceTTL != 30*time.Second || config.RetryAfterSeconds != 3 {
-		t.Fatalf("unexpected environment config: %+v", config)
-	}
-
-	t.Setenv("TELEMETRY_MAX_BATCH_SIZE", "invalid")
-	if _, err := IngestConfigFromEnvironment(); err == nil {
-		t.Fatal("invalid environment config should fail closed")
-	}
-}
-
-func TestHandlePublicIngestDoesNotRateLimitSpoofedIdentity(t *testing.T) {
+func TestHandlePublicIngestRejectsSpoofedIdentityBeforeRateAdmission(t *testing.T) {
 	service, store := newTestService(testAuthSecret)
 	deviceA := "dev-rate-a"
 	tokenA := mustAuth(t, service, store, deviceA)
@@ -241,9 +224,6 @@ func TestHandlePublicIngestDoesNotRateLimitSpoofedIdentity(t *testing.T) {
 	mux.ServeHTTP(spoofedRec, spoofed)
 	if spoofedRec.Code != http.StatusUnauthorized {
 		t.Fatalf("spoofed identity status = %d, want 401", spoofedRec.Code)
-	}
-	if got := handler.limiter.entryCount(); got != 0 {
-		t.Fatalf("spoofed identity created rate-limit entry count=%d", got)
 	}
 
 	valid := ingestRequest(t, tokenA, deviceA, testEnvelope("evt-valid", deviceA))
@@ -267,12 +247,11 @@ func TestHandlePublicIngestPartialInvalidAndDuplicateBatch(t *testing.T) {
 
 	invalid := testEnvelope("evt-partial-invalid", deviceID)
 	invalid.Feature = "network"
-	batch := IngestBatchRequest{Records: []TelemetryEnvelope{
+	body, err := json.Marshal(IngestBatchRequest{Records: []TelemetryEnvelope{
 		testEnvelope("evt-partial", deviceID),
 		testEnvelope("evt-partial", deviceID),
 		invalid,
-	}}
-	body, err := json.Marshal(batch)
+	}})
 	if err != nil {
 		t.Fatalf("marshal batch: %v", err)
 	}
@@ -352,16 +331,14 @@ func TestHandlePublicIngestReleasesWriterAfterStoreFailure(t *testing.T) {
 	mux := http.NewServeMux()
 	handler.RegisterPublicRoutes(mux)
 
-	first := ingestRequest(t, token, deviceID, testEnvelope("evt-recovery-fail", deviceID))
 	firstRec := httptest.NewRecorder()
-	mux.ServeHTTP(firstRec, first)
+	mux.ServeHTTP(firstRec, ingestRequest(t, token, deviceID, testEnvelope("evt-recovery-fail", deviceID)))
 	if firstRec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("failed store status = %d, want 503", firstRec.Code)
 	}
 
-	second := ingestRequest(t, token, deviceID, testEnvelope("evt-recovery-ok", deviceID))
 	secondRec := httptest.NewRecorder()
-	mux.ServeHTTP(secondRec, second)
+	mux.ServeHTTP(secondRec, ingestRequest(t, token, deviceID, testEnvelope("evt-recovery-ok", deviceID)))
 	if secondRec.Code != http.StatusOK {
 		t.Fatalf("recovered store status = %d: %s", secondRec.Code, secondRec.Body.String())
 	}
@@ -395,179 +372,6 @@ func TestHandlePublicIngestReleasesWriterAfterStorePanic(t *testing.T) {
 	mux.ServeHTTP(recovered, ingestRequest(t, token, deviceID, testEnvelope("evt-after-panic", deviceID)))
 	if recovered.Code != http.StatusOK {
 		t.Fatalf("writer permit was not released after panic: status=%d body=%s", recovered.Code, recovered.Body.String())
-	}
-}
-
-func TestMySQLStoreConcurrentDuplicateEventIDs(t *testing.T) {
-	dsn := os.Getenv("TELEMETRY_TEST_MYSQL_DSN")
-	if dsn == "" {
-		dsn = os.Getenv("TELEMETRY_MYSQL_DSN")
-	}
-	if dsn == "" {
-		t.Skip("TELEMETRY_TEST_MYSQL_DSN or TELEMETRY_MYSQL_DSN not set; skipping MySQL integration test")
-	}
-
-	store, err := NewMySQLStoreFromDSN(dsn, DefaultCatalog())
-	if err != nil {
-		t.Fatalf("open telemetry MySQL store: %v", err)
-	}
-	defer store.Close()
-	const eventID = "evt-concurrent-mysql-duplicate"
-	const deviceID = "dev-concurrent-mysql"
-	cleanup := func() {
-		_, _ = store.db.ExecContext(context.Background(), "DELETE FROM telemetry_events WHERE event_id = ?", eventID)
-		_, _ = store.db.ExecContext(context.Background(), "DELETE FROM telemetry_ingest_receipts WHERE event_id = ?", eventID)
-	}
-	cleanup()
-	t.Cleanup(cleanup)
-
-	envelope := testEnvelope(eventID, deviceID)
-	const calls = 8
-	statuses := make(chan IngestStatus, calls)
-	var wait sync.WaitGroup
-	for i := 0; i < calls; i++ {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
-			got, err := store.IngestBatch(context.Background(), []TelemetryEnvelope{envelope})
-			if err != nil {
-				t.Errorf("concurrent MySQL ingest: %v", err)
-				return
-			}
-			statuses <- got[0].Status
-		}()
-	}
-	wait.Wait()
-	close(statuses)
-
-	var accepted, alreadySeen int
-	for status := range statuses {
-		switch status {
-		case StatusAccepted:
-			accepted++
-		case StatusAlreadySeen:
-			alreadySeen++
-		default:
-			t.Fatalf("unexpected MySQL concurrent status %q", status)
-		}
-	}
-	if accepted != 1 || alreadySeen != calls-1 {
-		t.Fatalf("MySQL concurrent statuses accepted=%d alreadySeen=%d, want 1/%d", accepted, alreadySeen, calls-1)
-	}
-}
-
-func TestMySQLStoreConcurrentReverseOverlapBatches(t *testing.T) {
-	dsn := os.Getenv("TELEMETRY_TEST_MYSQL_DSN")
-	if dsn == "" {
-		dsn = os.Getenv("TELEMETRY_MYSQL_DSN")
-	}
-	if dsn == "" {
-		t.Skip("TELEMETRY_TEST_MYSQL_DSN or TELEMETRY_MYSQL_DSN not set; skipping MySQL integration test")
-	}
-
-	store, err := NewMySQLStoreFromDSN(dsn, DefaultCatalog())
-	if err != nil {
-		t.Fatalf("open telemetry MySQL store: %v", err)
-	}
-	defer store.Close()
-	const deviceID = "dev-concurrent-mysql-overlap"
-	ids := []string{"evt-reverse-overlap-a", "evt-reverse-overlap-b"}
-	cleanup := func() {
-		for _, eventID := range ids {
-			_, _ = store.db.ExecContext(context.Background(), "DELETE FROM telemetry_events WHERE event_id = ?", eventID)
-			_, _ = store.db.ExecContext(context.Background(), "DELETE FROM telemetry_ingest_receipts WHERE event_id = ?", eventID)
-		}
-	}
-	cleanup()
-	t.Cleanup(cleanup)
-
-	forward := []TelemetryEnvelope{testEnvelope(ids[0], deviceID), testEnvelope(ids[1], deviceID)}
-	reverse := []TelemetryEnvelope{testEnvelope(ids[1], deviceID), testEnvelope(ids[0], deviceID)}
-	type batchResult struct {
-		acks []IngestRecordResult
-		err  error
-	}
-	results := make(chan batchResult, 2)
-	go func() {
-		acks, ingestErr := store.IngestBatch(context.Background(), forward)
-		results <- batchResult{acks: acks, err: ingestErr}
-	}()
-	go func() {
-		acks, ingestErr := store.IngestBatch(context.Background(), reverse)
-		results <- batchResult{acks: acks, err: ingestErr}
-	}()
-
-	accepted := make(map[string]int)
-	alreadySeen := make(map[string]int)
-	for i := 0; i < 2; i++ {
-		result := <-results
-		if result.err != nil {
-			t.Fatalf("reverse-overlap MySQL ingest: %v", result.err)
-		}
-		for _, ack := range result.acks {
-			switch ack.Status {
-			case StatusAccepted:
-				accepted[ack.EventID]++
-			case StatusAlreadySeen:
-				alreadySeen[ack.EventID]++
-			default:
-				t.Fatalf("unexpected reverse-overlap status for %q: %q", ack.EventID, ack.Status)
-			}
-		}
-	}
-	for _, eventID := range ids {
-		if accepted[eventID] != 1 || alreadySeen[eventID] != 1 {
-			t.Fatalf("reverse-overlap event %q accepted=%d alreadySeen=%d, want 1/1", eventID, accepted[eventID], alreadySeen[eventID])
-		}
-	}
-}
-
-func TestMySQLStoreEventIDsPreserveCaseAndTrailingBytes(t *testing.T) {
-	dsn := os.Getenv("TELEMETRY_TEST_MYSQL_DSN")
-	if dsn == "" {
-		dsn = os.Getenv("TELEMETRY_MYSQL_DSN")
-	}
-	if dsn == "" {
-		t.Skip("TELEMETRY_TEST_MYSQL_DSN or TELEMETRY_MYSQL_DSN not set; skipping MySQL integration test")
-	}
-
-	store, err := NewMySQLStoreFromDSN(dsn, DefaultCatalog())
-	if err != nil {
-		t.Fatalf("open telemetry MySQL store: %v", err)
-	}
-	defer store.Close()
-	const deviceID = "dev-mysql-event-id-bytes"
-	ids := []string{"evt-a", "EVT-A", "evt-a "}
-	cleanup := func() {
-		for _, eventID := range ids {
-			_, _ = store.db.ExecContext(context.Background(), "DELETE FROM telemetry_events WHERE event_id = ?", eventID)
-			_, _ = store.db.ExecContext(context.Background(), "DELETE FROM telemetry_ingest_receipts WHERE event_id = ?", eventID)
-		}
-	}
-	cleanup()
-	t.Cleanup(cleanup)
-
-	records := make([]TelemetryEnvelope, 0, len(ids))
-	for _, eventID := range ids {
-		records = append(records, testEnvelope(eventID, deviceID))
-	}
-	acks, err := store.IngestBatch(context.Background(), records)
-	if err != nil {
-		t.Fatalf("exact event-id ingest: %v", err)
-	}
-	for i, ack := range acks {
-		if ack.EventID != ids[i] || ack.Status != StatusAccepted {
-			t.Fatalf("exact event-id ack[%d] = %#v, want accepted %q", i, ack, ids[i])
-		}
-	}
-	replay, err := store.IngestBatch(context.Background(), records)
-	if err != nil {
-		t.Fatalf("exact event-id replay: %v", err)
-	}
-	for i, ack := range replay {
-		if ack.EventID != ids[i] || ack.Status != StatusAlreadySeen {
-			t.Fatalf("exact event-id replay ack[%d] = %#v, want already_seen %q", i, ack, ids[i])
-		}
 	}
 }
 

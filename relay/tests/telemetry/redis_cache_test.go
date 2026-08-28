@@ -1,10 +1,12 @@
-package telemetry
+package telemetry_test
 
 import (
 	"context"
 	"errors"
 	"testing"
 	"time"
+
+	. "github.com/ssh-mobile/relay/internal/telemetry"
 )
 
 type mockFailingRedisCache struct {
