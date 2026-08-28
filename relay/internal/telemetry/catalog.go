@@ -3,9 +3,12 @@
 package telemetry
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"math"
 	"os"
 	"reflect"
 	"sort"
@@ -23,6 +26,12 @@ import (
 const (
 	ContractEventsPath = "contracts/telemetry/events.json"
 	ContractErrorsPath = "contracts/telemetry/error_codes.json"
+)
+
+const (
+	telemetryPropertyTypeString  = "string"
+	telemetryPropertyTypeInteger = "integer"
+	telemetryPropertyTypeBoolean = "boolean"
 )
 
 type AllowedProperty struct {
@@ -104,26 +113,114 @@ func LoadCatalogFromFiles(eventsPath, errorsPath string) (*Catalog, error) {
 // LoadCatalogFromBytes parses catalog definitions from in-memory JSON bytes.
 func LoadCatalogFromBytes(eventsJSON, errorsJSON []byte) (*Catalog, error) {
 	var ep eventsPayload
-	if err := json.Unmarshal(eventsJSON, &ep); err != nil {
+	if err := decodeStrictContractJSON(eventsJSON, &ep); err != nil {
 		return nil, fmt.Errorf("unmarshal events JSON: %w", err)
 	}
 	var ecp errorCodesPayload
-	if err := json.Unmarshal(errorsJSON, &ecp); err != nil {
+	if err := decodeStrictContractJSON(errorsJSON, &ecp); err != nil {
 		return nil, fmt.Errorf("unmarshal error codes JSON: %w", err)
+	}
+	if err := validateContractPropertyTypes(&ep); err != nil {
+		return nil, err
 	}
 	return catalogFromPayloads(&ep, &ecp), nil
 }
 
 func catalogFromJSON(eventsJSON, errorsJSON []byte) (*Catalog, error) {
-	var ep eventsPayload
-	if err := json.Unmarshal(eventsJSON, &ep); err != nil {
-		return nil, fmt.Errorf("unmarshal events JSON: %w", err)
+	return LoadCatalogFromBytes(eventsJSON, errorsJSON)
+}
+
+func decodeStrictContractJSON(data []byte, dst any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil {
+		return err
 	}
-	var ecp errorCodesPayload
-	if err := json.Unmarshal(errorsJSON, &ecp); err != nil {
-		return nil, fmt.Errorf("unmarshal error codes JSON: %w", err)
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return errors.New("multiple JSON values")
+		}
+		return err
 	}
-	return catalogFromPayloads(&ep, &ecp), nil
+	return nil
+}
+
+func validateContractPropertyTypes(payload *eventsPayload) error {
+	for _, event := range payload.Events {
+		for _, property := range event.AllowedProperties {
+			if !isSupportedTelemetryPropertyType(property.Type) {
+				return fmt.Errorf("event %q property %q has unsupported primitive type %q", event.Name, property.Name, property.Type)
+			}
+		}
+	}
+	return nil
+}
+
+func isSupportedTelemetryPropertyType(propertyType string) bool {
+	switch propertyType {
+	case telemetryPropertyTypeString, telemetryPropertyTypeInteger, telemetryPropertyTypeBoolean:
+		return true
+	default:
+		return false
+	}
+}
+
+func isTelemetryPropertyValueType(propertyType string, value any) bool {
+	switch propertyType {
+	case telemetryPropertyTypeString:
+		_, ok := value.(string)
+		return ok
+	case telemetryPropertyTypeBoolean:
+		_, ok := value.(bool)
+		return ok
+	case telemetryPropertyTypeInteger:
+		return isTelemetryInteger(value)
+	default:
+		return false
+	}
+}
+
+func isTelemetryInteger(value any) bool {
+	switch value := value.(type) {
+	case int:
+		return true
+	case int8:
+		return true
+	case int16:
+		return true
+	case int32:
+		return true
+	case int64:
+		return true
+	case uint:
+		return uint64(value) <= uint64(1<<63-1)
+	case uint8:
+		return true
+	case uint16:
+		return true
+	case uint32:
+		return true
+	case uint64:
+		return value <= uint64(1<<63-1)
+	case json.Number:
+		if strings.ContainsAny(string(value), ".eE") {
+			return false
+		}
+		_, err := value.Int64()
+		return err == nil
+	case float32:
+		return isWholeTelemetryFloat(float64(value))
+	case float64:
+		return isWholeTelemetryFloat(value)
+	default:
+		return false
+	}
+}
+
+func isWholeTelemetryFloat(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) &&
+		math.Trunc(value) == value && value >= -9223372036854775808 && value < 9223372036854775808
 }
 
 func catalogFromPayloads(ep *eventsPayload, ecp *errorCodesPayload) *Catalog {
@@ -264,6 +361,9 @@ func (c *Catalog) ValidateEvent(name string, version int, properties map[string]
 	// Build map of allowed property names
 	allowed := make(map[string]AllowedProperty, len(def.AllowedProperties))
 	for _, p := range def.AllowedProperties {
+		if !isSupportedTelemetryPropertyType(p.Type) {
+			return fmt.Errorf("event %q property %q has unsupported primitive type %q", name, p.Name, p.Type)
+		}
 		allowed[p.Name] = p
 	}
 
@@ -277,9 +377,13 @@ func (c *Catalog) ValidateEvent(name string, version int, properties map[string]
 	}
 
 	// Verify all provided properties are allowed and not undeclared
-	for k := range properties {
-		if _, exists := allowed[k]; !exists {
+	for k, value := range properties {
+		property, exists := allowed[k]
+		if !exists {
 			return fmt.Errorf("unregistered property %q for event %q", k, name)
+		}
+		if !isTelemetryPropertyValueType(property.Type, value) {
+			return fmt.Errorf("property %q for event %q has invalid type %q", k, name, property.Type)
 		}
 	}
 
@@ -310,6 +414,7 @@ func (c *Catalog) ValidateEnvelopeAt(env *TelemetryEnvelope, now time.Time) erro
 	if env == nil {
 		return fmt.Errorf("missing envelope")
 	}
+	*env = sanitizeEnvelopeForServer(*env)
 	if strings.TrimSpace(env.EventID) == "" {
 		return fmt.Errorf("missing eventId")
 	}

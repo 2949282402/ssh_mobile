@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -83,7 +82,7 @@ func (h *Handler) handlePublicCredential(w http.ResponseWriter, r *http.Request,
 
 	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 	var request TelemetryEnrollmentRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+	if err := decodeStrictJSON(r.Body, &request); err != nil {
 		h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid enrollment request")
 		return
 	}
@@ -166,7 +165,7 @@ func (h *Handler) handlePublicAuth(w http.ResponseWriter, r *http.Request) {
 		Proof    string `json:"proof"`
 		ExpEpoch int64  `json:"expEpoch"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.DeviceID) == "" {
+	if err := decodeStrictJSON(r.Body, &body); err != nil || strings.TrimSpace(body.DeviceID) == "" {
 		h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid request: missing or empty deviceId")
 		return
 	}
@@ -227,28 +226,12 @@ func (h *Handler) handlePublicIngest(w http.ResponseWriter, r *http.Request) {
 	// 2. Decode Batch Body
 	r.Body = http.MaxBytesReader(w, r.Body, h.config.MaxBodyBytes)
 	var req IngestBatchRequest
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&req); err != nil {
+	if err := decodeStrictJSON(r.Body, &req); err != nil {
 		if isMaxBytesError(err) {
 			h.writeError(w, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", fmt.Sprintf("telemetry request body exceeds %d bytes", h.config.MaxBodyBytes))
 			return
 		}
-		h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid batch payload: "+err.Error())
-		return
-	}
-	// Decode exactly one JSON value. This also makes a chunked body containing
-	// trailing data subject to the same bounded-body classification.
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		if isMaxBytesError(err) {
-			h.writeError(w, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", fmt.Sprintf("telemetry request body exceeds %d bytes", h.config.MaxBodyBytes))
-			return
-		}
-		if err == nil {
-			h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid batch payload: multiple JSON values")
-			return
-		}
-		h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid batch payload: "+err.Error())
+		h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid batch payload")
 		return
 	}
 
@@ -259,6 +242,18 @@ func (h *Handler) handlePublicIngest(w http.ResponseWriter, r *http.Request) {
 	if len(req.Records) > h.config.MaxBatchSize {
 		h.writeError(w, http.StatusRequestEntityTooLarge, "BATCH_TOO_LARGE", fmt.Sprintf("telemetry batch contains %d records; maximum is %d", len(req.Records), h.config.MaxBatchSize))
 		return
+	}
+
+	// The body field remains optional at the decoding boundary for legacy
+	// partial batches, but when present it is an authenticated binding and must
+	// agree with the header. Never overwrite client data after authentication:
+	// doing so would hide a confused-deputy or replay attempt from validation
+	// and auditing.
+	for i := range req.Records {
+		if req.Records[i].DeviceID != "" && req.Records[i].DeviceID != deviceID {
+			h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "telemetry record deviceId does not match authenticated device")
+			return
+		}
 	}
 
 	// Admission is intentionally after token verification. The client-provided
@@ -277,11 +272,6 @@ func (h *Handler) handlePublicIngest(w http.ResponseWriter, r *http.Request) {
 	default:
 		h.writeIngestRetryError(w, ErrIngestOverloaded, time.Duration(h.config.RetryAfterSeconds)*time.Second)
 		return
-	}
-
-	// Ensure all records in the batch match the authenticated deviceId
-	for i := range req.Records {
-		req.Records[i].DeviceID = deviceID
 	}
 
 	// 3. Process Batch Ingest: server stamps receive time and persists atomically.
@@ -359,7 +349,7 @@ func (h *Handler) handleAdminRegisterDevice(w http.ResponseWriter, r *http.Reque
 	var body struct {
 		DeviceID string `json:"deviceId"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.DeviceID) == "" {
+	if err := decodeStrictJSON(r.Body, &body); err != nil || strings.TrimSpace(body.DeviceID) == "" {
 		h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid request: missing or empty deviceId")
 		return
 	}
@@ -481,8 +471,8 @@ func (h *Handler) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 		var settings TelemetrySettings
-		if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
-			h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid settings payload: "+err.Error())
+		if err := decodeStrictJSON(r.Body, &settings); err != nil {
+			h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid settings payload")
 			return
 		}
 		if err := h.service.UpdateSettings(r.Context(), settings); err != nil {

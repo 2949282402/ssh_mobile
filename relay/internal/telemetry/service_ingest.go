@@ -35,6 +35,7 @@ func (s *Service) IngestBatch(ctx context.Context, envelopes []TelemetryEnvelope
 	// Unconditionally stamp server receive time; client-supplied receivedAt is ignored.
 	now := time.Now().UTC()
 	for i := range envelopes {
+		envelopes[i] = sanitizeEnvelopeForServer(envelopes[i])
 		envelopes[i].ReceivedAt = now
 	}
 
