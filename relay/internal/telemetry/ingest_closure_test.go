@@ -122,6 +122,26 @@ func TestServiceAndStoresRejectOversizedDirectBatches(t *testing.T) {
 	}
 }
 
+func TestMySQLIngestCanceledContextShortCircuitsBeforeValidation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	store := &MySQLStore{catalog: DefaultCatalog()}
+	cases := []struct {
+		name      string
+		envelopes []TelemetryEnvelope
+	}{
+		{name: "empty batch", envelopes: nil},
+		{name: "all invalid batch", envelopes: []TelemetryEnvelope{{EventID: ""}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := store.IngestBatch(ctx, tc.envelopes); !errors.Is(err, context.Canceled) {
+				t.Fatalf("canceled MySQL ingest error = %v, want context.Canceled", err)
+			}
+		})
+	}
+}
+
 func TestMemoryStoreCanceledContextAndReceivedAtParity(t *testing.T) {
 	store := NewMemoryStore(DefaultCatalog())
 	old := time.Unix(1, 0).UTC()

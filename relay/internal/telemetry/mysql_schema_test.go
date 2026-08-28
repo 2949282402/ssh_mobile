@@ -17,11 +17,14 @@ var registerSchemaProbeDriver sync.Once
 var schemaProbe schemaProbeState
 
 type schemaProbeState struct {
-	mu           sync.Mutex
-	execs        []string
-	duplicateIDs int64
-	missingCalls int
-	legacyColumn bool
+	mu             sync.Mutex
+	execs          []string
+	duplicateIDs   int64
+	missingCalls   int
+	legacyColumn   bool
+	orphanReceipts int64
+	indexRows      [][]driver.Value
+	indexQueryErr  error
 }
 
 func (s *schemaProbeState) reset() {
@@ -31,6 +34,9 @@ func (s *schemaProbeState) reset() {
 	s.duplicateIDs = 0
 	s.missingCalls = 0
 	s.legacyColumn = false
+	s.orphanReceipts = 0
+	s.indexRows = nil
+	s.indexQueryErr = nil
 }
 
 func (s *schemaProbeState) recordExec(query string) {
@@ -67,6 +73,18 @@ func (c *schemaProbeConn) ExecContext(_ context.Context, query string, _ []drive
 func (c *schemaProbeConn) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
 	lower := strings.ToLower(query)
 	switch {
+	case strings.Contains(lower, "information_schema.statistics"):
+		c.state.mu.Lock()
+		indexRows := append([][]driver.Value(nil), c.state.indexRows...)
+		indexErr := c.state.indexQueryErr
+		c.state.mu.Unlock()
+		if indexErr != nil {
+			return nil, indexErr
+		}
+		return &schemaProbeMultiRows{
+			columns: []string{"NON_UNIQUE", "SEQ_IN_INDEX", "COLUMN_NAME", "SUB_PART", "DATA_TYPE", "CHARACTER_OCTET_LENGTH", "COLLATION_NAME"},
+			rows:    indexRows,
+		}, nil
 	case strings.Contains(lower, "information_schema.columns"):
 		c.state.mu.Lock()
 		dataType := "varbinary"
@@ -83,6 +101,11 @@ func (c *schemaProbeConn) QueryContext(_ context.Context, query string, _ []driv
 		duplicate := c.state.duplicateIDs
 		c.state.mu.Unlock()
 		return &schemaProbeRows{columns: []string{"COUNT(*)"}, values: []driver.Value{duplicate}}, nil
+	case strings.Contains(lower, "left join telemetry_events"):
+		c.state.mu.Lock()
+		orphan := c.state.orphanReceipts
+		c.state.mu.Unlock()
+		return &schemaProbeRows{columns: []string{"COUNT(*)"}, values: []driver.Value{orphan}}, nil
 	case strings.Contains(lower, "left join telemetry_ingest_receipts"):
 		c.state.mu.Lock()
 		c.state.missingCalls++
@@ -93,8 +116,6 @@ func (c *schemaProbeConn) QueryContext(_ context.Context, query string, _ []driv
 			missing = 0
 		}
 		return &schemaProbeRows{columns: []string{"COUNT(*)"}, values: []driver.Value{missing}}, nil
-	case strings.Contains(lower, "information_schema.statistics"):
-		return &schemaProbeRows{columns: []string{"COUNT(*)"}, values: []driver.Value{int64(0)}}, nil
 	default:
 		return &schemaProbeRows{}, nil
 	}
@@ -104,6 +125,25 @@ type schemaProbeRows struct {
 	columns []string
 	values  []driver.Value
 	done    bool
+}
+
+type schemaProbeMultiRows struct {
+	columns []string
+	rows    [][]driver.Value
+	index   int
+}
+
+func (r *schemaProbeMultiRows) Columns() []string { return r.columns }
+
+func (*schemaProbeMultiRows) Close() error { return nil }
+
+func (r *schemaProbeMultiRows) Next(dest []driver.Value) error {
+	if r.index >= len(r.rows) {
+		return io.EOF
+	}
+	copy(dest, r.rows[r.index])
+	r.index++
+	return nil
 }
 
 func (r *schemaProbeRows) Columns() []string { return r.columns }
@@ -205,6 +245,138 @@ func TestEnsureSchemaMigratesLegacyTextEventIDColumnsToBinary(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("legacy schema did not migrate %s event_id with %q; execs=%#v", table, want, schemaProbe.execs)
+		}
+	}
+}
+
+func TestEnsureSchemaRepairsInvalidEventIDIndexShapes(t *testing.T) {
+	valid := []driver.Value{int64(0), int64(1), "event_id", nil, "varbinary", int64(64), nil}
+	cases := []struct {
+		name string
+		rows [][]driver.Value
+	}{
+		{
+			name: "nonunique",
+			rows: [][]driver.Value{{int64(1), int64(1), "event_id", nil, "varbinary", int64(64), nil}},
+		},
+		{
+			name: "composite",
+			rows: [][]driver.Value{valid, []driver.Value{int64(0), int64(2), "device_id", nil, "varchar", int64(512), "utf8mb4_unicode_ci"}},
+		},
+		{
+			name: "prefix",
+			rows: [][]driver.Value{{int64(0), int64(1), "event_id", int64(32), "varbinary", int64(64), nil}},
+		},
+		{
+			name: "text collation",
+			rows: [][]driver.Value{{int64(0), int64(1), "event_id", nil, "varchar", int64(256), "utf8mb4_bin"}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := openSchemaProbe(t)
+			schemaProbe.mu.Lock()
+			schemaProbe.indexRows = tc.rows
+			schemaProbe.mu.Unlock()
+			store := NewMySQLStore(db, DefaultCatalog())
+			if err := store.EnsureSchema(context.Background()); err != nil {
+				t.Fatalf("EnsureSchema invalid %s index: %v", tc.name, err)
+			}
+			schemaProbe.mu.Lock()
+			defer schemaProbe.mu.Unlock()
+			var dropped, recreated bool
+			for _, query := range schemaProbe.execs {
+				lower := strings.ToLower(query)
+				dropped = dropped || strings.Contains(lower, "drop index uq_telemetry_event_id")
+				recreated = recreated || strings.Contains(lower, "add unique key uq_telemetry_event_id")
+			}
+			if !dropped || !recreated {
+				t.Fatalf("invalid %s index was not safely replaced: dropped=%v recreated=%v execs=%#v", tc.name, dropped, recreated, schemaProbe.execs)
+			}
+		})
+	}
+}
+
+func TestEnsureSchemaKeepsValidEventIDIndex(t *testing.T) {
+	db := openSchemaProbe(t)
+	schemaProbe.mu.Lock()
+	schemaProbe.indexRows = [][]driver.Value{{int64(0), int64(1), "event_id", nil, "varbinary", int64(64), nil}}
+	schemaProbe.mu.Unlock()
+	store := NewMySQLStore(db, DefaultCatalog())
+	if err := store.EnsureSchema(context.Background()); err != nil {
+		t.Fatalf("EnsureSchema valid event-id index: %v", err)
+	}
+	schemaProbe.mu.Lock()
+	defer schemaProbe.mu.Unlock()
+	for _, query := range schemaProbe.execs {
+		lower := strings.ToLower(query)
+		if strings.Contains(lower, "drop index uq_telemetry_event_id") || strings.Contains(lower, "add unique key uq_telemetry_event_id") {
+			t.Fatalf("valid event-id index was replaced: execs=%#v", schemaProbe.execs)
+		}
+	}
+}
+
+func TestEnsureSchemaRejectsMalformedEventIDIndexMetadata(t *testing.T) {
+	db := openSchemaProbe(t)
+	schemaProbe.mu.Lock()
+	schemaProbe.indexRows = [][]driver.Value{{"not-a-number", int64(1), "event_id", nil, "varbinary", int64(64), nil}}
+	schemaProbe.mu.Unlock()
+	store := NewMySQLStore(db, DefaultCatalog())
+	if err := store.EnsureSchema(context.Background()); err == nil || !strings.Contains(err.Error(), "inspect telemetry event id index") {
+		t.Fatalf("malformed index metadata error = %v, want explicit inspection failure", err)
+	}
+	schemaProbe.mu.Lock()
+	defer schemaProbe.mu.Unlock()
+	for _, query := range schemaProbe.execs {
+		if strings.Contains(strings.ToLower(query), "drop index uq_telemetry_event_id") {
+			t.Fatal("malformed index metadata was dropped instead of failing explicitly")
+		}
+	}
+}
+
+func TestEnsureSchemaRejectsIncompleteEventIDIndexMetadata(t *testing.T) {
+	db := openSchemaProbe(t)
+	schemaProbe.mu.Lock()
+	schemaProbe.indexRows = [][]driver.Value{{int64(0), int64(1), nil, nil, "varbinary", int64(64), nil}}
+	schemaProbe.mu.Unlock()
+	store := NewMySQLStore(db, DefaultCatalog())
+	if err := store.EnsureSchema(context.Background()); err == nil || !strings.Contains(err.Error(), "required metadata is NULL") {
+		t.Fatalf("incomplete index metadata error = %v, want explicit required-field failure", err)
+	}
+	schemaProbe.mu.Lock()
+	defer schemaProbe.mu.Unlock()
+	for _, query := range schemaProbe.execs {
+		if strings.Contains(strings.ToLower(query), "drop index uq_telemetry_event_id") {
+			t.Fatal("incomplete index metadata was dropped instead of failing explicitly")
+		}
+	}
+}
+
+func TestEnsureSchemaRejectsIndexMetadataQueryFailure(t *testing.T) {
+	db := openSchemaProbe(t)
+	schemaProbe.mu.Lock()
+	schemaProbe.indexQueryErr = errors.New("index metadata unavailable")
+	schemaProbe.mu.Unlock()
+	store := NewMySQLStore(db, DefaultCatalog())
+	if err := store.EnsureSchema(context.Background()); err == nil || !strings.Contains(err.Error(), "inspect telemetry event id index") {
+		t.Fatalf("index metadata query error = %v, want explicit inspection failure", err)
+	}
+}
+
+func TestEnsureSchemaRejectsOrphanTelemetryReceipts(t *testing.T) {
+	db := openSchemaProbe(t)
+	schemaProbe.mu.Lock()
+	schemaProbe.orphanReceipts = 1
+	schemaProbe.mu.Unlock()
+	store := NewMySQLStore(db, DefaultCatalog())
+	if err := store.EnsureSchema(context.Background()); err == nil || !strings.Contains(err.Error(), "orphan telemetry ingest receipts") {
+		t.Fatalf("orphan receipt migration error = %v, want explicit orphan failure", err)
+	}
+	schemaProbe.mu.Lock()
+	defer schemaProbe.mu.Unlock()
+	for _, query := range schemaProbe.execs {
+		if strings.Contains(strings.ToLower(query), "insert into telemetry_ingest_receipts") && strings.Contains(strings.ToLower(query), "select e.event_id") {
+			t.Fatal("orphan receipt migration attempted missing-receipt backfill")
 		}
 	}
 }

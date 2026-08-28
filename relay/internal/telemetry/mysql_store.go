@@ -180,9 +180,9 @@ func (s *MySQLStore) ensureEventIDBinaryColumns(ctx context.Context) error {
 }
 
 // ensureTelemetryReceiptConsistency repairs legacy raw-event rows that were
-// written before receipts became mandatory. An exact duplicate event ID is an
-// unrecoverable migration ambiguity and fails startup explicitly rather than
-// causing every later replay to surface as a misleading 503.
+// written before receipts became mandatory. Exact duplicate event IDs and
+// receipt-only rows are unrecoverable migration ambiguities; both fail startup
+// explicitly rather than causing later replays to surface as misleading 503s.
 func (s *MySQLStore) ensureTelemetryReceiptConsistency(ctx context.Context) error {
 	var duplicateCount int
 	if err := s.db.QueryRowContext(ctx, `
@@ -197,6 +197,19 @@ func (s *MySQLStore) ensureTelemetryReceiptConsistency(ctx context.Context) erro
 	}
 	if duplicateCount > 0 {
 		return fmt.Errorf("telemetry schema migration found %d duplicate event ids; resolve duplicates before enabling receipt idempotency", duplicateCount)
+	}
+
+	var orphanCount int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM telemetry_ingest_receipts r
+		LEFT JOIN telemetry_events e ON BINARY e.event_id = BINARY r.event_id
+		WHERE e.event_id IS NULL
+	`).Scan(&orphanCount); err != nil {
+		return fmt.Errorf("check orphan telemetry ingest receipts: %w", err)
+	}
+	if orphanCount > 0 {
+		return fmt.Errorf("telemetry schema migration found %d orphan telemetry ingest receipts with no raw event; resolve orphan receipts before enabling idempotency", orphanCount)
 	}
 
 	var missingCount int
@@ -240,19 +253,92 @@ func (s *MySQLStore) ensureTelemetryReceiptConsistency(ctx context.Context) erro
 // intentionally fail this migration instead of silently deleting telemetry or
 // weakening receipt semantics.
 func (s *MySQLStore) ensureEventIDUniqueIndex(ctx context.Context) error {
-	var count int
-	err := s.db.QueryRowContext(ctx, `
-		SELECT COUNT(*)
-		FROM information_schema.statistics
-		WHERE table_schema = DATABASE()
-		  AND table_name = 'telemetry_events'
-		  AND index_name = 'uq_telemetry_event_id'
-	`).Scan(&count)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT s.NON_UNIQUE, s.SEQ_IN_INDEX, s.COLUMN_NAME, s.SUB_PART,
+		       c.DATA_TYPE, c.CHARACTER_OCTET_LENGTH, c.COLLATION_NAME
+		FROM information_schema.statistics s
+		LEFT JOIN information_schema.columns c
+		  ON c.TABLE_SCHEMA = s.TABLE_SCHEMA
+		 AND c.TABLE_NAME = s.TABLE_NAME
+		 AND c.COLUMN_NAME = s.COLUMN_NAME
+		WHERE s.TABLE_SCHEMA = DATABASE()
+		  AND s.TABLE_NAME = 'telemetry_events'
+		  AND s.INDEX_NAME = 'uq_telemetry_event_id'
+		ORDER BY s.SEQ_IN_INDEX
+	`)
 	if err != nil {
-		return fmt.Errorf("check telemetry event id index: %w", err)
+		return fmt.Errorf("inspect telemetry event id index: %w", err)
 	}
-	if count > 0 {
-		return nil
+
+	type indexPart struct {
+		nonUnique   sql.NullInt64
+		seqInIndex  sql.NullInt64
+		columnName  sql.NullString
+		subPart     sql.NullInt64
+		dataType    sql.NullString
+		octetLength sql.NullInt64
+		collation   sql.NullString
+	}
+	parts := make([]indexPart, 0, 1)
+	for rows.Next() {
+		var part indexPart
+		if err := rows.Scan(
+			&part.nonUnique,
+			&part.seqInIndex,
+			&part.columnName,
+			&part.subPart,
+			&part.dataType,
+			&part.octetLength,
+			&part.collation,
+		); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("inspect telemetry event id index: scan metadata: %w", err)
+		}
+		parts = append(parts, part)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("inspect telemetry event id index: iterate metadata: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("inspect telemetry event id index: close metadata: %w", err)
+	}
+
+	for _, part := range parts {
+		if !part.nonUnique.Valid || !part.seqInIndex.Valid || !part.columnName.Valid ||
+			!part.dataType.Valid || !part.octetLength.Valid {
+			return fmt.Errorf("inspect telemetry event id index: required metadata is NULL")
+		}
+		if part.nonUnique.Int64 < 0 || part.seqInIndex.Int64 < 1 ||
+			strings.TrimSpace(part.columnName.String) == "" ||
+			strings.TrimSpace(part.dataType.String) == "" || part.octetLength.Int64 < 1 {
+			return fmt.Errorf("inspect telemetry event id index: malformed required metadata")
+		}
+		if part.subPart.Valid && part.subPart.Int64 < 1 {
+			return fmt.Errorf("inspect telemetry event id index: malformed prefix metadata")
+		}
+		if part.collation.Valid && strings.TrimSpace(part.collation.String) == "" {
+			return fmt.Errorf("inspect telemetry event id index: malformed collation metadata")
+		}
+	}
+
+	if len(parts) == 1 {
+		part := parts[0]
+		if part.nonUnique.Valid && part.nonUnique.Int64 == 0 &&
+			part.seqInIndex.Valid && part.seqInIndex.Int64 == 1 &&
+			part.columnName.Valid && part.columnName.String == "event_id" &&
+			!part.subPart.Valid &&
+			part.dataType.Valid && strings.EqualFold(part.dataType.String, "varbinary") &&
+			part.octetLength.Valid && part.octetLength.Int64 == 64 &&
+			!part.collation.Valid {
+			return nil
+		}
+	}
+
+	if len(parts) > 0 {
+		if _, err := s.db.ExecContext(ctx, "ALTER TABLE telemetry_events DROP INDEX uq_telemetry_event_id"); err != nil {
+			return fmt.Errorf("replace invalid telemetry event id index: drop existing index: %w", err)
+		}
 	}
 	if _, err := s.db.ExecContext(ctx, "ALTER TABLE telemetry_events ADD UNIQUE KEY uq_telemetry_event_id (event_id)"); err != nil {
 		return fmt.Errorf("add telemetry event id index: %w", err)
@@ -328,14 +414,17 @@ func waitForIngestRetry(ctx context.Context, attempt int) error {
 }
 
 func (s *MySQLStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnvelope) ([]IngestRecordResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(envelopes) > MaxIngestBatchSize {
 		return nil, fmt.Errorf("%w: maximum is %d records", ErrIngestBatchTooLarge, MaxIngestBatchSize)
 	}
 	if s == nil || s.db == nil || s.catalog == nil {
 		return nil, fmt.Errorf("%w: mysql telemetry store is unavailable", ErrServiceUnavailable)
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	now := time.Now().UTC()
 	results := make([]IngestRecordResult, len(envelopes))
