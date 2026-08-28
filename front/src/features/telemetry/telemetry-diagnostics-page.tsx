@@ -36,6 +36,7 @@ export function TelemetryDiagnosticsPage() {
     deviceId: '',
     traceId: '',
     errorCode: '',
+    releaseChannel: '',
     page: 1,
     pageSize: 20,
   });
@@ -65,6 +66,7 @@ export function TelemetryDiagnosticsPage() {
       traceId: '',
       severity: undefined,
       errorCode: '',
+      releaseChannel: '',
       page: 1,
       pageSize: 20,
     };
@@ -198,6 +200,14 @@ export function TelemetryDiagnosticsPage() {
               value={filterDraft.errorCode ?? ''}
               onChange={(e) => setFilterDraft((prev) => ({ ...prev, errorCode: e.target.value }))}
             />
+            <input
+              type="text"
+              placeholder="按发布渠道 (releaseChannel)..."
+              className="button button--quiet"
+              style={{ border: '1px solid var(--line)', padding: '0.5rem', textAlign: 'left' }}
+              value={filterDraft.releaseChannel ?? ''}
+              onChange={(e) => setFilterDraft((prev) => ({ ...prev, releaseChannel: e.target.value }))}
+            />
           </div>
 
           <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
@@ -318,6 +328,11 @@ function DiagnosticLogItem({
           <span style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>
             {log.feature}
           </span>
+          {log.releaseChannel ? (
+            <span style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>
+              channel: {log.releaseChannel}
+            </span>
+          ) : null}
           <span className="type-mono" style={{ fontSize: '0.85rem', color: 'var(--ink-soft)' }}>
             {log.deviceId}
           </span>
@@ -361,6 +376,12 @@ function DiagnosticLogItem({
               <span style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>Platform / Version:</span>
               <div className="type-mono" style={{ fontSize: '0.85rem' }}>{log.platform} ({log.appVersion}+{log.buildNumber})</div>
             </div>
+            {log.releaseChannel ? (
+              <div>
+                <span style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>Release Channel:</span>
+                <div className="type-mono" style={{ fontSize: '0.85rem' }}>{log.releaseChannel}</div>
+              </div>
+            ) : null}
           </div>
 
           {log.error ? (

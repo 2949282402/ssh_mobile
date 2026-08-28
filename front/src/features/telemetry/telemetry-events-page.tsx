@@ -47,6 +47,7 @@ export function TelemetryEventsPage() {
     deviceId: '',
     traceId: '',
     errorCode: '',
+    releaseChannel: '',
     page: 1,
     pageSize: 50,
   });
@@ -80,6 +81,7 @@ export function TelemetryEventsPage() {
       severity: undefined,
       platform: undefined,
       errorCode: '',
+      releaseChannel: '',
       page: 1,
       pageSize: 50,
     };
@@ -234,6 +236,14 @@ export function TelemetryEventsPage() {
               value={filterDraft.errorCode ?? ''}
               onChange={(e) => setFilterDraft((prev) => ({ ...prev, errorCode: e.target.value }))}
             />
+            <input
+              type="text"
+              placeholder="按发布渠道 (releaseChannel)..."
+              className="button button--quiet"
+              style={{ border: '1px solid var(--line)', padding: '0.5rem', textAlign: 'left' }}
+              value={filterDraft.releaseChannel ?? ''}
+              onChange={(e) => setFilterDraft((prev) => ({ ...prev, releaseChannel: e.target.value }))}
+            />
           </div>
 
           <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '0.25rem' }}>
@@ -355,6 +365,11 @@ function EventRowItem({
           <span style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>
             v{event.eventVersion} · {event.feature}
           </span>
+          {event.releaseChannel ? (
+            <span style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>
+              channel: {event.releaseChannel}
+            </span>
+          ) : null}
           <span className="type-mono" style={{ fontSize: '0.85rem', color: 'var(--ink-soft)' }}>
             {event.deviceId}
           </span>
@@ -402,6 +417,12 @@ function EventRowItem({
               <span style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>App Version:</span>
               <div className="type-mono" style={{ fontSize: '0.85rem' }}>{event.appVersion} ({event.buildNumber}) / {event.platform}</div>
             </div>
+            {event.releaseChannel ? (
+              <div>
+                <span style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>Release Channel:</span>
+                <div className="type-mono" style={{ fontSize: '0.85rem' }}>{event.releaseChannel}</div>
+              </div>
+            ) : null}
           </div>
 
           {event.error ? (

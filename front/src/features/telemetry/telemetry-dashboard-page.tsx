@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   BarChart3,
   RefreshCw,
+  Search,
 } from 'lucide-react';
 import { ApiRequestError } from '../../api/errors';
 import { useTelemetryOverview } from '../../hooks/use-telemetry';
@@ -106,7 +107,12 @@ function latencyAccent(value: number | undefined): 'teal' | 'amber' | 'coral' {
 
 export function TelemetryDashboardPage() {
   const [timeRange, setTimeRange] = useState<TelemetryFilter['timeRange']>('24h');
-  const overviewQuery = useTelemetryOverview({ timeRange });
+  const [releaseChannel, setReleaseChannel] = useState('');
+  const [releaseChannelDraft, setReleaseChannelDraft] = useState('');
+  const overviewQuery = useTelemetryOverview({
+    timeRange,
+    ...(releaseChannel.trim() ? { releaseChannel: releaseChannel.trim() } : {}),
+  });
   const data = overviewQuery.data;
 
   if (overviewQuery.isPending && !data) {
@@ -154,6 +160,26 @@ export function TelemetryDashboardPage() {
                 </Button>
               ))}
             </div>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                setReleaseChannel(releaseChannelDraft.trim());
+              }}
+              style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}
+            >
+              <input
+                type="text"
+                aria-label="发布渠道 (releaseChannel)"
+                placeholder="发布渠道..."
+                value={releaseChannelDraft}
+                onChange={(event) => setReleaseChannelDraft(event.target.value)}
+                className="button button--quiet"
+                style={{ border: '1px solid var(--line)', padding: '0.4rem 0.6rem', width: '8rem' }}
+              />
+              <Button type="submit" variant="quiet" aria-label="应用发布渠道筛选">
+                <Search size={15} aria-hidden="true" />
+              </Button>
+            </form>
             <Button
               variant="outline"
               onClick={() => void overviewQuery.refetch()}
