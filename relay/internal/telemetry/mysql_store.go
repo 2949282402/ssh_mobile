@@ -180,9 +180,9 @@ func (s *MySQLStore) ensureEventIDBinaryColumns(ctx context.Context) error {
 }
 
 // ensureTelemetryReceiptConsistency repairs legacy raw-event rows that were
-// written before receipts became mandatory. Exact duplicate event IDs and
-// receipt-only rows are unrecoverable migration ambiguities; both fail startup
-// explicitly rather than causing later replays to surface as misleading 503s.
+// written before receipts became mandatory. Receipt-only rows are expected when
+// raw telemetry is purged under ADR-033 because receipts persist for replay
+// idempotency; only exact duplicate raw event IDs fail this migration.
 func (s *MySQLStore) ensureTelemetryReceiptConsistency(ctx context.Context) error {
 	var duplicateCount int
 	if err := s.db.QueryRowContext(ctx, `
@@ -197,19 +197,6 @@ func (s *MySQLStore) ensureTelemetryReceiptConsistency(ctx context.Context) erro
 	}
 	if duplicateCount > 0 {
 		return fmt.Errorf("telemetry schema migration found %d duplicate event ids; resolve duplicates before enabling receipt idempotency", duplicateCount)
-	}
-
-	var orphanCount int
-	if err := s.db.QueryRowContext(ctx, `
-		SELECT COUNT(*)
-		FROM telemetry_ingest_receipts r
-		LEFT JOIN telemetry_events e ON BINARY e.event_id = BINARY r.event_id
-		WHERE e.event_id IS NULL
-	`).Scan(&orphanCount); err != nil {
-		return fmt.Errorf("check orphan telemetry ingest receipts: %w", err)
-	}
-	if orphanCount > 0 {
-		return fmt.Errorf("telemetry schema migration found %d orphan telemetry ingest receipts with no raw event; resolve orphan receipts before enabling idempotency", orphanCount)
 	}
 
 	var missingCount int
@@ -414,14 +401,14 @@ func waitForIngestRetry(ctx context.Context, attempt int) error {
 }
 
 func (s *MySQLStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnvelope) ([]IngestRecordResult, error) {
+	if len(envelopes) > MaxIngestBatchSize {
+		return nil, fmt.Errorf("%w: maximum is %d records", ErrIngestBatchTooLarge, MaxIngestBatchSize)
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
-	}
-	if len(envelopes) > MaxIngestBatchSize {
-		return nil, fmt.Errorf("%w: maximum is %d records", ErrIngestBatchTooLarge, MaxIngestBatchSize)
 	}
 	if s == nil || s.db == nil || s.catalog == nil {
 		return nil, fmt.Errorf("%w: mysql telemetry store is unavailable", ErrServiceUnavailable)

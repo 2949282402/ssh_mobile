@@ -17,14 +17,14 @@ var registerSchemaProbeDriver sync.Once
 var schemaProbe schemaProbeState
 
 type schemaProbeState struct {
-	mu             sync.Mutex
-	execs          []string
-	duplicateIDs   int64
-	missingCalls   int
-	legacyColumn   bool
-	orphanReceipts int64
-	indexRows      [][]driver.Value
-	indexQueryErr  error
+	mu            sync.Mutex
+	execs         []string
+	duplicateIDs  int64
+	missingCalls  int
+	legacyColumn  bool
+	indexRows     [][]driver.Value
+	indexQueryErr error
+	receiptIDs    []string
 }
 
 func (s *schemaProbeState) reset() {
@@ -34,9 +34,9 @@ func (s *schemaProbeState) reset() {
 	s.duplicateIDs = 0
 	s.missingCalls = 0
 	s.legacyColumn = false
-	s.orphanReceipts = 0
 	s.indexRows = nil
 	s.indexQueryErr = nil
+	s.receiptIDs = nil
 }
 
 func (s *schemaProbeState) recordExec(query string) {
@@ -61,9 +61,16 @@ func (*schemaProbeConn) Prepare(string) (driver.Stmt, error) {
 
 func (*schemaProbeConn) Close() error { return nil }
 
-func (*schemaProbeConn) Begin() (driver.Tx, error) {
-	return nil, errors.New("schema probe does not use transactions")
+func (c *schemaProbeConn) Begin() (driver.Tx, error) {
+	return &schemaProbeTx{conn: c}, nil
 }
+
+type schemaProbeTx struct {
+	conn *schemaProbeConn
+}
+
+func (*schemaProbeTx) Commit() error   { return nil }
+func (*schemaProbeTx) Rollback() error { return nil }
 
 func (c *schemaProbeConn) ExecContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Result, error) {
 	c.state.recordExec(query)
@@ -73,6 +80,15 @@ func (c *schemaProbeConn) ExecContext(_ context.Context, query string, _ []drive
 func (c *schemaProbeConn) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
 	lower := strings.ToLower(query)
 	switch {
+	case strings.Contains(lower, "select event_id from telemetry_ingest_receipts"):
+		c.state.mu.Lock()
+		receiptIDs := append([]string(nil), c.state.receiptIDs...)
+		c.state.mu.Unlock()
+		rows := make([][]driver.Value, 0, len(receiptIDs))
+		for _, eventID := range receiptIDs {
+			rows = append(rows, []driver.Value{eventID})
+		}
+		return &schemaProbeMultiRows{columns: []string{"event_id"}, rows: rows}, nil
 	case strings.Contains(lower, "information_schema.statistics"):
 		c.state.mu.Lock()
 		indexRows := append([][]driver.Value(nil), c.state.indexRows...)
@@ -101,11 +117,6 @@ func (c *schemaProbeConn) QueryContext(_ context.Context, query string, _ []driv
 		duplicate := c.state.duplicateIDs
 		c.state.mu.Unlock()
 		return &schemaProbeRows{columns: []string{"COUNT(*)"}, values: []driver.Value{duplicate}}, nil
-	case strings.Contains(lower, "left join telemetry_events"):
-		c.state.mu.Lock()
-		orphan := c.state.orphanReceipts
-		c.state.mu.Unlock()
-		return &schemaProbeRows{columns: []string{"COUNT(*)"}, values: []driver.Value{orphan}}, nil
 	case strings.Contains(lower, "left join telemetry_ingest_receipts"):
 		c.state.mu.Lock()
 		c.state.missingCalls++
@@ -363,20 +374,38 @@ func TestEnsureSchemaRejectsIndexMetadataQueryFailure(t *testing.T) {
 	}
 }
 
-func TestEnsureSchemaRejectsOrphanTelemetryReceipts(t *testing.T) {
+func TestEnsureSchemaAllowsReceiptOnlyRowsAndBackfillsMissingReceipts(t *testing.T) {
 	db := openSchemaProbe(t)
 	schemaProbe.mu.Lock()
-	schemaProbe.orphanReceipts = 1
+	schemaProbe.receiptIDs = []string{"evt-retained-receipt"}
 	schemaProbe.mu.Unlock()
 	store := NewMySQLStore(db, DefaultCatalog())
-	if err := store.EnsureSchema(context.Background()); err == nil || !strings.Contains(err.Error(), "orphan telemetry ingest receipts") {
-		t.Fatalf("orphan receipt migration error = %v, want explicit orphan failure", err)
+	ctx := context.Background()
+	if err := store.EnsureSchema(ctx); err != nil {
+		t.Fatalf("EnsureSchema with receipt-only rows: %v", err)
+	}
+	acks, err := store.IngestBatch(ctx, []TelemetryEnvelope{testEnvelope("evt-retained-receipt", "device-1")})
+	if err != nil {
+		t.Fatalf("receipt-only replay after schema migration: %v", err)
+	}
+	if len(acks) != 1 || acks[0].EventID != "evt-retained-receipt" || acks[0].Status != StatusAlreadySeen {
+		t.Fatalf("receipt-only replay ack = %#v, want exact already_seen result", acks)
 	}
 	schemaProbe.mu.Lock()
 	defer schemaProbe.mu.Unlock()
+	var backfilled bool
 	for _, query := range schemaProbe.execs {
-		if strings.Contains(strings.ToLower(query), "insert into telemetry_ingest_receipts") && strings.Contains(strings.ToLower(query), "select e.event_id") {
-			t.Fatal("orphan receipt migration attempted missing-receipt backfill")
+		lower := strings.ToLower(query)
+		if strings.Contains(lower, "insert into telemetry_ingest_receipts") && strings.Contains(lower, "select e.event_id") {
+			backfilled = true
+		}
+	}
+	if !backfilled {
+		t.Fatal("schema migration did not backfill raw events missing receipts while preserving receipt-only rows")
+	}
+	for _, query := range schemaProbe.execs {
+		if strings.Contains(strings.ToLower(query), "insert into telemetry_events") {
+			t.Fatalf("receipt-only replay attempted raw event insert: %s", query)
 		}
 	}
 }

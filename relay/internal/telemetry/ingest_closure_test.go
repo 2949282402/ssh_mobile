@@ -140,6 +140,10 @@ func TestMySQLIngestCanceledContextShortCircuitsBeforeValidation(t *testing.T) {
 			}
 		})
 	}
+	overSized := make([]TelemetryEnvelope, MaxIngestBatchSize+1)
+	if _, err := store.IngestBatch(ctx, overSized); !errors.Is(err, ErrIngestBatchTooLarge) {
+		t.Fatalf("canceled oversized MySQL ingest error = %v, want ErrIngestBatchTooLarge", err)
+	}
 }
 
 func TestMemoryStoreCanceledContextAndReceivedAtParity(t *testing.T) {
