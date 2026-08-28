@@ -196,11 +196,4 @@ impl PeerSupervisorRegistry {
             supervisor.stop();
         }
     }
-
-    pub(crate) fn len(&self) -> usize {
-        self.supervisors
-            .read()
-            .expect("peer supervisor registry lock")
-            .len()
-    }
 }

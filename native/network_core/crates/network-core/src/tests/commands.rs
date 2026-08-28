@@ -660,7 +660,10 @@ async fn remove_peer_evicts_configuration_and_supervisor() {
 
     assert!(!state.peers.read().await.contains_key("peer-a"));
     assert!(!state.trusted_peer_keys.read().await.contains_key("peer-a"));
-    assert_eq!(state.peer_supervisors.len(), 0);
+    assert!(!state
+        .peer_supervisors
+        .remove_if_evictable("peer-a")
+        .expect("removed peer supervisor lookup"));
     assert!(state
         .transfer
         .manager

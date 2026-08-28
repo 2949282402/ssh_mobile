@@ -38,7 +38,10 @@ fn peer_ids_are_validated_and_isolated() {
     let first = registry.get_or_create("peer-a").expect("first supervisor");
     let second = registry.get_or_create("peer-b").expect("second supervisor");
     assert!(!Arc::ptr_eq(&first, &second));
-    assert_eq!(registry.len(), 2);
+    let first_again = registry
+        .get_or_create("peer-a")
+        .expect("existing supervisor");
+    assert!(Arc::ptr_eq(&first, &first_again));
 }
 
 #[test]
@@ -57,11 +60,24 @@ fn supervisor_registry_enforces_budgets_and_evicts_idle_entries() {
             .get_or_create_with_configured(&format!("idle-{index}"), false)
             .expect("idle supervisor");
     }
-    assert_eq!(registry.len(), crate::connect::MAX_CONFIGURED_PEERS);
     registry
         .get_or_create("evicted-peer")
         .expect("an idle supervisor is evictable");
-    assert_eq!(registry.len(), crate::connect::MAX_CONFIGURED_PEERS);
+    let remaining_idle = (0..crate::connect::MAX_CONFIGURED_PEERS)
+        .filter(|index| {
+            registry
+                .remove_if_evictable(&format!("idle-{index}"))
+                .expect("idle supervisor eviction")
+        })
+        .count();
+    assert_eq!(
+        remaining_idle,
+        crate::connect::MAX_CONFIGURED_PEERS - 1,
+        "admitting one peer evicts exactly one idle supervisor"
+    );
+    assert!(registry
+        .remove_if_evictable("evicted-peer")
+        .expect("evicted supervisor remains addressable"));
 
     let configured = PeerSupervisorRegistry::new();
     for index in 0..crate::connect::MAX_CONFIGURED_PEERS {
