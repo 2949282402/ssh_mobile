@@ -138,6 +138,7 @@ func (h *Handler) writeError(w http.ResponseWriter, status int, code, message st
 	if code == "" {
 		code = "TELEMETRY_ERROR"
 	}
+	message = sanitizeDiagnosticText(message, MaxDiagnosticMessageLength)
 	h.writeJSON(w, status, map[string]any{
 		"error": map[string]string{
 			"code":    code,
