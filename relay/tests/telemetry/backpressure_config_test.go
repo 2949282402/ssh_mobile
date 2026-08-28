@@ -2,7 +2,6 @@ package telemetry_test
 
 import (
 	"context"
-	"os"
 	"strconv"
 	"sync"
 	"testing"
@@ -49,11 +48,15 @@ func TestIngestConfigRejectsNonFiniteRateValues(t *testing.T) {
 }
 
 func TestMySQLStoreConcurrentDuplicateEventIDs(t *testing.T) {
-	store := openTelemetryMySQLOrSkip(t)
-	defer store.Close()
+	store, dsn := openTelemetryMySQLOrSkip(t)
 	unique := strconv.FormatInt(time.Now().UnixNano(), 10)
 	eventID := "evt-concurrent-mysql-duplicate-" + unique
-	envelope := testEnvelope(eventID, "dev-concurrent-mysql-"+unique)
+	deviceID := "dev-concurrent-mysql-" + unique
+	defer func() {
+		_ = store.Close()
+		cleanupTelemetryMySQL(t, dsn, []string{eventID}, []string{deviceID})
+	}()
+	envelope := testEnvelope(eventID, deviceID)
 	const calls = 8
 	statuses := make(chan IngestStatus, calls)
 	var wait sync.WaitGroup
@@ -89,11 +92,14 @@ func TestMySQLStoreConcurrentDuplicateEventIDs(t *testing.T) {
 }
 
 func TestMySQLStoreConcurrentReverseOverlapBatches(t *testing.T) {
-	store := openTelemetryMySQLOrSkip(t)
-	defer store.Close()
+	store, dsn := openTelemetryMySQLOrSkip(t)
 	unique := strconv.FormatInt(time.Now().UnixNano(), 10)
 	deviceID := "dev-concurrent-mysql-overlap-" + unique
 	ids := []string{"evt-reverse-overlap-a-" + unique, "evt-reverse-overlap-b-" + unique}
+	defer func() {
+		_ = store.Close()
+		cleanupTelemetryMySQL(t, dsn, ids, []string{deviceID})
+	}()
 	forward := []TelemetryEnvelope{testEnvelope(ids[0], deviceID), testEnvelope(ids[1], deviceID)}
 	reverse := []TelemetryEnvelope{testEnvelope(ids[1], deviceID), testEnvelope(ids[0], deviceID)}
 	type batchResult struct {
@@ -113,7 +119,12 @@ func TestMySQLStoreConcurrentReverseOverlapBatches(t *testing.T) {
 	accepted := make(map[string]int)
 	alreadySeen := make(map[string]int)
 	for i := 0; i < 2; i++ {
-		result := <-results
+		var result batchResult
+		select {
+		case result = <-results:
+		case <-time.After(5 * time.Second):
+			t.Fatal("overlapping MySQL ingest batches did not complete; possible lock deadlock")
+		}
 		if result.err != nil {
 			t.Fatalf("reverse-overlap MySQL ingest: %v", result.err)
 		}
@@ -128,6 +139,10 @@ func TestMySQLStoreConcurrentReverseOverlapBatches(t *testing.T) {
 			}
 		}
 	}
+	if forward[0].EventID != ids[0] || forward[1].EventID != ids[1] ||
+		reverse[0].EventID != ids[1] || reverse[1].EventID != ids[0] {
+		t.Fatalf("public IngestBatch mutated input event order: forward=%v reverse=%v", forward, reverse)
+	}
 	for _, eventID := range ids {
 		if accepted[eventID] != 1 || alreadySeen[eventID] != 1 {
 			t.Fatalf("reverse-overlap event %q accepted=%d alreadySeen=%d, want 1/1", eventID, accepted[eventID], alreadySeen[eventID])
@@ -136,11 +151,14 @@ func TestMySQLStoreConcurrentReverseOverlapBatches(t *testing.T) {
 }
 
 func TestMySQLStoreEventIDsPreserveCaseAndTrailingBytes(t *testing.T) {
-	store := openTelemetryMySQLOrSkip(t)
-	defer store.Close()
+	store, dsn := openTelemetryMySQLOrSkip(t)
 	unique := strconv.FormatInt(time.Now().UnixNano(), 10)
 	deviceID := "dev-mysql-event-id-bytes-" + unique
 	ids := []string{"evt-a-" + unique, "EVT-A-" + unique, "evt-a- " + unique}
+	defer func() {
+		_ = store.Close()
+		cleanupTelemetryMySQL(t, dsn, ids, []string{deviceID})
+	}()
 	records := make([]TelemetryEnvelope, 0, len(ids))
 	for _, eventID := range ids {
 		records = append(records, testEnvelope(eventID, deviceID))
@@ -163,20 +181,4 @@ func TestMySQLStoreEventIDsPreserveCaseAndTrailingBytes(t *testing.T) {
 			t.Fatalf("exact event-id replay ack[%d] = %#v, want already_seen %q", i, ack, ids[i])
 		}
 	}
-}
-
-func openTelemetryMySQLOrSkip(t *testing.T) *MySQLStore {
-	t.Helper()
-	dsn := os.Getenv("TELEMETRY_TEST_MYSQL_DSN")
-	if dsn == "" {
-		dsn = os.Getenv("TELEMETRY_MYSQL_DSN")
-	}
-	if dsn == "" {
-		t.Skip("TELEMETRY_TEST_MYSQL_DSN or TELEMETRY_MYSQL_DSN not set; skipping MySQL integration test")
-	}
-	store, err := NewMySQLStoreFromDSN(dsn, DefaultCatalog())
-	if err != nil {
-		t.Fatalf("open telemetry MySQL store: %v", err)
-	}
-	return store
 }

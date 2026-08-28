@@ -3,7 +3,6 @@ package telemetry_test
 import (
 	"context"
 	"errors"
-	"os"
 	"strconv"
 	"testing"
 	"time"
@@ -26,20 +25,12 @@ func TestTelemetryCredentialStoresAreCreateOnly(t *testing.T) {
 }
 
 func TestMySQLTelemetryCredentialStoreCreateOnlyWhenDSNAvailable(t *testing.T) {
-	dsn := os.Getenv("TELEMETRY_TEST_MYSQL_DSN")
-	if dsn == "" {
-		dsn = os.Getenv("TELEMETRY_MYSQL_DSN")
-	}
-	if dsn == "" {
-		t.Skip("TELEMETRY_TEST_MYSQL_DSN or TELEMETRY_MYSQL_DSN not set; skipping MySQL integration test")
-	}
-
-	store, err := NewMySQLStoreFromDSN(dsn, DefaultCatalog())
-	if err != nil {
-		t.Fatalf("open telemetry MySQL store: %v", err)
-	}
-	defer store.Close()
+	store, dsn := openTelemetryMySQLOrSkip(t)
 	deviceID := "test-create-only-mysql-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	defer func() {
+		_ = store.Close()
+		cleanupTelemetryMySQL(t, dsn, nil, []string{deviceID})
+	}()
 	if err := store.CreateDeviceCredential(context.Background(), deviceID, "hash-one"); err != nil {
 		t.Fatalf("first MySQL create failed: %v", err)
 	}
