@@ -194,7 +194,7 @@ job_app_coverage() {
       coverage_args+=("--file=$LOG_DIR/coverage/full-test-shard-$shard/isolated-$isolated-lcov.info")
     done
   done
-  step 'Enforce Full App shard coverage' run_in apps/ssh_mobile_full dart run tool/check_coverage.dart --minimum=35 "${coverage_args[@]}"
+  step 'Enforce Full App shard coverage (90% minimum)' run_in apps/ssh_mobile_full dart run tool/check_coverage.dart --minimum=90 "${coverage_args[@]}"
 }
 
 job_android() {

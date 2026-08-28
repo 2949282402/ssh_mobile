@@ -4,7 +4,7 @@ param([switch]$NoBootstrap, [string]$Minimum = $env:CLIENT_COVERAGE_MINIMUM, [st
 Assert-NativeWindowsPowerShell
 $root = Get-RepositoryRoot
 $temp = Initialize-NativeEnvironment $TempRoot
-if (-not $Minimum) { $Minimum = '80' }
+if (-not $Minimum) { $Minimum = '90' }
 if (-not $FlutterTimeout) { $FlutterTimeout = '30m' }
 if (-not $Flutter) { $Flutter = 'flutter' }
 if ($Minimum -notmatch '^[0-9]+(?:\.[0-9]+)?$') { [Console]::Error.WriteLine("CLIENT_COVERAGE_MINIMUM must be numeric: $Minimum"); exit 64 }

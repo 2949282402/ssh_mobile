@@ -211,6 +211,9 @@ The periodic backend coverage gate is run from the repository root:
 bash scripts/bash/coverage/backend_coverage.sh
 ```
 
+The gate requires at least 90% line coverage for hand-written Relay/Admin
+code and for the separate hand-written telemetry scope.
+
 When test DSNs are not supplied, the script provisions temporary
 `mysql:8.4` and `redis:7-alpine` containers and removes them on exit. The
 cross-owner Network V2 contract gate is:

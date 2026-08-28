@@ -342,7 +342,7 @@ bash scripts/bash/coverage/client_coverage.sh
 bash scripts/bash/coverage/sdk_coverage.sh
 ```
 
-Each gate enforces an 80% threshold on its documented owner scope. The client
+Each gate enforces a 90% threshold on its documented owner scope. The client
 gate covers the App-owned Network V2 service boundary; it does not represent
 coverage for unrelated Full App UI features. See
 [Coverage policy](docs/COVERAGE_POLICY.md) for the exact scopes and the

@@ -3,7 +3,7 @@ name: ssh-mobile-maintenance
 description: Maintain and debug the SSH Mobile repository, including Flutter, Dart packages, the Rust network SDK, Relay, Admin UI, tests, documentation, and shared Agent guidance. Use for any non-trivial implementation, diagnosis, validation, or documentation change in this repository.
 ---
 
-> Last updated: 2026-08-26
+> Last updated: 2026-08-28
 
 # SSH Mobile Maintenance
 
@@ -78,10 +78,11 @@ the write mechanics; this Skill owns the repository validation gate.
 
 ## Test-first contract
 
-Observable business behavior changes default to test-first development. Before
-production edits, identify the contract and lowest reasonable test layer, then
-work in small Red → Green → Refactor increments. Bugs first receive a failing
-regression test; risky untested code first receives a characterization test.
+Observable or automatable behavior changes must use test-first development.
+Before production edits, identify the contract and lowest reasonable test
+layer, then work in small Red → Green → Refactor increments. Bugs first receive
+a failing regression test; risky untested code first receives a characterization
+test.
 The documented visual/generated/docs exceptions do not fabricate a Red step.
 Never weaken or skip a failure or add test-only production coupling.
 
@@ -136,6 +137,13 @@ commands and cross-boundary gates remain owned by
   broad rewrites, and edits outside the requested scope.
 - Edit generator inputs rather than generated output. Regenerate committed
   artifacts only when their source changes, then verify the generated diff.
+- Hand-written files over 500 lines require functional/responsibility
+  decomposition; never use numbered chunks (`part_01`/`file_01`) or gratuitous
+  over-splitting.
+- Repository-owned tests/fixtures use dedicated `test/` or `tests/` roots.
+  Required native same-package forms are Go `_test.go`, Rust
+  `#[cfg(test)]`/`src/tests`, and TypeScript `.test`/`.spec`. Architecture CI
+  runs this placement and numbered-path audit with a regression test.
 - Keep diagnostics behind the injected logger; do not add ad hoc `print` calls.
 - Keep user-visible text in the owning localization/string contract.
 - Add focused tests for changed behavior and regressions. Use fakes and bounded

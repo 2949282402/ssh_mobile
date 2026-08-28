@@ -18,7 +18,7 @@ Native Windows PowerShell 7 uses the same-relative-path counterparts under
 `scripts\powershell\coverage\`. Agents select the tree from the actual host
 and update every `.sh`/`.ps1` pair together.
 
-Every gate requires at least 80% in its owner scope. A failure prints the
+Every gate requires at least 90% in its owner scope. A failure prints the
 uncovered files/lines or functions so the next change can add a behavior test
 for the missing boundary, error path, extreme value, or state transition.
 Tests that only execute a line without checking an observable result are not
@@ -32,10 +32,10 @@ the [Maintenance Workflow](../.agents/skills/ssh-mobile-maintenance/references/w
 
 ## New-file requirement
 
-The 80% values below are aggregate owner baselines. Every newly added
-hand-written production source file has a stricter requirement: add
-corresponding independent tests in the owning test directory and reach at
-least 90% line coverage for that file. Generated output, documentation,
+The 90% values below are aggregate owner baselines. Every newly added
+hand-written production source file must have corresponding independent tests
+in the owning test directory and reach at least 90% line coverage for that
+file. Generated output, documentation,
 configuration, test-only files, and platform boilerplate without coverable
 business logic are excluded only when the owner validation report records the
 reason. A new source file without this evidence is not ready for merge.
@@ -44,10 +44,10 @@ reason. A new source file without this evidence is not ready for merge.
 
 | Gate | Scope | Threshold |
 | --- | --- | --- |
-| `front_coverage.sh` | React/Vite `front/src`, with generated/test/bootstrap files excluded | Vitest statements, lines, functions, and branches: 80% each |
-| `backend_coverage.sh` | Hand-written Go Relay and Admin code; generated protobuf/catalog and process-only `cmd/{relay,admin}/main.go` excluded | Go line coverage: 80%; hand-written `internal/telemetry` has its own 80% gate |
-| `client_coverage.sh` | App-owned Network Protocol V2 boundary in `apps/ssh_mobile_full/lib/services/network/`, exercised by its codec, transfer, realtime, and runtime tests | Dart line coverage: 80% |
-| `sdk_coverage.sh` | Dart `network_sdk`, `network_transport`, and `ssh_mobile_network_native` public libraries, plus the public Rust SDK crates (`network-ffi`, `network-identity`, `network-nat`, `network-protocol`, `network-quic`, `network-relay-proto`, `network-transfer`, `network-transport`, `network-webrtc`) | Each Dart package and the Rust public-crate aggregate: 80% lines |
+| `front_coverage.sh` | React/Vite `front/src`, with generated/test/bootstrap files excluded | Vitest statements, lines, functions, and branches: 90% each |
+| `backend_coverage.sh` | Hand-written Go Relay and Admin code; generated protobuf/catalog and process-only `cmd/{relay,admin}/main.go` excluded | Go line coverage: 90%; hand-written `internal/telemetry` has its own 90% gate |
+| `client_coverage.sh` | App-owned Network Protocol V2 boundary in `apps/ssh_mobile_full/lib/services/network/`, exercised by its codec, transfer, realtime, and runtime tests | Dart line coverage: 90% |
+| `sdk_coverage.sh` | Dart `network_sdk`, `network_transport`, and `ssh_mobile_network_native` public libraries, plus the public Rust SDK crates (`network-ffi`, `network-identity`, `network-nat`, `network-protocol`, `network-quic`, `network-relay-proto`, `network-transfer`, `network-transport`, `network-webrtc`) | Each Dart package and the Rust public-crate aggregate: 90% lines |
 
 Set `BACKEND_TELEMETRY_COVERAGE_MINIMUM` to override the telemetry sub-gate
 independently; it defaults to `BACKEND_COVERAGE_MINIMUM` when unset. Both
@@ -56,7 +56,7 @@ backend scripts instrument the hand-written production packages with Go's
 telemetry profile before evaluating either threshold.
 
 The client gate is intentionally a Network V2 client-boundary metric, not a
-claim that every unrelated UI feature in the Full App has 80% coverage. The
+claim that every unrelated UI feature in the Full App has 90% coverage. The
 Rust `network-core` implementation and Rust Relay implementation remain in the
 ordinary Rust workspace test/clippy gate; their current workspace coverage is
 reported separately because they are internal engines rather than public SDK

@@ -238,6 +238,7 @@ job_architecture() {
   step 'Test agent documentation checker' dart run test/tool/agent_docs_check_test.dart
   step 'Test CI workflow contract' dart run test/tool/ci_workflow_test.dart
   step 'Test CI production configuration' dart run test/tool/ci_production_config_test.dart
+  step 'Check Dart file sizes and test roots' dart run tool/check_file_sizes.dart
   step 'Check telemetry contract generated' dart run tool/check_telemetry_contract_generated.dart
   step 'Test telemetry contract codegen' dart run test/tool/telemetry_contract_codegen_test.dart
   step 'Check architecture guard' dart run tool/architecture_check.dart

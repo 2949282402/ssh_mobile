@@ -403,6 +403,8 @@ jobs:
         run: dart run test/tool/ci_workflow_test.dart
       - name: Test CI production configuration
         run: dart run test/tool/ci_production_config_test.dart
+      - name: Check Dart file sizes and test roots
+        run: dart run tool/check_file_sizes.dart
       - name: Check telemetry contract generated
         run: dart run tool/check_telemetry_contract_generated.dart
       - name: Test telemetry contract codegen
@@ -743,7 +745,7 @@ jobs:
           done
 
           dart run tool/check_coverage.dart \
-            --minimum=35 \
+            --minimum=90 \
             "${coverage_args[@]}"
 
   android-build:

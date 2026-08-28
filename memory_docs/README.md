@@ -1,4 +1,4 @@
-> Last updated: 2026-08-26
+> Last updated: 2026-08-28
 
 # Project Memory
 
@@ -71,13 +71,15 @@ bash scripts/bash/coverage/sdk_coverage.sh
 Native Windows uses the same filenames under
 `scripts\powershell\coverage\`; update and review both sides together.
 
-Each gate enforces an 80% threshold on its documented scope. The former
+Each gate enforces a 90% threshold on its documented scope. The same 90%
+file-level requirement applies to newly added hand-written production files.
+The former
 `scripts/bash/coverage/coverage_test.sh` name remains a compatibility alias for the client
 gate. Scope, failure interpretation, Docker-backed services, and the WSL
 Flutter runner workaround are maintained in
 [`docs/COVERAGE_POLICY.md`](../docs/COVERAGE_POLICY.md).
-New hand-written production files have the stricter 90% file-level coverage
-and corresponding-test requirement documented there.
+New hand-written production files have the 90% file-level coverage and
+corresponding-test requirement documented there.
 
 The native Windows PowerShell 7 MSI packaging and client validation workflow is
 maintained in [`client/current-state.md`](client/current-state.md). It is

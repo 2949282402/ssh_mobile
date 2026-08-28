@@ -1,6 +1,6 @@
-# Release and Portfolio Checklist
+> Last updated: 2026-08-28
 
-> 最新更新时间：2026-08-11
+# Release and Portfolio Checklist
 
 This checklist separates repository work that can be automated from decisions
 that require the project owner's identity, signing credentials, devices, or
@@ -85,7 +85,7 @@ flutter pub get
 dart format --output=none --set-exit-if-changed lib test tool
 flutter analyze
 flutter test --coverage
-dart run tool/check_coverage.dart --minimum=35
+dart run tool/check_coverage.dart --minimum=90
 flutter build apk --debug --no-pub
 ```
 

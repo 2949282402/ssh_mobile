@@ -178,6 +178,10 @@ void main() {
     architectureCheck.contains('dart run tool/check_resource_owners.dart'),
     'architecture-check 必须运行资源 Owner 检查器',
   );
+  _expect(
+    architectureCheck.contains('dart run tool/check_file_sizes.dart'),
+    'architecture-check 必须运行文件尺寸、测试根与编号拆分检查器',
+  );
 
   final appUnitTests = _jobSection(workflow, 'app-unit-tests');
   _expect(
@@ -194,6 +198,11 @@ void main() {
   _expect(
     appCoverage.contains('dart run tool/check_coverage.dart'),
     'app-coverage 必须运行覆盖率门禁',
+  );
+  _expect(
+    appCoverage.contains('--minimum=90') &&
+        !appCoverage.contains('--minimum=35'),
+    'app-coverage 必须执行仓库统一的 90% 覆盖率阈值',
   );
 
   for (final jobName in _buildOnlyJobNames) {

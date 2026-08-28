@@ -1,4 +1,4 @@
-> Last updated: 2026-08-27
+> Last updated: 2026-08-28
 
 # Front Overview
 
@@ -49,4 +49,4 @@ bash scripts/bash/coverage/front_coverage.sh
 ```
 
 It enforces the documented statements, lines, functions, and branches
-thresholds for `front/src`.
+thresholds for `front/src`, with each Vitest metric set to 90%.

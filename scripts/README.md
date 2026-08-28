@@ -26,7 +26,10 @@ environment GAP after completing the common checks.
 The CI aggregate entrypoints are intentionally thin dispatchers:
 `ci/full_test.sh` and `ci/full_test.ps1` load paired configuration, runtime,
 runner, App, and workspace/service helper modules. Each helper stays below the
-500-line review limit while preserving the same job names, arguments, timeout
-behavior, cleanup, and exit statuses across hosts. The GitHub Actions workflow
-is the authoritative full gate; use `bash scripts/bash/ci/full_test.sh` for the
-proportional Linux/WSL checks available on a local host.
+500-line review limit by keeping functional and responsibility boundaries
+cohesive; mechanically numbered chunks (`part_01`, `file_01`) and gratuitous
+over-splitting are prohibited. The helpers preserve the same job names,
+arguments, timeout behavior, cleanup, and exit statuses across hosts. The
+GitHub Actions workflow is the authoritative full gate; use
+`bash scripts/bash/ci/full_test.sh` for the proportional Linux/WSL checks
+available on a local host.

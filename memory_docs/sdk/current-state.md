@@ -1,4 +1,4 @@
-> Last updated: 2026-08-27
+> Last updated: 2026-08-28
 
 # SDK Current State
 
@@ -131,6 +131,9 @@ The public SDK coverage gate is independent from the daily regression gate:
 ```bash
 bash scripts/bash/coverage/sdk_coverage.sh
 ```
+
+Each public Dart package and the public Rust SDK aggregate must reach at least
+90% line coverage.
 
 It measures the public Dart facades and public Rust SDK crates; internal
 `network-core` and Relay implementation coverage remains part of the ordinary

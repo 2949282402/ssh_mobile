@@ -16,6 +16,35 @@ void main() {
   final workflow = File(
     '${root.path}/.github/workflows/flutter.yml',
   ).readAsStringSync();
+  final frontViteConfig = File(
+    '${root.path}/front/vite.config.ts',
+  ).readAsStringSync();
+  final coverageScripts = <String, String>{
+    'bash client coverage': File(
+      '${root.path}/scripts/bash/coverage/client_coverage.sh',
+    ).readAsStringSync(),
+    'bash SDK coverage': File(
+      '${root.path}/scripts/bash/coverage/sdk_coverage.sh',
+    ).readAsStringSync(),
+    'bash backend coverage': File(
+      '${root.path}/scripts/bash/coverage/backend_coverage.sh',
+    ).readAsStringSync(),
+    'PowerShell client coverage': File(
+      '${root.path}/scripts/powershell/coverage/client_coverage.ps1',
+    ).readAsStringSync(),
+    'PowerShell SDK coverage': File(
+      '${root.path}/scripts/powershell/coverage/sdk_coverage.ps1',
+    ).readAsStringSync(),
+    'PowerShell backend coverage': File(
+      '${root.path}/scripts/powershell/coverage/backend_coverage.ps1',
+    ).readAsStringSync(),
+  };
+  final coverageAlias = File(
+    '${root.path}/scripts/bash/coverage/coverage_test.sh',
+  ).readAsStringSync();
+  final coverageAliasPowerShell = File(
+    '${root.path}/scripts/powershell/coverage/coverage_test.ps1',
+  ).readAsStringSync();
   final backendCoverage = File(
     '${root.path}/scripts/bash/coverage/backend_coverage.sh',
   ).readAsStringSync();
@@ -140,6 +169,101 @@ void main() {
   _expect(
     workflow.contains('npm run typecheck:tests'),
     'front-quality must run the Front test TypeScript gate.',
+  );
+
+  _expect(
+    frontViteConfig.contains('lines: 90') &&
+        frontViteConfig.contains('functions: 90') &&
+        frontViteConfig.contains('branches: 90') &&
+        frontViteConfig.contains('statements: 90'),
+    'Front coverage must enforce 90% for every Vitest metric.',
+  );
+  _expect(
+    coverageScripts['bash client coverage']!.contains(
+      'MINIMUM="\${CLIENT_COVERAGE_MINIMUM:-90}"',
+    ),
+    'Bash client coverage must default to 90%.',
+  );
+  _expect(
+    coverageScripts['bash SDK coverage']!.contains(
+      'MINIMUM="\${SDK_COVERAGE_MINIMUM:-90}"',
+    ),
+    'Bash SDK coverage must default to 90%.',
+  );
+  _expect(
+    coverageScripts['bash backend coverage']!.contains(
+      'MINIMUM="\${BACKEND_COVERAGE_MINIMUM:-90}"',
+    ),
+    'Bash backend coverage must default to 90%.',
+  );
+  _expect(
+    coverageScripts['PowerShell client coverage']!.contains(
+      "if (-not \$Minimum) { \$Minimum = '90' }",
+    ),
+    'PowerShell client coverage must default to 90%.',
+  );
+  _expect(
+    coverageScripts['PowerShell SDK coverage']!.contains(
+      "if(-not \$Minimum){\$Minimum='90'}",
+    ),
+    'PowerShell SDK coverage must default to 90%.',
+  );
+  _expect(
+    coverageScripts['PowerShell backend coverage']!.contains(
+      "if (-not \$Minimum) { \$Minimum = '90' }",
+    ),
+    'PowerShell backend coverage must default to 90%.',
+  );
+  _expect(
+    coverageScripts['bash SDK coverage']!.contains(
+          'SDK coverage gate passed at Dart %s%% and Rust %s%% (minimum %s%%).',
+        ) &&
+        coverageScripts['PowerShell SDK coverage']!.contains(
+          'SDK coverage passed: Dart {0:N2}%, Rust {1:N2}% (minimum {2}%).',
+        ),
+    'Bash and PowerShell SDK coverage must report the active 90% threshold.',
+  );
+  _expect(
+    coverageScripts['bash backend coverage']!.contains(
+          'Backend coverage threshold: %s%%',
+        ) &&
+        coverageScripts['PowerShell backend coverage']!.contains(
+          'Backend coverage threshold: \$Minimum%',
+        ) &&
+        coverageScripts['PowerShell backend coverage']!.contains(
+          'Telemetry coverage threshold: \$telemetryMinimum%',
+        ),
+    'Bash and PowerShell backend coverage must report both active thresholds.',
+  );
+  _expect(
+    coverageAlias.contains('client_coverage.sh'),
+    'Bash coverage_test.sh must remain the client-gate compatibility alias.',
+  );
+  _expect(
+    coverageAliasPowerShell.contains('client_coverage.ps1'),
+    'PowerShell coverage_test.ps1 must remain the client-gate compatibility alias.',
+  );
+  _expect(
+    workflow.contains('--minimum=90') && !workflow.contains('--minimum=35'),
+    'CI Full App coverage must enforce the repository 90% threshold.',
+  );
+  final bashAppCoverage = File(
+    '${root.path}/scripts/bash/ci/full_test_app.sh',
+  ).readAsStringSync();
+  final powerShellAppCoverage = File(
+    '${root.path}/scripts/powershell/ci/full_test_app.ps1',
+  ).readAsStringSync();
+  _expect(
+    bashAppCoverage.contains('tool/check_coverage.dart --minimum=90') &&
+        powerShellAppCoverage.contains(
+          "'tool/check_coverage.dart','--minimum=90'",
+        ) &&
+        powerShellAppCoverage.contains(
+          'Enforce Full App shard coverage (90% minimum)',
+        ) &&
+        !bashAppCoverage.contains('--minimum=35') &&
+        !powerShellAppCoverage.contains('--minimum=35'),
+    'Bash and PowerShell Full App coverage helpers must enforce 90%.',
   );
   for (final marker in const [
     'analytics-mysql:',

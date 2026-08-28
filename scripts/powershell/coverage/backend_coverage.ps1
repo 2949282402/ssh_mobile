@@ -4,10 +4,12 @@ param([string]$Minimum = $env:BACKEND_COVERAGE_MINIMUM, [string]$TempRoot = $env
 Assert-NativeWindowsPowerShell
 $root = Get-RepositoryRoot
 $temp = Initialize-NativeEnvironment $TempRoot
-if (-not $Minimum) { $Minimum = '80' }
+if (-not $Minimum) { $Minimum = '90' }
 if ($Minimum -notmatch '^[0-9]+(?:\.[0-9]+)?$') { [Console]::Error.WriteLine("BACKEND_COVERAGE_MINIMUM must be numeric: $Minimum"); exit 64 }
 $telemetryMinimum = if ($env:BACKEND_TELEMETRY_COVERAGE_MINIMUM) { $env:BACKEND_TELEMETRY_COVERAGE_MINIMUM } else { $Minimum }
 if ($telemetryMinimum -notmatch '^[0-9]+(?:\.[0-9]+)?$') { [Console]::Error.WriteLine("BACKEND_TELEMETRY_COVERAGE_MINIMUM must be numeric: $telemetryMinimum"); exit 64 }
+Write-Host "Backend coverage threshold: $Minimum%"
+Write-Host "Telemetry coverage threshold: $telemetryMinimum%"
 Assert-Commands @('go')
 $runId = [Guid]::NewGuid().ToString('N')
 $run = Join-Path $temp "backend-coverage-$runId"
@@ -70,10 +72,10 @@ try {
   if ($totalLine -notmatch '([0-9]+(?:\.[0-9]+)?)%\s*$') { throw 'Unable to read Go coverage total.' }
   $total=[double]$Matches[1]
   if ($total -lt [double]$Minimum) { throw "Backend coverage is below $Minimum%." }
-  Write-Host "Backend coverage gate passed at $total%."
+  Write-Host "Backend coverage gate passed at $total% (minimum $Minimum%)."
   $telemetrySummary=& go tool cover "-func=$telemetry";$telemetrySummary|Write-Host;$telemetryTotalLine=$telemetrySummary|Where-Object{$_-match'^total:'}|Select-Object -Last 1
   if ($telemetryTotalLine -notmatch '([0-9]+(?:\.[0-9]+)?)%\s*$') { throw 'Unable to read telemetry coverage total.' };$telemetryTotal=[double]$Matches[1]
-  if ($telemetryTotal -lt [double]$telemetryMinimum) { throw "Telemetry coverage is below $telemetryMinimum%." };Write-Host "Telemetry coverage gate passed at $telemetryTotal%."
+  if ($telemetryTotal -lt [double]$telemetryMinimum) { throw "Telemetry coverage is below $telemetryMinimum%." };Write-Host "Telemetry coverage gate passed at $telemetryTotal% (minimum $telemetryMinimum%)."
 } finally {
   if ($started) { & docker rm -f $mysql $redis $analyticsMysql $analyticsRedis *> $null }
   Remove-Item $run -Recurse -Force -ErrorAction SilentlyContinue

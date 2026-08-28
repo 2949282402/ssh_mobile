@@ -454,14 +454,14 @@ class FrozenNetworkContractTest(unittest.TestCase):
         self.assertIn('DEFAULT_APP_COVERAGE="${FULL_TEST_COVERAGE:-0}"', full_test)
         self.assertIn("scripts/bash/coverage/client_coverage.sh", full_test)
         self.assertIn("client_coverage.sh", coverage_test)
-        self.assertIn('MINIMUM="${CLIENT_COVERAGE_MINIMUM:-80}"', client_coverage)
+        self.assertIn('MINIMUM="${CLIENT_COVERAGE_MINIMUM:-90}"', client_coverage)
         self.assertIn("--include=lib/services/network/", client_coverage)
         self.assertIn("record_skip app-coverage", full_test)
 
         self.assertIn("@vitest/coverage-v8", _read("scripts/bash/coverage/front_coverage.sh") + _read("front/package.json"))
-        self.assertIn('MINIMUM="${BACKEND_COVERAGE_MINIMUM:-80}"', _read("scripts/bash/coverage/backend_coverage.sh"))
-        self.assertIn('MINIMUM="${CLIENT_COVERAGE_MINIMUM:-80}"', client_coverage)
-        self.assertIn('MINIMUM="${SDK_COVERAGE_MINIMUM:-80}"', _read("scripts/bash/coverage/sdk_coverage.sh"))
+        self.assertIn('MINIMUM="${BACKEND_COVERAGE_MINIMUM:-90}"', _read("scripts/bash/coverage/backend_coverage.sh"))
+        self.assertIn('MINIMUM="${CLIENT_COVERAGE_MINIMUM:-90}"', client_coverage)
+        self.assertIn('MINIMUM="${SDK_COVERAGE_MINIMUM:-90}"', _read("scripts/bash/coverage/sdk_coverage.sh"))
 
     def test_relay_readme_documents_v2_transport_routes_only(self) -> None:
         readme = _read("relay/README.md")

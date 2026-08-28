@@ -1,4 +1,4 @@
-> Last updated: 2026-08-27
+> Last updated: 2026-08-28
 
 # Client Current State
 
@@ -119,13 +119,13 @@ is a native Windows temporary directory.
      test/app/realtime_feature_adapters_test.dart `
      test/app/app_runtime_test.dart
    & '<flutter-root>\bin\dart.bat' run tool/check_coverage.dart `
-     --minimum=80 --details `
+     --minimum=90 --details `
      --file='<native-temp>\client-windows-lcov.info' `
      --include=lib/services/network/
    ```
 
    This is the Windows counterpart of `scripts/bash/coverage/client_coverage.sh` and covers
-   the App-owned Network V2 boundary. The owner gate remains 80%; every new
+   the App-owned Network V2 boundary. The owner gate is 90%; every new
    hand-written production file must also meet the repository's 90% file-level
    coverage requirement with an independent test file.
 

@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-25
+> 最新更新时间：2026-08-28
 
 <p align="center">
   <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile 图标" width="112" />
@@ -302,7 +302,7 @@ Windows PowerShell 7 使用 `scripts/powershell/`。同相对路径的 `.sh`/`.p
 ```
 
 日常回归不收集 Flutter 覆盖率。大型重构、新功能或发布审查需独立运行四个
-Owner 覆盖率门禁，每个门禁对其文档化范围执行 80% 阈值：
+Owner 覆盖率门禁，每个门禁对其文档化范围执行 90% 阈值：
 
 ```bash
 bash scripts/bash/coverage/front_coverage.sh

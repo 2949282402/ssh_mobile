@@ -1,4 +1,4 @@
-> Last updated: 2026-08-26
+> Last updated: 2026-08-28
 
 # Validation Matrix
 
@@ -49,11 +49,19 @@ documentation, and accidental public API/dependency changes.
 
 Every newly added hand-written production source file requires corresponding
 independent tests in the owning test directory and at least 90% file-level
-line coverage. The 90% rule is stricter than the aggregate owner thresholds in
-the coverage scripts. Generated output, documentation, configuration,
+line coverage. This file-level rule applies alongside the aggregate owner
+thresholds in the coverage scripts. Generated output, documentation, configuration,
 test-only files, and platform boilerplate without coverable business logic may
 be excluded only when the owner report records the reason; otherwise the
 change is incomplete.
+
+Hand-written production files over 500 lines require a reviewable split by
+functional or responsibility boundary. The split must not be a mechanically
+numbered sequence such as `part_01`/`file_01`, and cohesive code must not be
+over-split merely to reduce the line count. Repository-owned test suites and
+fixtures use dedicated `test/` or `tests/` roots; Go `_test.go`, Rust
+`#[cfg(test)]`/`src/tests`, and colocated TypeScript `.test`/`.spec` files are
+the documented language-native same-package exceptions.
 
 ## Repository local CI
 
@@ -121,10 +129,11 @@ a Markdown link check cannot establish semantic correctness.
 
 ## Test-first evidence
 
-For behavior changes, run the new focused test before production edits and keep
-the failure output long enough to verify that Red corresponds to the intended
-contract. After Green, rerun that test and the owning package suite. Add the
-existing contract, integration, acceptance, race, storage, or platform gate
+For observable or automatable behavior changes, run the new focused test before
+production edits and keep the failure output long enough to verify that Red
+corresponds to the intended contract. After Green, rerun that test and the
+owning package suite. Add the existing contract, integration, acceptance, race,
+storage, or platform gate
 when the behavior crosses an owner boundary; a mocked unit test does not replace
 that evidence. The procedure and exceptions are canonical in
 [Maintenance Workflow](workflow.md).

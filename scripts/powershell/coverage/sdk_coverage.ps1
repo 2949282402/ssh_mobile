@@ -4,10 +4,11 @@ param([string]$Minimum=$env:SDK_COVERAGE_MINIMUM,[string]$DartTimeout=$env:SDK_D
 Assert-NativeWindowsPowerShell
 $root=Get-RepositoryRoot
 $temp=Initialize-NativeEnvironment $TempRoot
-if(-not $Minimum){$Minimum='80'}
+if(-not $Minimum){$Minimum='90'}
 if(-not $DartTimeout){$DartTimeout='10m'}
 if($env:SDK_KEEP_COVERAGE_ARTIFACTS -eq '1'){$KeepArtifacts=$true}
 if($Minimum -notmatch '^[0-9]+(?:\.[0-9]+)?$'){[Console]::Error.WriteLine("SDK_COVERAGE_MINIMUM must be numeric: $Minimum");exit 64}
+Write-Host "SDK coverage threshold: $Minimum%"
 Assert-Commands @('dart','cargo','cargo-llvm-cov')
 ConvertTo-TimeoutSeconds $DartTimeout|Out-Null
 $run=Join-Path $temp ("sdk-coverage-{0}" -f [Guid]::NewGuid().ToString('N'))
@@ -50,7 +51,7 @@ try{
   if($found-eq 0){throw 'No Rust coverage.'}
   $percent=100.0*$hit/$found
   if($percent-lt[double]$Minimum){throw "Rust SDK coverage below $Minimum%."}
-  Write-Host ("SDK coverage passed: Dart {0:N2}%, Rust {1:N2}%."-f(100.0*$allHit/$allFound),$percent)
+  Write-Host ("SDK coverage passed: Dart {0:N2}%, Rust {1:N2}% (minimum {2}%)."-f(100.0*$allHit/$allFound),$percent,$Minimum)
 }finally{
   if($KeepArtifacts){Write-Host "Artifacts: $run"}else{Remove-Item $run -Recurse -Force -ErrorAction SilentlyContinue}
 }

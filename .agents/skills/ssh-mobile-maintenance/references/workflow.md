@@ -1,4 +1,4 @@
-> Last updated: 2026-08-26
+> Last updated: 2026-08-28
 
 # Maintenance Workflow
 
@@ -32,11 +32,10 @@ Use this sequence after the canonical Skill and
 
 ### Test-first workflow
 
-This section is the detailed TDD source of truth. Apply it by default when a
-change affects observable business behavior, including a state transition,
-protocol or API contract, security invariant, persistence result, resource
-lifecycle, concurrency/ordering rule, cancellation/timeout/retry path, or
-returned error.
+This section is the detailed TDD source of truth. It is mandatory for
+observable or automatable behavior changes, including state transitions,
+protocol/API contracts, security invariants, persistence, lifecycle,
+concurrency/ordering, cancellation/timeout/retry paths, and returned errors.
 
 Choose the lowest reasonable evidence layer:
 
@@ -78,6 +77,12 @@ errors, ownership/release effects, protocol compatibility, and security
 invariants. Avoid private fields, private call order, incidental collection
 shape, or mock interaction alone unless the interaction is itself the contract
 (for example, close exactly once or retry at most N times).
+
+Keep hand-written production files over 500 lines decomposed by functional or
+responsibility boundary; do not create numbered chunks (`part_01`/`file_01`)
+or gratuitously split cohesive code. Repository-owned tests/fixtures use
+dedicated `test/` or `tests/` roots. Required native same-package forms are Go
+`_test.go`, Rust `#[cfg(test)]`/`src/tests`, and TypeScript `.test`/`.spec`.
 
 Never repair Red by deleting or weakening an assertion, skipping the new test,
 changing the test to accept the defect, or adding test-only hooks to production
