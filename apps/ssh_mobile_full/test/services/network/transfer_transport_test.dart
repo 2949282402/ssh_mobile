@@ -1,22 +1,19 @@
-// Network Protocol V2 原生网络服务命令/事件语义测试。
+// Network Protocol V2 native transfer and runtime lifecycle tests.
 
-import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:network_sdk/network_sdk.dart';
-import 'package:network_transport/network_transport.dart';
 import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
-import 'package:ssh_mobile/services/network/network_protocol_v2_codec.dart';
 import 'package:ssh_mobile/services/network/network_service.dart';
-import 'package:ssh_mobile/services/telemetry/telemetry_span.dart';
 
-/// 执行 V2 命令接受与终态事件语义测试。
+import 'transfer_transport_test_support.dart';
+
+/// 执行 V2 transfer、command acceptance 和 native runtime 生命周期测试。
 void main() {
-  group('NetworkService V2 contract tests', () {
+  group('NetworkService V2 transfer contract tests', () {
     test('route and error models expose typed state', () {
       const snapshot = RouteSnapshot(
         peerId: 'peer-1',
@@ -52,7 +49,7 @@ void main() {
           receiveDirectory: directory.absolute.path,
         ),
       );
-      _expectNetworkSuccess(start, 'start unregistered-peer runtime');
+      expectNetworkSuccess(start, 'start unregistered-peer runtime');
       expect(runtime.boundLocalPort, isNotNull);
 
       final result = await service.send(
@@ -83,7 +80,7 @@ void main() {
           receiveDirectory: root.absolute.path,
         ),
       );
-      _expectNetworkSuccess(start, 'start connect runtime');
+      expectNetworkSuccess(start, 'start connect runtime');
       expect(runtime.boundLocalPort, isNotNull);
 
       final connect = await service.connect('not-registered');
@@ -121,7 +118,7 @@ void main() {
                 receiveDirectory: directory.absolute.path,
               ),
             );
-            _expectNetworkSuccess(start, 'start stress runtime $iteration');
+            expectNetworkSuccess(start, 'start stress runtime $iteration');
             final boundPort = runtime.boundLocalPort;
             expect(
               boundPort,
@@ -197,8 +194,8 @@ void main() {
           receiveDirectory: receiveB.absolute.path,
         ),
       );
-      _expectNetworkSuccess(startA, 'start runtime A');
-      _expectNetworkSuccess(startB, 'start runtime B');
+      expectNetworkSuccess(startA, 'start runtime A');
+      expectNetworkSuccess(startB, 'start runtime B');
       final boundPortA = runtimeA.boundLocalPort;
       final boundPortB = runtimeB.boundLocalPort;
       expect(boundPortA, isNotNull);
@@ -223,17 +220,17 @@ void main() {
           e2ePublicKey: Uint8List.fromList(List.filled(32, 41)),
         ),
       );
-      _expectNetworkSuccess(upsertA, 'upsert peer B on runtime A');
-      _expectNetworkSuccess(upsertB, 'upsert peer A on runtime B');
+      expectNetworkSuccess(upsertA, 'upsert peer B on runtime A');
+      expectNetworkSuccess(upsertB, 'upsert peer A on runtime B');
 
-      final connectedFuture = _firstPeerEvent(
+      final connectedFuture = firstPeerEvent(
         serviceA,
         (event) =>
             event.peerId == 'device-b' &&
             event.state == PeerConnectionState.connected,
       );
       final connectResult = await serviceA.connect('device-b');
-      _expectNetworkSuccess(connectResult, 'connect runtime A to runtime B');
+      expectNetworkSuccess(connectResult, 'connect runtime A to runtime B');
       await connectedFuture.timeout(const Duration(seconds: 10));
 
       final fixtures = <(String, int)>[
@@ -251,14 +248,14 @@ void main() {
         );
         await source.writeAsBytes(payload, flush: true);
         final transferId = 'native-transfer-$index';
-        final offerFuture = _firstOffer(serviceB);
-        final completedFuture = _firstCompleted(serviceB);
+        final offerFuture = firstOffer(serviceB);
+        final completedFuture = firstCompleted(serviceB);
         final sendResult = await serviceA.send(
           transferId: transferId,
           peerId: 'device-b',
           filePath: source.path,
         );
-        _expectNetworkSuccess(sendResult, 'send $fileName');
+        expectNetworkSuccess(sendResult, 'send $fileName');
         final session = (sendResult as NetworkSuccess<TransferSession>).data;
         expect(session.transferId, transferId);
         expect(session.routeType, NetworkRouteType.quicDirect);
@@ -270,7 +267,7 @@ void main() {
           transferId: offer.transferId,
           accept: true,
         );
-        _expectNetworkSuccess(approve, 'approve $fileName');
+        expectNetworkSuccess(approve, 'approve $fileName');
 
         final completed = await completedFuture.timeout(
           const Duration(seconds: 15),
@@ -280,14 +277,14 @@ void main() {
 
       final rejectedSource = File('${root.path}/rejected.bin');
       await rejectedSource.writeAsBytes(<int>[1, 2, 3]);
-      final rejectedOfferFuture = _firstOffer(serviceB);
-      final rejectedFailureFuture = _firstFailed(serviceA);
+      final rejectedOfferFuture = firstOffer(serviceB);
+      final rejectedFailureFuture = firstFailed(serviceA);
       final rejectedSend = await serviceA.send(
         transferId: 'native-rejected',
         peerId: 'device-b',
         filePath: rejectedSource.path,
       );
-      _expectNetworkSuccess(rejectedSend, 'offer rejected file');
+      expectNetworkSuccess(rejectedSend, 'offer rejected file');
       final rejectedOffer = await rejectedOfferFuture.timeout(
         const Duration(seconds: 5),
       );
@@ -295,332 +292,12 @@ void main() {
         transferId: rejectedOffer.transferId,
         accept: false,
       );
-      _expectNetworkSuccess(reject, 'reject incoming native file');
+      expectNetworkSuccess(reject, 'reject incoming native file');
       final rejectedFailure = await rejectedFailureFuture.timeout(
         const Duration(seconds: 10),
       );
       expect(rejectedFailure.error.code, NetworkErrorCode.cancelled);
       expect(await File('${receiveB.path}/rejected.bin').exists(), isFalse);
     });
-
-    test(
-      'gateway facade covers invalid input, status mapping, and lifecycle',
-      () async {
-        final statusCases = <(TransportOperationStatus, NetworkErrorCode)>[
-          (
-            TransportOperationStatus.invalidArgument,
-            NetworkErrorCode.invalidArgument,
-          ),
-          (TransportOperationStatus.stopped, NetworkErrorCode.cancelled),
-          (TransportOperationStatus.failure, NetworkErrorCode.ioError),
-        ];
-        for (final (status, expectedCode) in statusCases) {
-          final gateway = _FakeCommandGateway(status: status);
-          final service = NativeNetworkService.fromGateway(gateway);
-          final result = await service.disconnect('peer-a');
-          expect(result, isA<NetworkFailure<void>>());
-          expect((result as NetworkFailure<void>).error.code, expectedCode);
-          await service.dispose();
-          await gateway.close();
-        }
-
-        final gateway = _FakeCommandGateway();
-        final service = NativeNetworkService.fromGateway(gateway);
-        addTearDown(() async {
-          await service.dispose();
-          await gateway.close();
-        });
-
-        expect(
-          (await service.connect('')).errorCode,
-          NetworkErrorCode.invalidArgument,
-        );
-        expect(
-          (await service.disconnect('')).errorCode,
-          NetworkErrorCode.invalidArgument,
-        );
-        expect(
-          (await service.cancel('')).errorCode,
-          NetworkErrorCode.invalidArgument,
-        );
-        expect(
-          (await service.send(
-            transferId: '',
-            peerId: 'peer-a',
-            filePath: '/missing/payload.bin',
-          )).errorCode,
-          NetworkErrorCode.invalidArgument,
-        );
-        expect(
-          (await service.send(
-            transferId: 'transfer-a',
-            peerId: 'peer-a',
-            filePath: '/missing/payload.bin',
-          )).errorCode,
-          NetworkErrorCode.ioError,
-        );
-        expect(
-          (await service.state('')).errorCode,
-          NetworkErrorCode.invalidArgument,
-        );
-        expect(
-          (await service.state('peer-a')).errorCode,
-          NetworkErrorCode.noRoute,
-        );
-
-        final root = await Directory.systemTemp.createTemp(
-          'ssh-mobile-gateway-',
-        );
-        addTearDown(() => root.delete(recursive: true));
-        final startConfig = NetworkRuntimeConfig(
-          deviceId: 'gateway-device',
-          identityPrivateKey: Uint8List.fromList(List.filled(32, 1)),
-          e2ePrivateKey: Uint8List.fromList(List.filled(32, 2)),
-          listenAddress: '127.0.0.1:0',
-          receiveDirectory: root.path,
-        );
-        expect((await service.start(startConfig)).isSuccess, isTrue);
-        expect((await service.start(startConfig)).isSuccess, isTrue);
-        expect((await service.disconnect('peer-a')).isSuccess, isTrue);
-
-        final routeFrame = _eventFrame(17, <int>[
-          ..._bytesField(1, utf8.encode('peer-a')),
-          ..._varintField(2, NetworkRouteType.relay.wireValue),
-          ..._bytesField(3, utf8.encode('relay.example.test:443')),
-        ]);
-        gateway.emit(routeFrame);
-        await Future<void>.delayed(Duration.zero);
-        final route = await service.state('peer-a');
-        expect(route, isA<NetworkSuccess<RouteSnapshot>>());
-        expect(
-          (route as NetworkSuccess<RouteSnapshot>).data.routeType,
-          NetworkRouteType.relay,
-        );
-        expect((await service.connect('peer-a')).isSuccess, isTrue);
-
-        final configureRelayFuture = service.configureRelay(
-          RelayConfig(
-            relayUrl: 'wss://relay.example.test/ws',
-            relayCredential: 'credential',
-            relaySigningSeed: Uint8List.fromList(<int>[1, 2, 3]),
-          ),
-        );
-        await Future<void>.delayed(Duration.zero);
-        gateway.emit(
-          _eventFrame(18, <int>[
-            ..._varintField(1, RelayConnectionState.connected.wireValue),
-          ]),
-        );
-        expect((await configureRelayFuture).isSuccess, isTrue);
-        expect((await service.disconnectRelay()).isSuccess, isTrue);
-        expect((await service.stop()).isSuccess, isTrue);
-        expect((await service.stop()).isSuccess, isTrue);
-        expect(
-          (await service.cancel('transfer-a')).errorCode,
-          NetworkErrorCode.cancelled,
-        );
-      },
-    );
-
-    test(
-      'gateway events drive failed peer and relay terminal states',
-      () async {
-        final gateway = _FakeCommandGateway();
-        final service = NativeNetworkService.fromGateway(gateway);
-        addTearDown(() async {
-          await service.dispose();
-          await gateway.close();
-        });
-
-        final connectFuture = service.connect('peer-failed');
-        await Future<void>.delayed(Duration.zero);
-        gateway.emit(
-          _eventFrame(10, <int>[
-            ..._bytesField(1, utf8.encode('peer-failed')),
-            ..._varintField(2, PeerConnectionState.failed.wireValue),
-            ..._bytesField(4, <int>[
-              ..._varintField(1, NetworkErrorCode.noRoute.wireValue),
-              ..._bytesField(2, utf8.encode('route unavailable')),
-            ]),
-          ]),
-        );
-        final connectResult = await connectFuture;
-        expect(connectResult.errorCode, NetworkErrorCode.noRoute);
-
-        final relayFuture = service.configureRelay(
-          RelayConfig(
-            relayUrl: 'wss://relay.example.test/ws',
-            relayCredential: 'credential',
-            relaySigningSeed: Uint8List.fromList(<int>[4, 5, 6]),
-          ),
-        );
-        await Future<void>.delayed(Duration.zero);
-        gateway.emit(
-          _eventFrame(18, <int>[
-            ..._varintField(1, RelayConnectionState.failed.wireValue),
-            ..._bytesField(2, <int>[
-              ..._varintField(1, NetworkErrorCode.relayError.wireValue),
-              ..._bytesField(2, utf8.encode('relay unavailable')),
-            ]),
-          ]),
-        );
-        final relayResult = await relayFuture;
-        expect(relayResult.errorCode, NetworkErrorCode.relayError);
-      },
-    );
-
-    test(
-      'connect command inherits and releases the SSH operation trace',
-      () async {
-        final gateway = _FakeCommandGateway();
-        final traces = TelemetryTraceRegistry();
-        traces.bindPeer(peerId: 'peer-traced', traceId: 'trace-operation');
-        final service = NativeNetworkService.fromGateway(
-          gateway,
-          traceRegistry: traces,
-        );
-        addTearDown(() async {
-          await service.dispose();
-          traces.dispose();
-          await gateway.close();
-        });
-
-        final connectFuture = service.connect('peer-traced');
-        await Future<void>.delayed(Duration.zero);
-        final commandId = const NetworkProtocolV2Codec().commandId(
-          gateway.commands.single,
-        );
-        expect(traces.traceForCommand(commandId), 'trace-operation');
-
-        gateway.emit(
-          _eventFrame(10, <int>[
-            ..._bytesField(1, utf8.encode('peer-traced')),
-            ..._varintField(2, PeerConnectionState.connected.wireValue),
-            ..._varintField(3, NetworkRouteType.quicDirect.wireValue),
-          ]),
-        );
-        expect((await connectFuture).isSuccess, isTrue);
-        expect(traces.traceForCommand(commandId), isNull);
-        // The adapter's terminal boundary releases the peer and its command;
-        // a bridge borrower may independently observe the same event without
-        // owning or extending this registry lifecycle.
-        expect(traces.traceForPeer('peer-traced'), isNull);
-      },
-    );
   });
-}
-
-extension on NetworkResult<Object?> {
-  NetworkErrorCode get errorCode => switch (this) {
-    NetworkFailure<Object?> failure => failure.error.code,
-    _ => fail('Expected a network failure, got $runtimeType'),
-  };
-}
-
-final class _FakeCommandGateway implements NetworkCommandGateway {
-  _FakeCommandGateway({this.status = TransportOperationStatus.success});
-
-  final TransportOperationStatus status;
-  final StreamController<Uint8List> _events =
-      StreamController<Uint8List>.broadcast();
-  final NetworkProtocolV2Codec _codec = const NetworkProtocolV2Codec();
-  final List<Uint8List> commands = <Uint8List>[];
-
-  @override
-  Stream<Uint8List> get events => _events.stream;
-
-  @override
-  TransportOperationStatus sendCommand(Uint8List command) {
-    if (status != TransportOperationStatus.success) return status;
-    commands.add(command);
-    final commandId = _codec.commandId(command);
-    scheduleMicrotask(() {
-      if (!_events.isClosed) _events.add(_commandResultFrame(commandId));
-    });
-    return status;
-  }
-
-  void emit(Uint8List frame) => _events.add(frame);
-
-  Future<void> close() => _events.close();
-}
-
-Uint8List _commandResultFrame(String commandId) => Uint8List.fromList(
-  _eventFrame(13, <int>[
-    ..._bytesField(1, utf8.encode(commandId)),
-    ..._varintField(2, 1),
-  ]),
-);
-
-Uint8List _eventFrame(int eventField, List<int> payload) =>
-    Uint8List.fromList(<int>[
-      ..._bytesField(1, utf8.encode('event-a')),
-      ..._varintField(2, 1),
-      ..._varintField(3, 2),
-      ..._bytesField(eventField, payload),
-    ]);
-
-List<int> _varintField(int fieldNumber, int value) => <int>[
-  ..._varint(fieldNumber << 3),
-  ..._varint(value),
-];
-
-List<int> _bytesField(int fieldNumber, List<int> value) => <int>[
-  ..._varint((fieldNumber << 3) | 2),
-  ..._varint(value.length),
-  ...value,
-];
-
-List<int> _varint(int value) {
-  final bytes = <int>[];
-  var remaining = value;
-  do {
-    final next = remaining & 0x7f;
-    remaining >>= 7;
-    bytes.add(remaining == 0 ? next : next | 0x80);
-  } while (remaining != 0);
-  return bytes;
-}
-
-Future<PeerStateChanged> _firstPeerEvent(
-  NetworkService service,
-  bool Function(PeerStateChanged event) predicate,
-) => service.events
-    .where((event) => event is PeerStateChanged)
-    .cast<PeerStateChanged>()
-    .firstWhere(predicate);
-
-Future<IncomingTransferOffer> _firstOffer(NetworkService service) => service
-    .events
-    .where((event) => event is IncomingTransferOffer)
-    .cast<IncomingTransferOffer>()
-    .first;
-
-Future<TransferCompleted> _firstCompleted(NetworkService service) => service
-    .events
-    .where((event) => event is TransferCompleted)
-    .cast<TransferCompleted>()
-    .first;
-
-Future<TransferFailed> _firstFailed(NetworkService service) => service.events
-    .where((event) => event is TransferFailed)
-    .cast<TransferFailed>()
-    .first;
-
-void _expectNetworkSuccess<T>(NetworkResult<T> result, String operation) {
-  if (result is NetworkFailure<T>) {
-    final error = result.error;
-    fail(
-      '$operation failed: '
-      'code=${error.code.name}; '
-      'message=${error.message}; '
-      'operation=${error.operation?.wireName ?? '<none>'}; '
-      'peerId=${error.peerId ?? '<none>'}',
-    );
-  }
-  expect(
-    result,
-    isA<NetworkSuccess<T>>(),
-    reason: '$operation returned ${result.runtimeType}',
-  );
 }
