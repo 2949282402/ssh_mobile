@@ -243,9 +243,13 @@ String _renderContractTypeScript(LoadedContract contract) {
       "export type TelemetrySeverity = 'info' | 'warn' | 'error' | 'critical';",
     )
     ..writeln()
+    ..writeln(
+      "export type TelemetryPropertyType = 'string' | 'integer' | 'boolean';",
+    )
+    ..writeln()
     ..writeln('export interface TelemetryPropertyDefinition {')
     ..writeln('  readonly name: string;')
-    ..writeln('  readonly type: string;')
+    ..writeln('  readonly type: TelemetryPropertyType;')
     ..writeln('  readonly required: boolean;')
     ..writeln('}')
     ..writeln()

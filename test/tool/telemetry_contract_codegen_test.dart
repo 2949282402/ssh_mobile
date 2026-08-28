@@ -27,6 +27,7 @@ void main() {
     _testIdentifierDerivation();
     _testDuplicateContractEntriesRejected();
     _testMalformedYamlRejected();
+    _testUnsupportedPropertyTypeRejected();
     stdout.writeln('Telemetry contract codegen tests passed.');
   } finally {
     _cleanupTempDirs();
@@ -169,7 +170,11 @@ void _testGeneratedCrossLanguageShape() {
     ts.contains('export class TelemetryEvents') &&
         ts.contains('static readonly all') &&
         ts.contains('export class TelemetryErrorCodes') &&
-        ts.contains('APP_FATAL_ERROR'),
+        ts.contains('APP_FATAL_ERROR') &&
+        ts.contains(
+          "export type TelemetryPropertyType = 'string' | 'integer' | 'boolean';",
+        ) &&
+        ts.contains('readonly type: TelemetryPropertyType;'),
     'TypeScript should expose complete generated catalogs and all lists',
   );
 }
@@ -321,6 +326,23 @@ void _testMalformedYamlRejected() {
   }
   _expect(threw, 'malformed errorCodes should throw FormatException');
   // Deletion is handled by [_cleanupTempDirs] after main completes.
+}
+
+void _testUnsupportedPropertyTypeRejected() {
+  final root = Directory.systemTemp.createTempSync('ssh_mobile_telem_type_');
+  _tempRoot = root;
+  _writeSkeleton(root);
+  final events = File('${root.path}/contracts/telemetry/events.yaml');
+  events.writeAsStringSync(
+    events.readAsStringSync().replaceFirst('type: "string"', 'type: "object"'),
+  );
+  var threw = false;
+  try {
+    loadContract(root);
+  } on FormatException {
+    threw = true;
+  }
+  _expect(threw, 'unsupported property type should throw FormatException');
 }
 
 // Helpers mirror private generator functions for shape verification.

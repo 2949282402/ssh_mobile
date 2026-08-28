@@ -32,6 +32,15 @@ const String _goContractPath =
     'relay/internal/telemetry/generated/telemetry_contract.go';
 const String _tsContractPath = 'front/src/generated/telemetry_contract.ts';
 
+/// Primitive values are intentionally the complete cross-language property
+/// vocabulary. Keeping this list at the YAML parser boundary prevents one
+/// generated client from accepting a shape another owner cannot validate.
+const Set<String> supportedTelemetryPropertyTypes = <String>{
+  'string',
+  'integer',
+  'boolean',
+};
+
 /// Header printed at the top of every generated file.
 const String generatedHeader =
     '// GENERATED DO NOT EDIT, regenerate via dart run tool/gen_telemetry_contract.dart';
@@ -242,6 +251,11 @@ List<EventDef> _parseEvents(dynamic doc) {
         );
       }
       final propertyType = _requiredString(rawProperty, 'type', 'property');
+      if (!supportedTelemetryPropertyTypes.contains(propertyType)) {
+        throw FormatException(
+          'event $name property $propertyName must use a supported primitive type',
+        );
+      }
       final required = rawProperty['required'];
       if (required is! bool) {
         throw FormatException(

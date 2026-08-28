@@ -23,10 +23,16 @@ export const TelemetryErrorSchema = z.object({
   errorCode: z.string().min(1),
   category: z.string().min(1),
   terminalFailure: z.boolean(),
-  message: z.string().optional(),
-  stackTrace: z.string().optional(),
+  message: z.string().max(512).optional(),
+  stackTrace: z.string().max(512).optional(),
 });
 export type TelemetryError = z.infer<typeof TelemetryErrorSchema>;
+
+const TelemetryPropertyValueSchema = z.union([
+  z.string(),
+  z.number().int(),
+  z.boolean(),
+]);
 
 export const TelemetryRecordSchema = z.object({
   eventId: z.string().min(1),
@@ -43,8 +49,8 @@ export const TelemetryRecordSchema = z.object({
   appVersion: z.string().min(1),
   buildNumber: z.string().min(1),
   platform: PlatformSchema,
-  properties: z.record(z.string(), z.unknown()).default({}),
   releaseChannel: z.string().min(1).optional(),
+  properties: z.record(z.string(), TelemetryPropertyValueSchema).default({}),
   error: TelemetryErrorSchema.optional(),
 });
 export type TelemetryRecord = z.infer<typeof TelemetryRecordSchema>;
@@ -239,6 +245,10 @@ export function validateEventCatalogRecord(record: TelemetryRecord): { valid: bo
     if (!allowedProps.has(key)) {
       return { valid: false, error: `Unregistered property "${key}" for event "${record.eventName}"` };
     }
+    const property = def.allowedProperties.find((candidate) => candidate.name === key);
+    if (!property || !matchesTelemetryPropertyType(property.type, record.properties[key])) {
+      return { valid: false, error: `Property "${key}" has invalid type for event "${record.eventName}"` };
+    }
   }
 
   if (record.error) {
@@ -255,4 +265,17 @@ export function validateEventCatalogRecord(record: TelemetryRecord): { valid: bo
   }
 
   return { valid: true };
+}
+
+function matchesTelemetryPropertyType(type: string, value: unknown): boolean {
+  switch (type) {
+    case 'string':
+      return typeof value === 'string';
+    case 'integer':
+      return typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value);
+    case 'boolean':
+      return typeof value === 'boolean';
+    default:
+      return false;
+  }
 }

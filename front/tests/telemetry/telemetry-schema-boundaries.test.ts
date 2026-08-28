@@ -5,7 +5,9 @@ import {
   type TelemetryEventDefinition,
 } from '../../src/generated/telemetry_contract';
 import {
+  TelemetryErrorSchema,
   type TelemetryRecord,
+  TelemetryRecordSchema,
   validateEventCatalogRecord,
 } from '../../src/schemas/telemetry';
 
@@ -65,5 +67,73 @@ describe('telemetry catalog validation boundaries', () => {
       valid: false,
       error: 'Unregistered error code: UNKNOWN_ERROR_CODE',
     });
+  });
+
+  it('rejects property values whose primitive type differs from the generated contract', () => {
+    const definition = TelemetryEvents.networkQuicConnected;
+    const record = recordFor(definition);
+
+    expect(
+      validateEventCatalogRecord({
+        ...record,
+        properties: { rtt_ms: '15', protocol_version: 'v2' },
+      }),
+    ).toMatchObject({ valid: false });
+    expect(
+      validateEventCatalogRecord({
+        ...record,
+        properties: { rtt_ms: 15.5, protocol_version: 'v2' },
+      }),
+    ).toMatchObject({ valid: false });
+    expect(
+      validateEventCatalogRecord({
+        ...record,
+        properties: { rtt_ms: 15, protocol_version: true },
+      }),
+    ).toMatchObject({ valid: false });
+  });
+
+  it('schema accepts only primitive telemetry property values', () => {
+    const definition = TelemetryEvents.networkQuicConnected;
+    const record = recordFor(definition);
+
+    expect(
+      TelemetryRecordSchema.safeParse({
+        ...record,
+        properties: { rtt_ms: 15, protocol_version: 'v2' },
+      }).success,
+    ).toBe(true);
+    expect(
+      TelemetryRecordSchema.safeParse({
+        ...record,
+        properties: { rtt_ms: { value: 15 } },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('bounds diagnostic error message and stack text', () => {
+    const definition = TelemetryEvents.networkQuicConnected;
+    const record = recordFor(definition);
+    const error = {
+      errorCode: 'APP_UNCAUGHT_ERROR',
+      category: 'app',
+      terminalFailure: false,
+    };
+
+    expect(
+      TelemetryRecordSchema.safeParse({
+        ...record,
+        error: {
+          ...error,
+          message: 'm'.repeat(513),
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      TelemetryErrorSchema.safeParse({
+        ...error,
+        stackTrace: 's'.repeat(513),
+      }).success,
+    ).toBe(false);
   });
 });

@@ -4,9 +4,11 @@
 export type TelemetryRecordType = 'analytics' | 'diagnostic';
 export type TelemetrySeverity = 'info' | 'warn' | 'error' | 'critical';
 
+export type TelemetryPropertyType = 'string' | 'integer' | 'boolean';
+
 export interface TelemetryPropertyDefinition {
   readonly name: string;
-  readonly type: string;
+  readonly type: TelemetryPropertyType;
   readonly required: boolean;
 }
 

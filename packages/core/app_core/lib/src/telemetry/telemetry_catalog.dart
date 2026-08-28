@@ -102,6 +102,10 @@ class TelemetryCatalog {
     // Check allowed properties
     for (final key in record.properties.keys) {
       if (!def.allowedProperties.contains(key)) return false;
+      final type = def.propertyTypes[key];
+      if (type == null || !_matchesPropertyType(type, record.properties[key])) {
+        return false;
+      }
     }
 
     // Check error code if present
@@ -120,4 +124,19 @@ class TelemetryCatalog {
   bool isValidErrorCode(String code) => _errors.containsKey(code);
 
   bool isTerminalFailure(String code) => _errors[code]?.terminalFailure ?? true;
+
+  bool _matchesPropertyType(String type, dynamic value) {
+    switch (type) {
+      case 'string':
+        return value is String;
+      case 'integer':
+        // Keep integer values distinct from doubles before JSON encoding can
+        // silently turn a fractional value into a generic number.
+        return value is int && value is! bool;
+      case 'boolean':
+        return value is bool;
+      default:
+        return false;
+    }
+  }
 }
