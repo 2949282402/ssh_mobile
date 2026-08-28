@@ -57,6 +57,9 @@ var (
 	// ErrEnrollmentCredentialMissing indicates that explicit rotation has no
 	// existing telemetry credential to replace.
 	ErrEnrollmentCredentialMissing = errors.New("telemetry credential is not enrolled")
+	// ErrIngestBatchTooLarge is returned before validation or storage allocation
+	// when a direct caller exceeds the bounded public-ingest batch contract.
+	ErrIngestBatchTooLarge = errors.New("telemetry ingest batch exceeds maximum size")
 )
 
 type credentialCreator interface {
@@ -348,8 +351,16 @@ func validEnrollmentRequest(request TelemetryEnrollmentRequest) bool {
 }
 
 func (s *Service) IngestBatch(ctx context.Context, envelopes []TelemetryEnvelope) ([]IngestRecordResult, error) {
+	if len(envelopes) > MaxIngestBatchSize {
+		return nil, fmt.Errorf("%w: maximum is %d records", ErrIngestBatchTooLarge, MaxIngestBatchSize)
+	}
 	if s.store == nil {
 		return nil, ErrServiceUnavailable
+	}
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 	}
 
 	// Unconditionally stamp server receive time; client-supplied receivedAt is ignored.

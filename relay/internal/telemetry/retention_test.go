@@ -97,10 +97,16 @@ func TestRetentionPurgeAndReceiptPreservation(t *testing.T) {
 		},
 	}
 
-	_, err := store.IngestBatch(ctx, records)
-	if err != nil {
-		t.Fatalf("IngestBatch failed: %v", err)
+	store.mu.Lock()
+	for _, record := range records {
+		if err := store.catalog.ValidateEnvelope(&record); err != nil {
+			store.mu.Unlock()
+			t.Fatalf("invalid retention fixture %s: %v", record.EventID, err)
+		}
+		store.rawEvents = append(store.rawEvents, record)
+		store.receipts[record.EventID] = record.ReceivedAt
 	}
+	store.mu.Unlock()
 
 	// 1. Time retention purge: cutoff 30 days ago
 	cutoff := now.Add(-30 * 24 * time.Hour)

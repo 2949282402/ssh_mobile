@@ -111,7 +111,11 @@ func (l *deviceRateLimiter) waitForToken(tokens float64) time.Duration {
 		return 0
 	}
 	seconds := missing / l.config.RateLimitRefillPerSec
-	return time.Duration(math.Ceil(seconds * float64(time.Second)))
+	nanos := seconds * float64(time.Second)
+	if math.IsNaN(nanos) || math.IsInf(nanos, 0) || nanos >= float64(time.Duration(1<<63-1)) {
+		return time.Duration(1<<63 - 1)
+	}
+	return time.Duration(math.Ceil(nanos))
 }
 
 func (l *deviceRateLimiter) retryAfterDuration(wait time.Duration) time.Duration {

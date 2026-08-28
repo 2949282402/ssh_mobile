@@ -272,6 +272,12 @@ func (c *Catalog) ValidateEnvelope(env *TelemetryEnvelope) error {
 	if strings.TrimSpace(env.EventID) == "" {
 		return fmt.Errorf("missing eventId")
 	}
+	// MySQL stores event IDs as exact binary values in VARBINARY(64). Keep the
+	// same byte-length contract in memory so case and trailing whitespace remain
+	// distinct without allowing a value that the durable backend cannot store.
+	if len([]byte(env.EventID)) > 64 {
+		return fmt.Errorf("eventId exceeds maximum length of 64 bytes")
+	}
 	if strings.TrimSpace(env.DeviceID) == "" {
 		return fmt.Errorf("missing deviceId")
 	}

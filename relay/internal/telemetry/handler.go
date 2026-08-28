@@ -225,7 +225,7 @@ func (h *Handler) handlePublicIngest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2. Decode Batch Body
-	r.Body = http.MaxBytesReader(w, r.Body, h.config.MaxBodyBytes+1)
+	r.Body = http.MaxBytesReader(w, r.Body, h.config.MaxBodyBytes)
 	var req IngestBatchRequest
 	decoder := json.NewDecoder(r.Body)
 	if err := decoder.Decode(&req); err != nil {
@@ -301,13 +301,21 @@ func isMaxBytesError(err error) bool {
 }
 
 func (h *Handler) writeIngestRetryError(w http.ResponseWriter, err *ingestAdmissionError, retryAfter time.Duration) {
-	seconds := int(retryAfter.Round(time.Second) / time.Second)
-	if seconds < 1 {
-		seconds = 1
+	seconds64 := int64(1)
+	if retryAfter > 0 {
+		// Subtract before rounding up so a maximum-duration input cannot
+		// overflow while adding one second. The response is always bounded by
+		// the normalized configuration below.
+		seconds64 = int64((retryAfter-1)/time.Second) + 1
 	}
-	if seconds > maxIngestRetryAfterSeconds {
-		seconds = maxIngestRetryAfterSeconds
+	ceiling := maxIngestRetryAfterSeconds
+	if h != nil && h.config.RetryAfterSeconds > 0 && h.config.RetryAfterSeconds < ceiling {
+		ceiling = h.config.RetryAfterSeconds
 	}
+	if seconds64 > int64(ceiling) {
+		seconds64 = int64(ceiling)
+	}
+	seconds := int(seconds64)
 	w.Header().Set("Retry-After", strconv.Itoa(seconds))
 	h.writeError(w, http.StatusTooManyRequests, err.Code(), fmt.Sprintf("%s; retry after %d seconds", err.Error(), seconds))
 }

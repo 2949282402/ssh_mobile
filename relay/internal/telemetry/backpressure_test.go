@@ -367,6 +367,37 @@ func TestHandlePublicIngestReleasesWriterAfterStoreFailure(t *testing.T) {
 	}
 }
 
+func TestHandlePublicIngestReleasesWriterAfterStorePanic(t *testing.T) {
+	base := NewMemoryStore(DefaultCatalog())
+	deviceID := "dev-panic-recovery"
+	_, deviceHash := registerDevice(t, base, deviceID)
+	panicStore := &panicOnceStore{Store: base}
+	service := NewServiceWithSecret(panicStore, DefaultCatalog(), &NoopRedisCache{}, testAuthSecret)
+	exp := futureEpoch()
+	token, _, err := service.AuthenticateDevice(context.Background(), deviceID, deviceProof(deviceID, deviceHash, exp), exp)
+	if err != nil {
+		t.Fatalf("authenticate device: %v", err)
+	}
+	handler := NewHandlerWithConfig(service, IngestConfig{MaxConcurrentWriters: 4, RetryAfterSeconds: 1})
+	mux := http.NewServeMux()
+	handler.RegisterPublicRoutes(mux)
+
+	func() {
+		defer func() {
+			if recovered := recover(); recovered == nil {
+				t.Fatal("expected first store call to panic")
+			}
+		}()
+		mux.ServeHTTP(httptest.NewRecorder(), ingestRequest(t, token, deviceID, testEnvelope("evt-panic", deviceID)))
+	}()
+
+	recovered := httptest.NewRecorder()
+	mux.ServeHTTP(recovered, ingestRequest(t, token, deviceID, testEnvelope("evt-after-panic", deviceID)))
+	if recovered.Code != http.StatusOK {
+		t.Fatalf("writer permit was not released after panic: status=%d body=%s", recovered.Code, recovered.Body.String())
+	}
+}
+
 func TestMySQLStoreConcurrentDuplicateEventIDs(t *testing.T) {
 	dsn := os.Getenv("TELEMETRY_TEST_MYSQL_DSN")
 	if dsn == "" {
@@ -425,6 +456,121 @@ func TestMySQLStoreConcurrentDuplicateEventIDs(t *testing.T) {
 	}
 }
 
+func TestMySQLStoreConcurrentReverseOverlapBatches(t *testing.T) {
+	dsn := os.Getenv("TELEMETRY_TEST_MYSQL_DSN")
+	if dsn == "" {
+		dsn = os.Getenv("TELEMETRY_MYSQL_DSN")
+	}
+	if dsn == "" {
+		t.Skip("TELEMETRY_TEST_MYSQL_DSN or TELEMETRY_MYSQL_DSN not set; skipping MySQL integration test")
+	}
+
+	store, err := NewMySQLStoreFromDSN(dsn, DefaultCatalog())
+	if err != nil {
+		t.Fatalf("open telemetry MySQL store: %v", err)
+	}
+	defer store.Close()
+	const deviceID = "dev-concurrent-mysql-overlap"
+	ids := []string{"evt-reverse-overlap-a", "evt-reverse-overlap-b"}
+	cleanup := func() {
+		for _, eventID := range ids {
+			_, _ = store.db.ExecContext(context.Background(), "DELETE FROM telemetry_events WHERE event_id = ?", eventID)
+			_, _ = store.db.ExecContext(context.Background(), "DELETE FROM telemetry_ingest_receipts WHERE event_id = ?", eventID)
+		}
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+
+	forward := []TelemetryEnvelope{testEnvelope(ids[0], deviceID), testEnvelope(ids[1], deviceID)}
+	reverse := []TelemetryEnvelope{testEnvelope(ids[1], deviceID), testEnvelope(ids[0], deviceID)}
+	type batchResult struct {
+		acks []IngestRecordResult
+		err  error
+	}
+	results := make(chan batchResult, 2)
+	go func() {
+		acks, ingestErr := store.IngestBatch(context.Background(), forward)
+		results <- batchResult{acks: acks, err: ingestErr}
+	}()
+	go func() {
+		acks, ingestErr := store.IngestBatch(context.Background(), reverse)
+		results <- batchResult{acks: acks, err: ingestErr}
+	}()
+
+	accepted := make(map[string]int)
+	alreadySeen := make(map[string]int)
+	for i := 0; i < 2; i++ {
+		result := <-results
+		if result.err != nil {
+			t.Fatalf("reverse-overlap MySQL ingest: %v", result.err)
+		}
+		for _, ack := range result.acks {
+			switch ack.Status {
+			case StatusAccepted:
+				accepted[ack.EventID]++
+			case StatusAlreadySeen:
+				alreadySeen[ack.EventID]++
+			default:
+				t.Fatalf("unexpected reverse-overlap status for %q: %q", ack.EventID, ack.Status)
+			}
+		}
+	}
+	for _, eventID := range ids {
+		if accepted[eventID] != 1 || alreadySeen[eventID] != 1 {
+			t.Fatalf("reverse-overlap event %q accepted=%d alreadySeen=%d, want 1/1", eventID, accepted[eventID], alreadySeen[eventID])
+		}
+	}
+}
+
+func TestMySQLStoreEventIDsPreserveCaseAndTrailingBytes(t *testing.T) {
+	dsn := os.Getenv("TELEMETRY_TEST_MYSQL_DSN")
+	if dsn == "" {
+		dsn = os.Getenv("TELEMETRY_MYSQL_DSN")
+	}
+	if dsn == "" {
+		t.Skip("TELEMETRY_TEST_MYSQL_DSN or TELEMETRY_MYSQL_DSN not set; skipping MySQL integration test")
+	}
+
+	store, err := NewMySQLStoreFromDSN(dsn, DefaultCatalog())
+	if err != nil {
+		t.Fatalf("open telemetry MySQL store: %v", err)
+	}
+	defer store.Close()
+	const deviceID = "dev-mysql-event-id-bytes"
+	ids := []string{"evt-a", "EVT-A", "evt-a "}
+	cleanup := func() {
+		for _, eventID := range ids {
+			_, _ = store.db.ExecContext(context.Background(), "DELETE FROM telemetry_events WHERE event_id = ?", eventID)
+			_, _ = store.db.ExecContext(context.Background(), "DELETE FROM telemetry_ingest_receipts WHERE event_id = ?", eventID)
+		}
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+
+	records := make([]TelemetryEnvelope, 0, len(ids))
+	for _, eventID := range ids {
+		records = append(records, testEnvelope(eventID, deviceID))
+	}
+	acks, err := store.IngestBatch(context.Background(), records)
+	if err != nil {
+		t.Fatalf("exact event-id ingest: %v", err)
+	}
+	for i, ack := range acks {
+		if ack.EventID != ids[i] || ack.Status != StatusAccepted {
+			t.Fatalf("exact event-id ack[%d] = %#v, want accepted %q", i, ack, ids[i])
+		}
+	}
+	replay, err := store.IngestBatch(context.Background(), records)
+	if err != nil {
+		t.Fatalf("exact event-id replay: %v", err)
+	}
+	for i, ack := range replay {
+		if ack.EventID != ids[i] || ack.Status != StatusAlreadySeen {
+			t.Fatalf("exact event-id replay ack[%d] = %#v, want already_seen %q", i, ack, ids[i])
+		}
+	}
+}
+
 func ingestRequest(t *testing.T, token, deviceID string, envelope TelemetryEnvelope) *http.Request {
 	t.Helper()
 	body, err := json.Marshal(IngestBatchRequest{Records: []TelemetryEnvelope{envelope}})
@@ -476,6 +622,18 @@ type recoveringStore struct {
 func (s *recoveringStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnvelope) ([]IngestRecordResult, error) {
 	if s.failed.CompareAndSwap(false, true) {
 		return nil, errors.New("temporary database failure")
+	}
+	return s.Store.IngestBatch(ctx, envelopes)
+}
+
+type panicOnceStore struct {
+	Store
+	panicked atomic.Bool
+}
+
+func (s *panicOnceStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnvelope) ([]IngestRecordResult, error) {
+	if s.panicked.CompareAndSwap(false, true) {
+		panic("test store panic")
 	}
 	return s.Store.IngestBatch(ctx, envelopes)
 }

@@ -13,8 +13,16 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 	contractgen "github.com/ssh-mobile/relay/internal/telemetry/generated"
+)
+
+const (
+	maxIngestTransactionAttempts = 3
+	// A short, deterministic backoff lets a deadlock victim yield to the
+	// transaction that won the conflicting lock without creating an unbounded
+	// request wait. The attempt count remains the hard upper bound.
+	baseIngestRetryDelay = 5 * time.Millisecond
 )
 
 type MySQLStore struct {
@@ -75,7 +83,10 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS telemetry_events (
 			id BIGINT AUTO_INCREMENT PRIMARY KEY,
-			event_id VARCHAR(64) NOT NULL,
+			-- VARBINARY preserves exact event-id bytes, including case and
+			-- trailing whitespace; MySQL text collations otherwise compare
+			-- those values as equal and break Go-store idempotency parity.
+			event_id VARBINARY(64) NOT NULL,
 			record_type VARCHAR(32) NOT NULL,
 			event_name VARCHAR(128) NOT NULL,
 			event_version INT NOT NULL,
@@ -103,7 +114,8 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
 
 		`CREATE TABLE IF NOT EXISTS telemetry_ingest_receipts (
-			event_id VARCHAR(64) PRIMARY KEY,
+			-- Keep the receipt key byte-exact with telemetry_events.event_id.
+			event_id VARBINARY(64) PRIMARY KEY,
 			device_id VARCHAR(128) NOT NULL,
 			received_at DATETIME(3) NOT NULL,
 			INDEX idx_receipt_received (received_at)
@@ -128,8 +140,97 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 			return fmt.Errorf("failed executing telemetry schema DDL: %w", err)
 		}
 	}
+	if err := s.ensureEventIDBinaryColumns(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureTelemetryReceiptConsistency(ctx); err != nil {
+		return err
+	}
 	if err := s.ensureEventIDUniqueIndex(ctx); err != nil {
 		return err
+	}
+	return nil
+}
+
+// ensureEventIDBinaryColumns upgrades pre-backpressure schemas whose event IDs
+// were VARCHAR values under the database's default PAD SPACE/case-insensitive
+// collation. VARBINARY(64) is the durable representation used by both tables;
+// ALTER preserves all existing bytes and makes duplicate detection explicit in
+// the following consistency check.
+func (s *MySQLStore) ensureEventIDBinaryColumns(ctx context.Context) error {
+	for _, table := range []string{"telemetry_events", "telemetry_ingest_receipts"} {
+		var dataType string
+		var maxLength sql.NullInt64
+		err := s.db.QueryRowContext(ctx, `
+			SELECT DATA_TYPE, CHARACTER_OCTET_LENGTH
+			FROM information_schema.columns
+			WHERE table_schema = DATABASE() AND table_name = ? AND column_name = 'event_id'
+		`, table).Scan(&dataType, &maxLength)
+		if err != nil {
+			return fmt.Errorf("inspect %s event id column: %w", table, err)
+		}
+		if strings.EqualFold(dataType, "varbinary") && maxLength.Valid && maxLength.Int64 == 64 {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, "ALTER TABLE "+table+" MODIFY COLUMN event_id VARBINARY(64) NOT NULL"); err != nil {
+			return fmt.Errorf("migrate %s event id column to exact binary: %w", table, err)
+		}
+	}
+	return nil
+}
+
+// ensureTelemetryReceiptConsistency repairs legacy raw-event rows that were
+// written before receipts became mandatory. An exact duplicate event ID is an
+// unrecoverable migration ambiguity and fails startup explicitly rather than
+// causing every later replay to surface as a misleading 503.
+func (s *MySQLStore) ensureTelemetryReceiptConsistency(ctx context.Context) error {
+	var duplicateCount int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM (
+			SELECT event_id
+			FROM telemetry_events
+			GROUP BY BINARY event_id
+			HAVING COUNT(*) > 1
+		) AS duplicate_event_ids
+	`).Scan(&duplicateCount); err != nil {
+		return fmt.Errorf("check duplicate telemetry event ids: %w", err)
+	}
+	if duplicateCount > 0 {
+		return fmt.Errorf("telemetry schema migration found %d duplicate event ids; resolve duplicates before enabling receipt idempotency", duplicateCount)
+	}
+
+	var missingCount int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM telemetry_events e
+		LEFT JOIN telemetry_ingest_receipts r ON BINARY r.event_id = BINARY e.event_id
+		WHERE r.event_id IS NULL
+	`).Scan(&missingCount); err != nil {
+		return fmt.Errorf("check telemetry receipt coverage: %w", err)
+	}
+	if missingCount == 0 {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO telemetry_ingest_receipts (event_id, device_id, received_at)
+		SELECT e.event_id, e.device_id, e.received_at
+		FROM telemetry_events e
+		LEFT JOIN telemetry_ingest_receipts r ON BINARY r.event_id = BINARY e.event_id
+		WHERE r.event_id IS NULL
+	`); err != nil {
+		return fmt.Errorf("backfill %d missing telemetry ingest receipts: %w", missingCount, err)
+	}
+	var remaining int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM telemetry_events e
+		LEFT JOIN telemetry_ingest_receipts r ON BINARY r.event_id = BINARY e.event_id
+		WHERE r.event_id IS NULL
+	`).Scan(&remaining); err != nil {
+		return fmt.Errorf("verify telemetry receipt backfill: %w", err)
+	}
+	if remaining != 0 {
+		return fmt.Errorf("telemetry schema migration left %d raw events without receipts", remaining)
 	}
 	return nil
 }
@@ -163,13 +264,73 @@ func isDuplicateKeyError(err error) bool {
 	if err == nil {
 		return false
 	}
+	var mysqlErr *mysql.MySQLError
+	if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+		return true
+	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "1062") || strings.Contains(msg, "duplicate entry") || strings.Contains(msg, "unique constraint")
 }
 
 var errConcurrentIngestDuplicate = errors.New("concurrent telemetry ingest duplicate")
+var errRetryableIngestConflict = errors.New("retryable telemetry ingest transaction conflict")
+
+// isRetryableIngestConflict recognizes duplicate races and the two InnoDB
+// transaction conflicts that are safe to retry as a whole batch.
+func isRetryableIngestConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	var mysqlErr *mysql.MySQLError
+	if errors.As(err, &mysqlErr) {
+		switch mysqlErr.Number {
+		case 1062, 1205, 1213:
+			return true
+		}
+	}
+	msg := strings.ToLower(err.Error())
+	return isDuplicateKeyError(err) ||
+		strings.Contains(msg, "deadlock found") ||
+		strings.Contains(msg, "lock wait timeout") ||
+		strings.Contains(msg, "try restarting transaction") ||
+		strings.Contains(msg, "error 1205") ||
+		strings.Contains(msg, "error 1213")
+}
+
+func retryableIngestConflict(err error) error {
+	if !isRetryableIngestConflict(err) {
+		return err
+	}
+	if isDuplicateKeyError(err) {
+		return fmt.Errorf("%w: %w: %v", errRetryableIngestConflict, errConcurrentIngestDuplicate, err)
+	}
+	return fmt.Errorf("%w: %v", errRetryableIngestConflict, err)
+}
+
+func orderedIngestEnvelopes(envelopes []TelemetryEnvelope) []TelemetryEnvelope {
+	ordered := append([]TelemetryEnvelope(nil), envelopes...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return ordered[i].EventID < ordered[j].EventID
+	})
+	return ordered
+}
+
+func waitForIngestRetry(ctx context.Context, attempt int) error {
+	delay := baseIngestRetryDelay * time.Duration(attempt+1)
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
 
 func (s *MySQLStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnvelope) ([]IngestRecordResult, error) {
+	if len(envelopes) > MaxIngestBatchSize {
+		return nil, fmt.Errorf("%w: maximum is %d records", ErrIngestBatchTooLarge, MaxIngestBatchSize)
+	}
 	if s == nil || s.db == nil || s.catalog == nil {
 		return nil, fmt.Errorf("%w: mysql telemetry store is unavailable", ErrServiceUnavailable)
 	}
@@ -214,8 +375,20 @@ func (s *MySQLStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnvel
 	// deployments that use READ COMMITTED or an older schema. Retry the whole
 	// bounded batch once the winner commits; the next locking read then reports
 	// the winner as already_seen without losing unrelated records.
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < maxIngestTransactionAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		statuses, err := s.ingestValidBatch(ctx, valid, now)
+		if errors.Is(err, errRetryableIngestConflict) {
+			if attempt+1 < maxIngestTransactionAttempts {
+				if waitErr := waitForIngestRetry(ctx, attempt); waitErr != nil {
+					return nil, waitErr
+				}
+				continue
+			}
+			return nil, fmt.Errorf("ingest batch retry exhausted after %d attempts: %w", maxIngestTransactionAttempts, err)
+		}
 		if errors.Is(err, errConcurrentIngestDuplicate) {
 			continue
 		}
@@ -230,26 +403,33 @@ func (s *MySQLStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnvel
 		}
 		return results, nil
 	}
-	return nil, fmt.Errorf("ingest batch retry exhausted: %w", errConcurrentIngestDuplicate)
+	return nil, fmt.Errorf("ingest batch retry exhausted after %d attempts: %w", maxIngestTransactionAttempts, errConcurrentIngestDuplicate)
 }
 
 func (s *MySQLStore) ingestValidBatch(ctx context.Context, envelopes []TelemetryEnvelope, now time.Time) (map[string]IngestStatus, error) {
+	envelopes = orderedIngestEnvelopes(envelopes)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("begin ingest tx: %w", err)
+		return nil, retryableIngestConflict(fmt.Errorf("begin ingest tx: %w", err))
 	}
 	rollback := func() {
 		_ = tx.Rollback()
 	}
+	committed := false
+	defer func() {
+		if !committed {
+			rollback()
+		}
+	}()
 
 	placeholders := mysqlPlaceholders(len(envelopes))
 	rows, err := tx.QueryContext(ctx,
-		"SELECT event_id FROM telemetry_ingest_receipts WHERE event_id IN ("+placeholders+") FOR UPDATE",
+		"SELECT event_id FROM telemetry_ingest_receipts WHERE event_id IN ("+placeholders+") ORDER BY event_id FOR UPDATE",
 		telemetryEventIDs(envelopes)...,
 	)
 	if err != nil {
 		rollback()
-		return nil, fmt.Errorf("query receipts: %w", err)
+		return nil, retryableIngestConflict(fmt.Errorf("query receipts: %w", err))
 	}
 	existing := make(map[string]struct{}, len(envelopes))
 	for rows.Next() {
@@ -257,18 +437,18 @@ func (s *MySQLStore) ingestValidBatch(ctx context.Context, envelopes []Telemetry
 		if err := rows.Scan(&eventID); err != nil {
 			_ = rows.Close()
 			rollback()
-			return nil, fmt.Errorf("scan receipt: %w", err)
+			return nil, retryableIngestConflict(fmt.Errorf("scan receipt: %w", err))
 		}
 		existing[eventID] = struct{}{}
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
 		rollback()
-		return nil, fmt.Errorf("iterate receipts: %w", err)
+		return nil, retryableIngestConflict(fmt.Errorf("iterate receipts: %w", err))
 	}
 	if err := rows.Close(); err != nil {
 		rollback()
-		return nil, fmt.Errorf("close receipts: %w", err)
+		return nil, retryableIngestConflict(fmt.Errorf("close receipts: %w", err))
 	}
 
 	statuses := make(map[string]IngestStatus, len(envelopes))
@@ -282,8 +462,9 @@ func (s *MySQLStore) ingestValidBatch(ctx context.Context, envelopes []Telemetry
 	}
 	if len(newEnvelopes) == 0 {
 		if err := tx.Commit(); err != nil {
-			return nil, fmt.Errorf("commit receipt lookup: %w", err)
+			return nil, retryableIngestConflict(fmt.Errorf("commit receipt lookup: %w", err))
 		}
+		committed = true
 		return statuses, nil
 	}
 
@@ -299,8 +480,8 @@ func (s *MySQLStore) ingestValidBatch(ctx context.Context, envelopes []Telemetry
 	) VALUES ` + mysqlValueTuples(len(newEnvelopes), 18)
 	if _, err := tx.ExecContext(ctx, eventSQL, eventArgs...); err != nil {
 		rollback()
-		if isDuplicateKeyError(err) {
-			return nil, errConcurrentIngestDuplicate
+		if isRetryableIngestConflict(err) {
+			return nil, retryableIngestConflict(err)
 		}
 		return nil, fmt.Errorf("insert raw events: %w", err)
 	}
@@ -312,18 +493,19 @@ func (s *MySQLStore) ingestValidBatch(ctx context.Context, envelopes []Telemetry
 	receiptSQL := `INSERT INTO telemetry_ingest_receipts (event_id, device_id, received_at) VALUES ` + mysqlValueTuples(len(newEnvelopes), 3)
 	if _, err := tx.ExecContext(ctx, receiptSQL, receiptArgs...); err != nil {
 		rollback()
-		if isDuplicateKeyError(err) {
-			return nil, errConcurrentIngestDuplicate
+		if isRetryableIngestConflict(err) {
+			return nil, retryableIngestConflict(err)
 		}
 		return nil, fmt.Errorf("insert receipts: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		if isDuplicateKeyError(err) {
-			return nil, errConcurrentIngestDuplicate
+		if isRetryableIngestConflict(err) {
+			return nil, retryableIngestConflict(err)
 		}
 		return nil, fmt.Errorf("commit ingest tx: %w", err)
 	}
+	committed = true
 	for _, env := range newEnvelopes {
 		statuses[env.EventID] = StatusAccepted
 	}
@@ -341,28 +523,28 @@ func telemetryEventIDs(envelopes []TelemetryEnvelope) []any {
 func telemetryEventInsertArgs(envelopes []TelemetryEnvelope, now time.Time) ([]any, error) {
 	args := make([]any, 0, len(envelopes)*18)
 	for _, env := range envelopes {
-		var propsJSON []byte
+		var propsValue any
 		if env.Properties != nil {
 			encoded, err := json.Marshal(env.Properties)
 			if err != nil {
 				return nil, fmt.Errorf("marshal properties for %q: %w", env.EventID, err)
 			}
-			propsJSON = encoded
+			propsValue = encoded
 		}
-		var errJSON []byte
+		var errValue any
 		var errorCode any
 		if env.Error != nil {
 			encoded, err := json.Marshal(env.Error)
 			if err != nil {
 				return nil, fmt.Errorf("marshal error for %q: %w", env.EventID, err)
 			}
-			errJSON = encoded
+			errValue = encoded
 			errorCode = env.Error.ErrorCode
 		}
 		args = append(args,
 			env.EventID, string(env.RecordType), env.EventName, env.EventVersion, env.DeviceID, env.SessionID,
 			env.TraceID, env.OccurredAt, env.ReceivedAt, env.Feature, string(env.Severity), errorCode,
-			env.AppVersion, env.BuildNumber, env.Platform, propsJSON, errJSON, now,
+			env.AppVersion, env.BuildNumber, env.Platform, propsValue, errValue, now,
 		)
 	}
 	return args, nil

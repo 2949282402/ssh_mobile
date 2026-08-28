@@ -14,7 +14,10 @@ const (
 	// Ingest backpressure defaults are deliberately small enough for the
 	// supported 2C4G deployment while leaving room for the normal client
 	// policy's 100-record upload.
-	DefaultIngestMaxBatchSize          = 100
+	DefaultIngestMaxBatchSize = 100
+	// MaxIngestBatchSize is the hard bound applied by every ingest entry point,
+	// including direct Store callers that bypass the HTTP handler.
+	MaxIngestBatchSize                 = DefaultIngestMaxBatchSize
 	DefaultIngestConcurrentWriters     = 4
 	DefaultIngestRateLimitCapacity     = 10
 	DefaultIngestRateLimitRefillPerSec = 1.0
@@ -24,7 +27,7 @@ const (
 
 	minIngestConcurrentWriters = 4
 	maxIngestConcurrentWriters = 8
-	maxIngestBatchSize         = 100
+	maxIngestBatchSize         = MaxIngestBatchSize
 	maxIngestBodyBytes         = 1 << 20
 	maxIngestRateLimitCapacity = 1000
 	maxIngestRateLimitRefill   = 1000.0
@@ -92,10 +95,10 @@ func normalizeIngestConfig(config IngestConfig) IngestConfig {
 	} else if config.RateLimitCapacity > maxIngestRateLimitCapacity {
 		config.RateLimitCapacity = maxIngestRateLimitCapacity
 	}
-	if config.RateLimitRefillPerSecond <= 0 || math.IsNaN(config.RateLimitRefillPerSecond) {
+	if config.RateLimitRefillPerSecond <= 0 || math.IsNaN(config.RateLimitRefillPerSecond) || math.IsInf(config.RateLimitRefillPerSecond, 0) {
 		config.RateLimitRefillPerSecond = config.RateLimitRefillPerSec
 	}
-	if config.RateLimitRefillPerSecond <= 0 {
+	if config.RateLimitRefillPerSecond <= 0 || math.IsNaN(config.RateLimitRefillPerSecond) || math.IsInf(config.RateLimitRefillPerSecond, 0) {
 		config.RateLimitRefillPerSecond = defaults.RateLimitRefillPerSecond
 	}
 	if config.RateLimitRefillPerSecond > maxIngestRateLimitRefill {

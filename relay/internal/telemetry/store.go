@@ -159,11 +159,26 @@ func NewMemoryStore(catalog *Catalog) *MemoryStore {
 }
 
 func (m *MemoryStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnvelope) ([]IngestRecordResult, error) {
+	if len(envelopes) > MaxIngestBatchSize {
+		return nil, fmt.Errorf("%w: maximum is %d records", ErrIngestBatchTooLarge, MaxIngestBatchSize)
+	}
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
 
 	now := time.Now().UTC()
 	results := make([]IngestRecordResult, len(envelopes))
+	accepted := make([]TelemetryEnvelope, 0, len(envelopes))
+	pending := make(map[string]struct{}, len(envelopes))
 
 	for i, env := range envelopes {
 		// 1. Schema & Catalog Validation
@@ -184,20 +199,37 @@ func (m *MemoryStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnve
 			}
 			continue
 		}
-
-		// 3. Set trusted receivedAt
-		if env.ReceivedAt.IsZero() {
-			env.ReceivedAt = now
+		if _, exists := pending[env.EventID]; exists {
+			results[i] = IngestRecordResult{
+				EventID: env.EventID,
+				Status:  StatusAlreadySeen,
+			}
+			continue
 		}
 
-		// 4. Atomic Insert of raw event + receipt
-		m.rawEvents = append(m.rawEvents, env)
-		m.receipts[env.EventID] = env.ReceivedAt
+		// 3. Set trusted receivedAt. The in-memory implementation mirrors
+		// MySQL: every newly accepted row receives the current server time,
+		// regardless of any client-supplied value.
+		env.ReceivedAt = now
+		accepted = append(accepted, env)
+		pending[env.EventID] = struct{}{}
 
 		results[i] = IngestRecordResult{
 			EventID: env.EventID,
 			Status:  StatusAccepted,
 		}
+	}
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
+	// Commit accepted rows only after validation and the final context check so
+	// cancellation cannot leave a partial in-memory batch behind the same
+	// transactional contract enforced by MySQL.
+	m.rawEvents = append(m.rawEvents, accepted...)
+	for _, env := range accepted {
+		m.receipts[env.EventID] = env.ReceivedAt
 	}
 
 	return results, nil

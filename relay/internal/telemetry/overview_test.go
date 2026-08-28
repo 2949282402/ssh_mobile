@@ -79,14 +79,16 @@ func ingestOverviewRecords(t *testing.T, records ...TelemetryEnvelope) *MemorySt
 	t.Helper()
 	catalog := DefaultCatalog()
 	store := NewMemoryStore(catalog)
-	results, err := store.IngestBatch(context.Background(), records)
-	if err != nil {
-		t.Fatalf("IngestBatch failed: %v", err)
-	}
-	for i, r := range results {
-		if r.Status != StatusAccepted {
-			t.Fatalf("record %s not accepted: %s", records[i].EventID, r.Reason)
+	// Seed this query-focused fixture directly so its historical receipt times
+	// remain deterministic without weakening the production ingest contract.
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	for _, record := range records {
+		if err := store.catalog.ValidateEnvelope(&record); err != nil {
+			t.Fatalf("invalid overview fixture %s: %v", record.EventID, err)
 		}
+		store.rawEvents = append(store.rawEvents, record)
+		store.receipts[record.EventID] = record.ReceivedAt
 	}
 	return store
 }
