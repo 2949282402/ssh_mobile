@@ -60,6 +60,8 @@ describe('release channel telemetry UI', () => {
     renderWithQueryClient(<TelemetryEventsPage />);
     await waitFor(() => expect(screen.getByText('ssh.session.started')).toBeInTheDocument());
     expect(screen.getByText('channel: beta')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '查看详情 ssh.session.started' }));
+    expect(screen.getByText('Release Channel:')).toBeInTheDocument();
 
     await user.type(screen.getByPlaceholderText('按发布渠道 (releaseChannel)...'), 'beta');
     await user.click(screen.getByRole('button', { name: '查询' }));
@@ -82,6 +84,8 @@ describe('release channel telemetry UI', () => {
 
     renderWithQueryClient(<TelemetryDiagnosticsPage />);
     await waitFor(() => expect(screen.getByText('ssh.session.started')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: '查看日志详情 ssh.session.started' }));
+    expect(screen.getByText('Release Channel:')).toBeInTheDocument();
     await user.type(screen.getByPlaceholderText('按发布渠道 (releaseChannel)...'), 'internal');
     await user.click(screen.getByRole('button', { name: '查询' }));
 

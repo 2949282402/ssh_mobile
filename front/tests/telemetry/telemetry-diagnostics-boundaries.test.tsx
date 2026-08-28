@@ -150,8 +150,19 @@ describe('TelemetryDiagnosticsPage boundary behavior', () => {
     await user.selectOptions(severity, 'critical');
     await user.selectOptions(severity, '');
 
-    const filterInputs = screen.getAllByRole('textbox');
-    expect(filterInputs).toHaveLength(4);
+    const releaseChannelInput = screen.getByPlaceholderText(
+      '按发布渠道 (releaseChannel)...',
+    );
+    expect(releaseChannelInput).toHaveValue('');
+    await user.type(releaseChannelInput, 'boundary');
+    await user.clear(releaseChannelInput);
+
+    const filterInputs = [
+      screen.getByPlaceholderText('按模块搜索 (如 sftp, ssh)...'),
+      screen.getByPlaceholderText('按设备 ID (deviceId)...'),
+      screen.getByPlaceholderText('按追踪 ID (traceId)...'),
+      screen.getByPlaceholderText('按错误码 (errorCode)...'),
+    ];
     for (const input of filterInputs) {
       await user.type(input, 'boundary');
       await user.clear(input);
