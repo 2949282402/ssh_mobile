@@ -1,6 +1,7 @@
-package admin
+package admin_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/ssh-mobile/relay/internal/admin"
 	"github.com/ssh-mobile/relay/internal/telemetry"
 )
 
@@ -109,18 +111,28 @@ func TestAdminRevokeDeviceSpecialCharactersForwarding(t *testing.T) {
 			mux := http.NewServeMux()
 			adminSvc.RegisterRoutes(mux)
 
-			// Create authenticated session
-			testToken := "test-admin-session-token-12345"
-			if err := adminSvc.sessionStore.Create(context.Background(), testToken, 1*time.Hour); err != nil {
-				t.Fatalf("failed to create session: %v", err)
+			escapedID := url.PathEscape(devID)
+			loginBody, err := json.Marshal(map[string]string{
+				"username": "admin",
+				"password": "password-123456",
+			})
+			if err != nil {
+				t.Fatalf("marshal admin login: %v", err)
+			}
+			loginReq := httptest.NewRequest(http.MethodPost, PathAuthLogin, bytes.NewReader(loginBody))
+			loginReq.Header.Set("Content-Type", "application/json")
+			loginRec := httptest.NewRecorder()
+			mux.ServeHTTP(loginRec, loginReq)
+			if loginRec.Code != http.StatusOK {
+				t.Fatalf("admin login status = %d, want 200: %s", loginRec.Code, loginRec.Body.String())
+			}
+			cookies := loginRec.Result().Cookies()
+			if len(cookies) == 0 || cookies[0].Value == "" {
+				t.Fatal("admin login did not return a session cookie")
 			}
 
-			escapedID := url.PathEscape(devID)
 			req := httptest.NewRequest(http.MethodPost, PathRevokeDevice+escapedID+"/revoke", nil)
-			req.AddCookie(&http.Cookie{
-				Name:  sessionCookieName,
-				Value: testToken,
-			})
+			req.AddCookie(cookies[0])
 
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
