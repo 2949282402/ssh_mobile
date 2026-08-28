@@ -476,5 +476,3 @@ async fn active_connect_not_ready_retries_once_then_maps_to_peer_not_ready() {
         "a pre-Offer Resolve/status failure must retire the newly owned Session"
     );
 }
-
-

@@ -358,4 +358,3 @@ fn ssh_stream_data_after_close_is_rejected_cleanly() {
     runtime_b.stop().expect("stop runtime B");
     fs::remove_dir_all(test_root).ok();
 }
-

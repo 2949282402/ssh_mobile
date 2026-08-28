@@ -258,4 +258,3 @@ fn receiver_runtime_restart_restores_direct_trust_without_repairing() {
     runtime_b2.stop().expect("stop receiver B2");
     fs::remove_dir_all(test_root).ok();
 }
-

@@ -441,5 +441,3 @@ async fn stage_b_not_ready_preserves_authority_when_budget_is_exhausted() {
     assert_eq!(control.connectivity_calls(), 0);
     assert_eq!(start.resolved.status, ResolveStatus::NotReady as i32);
 }
-
-

@@ -373,4 +373,3 @@ fn two_runtimes_transfer_binary_boundary_matrix_is_verified_end_to_end() {
     runtime_b.stop().expect("stop runtime B");
     fs::remove_dir_all(test_root).ok();
 }
-

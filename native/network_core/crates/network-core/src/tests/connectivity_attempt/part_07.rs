@@ -380,5 +380,3 @@ async fn healthy_reuse_retires_path_after_remote_epoch_hint() {
         None
     );
 }
-
-

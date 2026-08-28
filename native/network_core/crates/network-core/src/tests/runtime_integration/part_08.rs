@@ -281,4 +281,3 @@ fn delivery_reliable_message_resends_same_message_id_after_reconnect() {
     runtime_b.stop().expect("stop runtime B");
     fs::remove_dir_all(test_root).ok();
 }
-

@@ -338,4 +338,3 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
     runtime_b.stop().expect("stop runtime B");
     fs::remove_dir_all(test_root).ok();
 }
-

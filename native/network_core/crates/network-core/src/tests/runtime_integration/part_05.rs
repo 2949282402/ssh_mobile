@@ -77,4 +77,3 @@ fn receiver_missing_peer_registration_rejects_inbound_connection() {
     runtime_b.stop().expect("stop runtime B");
     fs::remove_dir_all(test_root).ok();
 }
-

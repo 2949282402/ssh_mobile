@@ -440,5 +440,3 @@ async fn relay_fallback_retires_session_when_data_plane_cannot_start() {
         "data-plane admission failure must retire its Session"
     );
 }
-
-

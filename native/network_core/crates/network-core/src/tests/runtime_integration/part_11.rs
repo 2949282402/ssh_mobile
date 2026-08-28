@@ -317,4 +317,3 @@ fn stream_handle_matches(
         handle.opener_device_id == opener_device_id && handle.stream_id == stream_id as u32
     })
 }
-

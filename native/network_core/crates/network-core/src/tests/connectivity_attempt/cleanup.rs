@@ -17,4 +17,3 @@ pub(crate) async fn close_session_and_unregister(
     let _ = state.peer_supervisors.disconnect(&peer_id);
     state.delivery.close_peer(&peer_id).await;
 }
-

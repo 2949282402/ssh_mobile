@@ -462,4 +462,3 @@ impl crate::discovery::DiscoveryControlPlane for StubControl {
         })
     }
 }
-

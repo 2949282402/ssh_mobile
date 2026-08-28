@@ -247,4 +247,3 @@ fn delivery_recovery_replays_same_message_after_explicit_recovery() {
     .is_some());
     fs::remove_dir_all(test_root).ok();
 }
-

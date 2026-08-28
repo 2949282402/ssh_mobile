@@ -400,5 +400,3 @@ async fn overall_timeout_does_not_poison_next_connect() {
     state.close_transport_path("peer-b").await;
     state.fail_session("peer-b", new_session_id).await;
 }
-
-

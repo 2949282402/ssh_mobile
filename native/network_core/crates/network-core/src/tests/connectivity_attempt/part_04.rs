@@ -410,5 +410,3 @@ fn relay_fallback_gate_requires_ready_relay_policy_and_budget() {
         Instant::now() - Duration::from_secs(1),
     ));
 }
-
-

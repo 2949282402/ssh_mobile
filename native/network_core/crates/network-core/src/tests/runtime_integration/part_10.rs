@@ -217,4 +217,3 @@ fn tcp_fallback_authenticates_delivery_and_gets_a_fresh_session_on_reconnect() {
     runtime_b.stop().expect("stop runtime B");
     fs::remove_dir_all(test_root).ok();
 }
-
