@@ -121,7 +121,7 @@ func (s *MySQLStore) ensureTelemetryReceiptConsistency(ctx context.Context) erro
 	var duplicateCount int
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM (
-			SELECT event_id
+			SELECT BINARY event_id AS event_id
 			FROM telemetry_events
 			GROUP BY BINARY event_id
 			HAVING COUNT(*) > 1
