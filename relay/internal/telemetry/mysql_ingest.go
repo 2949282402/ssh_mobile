@@ -239,8 +239,9 @@ func (s *MySQLStore) ingestValidBatch(ctx context.Context, envelopes []Telemetry
 	eventSQL := `INSERT INTO telemetry_events (
 		event_id, record_type, event_name, event_version, device_id, session_id,
 		trace_id, occurred_at, received_at, feature, severity, error_code,
-		app_version, build_number, platform, properties_json, error_json, created_at
-	) VALUES ` + mysqlValueTuples(len(newEnvelopes), 18)
+		app_version, build_number, platform, release_channel, properties_json,
+		error_json, created_at
+	) VALUES ` + mysqlValueTuples(len(newEnvelopes), 19)
 	if _, err := tx.ExecContext(ctx, eventSQL, eventArgs...); err != nil {
 		rollback()
 		if isRetryableIngestConflict(err) {
@@ -284,7 +285,7 @@ func telemetryEventIDs(envelopes []TelemetryEnvelope) []any {
 }
 
 func telemetryEventInsertArgs(envelopes []TelemetryEnvelope, now time.Time) ([]any, error) {
-	args := make([]any, 0, len(envelopes)*18)
+	args := make([]any, 0, len(envelopes)*19)
 	for _, env := range envelopes {
 		var propsValue any
 		if env.Properties != nil {
@@ -304,10 +305,14 @@ func telemetryEventInsertArgs(envelopes []TelemetryEnvelope, now time.Time) ([]a
 			errValue = encoded
 			errorCode = env.Error.ErrorCode
 		}
+		var releaseChannel any
+		if env.ReleaseChannel != "" {
+			releaseChannel = env.ReleaseChannel
+		}
 		args = append(args,
 			env.EventID, string(env.RecordType), env.EventName, env.EventVersion, env.DeviceID, env.SessionID,
 			env.TraceID, env.OccurredAt, env.ReceivedAt, env.Feature, string(env.Severity), errorCode,
-			env.AppVersion, env.BuildNumber, env.Platform, propsValue, errValue, now,
+			env.AppVersion, env.BuildNumber, env.Platform, releaseChannel, propsValue, errValue, now,
 		)
 	}
 	return args, nil

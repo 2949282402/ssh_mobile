@@ -19,20 +19,21 @@ var ErrDeviceCredentialAlreadyExists = errors.New("device telemetry credential a
 
 // QueryFilter defines filtering criteria for telemetry queries.
 type QueryFilter struct {
-	TimeRange  string     `json:"timeRange,omitempty"`
-	StartTime  time.Time  `json:"startTime,omitempty"`
-	EndTime    time.Time  `json:"endTime,omitempty"`
-	DeviceID   string     `json:"deviceId,omitempty"`
-	TraceID    string     `json:"traceId,omitempty"`
-	EventName  string     `json:"eventName,omitempty"`
-	Feature    string     `json:"feature,omitempty"`
-	Severity   Severity   `json:"severity,omitempty"`
-	ErrorCode  string     `json:"errorCode,omitempty"`
-	AppVersion string     `json:"appVersion,omitempty"`
-	Platform   string     `json:"platform,omitempty"`
-	RecordType RecordType `json:"recordType,omitempty"`
-	Page       int        `json:"page"`
-	PageSize   int        `json:"pageSize"`
+	TimeRange      string     `json:"timeRange,omitempty"`
+	StartTime      time.Time  `json:"startTime,omitempty"`
+	EndTime        time.Time  `json:"endTime,omitempty"`
+	DeviceID       string     `json:"deviceId,omitempty"`
+	TraceID        string     `json:"traceId,omitempty"`
+	EventName      string     `json:"eventName,omitempty"`
+	Feature        string     `json:"feature,omitempty"`
+	Severity       Severity   `json:"severity,omitempty"`
+	ErrorCode      string     `json:"errorCode,omitempty"`
+	AppVersion     string     `json:"appVersion,omitempty"`
+	Platform       string     `json:"platform,omitempty"`
+	ReleaseChannel string     `json:"releaseChannel,omitempty"`
+	RecordType     RecordType `json:"recordType,omitempty"`
+	Page           int        `json:"page"`
+	PageSize       int        `json:"pageSize"`
 }
 
 // Store defines persistence operations for telemetry data.
@@ -220,6 +221,9 @@ func (m *MemoryStore) matchesFilter(env *TelemetryEnvelope, f *QueryFilter) bool
 		return false
 	}
 	if f.Platform != "" && env.Platform != f.Platform {
+		return false
+	}
+	if f.ReleaseChannel != "" && env.ReleaseChannel != f.ReleaseChannel {
 		return false
 	}
 	if f.ErrorCode != "" {

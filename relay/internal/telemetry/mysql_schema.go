@@ -35,6 +35,7 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 			app_version VARCHAR(32) NOT NULL,
 			build_number VARCHAR(32) NOT NULL,
 			platform VARCHAR(32) NOT NULL,
+			release_channel VARCHAR(32) DEFAULT NULL,
 			properties_json JSON DEFAULT NULL,
 			error_json JSON DEFAULT NULL,
 			created_at DATETIME(3) NOT NULL,
@@ -44,6 +45,7 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 			INDEX idx_telemetry_name_received (event_name, received_at),
 			INDEX idx_telemetry_severity_received (severity, received_at),
 			INDEX idx_telemetry_error_received (error_code, received_at),
+			INDEX idx_telemetry_release_channel_received (release_channel, received_at),
 			INDEX idx_telemetry_received (received_at)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
 
@@ -73,6 +75,15 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 		if _, err := s.db.ExecContext(ctx, q); err != nil {
 			return fmt.Errorf("failed executing telemetry schema DDL: %w", err)
 		}
+	}
+	// Existing telemetry databases predate the release-channel dimension. The
+	// nullable column keeps those rows valid and lets MySQL retain the old
+	// records without manufacturing a channel value.
+	if _, err := s.db.ExecContext(ctx, `
+		ALTER TABLE telemetry_events
+			ADD COLUMN IF NOT EXISTS release_channel VARCHAR(32) DEFAULT NULL
+	`); err != nil {
+		return fmt.Errorf("failed adding telemetry release channel column: %w", err)
 	}
 	if err := s.ensureEventIDBinaryColumns(ctx); err != nil {
 		return err

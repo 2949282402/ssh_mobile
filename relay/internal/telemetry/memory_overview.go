@@ -32,6 +32,9 @@ func (m *MemoryStore) QueryOverview(ctx context.Context, filter QueryFilter) (*O
 	trendErrors := make(map[string]float64)
 
 	for _, env := range m.rawEvents {
+		if filter.ReleaseChannel != "" && env.ReleaseChannel != filter.ReleaseChannel {
+			continue
+		}
 		if !filter.StartTime.IsZero() && env.ReceivedAt.Before(filter.StartTime) {
 			continue
 		}

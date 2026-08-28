@@ -97,22 +97,23 @@ type TelemetryError struct {
 
 // TelemetryEnvelope represents the standard payload shape received from clients.
 type TelemetryEnvelope struct {
-	EventID      string          `json:"eventId"`
-	RecordType   RecordType      `json:"recordType"`
-	EventName    string          `json:"eventName"`
-	EventVersion int             `json:"eventVersion"`
-	DeviceID     string          `json:"deviceId"`
-	SessionID    string          `json:"sessionId"`
-	TraceID      string          `json:"traceId"`
-	OccurredAt   time.Time       `json:"occurredAt"`
-	ReceivedAt   time.Time       `json:"receivedAt,omitempty"`
-	Feature      string          `json:"feature"`
-	Severity     Severity        `json:"severity"`
-	AppVersion   string          `json:"appVersion"`
-	BuildNumber  string          `json:"buildNumber"`
-	Platform     string          `json:"platform"`
-	Properties   map[string]any  `json:"properties,omitempty"`
-	Error        *TelemetryError `json:"error,omitempty"`
+	EventID        string          `json:"eventId"`
+	RecordType     RecordType      `json:"recordType"`
+	EventName      string          `json:"eventName"`
+	EventVersion   int             `json:"eventVersion"`
+	DeviceID       string          `json:"deviceId"`
+	SessionID      string          `json:"sessionId"`
+	TraceID        string          `json:"traceId"`
+	OccurredAt     time.Time       `json:"occurredAt"`
+	ReceivedAt     time.Time       `json:"receivedAt,omitempty"`
+	Feature        string          `json:"feature"`
+	Severity       Severity        `json:"severity"`
+	AppVersion     string          `json:"appVersion"`
+	BuildNumber    string          `json:"buildNumber"`
+	Platform       string          `json:"platform"`
+	ReleaseChannel string          `json:"releaseChannel,omitempty"`
+	Properties     map[string]any  `json:"properties,omitempty"`
+	Error          *TelemetryError `json:"error,omitempty"`
 }
 
 // IngestRecordResult represents the acknowledgment for a single event in a batch.

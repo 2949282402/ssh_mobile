@@ -99,6 +99,10 @@ func (s *MySQLStore) QueryEvents(ctx context.Context, filter QueryFilter) ([]Tel
 		whereClauses = append(whereClauses, "platform = ?")
 		args = append(args, filter.Platform)
 	}
+	if filter.ReleaseChannel != "" {
+		whereClauses = append(whereClauses, "release_channel = ?")
+		args = append(args, filter.ReleaseChannel)
+	}
 	if !filter.StartTime.IsZero() {
 		whereClauses = append(whereClauses, "received_at >= ?")
 		args = append(args, filter.StartTime)
@@ -133,7 +137,7 @@ func (s *MySQLStore) QueryEvents(ctx context.Context, filter QueryFilter) ([]Tel
 	query := `
 		SELECT event_id, record_type, event_name, event_version, device_id, session_id,
 		       trace_id, occurred_at, received_at, feature, severity, app_version,
-		       build_number, platform, properties_json, error_json
+		       build_number, platform, release_channel, properties_json, error_json
 		FROM telemetry_events
 	` + whereSQL + " ORDER BY received_at DESC LIMIT ? OFFSET ?"
 
@@ -148,12 +152,12 @@ func (s *MySQLStore) QueryEvents(ctx context.Context, filter QueryFilter) ([]Tel
 	for rows.Next() {
 		var env TelemetryEnvelope
 		var recType, sev string
-		var propsRaw, errRaw sql.NullString
+		var releaseChannel, propsRaw, errRaw sql.NullString
 
 		err := rows.Scan(
 			&env.EventID, &recType, &env.EventName, &env.EventVersion, &env.DeviceID, &env.SessionID,
 			&env.TraceID, &env.OccurredAt, &env.ReceivedAt, &env.Feature, &sev, &env.AppVersion,
-			&env.BuildNumber, &env.Platform, &propsRaw, &errRaw,
+			&env.BuildNumber, &env.Platform, &releaseChannel, &propsRaw, &errRaw,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("scan event row: %w", err)
@@ -161,6 +165,9 @@ func (s *MySQLStore) QueryEvents(ctx context.Context, filter QueryFilter) ([]Tel
 
 		env.RecordType = RecordType(recType)
 		env.Severity = Severity(sev)
+		if releaseChannel.Valid {
+			env.ReleaseChannel = releaseChannel.String
+		}
 
 		if propsRaw.Valid && len(propsRaw.String) > 0 {
 			var p map[string]any

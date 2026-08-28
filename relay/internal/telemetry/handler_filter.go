@@ -12,15 +12,16 @@ import (
 func parseQueryFilter(r *http.Request) QueryFilter {
 	q := r.URL.Query()
 	f := QueryFilter{
-		TimeRange:  q.Get("timeRange"),
-		DeviceID:   q.Get("deviceId"),
-		TraceID:    q.Get("traceId"),
-		EventName:  q.Get("eventName"),
-		Feature:    q.Get("feature"),
-		Severity:   Severity(q.Get("severity")),
-		ErrorCode:  q.Get("errorCode"),
-		AppVersion: q.Get("appVersion"),
-		Platform:   q.Get("platform"),
+		TimeRange:      q.Get("timeRange"),
+		DeviceID:       q.Get("deviceId"),
+		TraceID:        q.Get("traceId"),
+		EventName:      q.Get("eventName"),
+		Feature:        q.Get("feature"),
+		Severity:       Severity(q.Get("severity")),
+		ErrorCode:      q.Get("errorCode"),
+		AppVersion:     q.Get("appVersion"),
+		Platform:       q.Get("platform"),
+		ReleaseChannel: q.Get("releaseChannel"),
 	}
 
 	if st := q.Get("startTime"); st != "" {

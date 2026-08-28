@@ -54,6 +54,10 @@ func overviewTimeWhere(filter QueryFilter) (string, []any) {
 		whereClauses = append(whereClauses, "received_at <= ?")
 		args = append(args, filter.EndTime)
 	}
+	if filter.ReleaseChannel != "" {
+		whereClauses = append(whereClauses, "release_channel = ?")
+		args = append(args, filter.ReleaseChannel)
+	}
 	if len(whereClauses) == 0 {
 		return "", nil
 	}

@@ -375,6 +375,7 @@ func (s *Service) QueryDiagnostics(ctx context.Context, filter QueryFilter) ([]T
 		filter.ErrorCode == "" &&
 		filter.Severity == "" &&
 		filter.Platform == "" &&
+		filter.ReleaseChannel == "" &&
 		filter.AppVersion == "" &&
 		filter.StartTime.IsZero() &&
 		filter.EndTime.IsZero() &&
