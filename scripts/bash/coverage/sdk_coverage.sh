@@ -142,7 +142,8 @@ run_dart_package network_transport "$network_transport_dir" "$RUN_DIR/network-tr
   test/transport_contract_test.dart
 run_dart_package ssh_mobile_network_native "$native_sdk_dir" "$RUN_DIR/native-sdk.lcov" \
   test/ssh_mobile_network_native_test.dart \
-  test/protocol_event_matrix_test.dart
+  test/protocol_event_matrix_test.dart \
+  test/protocol_event_matrix_events_test.dart
 
 dart_total_found=0
 dart_total_hit=0
