@@ -9,6 +9,40 @@ void main() {
   final tsconfig = File(
     '${root.path}/front/tsconfig.app.json',
   ).readAsStringSync();
+  final testTsconfig = File('${root.path}/front/tsconfig.tests.json');
+  final packageJson = File(
+    '${root.path}/front/package.json',
+  ).readAsStringSync();
+  final workflow = File(
+    '${root.path}/.github/workflows/flutter.yml',
+  ).readAsStringSync();
+  final backendCoverage = File(
+    '${root.path}/scripts/bash/coverage/backend_coverage.sh',
+  ).readAsStringSync();
+  final backendCoveragePowerShell = File(
+    '${root.path}/scripts/powershell/coverage/backend_coverage.ps1',
+  ).readAsStringSync();
+  final bashApp = File(
+    '${root.path}/scripts/bash/ci/full_test_app.sh',
+  ).readAsStringSync();
+  final powerShellApp = File(
+    '${root.path}/scripts/powershell/ci/full_test_app.ps1',
+  ).readAsStringSync();
+  final bashE2e = File(
+    '${root.path}/scripts/bash/e2e/client_backend_e2e.sh',
+  ).readAsStringSync();
+  final bashTelemetryE2e = File(
+    '${root.path}/scripts/bash/e2e/client_backend_telemetry.sh',
+  ).readAsStringSync();
+  final powerShellE2e = File(
+    '${root.path}/scripts/powershell/e2e/client_backend_e2e.ps1',
+  ).readAsStringSync();
+  final powerShellTelemetryE2e = File(
+    '${root.path}/scripts/powershell/e2e/client_backend_telemetry.ps1',
+  ).readAsStringSync();
+  final powerShellRunner = File(
+    '${root.path}/scripts/powershell/ci/full_test_runner.ps1',
+  ).readAsStringSync();
 
   for (final variable in const [
     'TELEMETRY_MYSQL_DSN',
@@ -33,6 +67,21 @@ void main() {
       'Compose contains a predictable analytics secret: $forbidden',
     );
   }
+  for (final service in const ['analytics-mysql', 'analytics-redis']) {
+    _expect(
+      compose.contains('$service:') && compose.contains('service_healthy'),
+      'Admin Compose startup must wait for healthy $service.',
+    );
+    _expect(
+      compose.contains('$service:') && compose.contains('healthcheck:'),
+      'Analytics service $service must define a readiness healthcheck.',
+    );
+  }
+  _expect(
+    compose.contains('profiles: ["storage"]') &&
+        compose.contains('required: true'),
+    'Analytics storage must remain an explicit, required production profile dependency.',
+  );
 
   for (final example in [
     File('${root.path}/.env.example'),
@@ -75,6 +124,88 @@ void main() {
   _expect(
     !tsconfig.contains('"tests"'),
     'The production Front TypeScript project must not compile root-contract tests.',
+  );
+  _expect(
+    testTsconfig.existsSync(),
+    'Front tests need a dedicated TypeScript project.',
+  );
+  _expect(
+    testTsconfig.readAsStringSync().contains('"tests"'),
+    'The Front test TypeScript project must include front/tests.',
+  );
+  _expect(
+    packageJson.contains('"typecheck:tests"'),
+    'Front package scripts must expose the test TypeScript gate.',
+  );
+  _expect(
+    workflow.contains('npm run typecheck:tests'),
+    'front-quality must run the Front test TypeScript gate.',
+  );
+  for (final marker in const [
+    'analytics-mysql:',
+    'analytics-redis:',
+    'TELEMETRY_TEST_MYSQL_DSN:',
+    'TELEMETRY_TEST_REDIS_URL:',
+    'TELEMETRY_MYSQL_DSN:',
+    'TELEMETRY_REDIS_URL:',
+  ]) {
+    _expect(
+      workflow.contains(marker),
+      'relay-quality must provision Analytics dependencies and test URLs: $marker',
+    );
+  }
+
+  for (final coverage in [backendCoverage, backendCoveragePowerShell]) {
+    _expect(
+      coverage.contains('coverpkg') &&
+          coverage.contains('go list') &&
+          coverage.contains('./internal/...') &&
+          coverage.contains('./cmd/...') &&
+          coverage.contains('TELEMETRY_TEST_MYSQL_DSN') &&
+          coverage.contains('TELEMETRY_TEST_REDIS_URL'),
+      'Backend coverage must instrument production packages and run telemetry integration tests.',
+    );
+    _expect(
+      coverage.contains('internal/telemetry') &&
+          coverage.contains('TELEMETRY_COVERAGE_MINIMUM'),
+      'Backend coverage must enforce a real telemetry-specific threshold.',
+    );
+  }
+  _expect(
+    bashApp.contains('partition_app_tests') &&
+        bashApp.contains('Security regression grep') &&
+        bashApp.contains('retrying once'),
+    'Bash App CI must keep balanced sharding, security grep, and retries.',
+  );
+  _expect(
+    powerShellApp.contains('Partition-AppFiles') &&
+        powerShellApp.contains('SshIdentityCache') &&
+        powerShellApp.contains('Retrying App shard') &&
+        powerShellApp.contains('Assert-AppSecurityIdentifiers'),
+    'PowerShell App CI must match Bash sharding, security grep, and retries.',
+  );
+  _expect(
+    bashTelemetryE2e.contains('TELEMETRY_INGESTION_PASS') &&
+        bashTelemetryE2e.contains('telemetry_ingest') &&
+        bashE2e.contains('assert_storage_after_restart'),
+    'Bash E2E must assert telemetry ingestion and persistence behavior.',
+  );
+  _expect(
+    powerShellTelemetryE2e.contains('TELEMETRY_INGESTION_PASS') &&
+        powerShellE2e.contains('TelemetryIngestion') &&
+        powerShellE2e.contains('AssertStorageAfterRestart'),
+    'PowerShell E2E must match Bash telemetry and persistence assertions.',
+  );
+  _expect(
+    bashE2e.contains('COMPOSE_PROFILE_ARGS=(--profile storage)') &&
+        powerShellE2e.contains("'--profile','storage'"),
+    'Both E2E launchers must activate the required Analytics storage profile.',
+  );
+  _expect(
+    powerShellRunner.contains('RecordSkip') &&
+        powerShellRunner.contains('Flutter coverage was not enabled') &&
+        powerShellRunner.contains('Full App coverage depends'),
+    'PowerShell CI must preserve Bash app-coverage skip semantics.',
   );
 
   final bashCi = Directory('${root.path}/scripts/bash/ci');

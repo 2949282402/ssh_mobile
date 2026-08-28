@@ -1,4 +1,4 @@
-> Last updated: 2026-08-26
+> Last updated: 2026-08-28
 
 # Coverage policy
 
@@ -45,9 +45,15 @@ reason. A new source file without this evidence is not ready for merge.
 | Gate | Scope | Threshold |
 | --- | --- | --- |
 | `front_coverage.sh` | React/Vite `front/src`, with generated/test/bootstrap files excluded | Vitest statements, lines, functions, and branches: 80% each |
-| `backend_coverage.sh` | Hand-written Go Relay code; generated protobuf and process-only `cmd/relay/main.go` excluded | Go line coverage: 80% |
+| `backend_coverage.sh` | Hand-written Go Relay and Admin code; generated protobuf/catalog and process-only `cmd/{relay,admin}/main.go` excluded | Go line coverage: 80%; hand-written `internal/telemetry` has its own 80% gate |
 | `client_coverage.sh` | App-owned Network Protocol V2 boundary in `apps/ssh_mobile_full/lib/services/network/`, exercised by its codec, transfer, realtime, and runtime tests | Dart line coverage: 80% |
 | `sdk_coverage.sh` | Dart `network_sdk`, `network_transport`, and `ssh_mobile_network_native` public libraries, plus the public Rust SDK crates (`network-ffi`, `network-identity`, `network-nat`, `network-protocol`, `network-quic`, `network-relay-proto`, `network-transfer`, `network-transport`, `network-webrtc`) | Each Dart package and the Rust public-crate aggregate: 80% lines |
+
+Set `BACKEND_TELEMETRY_COVERAGE_MINIMUM` to override the telemetry sub-gate
+independently; it defaults to `BACKEND_COVERAGE_MINIMUM` when unset. Both
+backend scripts instrument the hand-written production packages with Go's
+`-coverpkg` option, including tests under `relay/tests`, and reject an empty
+telemetry profile before evaluating either threshold.
 
 The client gate is intentionally a Network V2 client-boundary metric, not a
 claim that every unrelated UI feature in the Full App has 80% coverage. The
@@ -56,8 +62,10 @@ ordinary Rust workspace test/clippy gate; their current workspace coverage is
 reported separately because they are internal engines rather than public SDK
 facades.
 
-Docker-backed MySQL/Redis services are created and removed by
-`backend_coverage.sh` when DSNs are not supplied. The client gate may take
+Docker-backed Relay MySQL/Redis and Analytics MySQL/Redis services are created
+and removed by `backend_coverage.sh` when the corresponding test DSNs/URLs are
+not supplied. Telemetry integration tests therefore do not silently skip when
+the coverage gate bootstraps its own services. The client gate may take
 longer under WSL because Flutter coverage compilation is serialized; use
 `CLIENT_FLUTTER_COVERAGE_TIMEOUT=30m` (or a larger value) when the toolchain
 cache is cold. The SDK Dart gate uses the native `dart test --coverage` runner,

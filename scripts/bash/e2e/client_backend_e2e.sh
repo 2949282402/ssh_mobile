@@ -36,9 +36,13 @@ if [[ -n "${CLIENT_BACKEND_E2E_CA_FILE:-}" ]]; then
   CURL_TLS_ARGS=(--cacert "$CLIENT_BACKEND_E2E_CA_FILE")
 fi
 
+# shellcheck source=client_backend_telemetry.sh
+source "$SCRIPT_DIR/client_backend_telemetry.sh"
+
 case "$STORAGE_MODE" in
-  memory) ;;
-  mysql) COMPOSE_PROFILE_ARGS=(--profile storage) ;;
+  # Analytics storage is part of every E2E deployment. The Relay storage
+  # profile is harmless in memory mode and keeps admin-api dependencies active.
+  memory|mysql) COMPOSE_PROFILE_ARGS=(--profile storage) ;;
   *)
     echo "CLIENT_BACKEND_E2E_STORAGE must be memory or mysql: $STORAGE_MODE" >&2
     exit 64
@@ -474,6 +478,7 @@ if [[ "$MODE" == strict ]]; then
 fi
 
 assert_relay_routes
+telemetry_ingestion_probe
 run_dart
 if [[ "$MODE" == strict && -n "$ADMIN_USER" && -n "$ADMIN_PASSWORD" ]]; then
   run_rust_with_revocation

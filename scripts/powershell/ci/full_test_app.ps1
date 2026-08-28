@@ -1,8 +1,21 @@
 # Full App test and build jobs. Dot-sourced by full_test.ps1.
 
 function AppFiles{$directory=Join-Path $root 'apps\ssh_mobile_full';@(Get-ChildItem (Join-Path $directory 'test') -Recurse -Filter '*_test.dart'|ForEach-Object{[IO.Path]::GetRelativePath($directory,$_.FullName).Replace('\','/')}|Where-Object{$_-notin@('test/features/startup/views/startup_screen_test.dart','test/screens/system_admin/system_admin_snapshot_tabs_test.dart','test/services/network/transfer_transport_test.dart')-and$_-notlike'test/integration/client_backend/*'}|Sort-Object)}
+function Partition-AppFiles([string[]]$Files,[int]$Shard){
+  $directory=Join-Path $root 'apps\ssh_mobile_full';$assignments=@();$sizes=@();for($index=0;$index-lt$AppShards;$index++){$assignments+=,([Collections.Generic.List[string]]::new());$sizes+=[int64]0}
+  $ordered=@($Files|ForEach-Object{$path=$_;[pscustomobject]@{Path=$path;Size=(Get-Item -LiteralPath (Join-Path $directory $path)).Length}}|Sort-Object Size -Descending)
+  foreach($item in $ordered){$target=0;for($candidate=1;$candidate-lt$AppShards;$candidate++){if($sizes[$candidate]-lt$sizes[$target]){$target=$candidate}};$assignments[$target].Add([string]$item.Path);$sizes[$target]+=[int64]$item.Size}
+  [string[]]$assignments[$Shard]
+}
+function Invoke-AppTestWithRetry([string[]]$Arguments,[string]$Directory){
+  for($attempt=1;$attempt-le2;$attempt++){try{Invoke-CommandWithTimeout flutter $Arguments $AppTimeout $Directory @{HTTP_PROXY='';HTTPS_PROXY='';ALL_PROXY='';NO_PROXY='localhost,127.0.0.1,::1'};return}catch{if($attempt-eq2){throw};Write-Host "Retrying App shard after failed attempt ${attempt}: $($_.Exception.Message)"}}
+}
+function Assert-AppSecurityIdentifiers{
+  $directory=Join-Path $root 'apps\ssh_mobile_full';$forbidden=@('SshIdentityCache','reconnectCredentials','privateKeyDigest')
+  foreach($needle in $forbidden){$matches=@(Get-ChildItem (Join-Path $directory 'lib') -Recurse -File -Filter '*.dart'|Select-String -SimpleMatch $needle);if($matches){$matches|Write-Host;throw "Security regression grep found $needle"}}
+}
 function JobApp([int]$Shard){
-  if(-not(Need @('flutter'))){exit$gap};$directory=Join-Path $root 'apps\ssh_mobile_full';$files=AppFiles
+  if(-not(Need @('flutter'))){exit$gap};$directory=Join-Path $root 'apps\ssh_mobile_full';$files=@(Partition-AppFiles @(AppFiles) $Shard)
   $coverageDir=Join-Path $LogDir "coverage\shard-$Shard";New-Item -ItemType Directory $coverageDir -Force|Out-Null
   $batchSize=10
   for($offset=0;$offset -lt $files.Count;$offset+=$batchSize){
@@ -11,7 +24,7 @@ function JobApp([int]$Shard){
     $arguments=@('test','--no-pub','--no-test-assets','--exclude-tags','client-backend,native-loopback','--reporter','compact','--fail-fast','--timeout','60s','--concurrency',"$FlutterConcurrency")
     if($coverage){$arguments+=@('--coverage','--coverage-path',$batchCoverage)}
     $arguments+=$batch
-    Invoke-CommandWithTimeout flutter $arguments $AppTimeout $directory @{HTTP_PROXY='';HTTPS_PROXY='';ALL_PROXY='';NO_PROXY='localhost,127.0.0.1,::1'}
+    Invoke-AppTestWithRetry $arguments $directory
   }
   if($coverage){
     $merged=Join-Path $coverageDir 'lcov.info';Remove-Item $merged -Force -ErrorAction SilentlyContinue

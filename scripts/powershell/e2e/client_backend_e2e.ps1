@@ -19,7 +19,7 @@ $rustProcess=$null
 if($storage-notin@('memory','mysql')){[Console]::Error.WriteLine("CLIENT_BACKEND_E2E_STORAGE must be memory or mysql: $storage");exit 64}
 function Compose([string[]]$Args){
   $a=@('compose','--project-name',$project,'--env-file',$envFile,'--file',(Join-Path $root 'compose.yaml'))
-  if($storage-eq'mysql'){$a+=@('--profile','storage')}
+  $a+=@('--profile','storage')
   Invoke-CommandChecked docker ($a+$Args) $root
 }
 function Hex([int]$n){[Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes($n)).ToLowerInvariant()}
@@ -27,6 +27,7 @@ function B64([int]$n){[Convert]::ToBase64String([Security.Cryptography.RandomNum
 function Port{$listener=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0);try{$listener.Start();([Net.IPEndPoint]$listener.LocalEndpoint).Port}finally{$listener.Stop()}}
 function CurlStatus([string[]]$Args){((& curl.exe @Args 2>$null|Out-String).Trim())}
 function TlsArgs{if($env:CLIENT_BACKEND_E2E_CA_FILE){@('--cacert',$env:CLIENT_BACKEND_E2E_CA_FILE)}else{@()}}
+. (Join-Path $PSScriptRoot 'client_backend_telemetry.ps1')
 function WaitHealth{
   foreach($i in 1..90){if((CurlStatus ((TlsArgs)+@('-sS','--max-time','3','-o','NUL','-w','%{http_code}',"$base/healthz")))-eq'204'){return};Start-Sleep 1}
   throw "Relay health probe failed: $base/healthz"
@@ -69,6 +70,15 @@ function AdminRevoke{
   $status=CurlStatus ((TlsArgs)+@('-sS','--max-time','10','-b',$cookie,'-X','POST','-o','NUL','-w','%{http_code}',"$base/api/admin/v1/devices/e2e-rust-revoke-a/revoke"))
   if($status-ne'204'){throw "Admin revoke failed: $status"}
 }
+function AssertStorageAfterRestart{
+  if(-not$adminUser-or-not$adminPassword){return};$cookie=Join-Path $run 'restart-admin-cookie';$body=Join-Path $run 'restart-admin-login.json';$devices=Join-Path $run 'devices-after-restart.json'
+  @{username=$adminUser;password=$adminPassword}|ConvertTo-Json -Compress|Set-Content $body -Encoding utf8NoBOM
+  $status=CurlStatus ((TlsArgs)+@('-sS','--max-time','10','-H','Content-Type: application/json','-c',$cookie,'--data-binary',"@$body",'-o','NUL','-w','%{http_code}',"$base/api/admin/v1/auth/login"));if($status-ne'200'){throw "Strict post-restart admin login failed: $status"}
+  $status=CurlStatus ((TlsArgs)+@('-sS','--max-time','10','-b',$cookie,'-o',$devices,'-w','%{http_code}',"$base/api/admin/v1/devices"));if($status-ne'200'){throw "Strict post-restart device snapshot failed: $status"}
+  $bodyText=Get-Content $devices -Raw
+  if($storage-eq'mysql'){if($bodyText-notmatch'e2e-rust-a'){throw'MySQL storage profile lost an enrolled device after Relay restart.'};if($bodyText-match'e2e-rust-revoke-a'){throw'MySQL storage profile retained a revoked device after Relay restart.'}}
+  elseif($bodyText-match'e2e-rust-(a|b)'){throw'Memory storage profile retained an enrollment after Relay restart.'}
+}
 function RunRevocation{
   $native=Join-Path $root 'native\network_core'
   Invoke-CommandChecked cargo @('test','-p','network-relay','--features','test-support','--test','client_backend_e2e','--locked','--no-run') $native
@@ -89,6 +99,7 @@ function RunRevocation{
 try{
   if($base-or$token){if(-not$base-or-not$token){[Console]::Error.WriteLine('CLIENT_BACKEND_E2E_BASE_URL and RELAY_ENROLLMENT_TOKEN must be provided together');exit 64}}else{StartDeployment}
   AssertRoutes
+  TelemetryIngestion
   RunDart
   if($Mode-eq'strict'-and$adminUser-and$adminPassword){RunRevocation}else{RunRust}
   if($Mode-eq'strict'-and$started){
@@ -104,6 +115,7 @@ try{
     Compose @('restart','relay')
     WaitHealth
     AssertRoutes
+    AssertStorageAfterRestart
   }
   Write-Host $(if($Mode-eq'strict'){'CLIENT_BACKEND_STRICT_PASS'}else{'CLIENT_BACKEND_SMOKE_PASS'})
 }finally{

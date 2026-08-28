@@ -38,6 +38,8 @@ jobs:
         run: npm ci
       - name: Typecheck front
         run: npm run typecheck
+      - name: Typecheck front tests
+        run: npm run typecheck:tests
       - name: Lint front
         run: npm run lint
       - name: Test front
@@ -210,6 +212,12 @@ jobs:
       # exchange) automatically, so the DSN needs no extra auth parameter.
       RELAY_TEST_MYSQL_DSN: "relay:relay@tcp(127.0.0.1:3306)/relay?parseTime=true&loc=UTC"
       RELAY_TEST_REDIS_URL: "redis://127.0.0.1:6379/0"
+      # Telemetry integration tests must exercise the durable Analytics store;
+      # these are separate service instances and never fall back to t.Skip.
+      TELEMETRY_TEST_MYSQL_DSN: "telemetry:telemetry@tcp(127.0.0.1:3307)/telemetry?parseTime=true&loc=UTC"
+      TELEMETRY_MYSQL_DSN: "telemetry:telemetry@tcp(127.0.0.1:3307)/telemetry?parseTime=true&loc=UTC"
+      TELEMETRY_TEST_REDIS_URL: "redis://127.0.0.1:6380/0"
+      TELEMETRY_REDIS_URL: "redis://127.0.0.1:6380/0"
     services:
       # Mirrors compose.yaml storage profile (mysql:8.4, redis:7-alpine).
       mysql:
@@ -228,6 +236,25 @@ jobs:
         image: redis:7-alpine
         ports:
           - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+      analytics-mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: analytics-root-ci
+          MYSQL_DATABASE: telemetry
+          MYSQL_USER: telemetry
+          MYSQL_PASSWORD: telemetry
+        ports:
+          - 3307:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -utelemetry -ptelemetry"
+          --health-interval=10s --health-timeout=5s --health-retries=15
+      analytics-redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
         options: >-
           --health-cmd="redis-cli ping"
           --health-interval=10s --health-timeout=5s --health-retries=10

@@ -6,6 +6,7 @@ $requested=[string[]]@()
 if($Only){$requested=[string[]]@($Only.Split(',')|Where-Object{$_})}
 function Wanted([string]$Name){$requested.Count-eq0-or$Name-in$requested}
 $results=@{};$durations=@{};$selected=[Collections.Generic.List[string]]::new();$start=Get-Date
+function RecordSkip([string]$Name,[string]$Reason){$selected.Add($Name);$results[$Name]=$gap;$durations[$Name]=0;"ENVIRONMENT GAP: $Reason"|Set-Content (Join-Path $LogDir "$Name.log") -Encoding utf8NoBOM;Write-Host "[GAP ] $Name (environment/dependency gap)";Write-Host $Reason}
 function StartJob([string]$Name){
   $processInfo=[Diagnostics.ProcessStartInfo]::new((Get-Process -Id $PID).Path);$processInfo.UseShellExecute=$false
   foreach($argument in @('-NoProfile','-File',$FullTestScriptPath,'-InternalJob',$Name,'-RunId',$RunId,'-LogDir',$LogDir,'-Jobs',"$Jobs",'-FlutterConcurrency',"$FlutterConcurrency",'-MelosConcurrency',"$MelosConcurrency",'-MelosTestConcurrency',"$MelosTestConcurrency",'-AppTimeout',$AppTimeout,'-AppShards',"$AppShards",'-WorkspaceTestTimeout',$WorkspaceTestTimeout,'-TempRoot',$temp)){$processInfo.ArgumentList.Add($argument)}
@@ -24,7 +25,11 @@ function Invoke-FullTest {
   Batch @('workspace-core-quality') 1;Batch @('workspace-features-quality') 1
   $appJobs=@(0..($AppShards-1)|ForEach-Object{"app-unit-shard-$_"});Batch $appJobs $(if($parallelShards){$Jobs}else{1})
   Batch @('android-build') 1;Batch @('windows-build') 1;Batch @('terminal-smoke-build') 1
-  if($coverage-and@($appJobs|Where-Object{$results[$_]-ne0}).Count-eq0){Batch @('app-coverage') 1}
+  if(Wanted 'app-coverage'){
+    if(-not$coverage){if($Only){RecordSkip 'app-coverage' 'Flutter coverage was not enabled for this explicit app-coverage selection. Use scripts/powershell/coverage/client_coverage.ps1 or -WithCoverage.'}else{Write-Host '[SKIP] app-coverage (daily gate; run scripts/powershell/coverage/client_coverage.ps1 for the periodic client review)'}}
+    elseif(@($appJobs|Where-Object{if($results.ContainsKey($_)){$results[$_]-ne0}else{$true}}).Count-eq0){Batch @('app-coverage') 1}
+    else{RecordSkip 'app-coverage' 'Full App coverage depends on every App test shard passing.'}
+  }
   Write-Host "`nFinal summary:"
   foreach($name in $selected){Write-Host("  {0} {1} ({2}s)"-f$(if($results[$name]-eq0){'PASS'}elseif($results[$name]-eq$gap){'GAP '}else{'FAIL'}),$name,$durations[$name])}
   Write-Host "Total: $([int]((Get-Date)-$start).TotalSeconds)s"

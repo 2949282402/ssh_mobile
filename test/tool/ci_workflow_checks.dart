@@ -271,4 +271,14 @@ void _verifyFullTestScripts(Directory root) {
     powerShellFullTest.contains("full_test_jobs.ps1"),
     'full_test.ps1 必须加载 workspace/service CI helper',
   );
+  _expect(
+    bashJobs.contains(
+      "step 'Typecheck front tests' run_in front npm run typecheck:tests",
+    ),
+    'full_test_jobs.sh 必须运行 Front test TypeScript gate',
+  );
+  _expect(
+    powerShellJobs.contains("'typecheck:tests'"),
+    'full_test_jobs.ps1 必须运行 Front test TypeScript gate',
+  );
 }

@@ -50,6 +50,13 @@ services:
     stop_grace_period: 30s
     deploy:
       replicas: 1
+    depends_on:
+      analytics-mysql:
+        condition: service_healthy
+        required: true
+      analytics-redis:
+        condition: service_healthy
+        required: true
     expose:
       - "${ADMIN_INTERNAL_PORT:-8081}"
     environment:
@@ -105,6 +112,16 @@ services:
       TZ: UTC
     volumes:
       - analytics_mysql_data:/var/lib/mysql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mysqladmin ping -h 127.0.0.1 -utelemetry
+          -p"$${MYSQL_PASSWORD}" --silent
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
     networks:
       - analytics_state
 
@@ -130,6 +147,16 @@ services:
         --requirepass "$$ANALYTICS_REDIS_PASSWORD"
     volumes:
       - analytics_redis_data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          redis-cli --no-auth-warning -a "$${ANALYTICS_REDIS_PASSWORD}"
+          ping | grep -q '^PONG$'
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 5s
     networks:
       - analytics_state
 

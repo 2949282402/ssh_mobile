@@ -20,6 +20,7 @@ job_client_backend_smoke() {
 job_front() {
   need npm || return "$SKIP_STATUS"
   step 'Typecheck front' run_in front npm run typecheck
+  step 'Typecheck front tests' run_in front npm run typecheck:tests
   step 'Lint front' run_in front npm run lint
   step 'Test front' run_in front npm run test:run
   step 'Build front' run_in front npm run build
@@ -98,42 +99,88 @@ wait_for_redis() {
   return 1
 }
 
+wait_for_analytics_mysql() {
+  local attempt
+  for attempt in $(seq 1 60); do
+    if docker exec "$ANALYTICS_MYSQL_CONTAINER" mysqladmin ping -h 127.0.0.1 \
+      -utelemetry -p"$ANALYTICS_MYSQL_PASSWORD" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+wait_for_analytics_redis() {
+  local attempt
+  for attempt in $(seq 1 30); do
+    if docker exec "$ANALYTICS_REDIS_CONTAINER" redis-cli -a "$ANALYTICS_REDIS_PASSWORD" \
+      --no-auth-warning ping 2>/dev/null | rg -q '^PONG$'; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
 start_relay_services() {
   RELAY_MYSQL_CONTAINER="ssh-mobile-full-test-mysql-$RUN_ID"
   RELAY_REDIS_CONTAINER="ssh-mobile-full-test-redis-$RUN_ID"
-  trap 'docker rm -f "${RELAY_MYSQL_CONTAINER:-}" "${RELAY_REDIS_CONTAINER:-}" >/dev/null 2>&1 || true' EXIT
+  ANALYTICS_MYSQL_CONTAINER="ssh-mobile-full-test-analytics-mysql-$RUN_ID"
+  ANALYTICS_REDIS_CONTAINER="ssh-mobile-full-test-analytics-redis-$RUN_ID"
+  trap 'docker rm -f "${RELAY_MYSQL_CONTAINER:-}" "${RELAY_REDIS_CONTAINER:-}" "${ANALYTICS_MYSQL_CONTAINER:-}" "${ANALYTICS_REDIS_CONTAINER:-}" >/dev/null 2>&1 || true' EXIT
 
   docker run -d --rm --name "$RELAY_MYSQL_CONTAINER" -p 127.0.0.1::3306 \
     -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=relay \
     -e MYSQL_USER=relay -e MYSQL_PASSWORD=relay mysql:8.4 >/dev/null || return 1
   docker run -d --rm --name "$RELAY_REDIS_CONTAINER" -p 127.0.0.1::6379 \
     redis:7-alpine >/dev/null || return 1
+  ANALYTICS_MYSQL_PASSWORD="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
+  ANALYTICS_MYSQL_ROOT_PASSWORD="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
+  ANALYTICS_REDIS_PASSWORD="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
+  docker run -d --rm --name "$ANALYTICS_MYSQL_CONTAINER" -p 127.0.0.1::3306 \
+    -e MYSQL_ROOT_PASSWORD="$ANALYTICS_MYSQL_ROOT_PASSWORD" \
+    -e MYSQL_DATABASE=telemetry -e MYSQL_USER=telemetry \
+    -e MYSQL_PASSWORD="$ANALYTICS_MYSQL_PASSWORD" mysql:8.4 >/dev/null || return 1
+  docker run -d --rm --name "$ANALYTICS_REDIS_CONTAINER" -p 127.0.0.1::6379 \
+    -e ANALYTICS_REDIS_PASSWORD="$ANALYTICS_REDIS_PASSWORD" redis:7-alpine sh -ec \
+    'exec redis-server --maxmemory 64mb --maxmemory-policy noeviction --requirepass "$ANALYTICS_REDIS_PASSWORD"' >/dev/null || return 1
 
   RELAY_MYSQL_PORT="$(docker port "$RELAY_MYSQL_CONTAINER" 3306/tcp | head -n 1 | sed -E 's/.*:([0-9]+)$/\1/')"
   RELAY_REDIS_PORT="$(docker port "$RELAY_REDIS_CONTAINER" 6379/tcp | head -n 1 | sed -E 's/.*:([0-9]+)$/\1/')"
-  [[ "$RELAY_MYSQL_PORT" =~ ^[0-9]+$ && "$RELAY_REDIS_PORT" =~ ^[0-9]+$ ]] || return 1
+  ANALYTICS_MYSQL_PORT="$(docker port "$ANALYTICS_MYSQL_CONTAINER" 3306/tcp | head -n 1 | sed -E 's/.*:([0-9]+)$/\1/')"
+  ANALYTICS_REDIS_PORT="$(docker port "$ANALYTICS_REDIS_CONTAINER" 6379/tcp | head -n 1 | sed -E 's/.*:([0-9]+)$/\1/')"
+  [[ "$RELAY_MYSQL_PORT" =~ ^[0-9]+$ && "$RELAY_REDIS_PORT" =~ ^[0-9]+$ && \
+    "$ANALYTICS_MYSQL_PORT" =~ ^[0-9]+$ && "$ANALYTICS_REDIS_PORT" =~ ^[0-9]+$ ]] || return 1
 
   wait_for_mysql || return 1
   wait_for_redis || return 1
+  wait_for_analytics_mysql || return 1
+  wait_for_analytics_redis || return 1
   export RELAY_TEST_MYSQL_DSN="relay:relay@tcp(127.0.0.1:${RELAY_MYSQL_PORT})/relay?parseTime=true&loc=UTC"
   export RELAY_TEST_REDIS_URL="redis://127.0.0.1:${RELAY_REDIS_PORT}/0"
+  export TELEMETRY_TEST_MYSQL_DSN="telemetry:${ANALYTICS_MYSQL_PASSWORD}@tcp(127.0.0.1:${ANALYTICS_MYSQL_PORT})/telemetry?parseTime=true&loc=UTC"
+  export TELEMETRY_MYSQL_DSN="$TELEMETRY_TEST_MYSQL_DSN"
+  export TELEMETRY_TEST_REDIS_URL="redis://:${ANALYTICS_REDIS_PASSWORD}@127.0.0.1:${ANALYTICS_REDIS_PORT}/0"
+  export TELEMETRY_REDIS_URL="$TELEMETRY_TEST_REDIS_URL"
 }
 
 job_relay() {
   need go || return "$SKIP_STATUS"
   local storage_ready=0
-  if [[ -n "${RELAY_TEST_MYSQL_DSN:-}" && -n "${RELAY_TEST_REDIS_URL:-}" ]]; then
+  if [[ -n "${RELAY_TEST_MYSQL_DSN:-}" && -n "${RELAY_TEST_REDIS_URL:-}" && \
+    -n "${TELEMETRY_TEST_MYSQL_DSN:-}" && -n "${TELEMETRY_TEST_REDIS_URL:-}" ]]; then
     storage_ready=1
-    echo 'Using caller-provided Relay MySQL/Redis test endpoints.'
+    echo 'Using caller-provided Relay and Analytics test endpoints.'
   elif ((DOCKER_AVAILABLE)); then
     if start_relay_services; then
       storage_ready=1
-      trap 'docker rm -f "${RELAY_MYSQL_CONTAINER:-}" "${RELAY_REDIS_CONTAINER:-}" >/dev/null 2>&1 || true' EXIT
+      trap 'docker rm -f "${RELAY_MYSQL_CONTAINER:-}" "${RELAY_REDIS_CONTAINER:-}" "${ANALYTICS_MYSQL_CONTAINER:-}" "${ANALYTICS_REDIS_CONTAINER:-}" >/dev/null 2>&1 || true' EXIT
     else
-      echo 'ENVIRONMENT GAP: MySQL/Redis test containers could not be started; storage integration tests were not run.'
+      echo 'ENVIRONMENT GAP: Relay/Analytics MySQL/Redis test containers could not be started; storage integration tests were not run.'
     fi
   else
-    echo 'ENVIRONMENT GAP: Docker daemon is unavailable; MySQL/Redis integration tests were not run.'
+    echo 'ENVIRONMENT GAP: Docker daemon is unavailable; Relay/Analytics integration tests were not run.'
   fi
 
   step 'Check Go formatting' bash -c 'files="$(gofmt -l .)"; if [[ -n "$files" ]]; then printf "%s\n" "$files"; exit 1; fi'
