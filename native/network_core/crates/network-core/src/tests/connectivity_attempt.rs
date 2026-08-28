@@ -2,12 +2,12 @@
 
 // The source is included in ordered, focused chunks so every hand-written test
 // unit remains reviewable without changing the original shared test namespace.
-include!("connectivity_attempt/part_01.rs");
-include!("connectivity_attempt/part_02.rs");
-include!("connectivity_attempt/part_03.rs");
-include!("connectivity_attempt/part_04.rs");
-include!("connectivity_attempt/part_05.rs");
-include!("connectivity_attempt/part_06.rs");
-include!("connectivity_attempt/part_07.rs");
-include!("connectivity_attempt/part_08.rs");
+include!("connectivity_attempt/state_machine_and_guards.rs");
+include!("connectivity_attempt/direct_reuse_and_retries.rs");
+include!("connectivity_attempt/coordination_and_direct_attach.rs");
+include!("connectivity_attempt/candidate_and_relay_gates.rs");
+include!("connectivity_attempt/resolve_and_answer_boundaries.rs");
+include!("connectivity_attempt/relay_fallback_cleanup.rs");
+include!("connectivity_attempt/authoritative_resolve_and_reuse.rs");
+include!("connectivity_attempt/connectivity_test_doubles.rs");
 include!("connectivity_attempt/cleanup.rs");

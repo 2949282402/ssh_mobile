@@ -4,16 +4,15 @@
 //! hand-written test unit remains reviewable without changing the shared
 //! private-state test namespace.
 
-include!("runtime_integration/part_01.rs");
-include!("runtime_integration/part_02.rs");
-include!("runtime_integration/part_03.rs");
-include!("runtime_integration/part_04.rs");
-include!("runtime_integration/part_05.rs");
-include!("runtime_integration/part_06.rs");
-include!("runtime_integration/part_07.rs");
-include!("runtime_integration/part_08.rs");
-include!("runtime_integration/part_09.rs");
-include!("runtime_integration/part_10.rs");
-include!("runtime_integration/part_11.rs");
-include!("runtime_integration/part_12.rs");
-include!("runtime_integration/part_13.rs");
+include!("runtime_integration/relay_data_fixtures.rs");
+include!("runtime_integration/relay_data_and_runtime_lifecycle.rs");
+include!("runtime_integration/direct_transfer_matrix.rs");
+include!("runtime_integration/receiver_restart_and_admission.rs");
+include!("runtime_integration/file_transfer_recovery.rs");
+include!("runtime_integration/delivery_recovery.rs");
+include!("runtime_integration/delivery_reconnect.rs");
+include!("runtime_integration/peer_runtime_restart.rs");
+include!("runtime_integration/tcp_fallback.rs");
+include!("runtime_integration/websocket_fallback_and_stream_helpers.rs");
+include!("runtime_integration/stream_transport.rs");
+include!("runtime_integration/ssh_gateway_and_test_helpers.rs");
