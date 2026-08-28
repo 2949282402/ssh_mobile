@@ -19,14 +19,21 @@ var registerSchemaProbeDriver sync.Once
 var schemaProbe schemaProbeState
 
 type schemaProbeState struct {
-	mu            sync.Mutex
-	execs         []string
-	duplicateIDs  int64
-	missingCalls  int
-	legacyColumn  bool
-	indexRows     [][]driver.Value
-	indexQueryErr error
-	receiptIDs    []string
+	mu                       sync.Mutex
+	execs                    []string
+	duplicateIDs             int64
+	missingCalls             int
+	legacyColumn             bool
+	indexRows                [][]driver.Value
+	indexQueryErr            error
+	indexRowsIterErr         error
+	indexRowsCloseErr        error
+	indexRowsKeepOpen        bool
+	receiptIDs               []string
+	queryErrors              map[string]error
+	execErrors               map[string]error
+	receiptCoverageQueryErr  error
+	receiptBackfillVerifyErr error
 }
 
 func (s *schemaProbeState) reset() {
@@ -38,13 +45,14 @@ func (s *schemaProbeState) reset() {
 	s.legacyColumn = false
 	s.indexRows = nil
 	s.indexQueryErr = nil
+	s.indexRowsIterErr = nil
+	s.indexRowsCloseErr = nil
+	s.indexRowsKeepOpen = false
 	s.receiptIDs = nil
-}
-
-func (s *schemaProbeState) recordExec(query string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.execs = append(s.execs, query)
+	s.queryErrors = nil
+	s.execErrors = nil
+	s.receiptCoverageQueryErr = nil
+	s.receiptBackfillVerifyErr = nil
 }
 
 type schemaProbeDriver struct{}
@@ -75,12 +83,21 @@ func (*schemaProbeTx) Commit() error   { return nil }
 func (*schemaProbeTx) Rollback() error { return nil }
 
 func (c *schemaProbeConn) ExecContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Result, error) {
-	c.state.recordExec(query)
-	return schemaProbeResult{}, nil
+	c.state.mu.Lock()
+	c.state.execs = append(c.state.execs, query)
+	err := schemaProbeError(query, c.state.execErrors)
+	c.state.mu.Unlock()
+	return schemaProbeResult{}, err
 }
 
 func (c *schemaProbeConn) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
 	lower := strings.ToLower(query)
+	c.state.mu.Lock()
+	queryErr := schemaProbeError(lower, c.state.queryErrors)
+	c.state.mu.Unlock()
+	if queryErr != nil {
+		return nil, queryErr
+	}
 	switch {
 	case strings.Contains(lower, "select event_id from telemetry_ingest_receipts"):
 		c.state.mu.Lock()
@@ -95,13 +112,19 @@ func (c *schemaProbeConn) QueryContext(_ context.Context, query string, _ []driv
 		c.state.mu.Lock()
 		indexRows := append([][]driver.Value(nil), c.state.indexRows...)
 		indexErr := c.state.indexQueryErr
+		indexIterErr := c.state.indexRowsIterErr
+		indexCloseErr := c.state.indexRowsCloseErr
+		indexKeepOpen := c.state.indexRowsKeepOpen
 		c.state.mu.Unlock()
 		if indexErr != nil {
 			return nil, indexErr
 		}
 		return &schemaProbeMultiRows{
-			columns: []string{"NON_UNIQUE", "SEQ_IN_INDEX", "COLUMN_NAME", "SUB_PART", "DATA_TYPE", "CHARACTER_OCTET_LENGTH", "COLLATION_NAME"},
-			rows:    indexRows,
+			columns:  []string{"NON_UNIQUE", "SEQ_IN_INDEX", "COLUMN_NAME", "SUB_PART", "DATA_TYPE", "CHARACTER_OCTET_LENGTH", "COLLATION_NAME"},
+			rows:     indexRows,
+			err:      indexIterErr,
+			closeErr: indexCloseErr,
+			keepOpen: indexKeepOpen,
 		}, nil
 	case strings.Contains(lower, "information_schema.columns"):
 		c.state.mu.Lock()
@@ -123,7 +146,14 @@ func (c *schemaProbeConn) QueryContext(_ context.Context, query string, _ []driv
 		c.state.mu.Lock()
 		c.state.missingCalls++
 		call := c.state.missingCalls
+		coverageErr := c.state.receiptCoverageQueryErr
+		if call > 1 {
+			coverageErr = c.state.receiptBackfillVerifyErr
+		}
 		c.state.mu.Unlock()
+		if coverageErr != nil {
+			return nil, coverageErr
+		}
 		missing := int64(1)
 		if call > 1 {
 			missing = 0
@@ -134,6 +164,16 @@ func (c *schemaProbeConn) QueryContext(_ context.Context, query string, _ []driv
 	}
 }
 
+func schemaProbeError(query string, configured map[string]error) error {
+	query = strings.ToLower(query)
+	for fragment, err := range configured {
+		if strings.Contains(query, fragment) {
+			return err
+		}
+	}
+	return nil
+}
+
 type schemaProbeRows struct {
 	columns []string
 	values  []driver.Value
@@ -141,17 +181,29 @@ type schemaProbeRows struct {
 }
 
 type schemaProbeMultiRows struct {
-	columns []string
-	rows    [][]driver.Value
-	index   int
+	columns  []string
+	rows     [][]driver.Value
+	index    int
+	err      error
+	closeErr error
+	keepOpen bool
 }
 
 func (r *schemaProbeMultiRows) Columns() []string { return r.columns }
 
-func (*schemaProbeMultiRows) Close() error { return nil }
+func (r *schemaProbeMultiRows) Close() error { return r.closeErr }
+
+func (r *schemaProbeMultiRows) HasNextResultSet() bool { return r.keepOpen }
+
+func (*schemaProbeMultiRows) NextResultSet() error { return io.EOF }
 
 func (r *schemaProbeMultiRows) Next(dest []driver.Value) error {
 	if r.index >= len(r.rows) {
+		if r.err != nil {
+			err := r.err
+			r.err = nil
+			return err
+		}
 		return io.EOF
 	}
 	copy(dest, r.rows[r.index])
