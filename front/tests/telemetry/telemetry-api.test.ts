@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { telemetryApi } from './telemetry';
-import { AdminApiRoutes } from './routes';
+import { telemetryApi } from '../../src/api/telemetry';
+import { AdminApiRoutes } from '../../src/api/routes';
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -19,6 +19,11 @@ describe('telemetryApi', () => {
       criticalErrorCount: 0,
       affectedDevicesCount: 1,
       coreOperationSuccessRate: 0.98,
+      businessOperationSuccessRate: 0.98,
+      businessOperationSuccesses: 98,
+      businessOperationFailures: 2,
+      businessOperationDenominator: 100,
+      businessOperationGroups: [],
       errorFreeSessionRate: 0.95,
       eventsTrend: [{ timestamp: '2026-08-27T00:00:00Z', value: 100 }],
       errorsTrend: [{ timestamp: '2026-08-27T00:00:00Z', value: 2 }],
@@ -26,8 +31,23 @@ describe('telemetryApi', () => {
       pipelineHealth: {
         status: 'healthy',
         serverIngestLatencyMs: 4.2,
+        serverIngestLatencyP50Ms: 4,
+        serverIngestLatencyP95Ms: 6,
+        serverIngestLatencyP99Ms: 8,
+        serverIngestLatencySamples: 100,
+        serverIngestRequests: 100,
+        serverIngestSuccesses: 100,
+        serverIngestFailures: 0,
         serverIngestErrorRate: 0.0,
         redisCacheStatus: 'active',
+      },
+      deliveryDelay: {
+        averageMs: 20,
+        p50Ms: 15,
+        p95Ms: 40,
+        p99Ms: 60,
+        samples: 90,
+        futureTimestampCount: 0,
       },
     };
 

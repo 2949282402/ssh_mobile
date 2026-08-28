@@ -189,8 +189,9 @@ void _testOperationMetadataAndLists() {
       .singleWhere((event) => event['name'] == 'network.relay.failed');
   _expect(
     relayFailed['operationGroup'] == 'network.relay' &&
-        relayFailed['operationRole'] == 'failure',
-    'network.relay.failed should carry operation metadata',
+        relayFailed['operationRole'] == 'failure' &&
+        relayFailed['businessOperation'] == true,
+    'network.relay.failed should carry explicit business operation metadata',
   );
   _expect(
     contract.events.length >= 23 && contract.errorCodes.length >= 21,
@@ -379,6 +380,7 @@ void _writeSkeleton(Directory root) {
     '    severity: "info"\n'
     '    operationGroup: "app.lifecycle"\n'
     '    operationRole: "started"\n'
+    '    businessOperation: false\n'
     '    description: "d"\n'
     '    allowedProperties:\n'
     '      - name: "start_type"\n'

@@ -19,7 +19,7 @@ Invoke-CommandChecked dart @('run', 'test/tool/telemetry_producer_ban_test.dart'
 Invoke-CommandChecked go @('test', './internal/telemetry', '-run', '^TestTelemetryContract', '-count=1') (Join-Path $root 'relay')
 
 # 3. TypeScript / Front validation
-Invoke-CommandChecked npm @('run', 'test:run', '--', 'src/schemas/telemetry-contract.test.ts') (Join-Path $root 'front')
+Invoke-CommandChecked npm @('run', 'test:run', '--', 'tests/telemetry/telemetry-contract.test.ts') (Join-Path $root 'front')
 
 # 4. Dart validation
 Invoke-CommandChecked flutter @('test', '--no-pub', 'packages/core/app_core/test/telemetry_contract_test.dart') $root

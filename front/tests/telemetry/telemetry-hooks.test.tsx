@@ -8,7 +8,7 @@ import {
   useTelemetryDiagnostics,
   useTelemetrySettings,
   useUpdateTelemetrySettings,
-} from './use-telemetry';
+} from '../../src/hooks/use-telemetry';
 
 function jsonResponse(body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -42,6 +42,11 @@ describe('telemetry hooks', () => {
       criticalErrorCount: 0,
       affectedDevicesCount: 1,
       coreOperationSuccessRate: 1.0,
+      businessOperationSuccessRate: 1.0,
+      businessOperationSuccesses: 10,
+      businessOperationFailures: 0,
+      businessOperationDenominator: 10,
+      businessOperationGroups: [],
       errorFreeSessionRate: 0.9,
       eventsTrend: [],
       errorsTrend: [],
@@ -49,8 +54,23 @@ describe('telemetry hooks', () => {
       pipelineHealth: {
         status: 'healthy',
         serverIngestLatencyMs: 2.5,
+        serverIngestLatencyP50Ms: 2,
+        serverIngestLatencyP95Ms: 4,
+        serverIngestLatencyP99Ms: 5,
+        serverIngestLatencySamples: 10,
+        serverIngestRequests: 10,
+        serverIngestSuccesses: 10,
+        serverIngestFailures: 0,
         serverIngestErrorRate: 0.0,
         redisCacheStatus: 'active',
+      },
+      deliveryDelay: {
+        averageMs: 10,
+        p50Ms: 8,
+        p95Ms: 20,
+        p99Ms: 25,
+        samples: 10,
+        futureTimestampCount: 0,
       },
     };
 

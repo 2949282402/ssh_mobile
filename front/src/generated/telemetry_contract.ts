@@ -18,6 +18,7 @@ export interface TelemetryEventDefinition {
   readonly severity: TelemetrySeverity;
   readonly operationGroup: string;
   readonly operationRole: string;
+  readonly businessOperation: boolean;
   readonly description: string;
   readonly allowedProperties: readonly TelemetryPropertyDefinition[];
   readonly requiredProperties: readonly string[];
@@ -39,6 +40,7 @@ export class TelemetryEvents {
     severity: "info",
     operationGroup: "app.lifecycle",
     operationRole: "started",
+    businessOperation: false,
     description: "Emitted when the application process completes bootstrap and starts.",
     allowedProperties: [
       {
@@ -63,6 +65,7 @@ export class TelemetryEvents {
     severity: "info",
     operationGroup: "app.lifecycle",
     operationRole: "state_change",
+    businessOperation: false,
     description: "Emitted when the application transitions to the background.",
     allowedProperties: [
       {
@@ -82,6 +85,7 @@ export class TelemetryEvents {
     severity: "info",
     operationGroup: "app.lifecycle",
     operationRole: "state_change",
+    businessOperation: false,
     description: "Emitted when the application returns to the foreground.",
     allowedProperties: [
       {
@@ -101,6 +105,7 @@ export class TelemetryEvents {
     severity: "info",
     operationGroup: "network.quic",
     operationRole: "success",
+    businessOperation: true,
     description: "Emitted when a direct QUIC network path is established.",
     allowedProperties: [
       {
@@ -125,6 +130,7 @@ export class TelemetryEvents {
     severity: "warn",
     operationGroup: "network.quic",
     operationRole: "failure",
+    businessOperation: true,
     description: "Emitted when QUIC connection attempt fails.",
     allowedProperties: [
       {
@@ -149,6 +155,7 @@ export class TelemetryEvents {
     severity: "info",
     operationGroup: "network.relay",
     operationRole: "success",
+    businessOperation: true,
     description: "Emitted when connected to the Relay control or data plane.",
     allowedProperties: [
       {
@@ -168,6 +175,7 @@ export class TelemetryEvents {
     severity: "warn",
     operationGroup: "network.relay",
     operationRole: "fallback",
+    businessOperation: false,
     description: "Emitted when connection falls back from direct path to Relay.",
     allowedProperties: [
       {
@@ -187,6 +195,7 @@ export class TelemetryEvents {
     severity: "error",
     operationGroup: "network.relay",
     operationRole: "failure",
+    businessOperation: true,
     description: "Emitted when a Relay connection attempt fails.",
     allowedProperties: [
       {
@@ -211,6 +220,7 @@ export class TelemetryEvents {
     severity: "info",
     operationGroup: "ssh.session",
     operationRole: "started",
+    businessOperation: true,
     description: "Emitted when an SSH interactive terminal or command session starts.",
     allowedProperties: [
       {
@@ -235,6 +245,7 @@ export class TelemetryEvents {
     severity: "info",
     operationGroup: "ssh.session",
     operationRole: "success",
+    businessOperation: true,
     description: "Emitted when an SSH session closes normally.",
     allowedProperties: [
       {
@@ -259,6 +270,7 @@ export class TelemetryEvents {
     severity: "error",
     operationGroup: "ssh.session",
     operationRole: "failure",
+    businessOperation: true,
     description: "Emitted when an SSH connection or authentication fails.",
     allowedProperties: [
       {
@@ -283,6 +295,7 @@ export class TelemetryEvents {
     severity: "info",
     operationGroup: "ssh.session",
     operationRole: "success",
+    businessOperation: true,
     description: "Emitted when an SSH session connection is established.",
     allowedProperties: [
       {
@@ -302,6 +315,7 @@ export class TelemetryEvents {
     severity: "info",
     operationGroup: "sftp.transfer",
     operationRole: "started",
+    businessOperation: true,
     description: "Emitted when an SFTP file upload or download begins.",
     allowedProperties: [
       {
@@ -326,6 +340,7 @@ export class TelemetryEvents {
     severity: "info",
     operationGroup: "sftp.transfer",
     operationRole: "success",
+    businessOperation: true,
     description: "Emitted when an SFTP file transfer completes successfully.",
     allowedProperties: [
       {
@@ -355,6 +370,7 @@ export class TelemetryEvents {
     severity: "error",
     operationGroup: "sftp.transfer",
     operationRole: "failure",
+    businessOperation: true,
     description: "Emitted when an SFTP transfer fails.",
     allowedProperties: [
       {
@@ -384,6 +400,7 @@ export class TelemetryEvents {
     severity: "info",
     operationGroup: "lan.discovery",
     operationRole: "success",
+    businessOperation: true,
     description: "Emitted when a LAN peer is discovered.",
     allowedProperties: [
       {
@@ -403,6 +420,7 @@ export class TelemetryEvents {
     severity: "info",
     operationGroup: "lan.transfer",
     operationRole: "success",
+    businessOperation: true,
     description: "Emitted when LAN file transfer completes.",
     allowedProperties: [
       {
@@ -427,6 +445,7 @@ export class TelemetryEvents {
     severity: "info",
     operationGroup: "ai.chat",
     operationRole: "started",
+    businessOperation: true,
     description: "Emitted when a client-side AI chat prompt request is sent.",
     allowedProperties: [
       {
@@ -451,6 +470,7 @@ export class TelemetryEvents {
     severity: "info",
     operationGroup: "ai.chat",
     operationRole: "success",
+    businessOperation: true,
     description: "Emitted when an AI response is successfully received.",
     allowedProperties: [
       {
@@ -475,6 +495,7 @@ export class TelemetryEvents {
     severity: "error",
     operationGroup: "ai.chat",
     operationRole: "failure",
+    businessOperation: true,
     description: "Emitted when an AI chat request fails.",
     allowedProperties: [
       {
@@ -499,6 +520,7 @@ export class TelemetryEvents {
     severity: "warn",
     operationGroup: "app.diagnostic",
     operationRole: "diagnostic",
+    businessOperation: false,
     description: "General diagnostic log entry for client and system diagnostics.",
     allowedProperties: [
       {
@@ -538,6 +560,7 @@ export class TelemetryEvents {
     severity: "error",
     operationGroup: "app.error",
     operationRole: "failure",
+    businessOperation: false,
     description: "Emitted when an uncaught application error is captured.",
     allowedProperties: [
       {
@@ -572,6 +595,7 @@ export class TelemetryEvents {
     severity: "critical",
     operationGroup: "app.crash",
     operationRole: "failure",
+    businessOperation: false,
     description: "Emitted when a fatal application crash is reported.",
     allowedProperties: [
       {
@@ -606,6 +630,7 @@ export class TelemetryEvents {
     severity: "info",
     operationGroup: "telemetry.batch",
     operationRole: "success",
+    businessOperation: false,
     description: "Emitted when a telemetry batch is successfully acknowledged by server.",
     allowedProperties: [
       {
@@ -630,6 +655,7 @@ export class TelemetryEvents {
     severity: "warn",
     operationGroup: "telemetry.batch",
     operationRole: "failure",
+    businessOperation: false,
     description: "Emitted when a telemetry batch upload fails.",
     allowedProperties: [
       {

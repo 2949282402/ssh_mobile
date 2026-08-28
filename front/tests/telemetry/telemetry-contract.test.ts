@@ -3,14 +3,14 @@ import policySchemaJson from '../../../contracts/telemetry/policy.schema.json';
 import {
   TelemetryErrorCodes,
   TelemetryEvents,
-} from '../generated/telemetry_contract';
+} from '../../src/generated/telemetry_contract';
 import {
   TelemetryUploadPolicySchema,
   TelemetryRecordSchema,
   TelemetryBatchUploadRequestSchema,
   TelemetryBatchUploadResponseSchema,
   validateEventCatalogRecord,
-} from './telemetry';
+} from '../../src/schemas/telemetry';
 
 describe('Telemetry Contract & Schemas', () => {
   it('loads valid generated contract definitions', () => {
@@ -22,6 +22,8 @@ describe('Telemetry Contract & Schemas', () => {
   it('exposes operation metadata and precise failure definitions', () => {
     expect(TelemetryEvents.networkRelayFailed.operationGroup).toBe('network.relay');
     expect(TelemetryEvents.networkRelayFailed.operationRole).toBe('failure');
+    expect(TelemetryEvents.networkRelayFailed.businessOperation).toBe(true);
+    expect(TelemetryEvents.networkRelayFallback.businessOperation).toBe(false);
     expect(TelemetryEvents.sshSessionConnected.operationRole).toBe('success');
     expect(TelemetryErrorCodes.sshConnectFailed.category).toBe('ssh');
     expect(TelemetryErrorCodes.appFatalError.terminalFailure).toBe(true);

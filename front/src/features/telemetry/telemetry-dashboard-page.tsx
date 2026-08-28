@@ -52,6 +52,12 @@ function formatLatency(value: number): string {
   return `${value.toFixed(0)}ms`;
 }
 
+function formatObservedLatency(value: number, samples: number): string {
+  if (!Number.isFinite(value) || samples <= 0) return '无数据';
+  if (value >= 1000) return `${(value / 1000).toFixed(2)}s`;
+  return `${value.toFixed(0)}ms`;
+}
+
 function formatThroughput(events: number, seconds: number | null): string {
   if (events <= 0) return '0/s';
   if (seconds === null || seconds <= 0) {
@@ -165,16 +171,23 @@ export function TelemetryDashboardPage() {
         </div>
         <div className="metric-grid" style={{ marginTop: '1rem' }}>
           <MetricTile
-            label="服务端 Ingest 延迟"
-            value={`${health.serverIngestLatencyMs.toFixed(2)} ms`}
-            detail="端到端入库与幂等收据确认耗时"
+            label="服务端 Ingest 平均延迟"
+            value={health.serverIngestRequests > 0 ? `${health.serverIngestLatencyMs.toFixed(2)} ms` : '无数据'}
+            detail={`服务启动以来，Service.IngestBatch 从调用到返回的平均耗时（含存储与诊断缓存更新；不含认证、解码、限流与过载拒绝）；${health.serverIngestRequests} 次调用`}
             accent={health.serverIngestLatencyMs < 20 ? 'teal' : 'amber'}
             mono
           />
           <MetricTile
-            label="Ingest 拒绝/失败率"
+            label="服务端 Ingest P95 延迟"
+            value={health.serverIngestRequests > 0 ? `${health.serverIngestLatencyP95Ms.toFixed(2)} ms` : '无数据'}
+            detail="服务启动以来 Service.IngestBatch 调用耗时的 95 分位；单位为毫秒，延迟样本最多保留最近 1024 次"
+            accent={health.serverIngestLatencyP95Ms < 50 ? 'teal' : 'amber'}
+            mono
+          />
+          <MetricTile
+            label="服务端 Ingest 错误率"
             value={`${(health.serverIngestErrorRate * 100).toFixed(2)}%`}
-            detail="包括签名失败或契约校验拒绝"
+            detail="服务启动以来 Service.IngestBatch 返回 error 的调用数 ÷ 调用总数；不含认证、解码、限流与过载拒绝，单条 rejected ACK 不算服务错误"
             accent={health.serverIngestErrorRate < 0.01 ? 'teal' : 'coral'}
             mono
           />
@@ -199,7 +212,7 @@ export function TelemetryDashboardPage() {
         <MetricTile
           label="上报事件总数"
           value={data.totalEvents}
-          detail="Analytics 业务行为事件总数"
+          detail="Analytics 记录总数（不等于业务操作成功率分母）"
           accent="teal"
           mono
         />
@@ -225,10 +238,10 @@ export function TelemetryDashboardPage() {
           mono
         />
         <MetricTile
-          label="核心链路成功率"
-          value={`${(data.coreOperationSuccessRate * 100).toFixed(1)}%`}
-          detail="连接、认证、传输等核心操作"
-          accent={data.coreOperationSuccessRate >= 0.99 ? 'teal' : 'coral'}
+          label="业务操作成功率"
+          value={`${(data.businessOperationSuccessRate * 100).toFixed(1)}%`}
+          detail={`显式目录 success ÷ (success + failure)，排除 started、fallback 与诊断事件；${data.businessOperationSuccesses}/${data.businessOperationDenominator} 个终结操作成功`}
+          accent={data.businessOperationSuccessRate >= 0.99 ? 'teal' : 'coral'}
           mono
         />
         <MetricTile
@@ -274,6 +287,44 @@ export function TelemetryDashboardPage() {
           value={formatThroughput(data.totalEvents, TIME_RANGE_SECONDS[timeRange] ?? TIME_RANGE_SECONDS.all)}
           detail={`${timeRange === 'all' ? '全部时间' : timeRange} 窗口内上报速率`}
           accent="teal"
+          mono
+        />
+      </section>
+
+      {/* Delivery Delay */}
+      <div className="section-heading" style={{ marginTop: '1.5rem' }}>
+        <div>
+          <p className="eyebrow">Delivery Delay</p>
+          <h2>客户端投递延迟</h2>
+        </div>
+      </div>
+      <section className="metric-grid" aria-label="客户端投递延迟">
+        <MetricTile
+          label="平均投递延迟"
+          value={formatObservedLatency(data.deliveryDelay.averageMs, data.deliveryDelay.samples)}
+          detail="receivedAt − occurredAt；未来 occurredAt 按 0 ms 计入样本，并单独计数时钟偏差"
+          accent="teal"
+          mono
+        />
+        <MetricTile
+          label="P50 投递延迟"
+          value={formatObservedLatency(data.deliveryDelay.p50Ms, data.deliveryDelay.samples)}
+          detail={`客户端事件到服务端接收的中位延迟；${data.deliveryDelay.samples} 个可测样本`}
+          accent="teal"
+          mono
+        />
+        <MetricTile
+          label="P95 投递延迟"
+          value={formatObservedLatency(data.deliveryDelay.p95Ms, data.deliveryDelay.samples)}
+          detail="95% 可测事件的 receivedAt − occurredAt 不超过该值"
+          accent={latencyAccent(data.deliveryDelay.p95Ms)}
+          mono
+        />
+        <MetricTile
+          label="未来时间戳样本"
+          value={data.deliveryDelay.futureTimestampCount}
+          detail="occurredAt 晚于 receivedAt 的事件；延迟按 0 ms 计入统计"
+          accent={data.deliveryDelay.futureTimestampCount > 0 ? 'amber' : 'teal'}
           mono
         />
       </section>

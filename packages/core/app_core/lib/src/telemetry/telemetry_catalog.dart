@@ -15,6 +15,7 @@ class TelemetryEventDefinition {
     this.description = '',
     this.operationGroup = '',
     this.operationRole = '',
+    this.businessOperation = false,
   });
 
   final String name;
@@ -28,6 +29,7 @@ class TelemetryEventDefinition {
   final String description;
   final String operationGroup;
   final String operationRole;
+  final bool businessOperation;
 }
 
 class TelemetryErrorCodeDefinition {

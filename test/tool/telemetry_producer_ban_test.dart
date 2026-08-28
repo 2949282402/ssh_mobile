@@ -37,6 +37,7 @@ events:
     severity: "info"
     operationGroup: "ssh.session"
     operationRole: "started"
+    businessOperation: false
     allowedProperties: []
 ''');
   File('${contracts.path}/error_codes.yaml').writeAsStringSync('''

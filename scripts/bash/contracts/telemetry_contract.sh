@@ -35,7 +35,7 @@ echo "Validating Telemetry contracts..."
 # 3. TypeScript / Front validation
 (
   cd "$ROOT_DIR/front"
-  npm run test:run -- src/schemas/telemetry-contract.test.ts
+  npm run test:run -- tests/telemetry/telemetry-contract.test.ts
 )
 
 # 4. Dart validation

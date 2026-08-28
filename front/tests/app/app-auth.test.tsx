@@ -3,8 +3,8 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { BrowserRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { App } from './app';
-import { queryKeys } from './api/query-keys';
+import { App } from '../../src/app';
+import { queryKeys } from '../../src/api/query-keys';
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -243,14 +243,34 @@ describe('AuthGate', () => {
           criticalErrorCount: 0,
           affectedDevicesCount: 0,
           coreOperationSuccessRate: 1.0,
+          businessOperationSuccessRate: 1.0,
+          businessOperationSuccesses: 1,
+          businessOperationFailures: 0,
+          businessOperationDenominator: 1,
+          businessOperationGroups: [],
           errorFreeSessionRate: 1.0,
           eventsTrend: [],
           errorsTrend: [],
           pipelineHealth: {
             status: 'healthy',
             serverIngestLatencyMs: 3.5,
+            serverIngestLatencyP50Ms: 3,
+            serverIngestLatencyP95Ms: 4,
+            serverIngestLatencyP99Ms: 5,
+            serverIngestLatencySamples: 1,
+            serverIngestRequests: 1,
+            serverIngestSuccesses: 1,
+            serverIngestFailures: 0,
             serverIngestErrorRate: 0.0,
             redisCacheStatus: 'active',
+          },
+          deliveryDelay: {
+            averageMs: 0,
+            p50Ms: 0,
+            p95Ms: 0,
+            p99Ms: 0,
+            samples: 0,
+            futureTimestampCount: 0,
           },
         }));
       }

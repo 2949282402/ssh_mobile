@@ -44,6 +44,10 @@ export default defineConfig(({ mode }) => {
           statements: 80,
         },
       },
+      include: [
+        'src/**/*.{test,spec}.{ts,tsx}',
+        'tests/**/*.{test,spec}.{ts,tsx}',
+      ],
     },
   };
 });

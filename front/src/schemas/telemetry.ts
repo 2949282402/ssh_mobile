@@ -107,6 +107,25 @@ export const TelemetryLatencyStatsSchema = z.object({
 });
 export type TelemetryLatencyStats = z.infer<typeof TelemetryLatencyStatsSchema>;
 
+export const TelemetryBusinessOperationGroupSchema = z.object({
+  operationGroup: z.string(),
+  successes: z.number(),
+  failures: z.number(),
+  denominator: z.number(),
+  successRate: z.number(),
+});
+export type TelemetryBusinessOperationGroup = z.infer<typeof TelemetryBusinessOperationGroupSchema>;
+
+export const TelemetryDeliveryDelayStatsSchema = z.object({
+  averageMs: z.number(),
+  p50Ms: z.number(),
+  p95Ms: z.number(),
+  p99Ms: z.number(),
+  samples: z.number(),
+  futureTimestampCount: z.number(),
+});
+export type TelemetryDeliveryDelayStats = z.infer<typeof TelemetryDeliveryDelayStatsSchema>;
+
 export const TelemetryOverviewResponseSchema = z.object({
   totalEvents: z.number(),
   totalDiagnostics: z.number(),
@@ -115,6 +134,11 @@ export const TelemetryOverviewResponseSchema = z.object({
   criticalErrorCount: z.number(),
   affectedDevicesCount: z.number(),
   coreOperationSuccessRate: z.number(),
+  businessOperationSuccessRate: z.number(),
+  businessOperationSuccesses: z.number(),
+  businessOperationFailures: z.number(),
+  businessOperationDenominator: z.number(),
+  businessOperationGroups: z.array(TelemetryBusinessOperationGroupSchema),
   errorFreeSessionRate: z.number(),
   eventsTrend: z.array(TelemetryMetricPointSchema),
   errorsTrend: z.array(TelemetryMetricPointSchema),
@@ -127,9 +151,17 @@ export const TelemetryOverviewResponseSchema = z.object({
   pipelineHealth: z.object({
     status: z.enum(['healthy', 'degraded', 'unhealthy']),
     serverIngestLatencyMs: z.number(),
+    serverIngestLatencyP50Ms: z.number(),
+    serverIngestLatencyP95Ms: z.number(),
+    serverIngestLatencyP99Ms: z.number(),
+    serverIngestLatencySamples: z.number(),
+    serverIngestRequests: z.number(),
+    serverIngestSuccesses: z.number(),
+    serverIngestFailures: z.number(),
     serverIngestErrorRate: z.number(),
     redisCacheStatus: z.enum(['active', 'disabled', 'fallback_mysql']),
   }),
+  deliveryDelay: TelemetryDeliveryDelayStatsSchema,
 });
 export type TelemetryOverviewResponse = z.infer<typeof TelemetryOverviewResponseSchema>;
 

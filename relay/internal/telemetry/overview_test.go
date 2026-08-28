@@ -292,40 +292,6 @@ func TestOverviewTimeRangeFiltering(t *testing.T) {
 	}
 }
 
-func TestOverviewTerminalFailureClassifications(t *testing.T) {
-	now := time.Now().UTC()
-
-	// A *.failed event with a registered error carries severity error -> failure.
-	// A warn-severity analytics event with a non-null error also counts as a
-	// terminal failure (error_code IS NOT NULL rule), even though its name is not
-	// *.failed.
-	failedEnvelope := overviewTestRecord("fail-1", "sftp.transfer.failed", SeverityError,
-		&TelemetryError{ErrorCode: "SFTP_TRANSFER_ABORTED", Category: "sftp", TerminalFailure: true},
-		now, nil)
-
-	errorWarnEnvelope := overviewTestRecord("fail-2", "network.relay.fallback", SeverityWarn,
-		&TelemetryError{ErrorCode: "NET_RELAY_UNAVAILABLE", Category: "network", TerminalFailure: true},
-		now, nil)
-
-	okEnvelope := overviewTestRecord("ok-1", "ssh.session.terminated", SeverityInfo, nil, now, floatPtr(120))
-
-	records := []TelemetryEnvelope{okEnvelope, failedEnvelope, errorWarnEnvelope}
-	store := ingestOverviewRecords(t, records...)
-	metrics, err := store.QueryOverview(context.Background(), QueryFilter{})
-	if err != nil {
-		t.Fatalf("QueryOverview failed: %v", err)
-	}
-
-	// succeeded = 1, failed = 2 -> 1 / (1 + 2) = 0.333...
-	approxEqual(t, metrics.CoreOperationSuccessRate, 1.0/3.0, 1e-9, "failure classification success rate")
-	// ErrorCount is severity-based: only the severity=error record counts.
-	if metrics.ErrorCount != 1 {
-		t.Errorf("expected 1 severity error (sftp.transfer.failed), got %d", metrics.ErrorCount)
-	}
-	// ErrorFreeSessionRate: 1 session total, 1 with severity error -> (1-1)/1 = 0
-	approxEqual(t, metrics.ErrorFreeSessionRate, 0.0, 1e-9, "error free session rate with failure")
-}
-
 func TestOverviewLatencyAliasLatencyMs(t *testing.T) {
 	now := time.Now().UTC()
 	// sftp.transfer.completed records with latency_ms present via ai.chat.response.

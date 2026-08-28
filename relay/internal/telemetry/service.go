@@ -68,11 +68,12 @@ type credentialCreator interface {
 
 // Service aggregates telemetry persistence, contract validation, caching and auth.
 type Service struct {
-	store      Store
-	catalog    *Catalog
-	redisCache RedisCache
-	tokenKey   []byte
-	mu         sync.RWMutex
+	store         Store
+	catalog       *Catalog
+	redisCache    RedisCache
+	tokenKey      []byte
+	ingestMetrics *ingestMetrics
+	mu            sync.RWMutex
 }
 
 // NewService creates a Service without a token signing secret. The service is
@@ -98,10 +99,11 @@ func NewServiceWithSecret(store Store, catalog *Catalog, redisCache RedisCache, 
 		tokenKey = []byte(hashSecret(trimmedSecret))
 	}
 	return &Service{
-		store:      store,
-		catalog:    catalog,
-		redisCache: redisCache,
-		tokenKey:   tokenKey,
+		store:         store,
+		catalog:       catalog,
+		redisCache:    redisCache,
+		tokenKey:      tokenKey,
+		ingestMetrics: newIngestMetrics(),
 	}
 }
 
@@ -348,66 +350,6 @@ func validEnrollmentRequest(request TelemetryEnrollmentRequest) bool {
 		request.Timestamp > 0 &&
 		strings.TrimSpace(request.Nonce) != "" &&
 		strings.TrimSpace(request.Signature) != ""
-}
-
-func (s *Service) IngestBatch(ctx context.Context, envelopes []TelemetryEnvelope) ([]IngestRecordResult, error) {
-	if len(envelopes) > MaxIngestBatchSize {
-		return nil, fmt.Errorf("%w: maximum is %d records", ErrIngestBatchTooLarge, MaxIngestBatchSize)
-	}
-	if s.store == nil {
-		return nil, ErrServiceUnavailable
-	}
-	if ctx != nil {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-	}
-
-	// Unconditionally stamp server receive time; client-supplied receivedAt is ignored.
-	now := time.Now().UTC()
-	for i := range envelopes {
-		envelopes[i].ReceivedAt = now
-	}
-
-	results, err := s.store.IngestBatch(ctx, envelopes)
-	if err != nil {
-		return nil, err
-	}
-
-	// Hot cache update for accepted diagnostics
-	settings, err := s.store.GetSettings(ctx)
-	if err != nil {
-		// Cache is best-effort; a settings read failure must not fail ingestion.
-		return results, nil
-	}
-	cacheEnabled := settings == nil || settings.RedisCacheEnabled
-	maxRecords := 1000
-	if settings != nil && settings.RedisMaxRecords > 0 {
-		maxRecords = settings.RedisMaxRecords
-	}
-
-	if cacheEnabled {
-		for i, res := range results {
-			if res.Status == StatusAccepted && envelopes[i].RecordType == RecordTypeDiagnostic {
-				_ = s.redisCache.PushDiagnostic(ctx, envelopes[i], maxRecords)
-			}
-		}
-	}
-
-	return results, nil
-}
-
-func (s *Service) QueryOverview(ctx context.Context, filter QueryFilter) (*OverviewMetrics, error) {
-	if s.store == nil {
-		return nil, ErrServiceUnavailable
-	}
-	// Inject the service Redis cache into the backing store so the overview can
-	// report live Redis pipeline health. Stores that do not support injection
-	// (e.g. mocks) simply report Redis as disabled.
-	if w, ok := s.store.(interface{ SetRedisCache(RedisCache) }); ok {
-		w.SetRedisCache(s.redisCache)
-	}
-	return s.store.QueryOverview(ctx, filter)
 }
 
 func (s *Service) QueryEvents(ctx context.Context, filter QueryFilter) ([]TelemetryEnvelope, int, error) {

@@ -2,8 +2,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { ToastProvider } from '../../components/toast';
-import { TelemetryDashboardPage } from './telemetry-dashboard-page';
+import { ToastProvider } from '../../src/components/toast';
+import { TelemetryDashboardPage } from '../../src/features/telemetry/telemetry-dashboard-page';
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -20,6 +20,11 @@ const mockOverviewData = {
   criticalErrorCount: 2,
   affectedDevicesCount: 4,
   coreOperationSuccessRate: 0.994,
+  businessOperationSuccessRate: 0.994,
+  businessOperationSuccesses: 994,
+  businessOperationFailures: 6,
+  businessOperationDenominator: 1000,
+  businessOperationGroups: [],
   errorFreeSessionRate: 0.982,
   eventsTrend: [
     { timestamp: '2026-08-27T00:00:00Z', value: 450 },
@@ -33,8 +38,23 @@ const mockOverviewData = {
   pipelineHealth: {
     status: 'healthy',
     serverIngestLatencyMs: 3.8,
+    serverIngestLatencyP50Ms: 3,
+    serverIngestLatencyP95Ms: 5,
+    serverIngestLatencyP99Ms: 7,
+    serverIngestLatencySamples: 64,
+    serverIngestRequests: 64,
+    serverIngestSuccesses: 63,
+    serverIngestFailures: 1,
     serverIngestErrorRate: 0.001,
     redisCacheStatus: 'active',
+  },
+  deliveryDelay: {
+    averageMs: 18,
+    p50Ms: 12,
+    p95Ms: 44,
+    p99Ms: 70,
+    samples: 120,
+    futureTimestampCount: 2,
   },
 };
 
@@ -73,11 +93,21 @@ describe('TelemetryDashboardPage', () => {
     expect(screen.getByText('12 (严重: 2)')).toBeInTheDocument();
     expect(screen.getByText('99.4%')).toBeInTheDocument();
     expect(screen.getByText('98.2%')).toBeInTheDocument();
+    expect(screen.getByText('业务操作成功率')).toBeInTheDocument();
+    expect(screen.getByText('服务端 Ingest P95 延迟')).toBeInTheDocument();
+    expect(screen.getByText('5.00 ms')).toBeInTheDocument();
+    expect(screen.getByText(/Service\.IngestBatch 从调用到返回的平均耗时/)).toBeInTheDocument();
 
     // Check Pipeline Health
     expect(screen.getByText('3.80 ms')).toBeInTheDocument();
     expect(screen.getByText('0.10%')).toBeInTheDocument();
     expect(screen.getByText('active')).toBeInTheDocument();
+
+    // Delivery delay is receivedAt - occurredAt, separate from service ingest.
+    expect(screen.getByText('客户端投递延迟')).toBeInTheDocument();
+    expect(screen.getByText('18ms')).toBeInTheDocument();
+    expect(screen.getByText('未来时间戳样本')).toBeInTheDocument();
+    expect(screen.getByText('receivedAt − occurredAt；未来 occurredAt 按 0 ms 计入样本，并单独计数时钟偏差')).toBeInTheDocument();
 
     // Check latency percentiles and throughput rendering
     expect(screen.getByText('120ms')).toBeInTheDocument();

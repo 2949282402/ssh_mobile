@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 
@@ -36,6 +37,7 @@ type EventDefinition struct {
 	Severity          Severity          `json:"severity"`
 	OperationGroup    string            `json:"operationGroup"`
 	OperationRole     string            `json:"operationRole"`
+	BusinessOperation bool              `json:"businessOperation"`
 	Description       string            `json:"description"`
 	AllowedProperties []AllowedProperty `json:"allowedProperties"`
 }
@@ -145,6 +147,7 @@ func DefaultCatalog() *Catalog {
 			Severity:          Severity(event.Severity),
 			OperationGroup:    event.OperationGroup,
 			OperationRole:     event.OperationRole,
+			BusinessOperation: event.BusinessOperation,
 			Description:       event.Description,
 			AllowedProperties: properties,
 		}
@@ -203,6 +206,25 @@ func (c *Catalog) GetEvent(name string) (EventDefinition, bool) {
 	defer c.mu.RUnlock()
 	def, ok := c.events[name]
 	return def, ok
+}
+
+// catalogEventDefinitions returns a stable snapshot for bounded aggregation
+// query construction. The catalog is normally generated and small; sorting
+// keeps SQL argument order deterministic for tests and query diagnostics.
+func catalogEventDefinitions(c *Catalog) []EventDefinition {
+	if c == nil {
+		return nil
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	events := make([]EventDefinition, 0, len(c.events))
+	for _, definition := range c.events {
+		events = append(events, definition)
+	}
+	sort.Slice(events, func(i, j int) bool {
+		return events[i].Name < events[j].Name
+	})
+	return events
 }
 
 // GetErrorCode retrieves an error code definition by code.
