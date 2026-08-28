@@ -19,6 +19,7 @@ import type { TelemetryFilter } from '../../schemas/telemetry';
 
 const TIME_RANGES: Array<{ label: string; value: TelemetryFilter['timeRange'] }> = [
   { label: '1 小时', value: '1h' },
+  { label: '1 天', value: '1d' },
   { label: '24 小时', value: '24h' },
   { label: '7 天', value: '7d' },
   { label: '30 天', value: '30d' },
@@ -27,6 +28,7 @@ const TIME_RANGES: Array<{ label: string; value: TelemetryFilter['timeRange'] }>
 
 const TIME_RANGE_SECONDS: Record<TelemetryFilter['timeRange'], number | null> = {
   '1h': 3600,
+  '1d': 86400,
   '24h': 86400,
   '7d': 604800,
   '30d': 2592000,
@@ -47,15 +49,27 @@ function formatTrendTime(timestamp: string): string {
 }
 
 function formatLatency(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return '无数据';
+  if (!Number.isFinite(value) || value <= 0) return 'No data';
   if (value >= 1000) return `${(value / 1000).toFixed(2)}s`;
   return `${value.toFixed(0)}ms`;
 }
 
 function formatObservedLatency(value: number, samples: number): string {
-  if (!Number.isFinite(value) || samples <= 0) return '无数据';
+  if (!Number.isFinite(value) || samples <= 0) return 'No data';
   if (value >= 1000) return `${(value / 1000).toFixed(2)}s`;
   return `${value.toFixed(0)}ms`;
+}
+
+function formatRate(rate: number, denominator: number, digits: number): string {
+  if (!Number.isFinite(rate) || !Number.isFinite(denominator) || denominator <= 0) return 'No data';
+  return `${(rate * 100).toFixed(digits)}%`;
+}
+
+function trendBarWidth(value: number, denominator: number): string {
+  if (!Number.isFinite(value) || !Number.isFinite(denominator) || denominator <= 0) {
+    return '0%';
+  }
+  return `${Math.min(100, Math.max(0, (value / denominator) * 100))}%`;
 }
 
 function formatThroughput(events: number, seconds: number | null): string {
@@ -172,23 +186,23 @@ export function TelemetryDashboardPage() {
         <div className="metric-grid" style={{ marginTop: '1rem' }}>
           <MetricTile
             label="服务端 Ingest 平均延迟"
-            value={health.serverIngestRequests > 0 ? `${health.serverIngestLatencyMs.toFixed(2)} ms` : '无数据'}
+            value={health.serverIngestRequests > 0 ? `${health.serverIngestLatencyMs.toFixed(2)} ms` : 'No data'}
             detail={`服务启动以来，Service.IngestBatch 从调用到返回的平均耗时（含存储与诊断缓存更新；不含认证、解码、限流与过载拒绝）；${health.serverIngestRequests} 次调用`}
             accent={health.serverIngestLatencyMs < 20 ? 'teal' : 'amber'}
             mono
           />
           <MetricTile
             label="服务端 Ingest P95 延迟"
-            value={health.serverIngestRequests > 0 ? `${health.serverIngestLatencyP95Ms.toFixed(2)} ms` : '无数据'}
+            value={health.serverIngestRequests > 0 ? `${health.serverIngestLatencyP95Ms.toFixed(2)} ms` : 'No data'}
             detail="服务启动以来 Service.IngestBatch 调用耗时的 95 分位；单位为毫秒，延迟样本最多保留最近 1024 次"
             accent={health.serverIngestLatencyP95Ms < 50 ? 'teal' : 'amber'}
             mono
           />
           <MetricTile
             label="服务端 Ingest 错误率"
-            value={`${(health.serverIngestErrorRate * 100).toFixed(2)}%`}
-            detail="服务启动以来 Service.IngestBatch 返回 error 的调用数 ÷ 调用总数；不含认证、解码、限流与过载拒绝，单条 rejected ACK 不算服务错误"
-            accent={health.serverIngestErrorRate < 0.01 ? 'teal' : 'coral'}
+            value={formatRate(health.serverIngestErrorRate, health.serverIngestRequests, 2)}
+            detail={`服务启动以来 Service.IngestBatch 返回 error 的调用数 ÷ 调用总数；不含认证、解码、限流与过载拒绝，单条 rejected ACK 不算服务错误；${health.serverIngestRequests} 次调用作为分母`}
+            accent={health.serverIngestRequests > 0 && health.serverIngestErrorRate >= 0.01 ? 'coral' : 'teal'}
             mono
           />
           <MetricTile
@@ -239,16 +253,16 @@ export function TelemetryDashboardPage() {
         />
         <MetricTile
           label="业务操作成功率"
-          value={`${(data.businessOperationSuccessRate * 100).toFixed(1)}%`}
-          detail={`显式目录 success ÷ (success + failure)，排除 started、fallback 与诊断事件；${data.businessOperationSuccesses}/${data.businessOperationDenominator} 个终结操作成功`}
-          accent={data.businessOperationSuccessRate >= 0.99 ? 'teal' : 'coral'}
+          value={formatRate(data.businessOperationSuccessRate, data.businessOperationDenominator, 1)}
+          detail={`目录中 businessOperation=true 且 role 为 success/failure 的终结事件（无论 recordType）按 success ÷ (success + failure)；排除 started 与 businessOperation=false 的诊断/投递事件；${data.businessOperationSuccesses}/${data.businessOperationDenominator} 个终结操作成功`}
+          accent={data.businessOperationDenominator > 0 && data.businessOperationSuccessRate < 0.99 ? 'coral' : 'teal'}
           mono
         />
         <MetricTile
           label="无错误会话率"
-          value={`${(data.errorFreeSessionRate * 100).toFixed(1)}%`}
-          detail="全程无任何 error/critical 的会话占比"
-          accent={data.errorFreeSessionRate >= 0.95 ? 'teal' : 'amber'}
+          value={formatRate(data.errorFreeSessionRate, data.errorFreeSessionDenominator, 1)}
+          detail={`全程无任何 error/critical 的会话占比；${data.errorFreeSessionSuccesses}/${data.errorFreeSessionDenominator} 个会话无错误`}
+          accent={data.errorFreeSessionDenominator > 0 && data.errorFreeSessionRate < 0.95 ? 'amber' : 'teal'}
           mono
         />
       </section>
@@ -352,7 +366,7 @@ export function TelemetryDashboardPage() {
                     <div
                       style={{
                         height: '100%',
-                        width: `${Math.min(100, Math.max(10, (point.value / (data.totalEvents || 1)) * 100))}%`,
+                        width: trendBarWidth(point.value, data.totalEvents),
                         background: 'var(--teal)',
                         borderRadius: '6px',
                       }}
@@ -386,7 +400,7 @@ export function TelemetryDashboardPage() {
                     <div
                       style={{
                         height: '100%',
-                        width: `${Math.min(100, Math.max(10, (point.value / (data.errorCount || 1)) * 100))}%`,
+                        width: trendBarWidth(point.value, data.errorCount),
                         background: point.value > 0 ? 'var(--coral)' : 'var(--teal)',
                         borderRadius: '6px',
                       }}

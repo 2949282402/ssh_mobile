@@ -386,67 +386,6 @@ func (h *Handler) handleAdminRegisterDevice(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-func parseQueryFilter(r *http.Request) QueryFilter {
-	q := r.URL.Query()
-	f := QueryFilter{
-		TimeRange:  q.Get("timeRange"),
-		DeviceID:   q.Get("deviceId"),
-		TraceID:    q.Get("traceId"),
-		EventName:  q.Get("eventName"),
-		Feature:    q.Get("feature"),
-		Severity:   Severity(q.Get("severity")),
-		ErrorCode:  q.Get("errorCode"),
-		AppVersion: q.Get("appVersion"),
-		Platform:   q.Get("platform"),
-	}
-
-	if st := q.Get("startTime"); st != "" {
-		if t, err := time.Parse(time.RFC3339, st); err == nil {
-			f.StartTime = t
-		}
-	}
-	if et := q.Get("endTime"); et != "" {
-		if t, err := time.Parse(time.RFC3339, et); err == nil {
-			f.EndTime = t
-		}
-	}
-
-	if f.StartTime.IsZero() && f.TimeRange != "" && f.TimeRange != "all" {
-		now := time.Now().UTC()
-		switch f.TimeRange {
-		case "1h":
-			f.StartTime = now.Add(-1 * time.Hour)
-		case "24h":
-			f.StartTime = now.Add(-24 * time.Hour)
-		case "7d":
-			f.StartTime = now.Add(-7 * 24 * time.Hour)
-		case "30d":
-			f.StartTime = now.Add(-30 * 24 * time.Hour)
-		default:
-			if d, err := time.ParseDuration(f.TimeRange); err == nil && d > 0 {
-				f.StartTime = now.Add(-d)
-			}
-		}
-		if !f.StartTime.IsZero() && f.EndTime.IsZero() {
-			f.EndTime = now
-		}
-	}
-
-	if p, err := strconv.Atoi(q.Get("page")); err == nil && p > 0 {
-		f.Page = p
-	} else {
-		f.Page = 1
-	}
-
-	if ps, err := strconv.Atoi(q.Get("pageSize")); err == nil && ps > 0 && ps <= 200 {
-		f.PageSize = ps
-	} else {
-		f.PageSize = 50
-	}
-
-	return f
-}
-
 // handleAdminOverview returns aggregated metrics for Admin Dashboard.
 func (h *Handler) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

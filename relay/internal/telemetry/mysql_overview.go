@@ -42,6 +42,7 @@ func latencyEventsSQL(catalog *Catalog) (string, []any) {
 // overviewTimeWhere builds the shared received_at time filter for overview
 // aggregation queries.
 func overviewTimeWhere(filter QueryFilter) (string, []any) {
+	filter = normalizeOverviewFilter(filter, time.Now().UTC())
 	var whereClauses []string
 	var args []any
 
@@ -163,7 +164,6 @@ func (s *MySQLStore) queryDeliveryDelayStats(ctx context.Context, combineWhere c
 	if err != nil {
 		return DeliveryDelayStats{}, fmt.Errorf("overview delivery delay: %w", err)
 	}
-	defer rows.Close()
 
 	values := make([]float64, 0, 64)
 	var sum float64
@@ -171,6 +171,7 @@ func (s *MySQLStore) queryDeliveryDelayStats(ctx context.Context, combineWhere c
 	for rows.Next() {
 		var occurredAt, receivedAt time.Time
 		if err := rows.Scan(&occurredAt, &receivedAt); err != nil {
+			_ = rows.Close()
 			return DeliveryDelayStats{}, fmt.Errorf("scan delivery delay: %w", err)
 		}
 		if occurredAt.IsZero() || receivedAt.IsZero() {
@@ -186,7 +187,11 @@ func (s *MySQLStore) queryDeliveryDelayStats(ctx context.Context, combineWhere c
 		sum += ms
 	}
 	if err := rows.Err(); err != nil {
+		_ = rows.Close()
 		return DeliveryDelayStats{}, fmt.Errorf("iterate delivery delay: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return DeliveryDelayStats{}, fmt.Errorf("close delivery delay: %w", err)
 	}
 	if len(values) == 0 {
 		return DeliveryDelayStats{FutureTimestampCount: futureCount}, nil
@@ -206,66 +211,72 @@ func (s *MySQLStore) queryDeliveryDelayStats(ctx context.Context, combineWhere c
 // duration_ms / latency_ms properties of catalog-declared successful business
 // operations in the requested time range. With no latency data it returns a
 // zeroed LatencyStats.
-func (s *MySQLStore) queryLatencyPercentiles(ctx context.Context, combineWhere combineWhereFunc) LatencyStats {
+func (s *MySQLStore) queryLatencyPercentiles(ctx context.Context, combineWhere combineWhereFunc) (LatencyStats, error) {
 	latencyCondition, latencyArgs := latencyEventsSQL(s.catalog)
 	w, qArgs := combineWhere(latencyCondition)
 	qArgs = append(qArgs, latencyArgs...)
 	rows, err := s.db.QueryContext(ctx, "SELECT properties_json FROM telemetry_events"+w, qArgs...)
 	if err != nil {
-		return LatencyStats{}
+		return LatencyStats{}, fmt.Errorf("overview latency query: %w", err)
 	}
-	defer rows.Close()
 
 	values := make([]float64, 0, 64)
 	for rows.Next() {
 		var propsRaw sql.NullString
 		if err := rows.Scan(&propsRaw); err != nil {
-			continue
+			_ = rows.Close()
+			return LatencyStats{}, fmt.Errorf("scan latency properties: %w", err)
 		}
 		if !propsRaw.Valid || propsRaw.String == "" {
 			continue
 		}
 		var props map[string]any
 		if err := json.Unmarshal([]byte(propsRaw.String), &props); err != nil {
-			continue
+			_ = rows.Close()
+			return LatencyStats{}, fmt.Errorf("decode latency properties: %w", err)
 		}
 		if d, ok := extractLatencyFromProps(props); ok {
 			values = append(values, d)
 		}
 	}
-	_ = rows.Err()
-	return latencyStats(values)
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return LatencyStats{}, fmt.Errorf("iterate latency properties: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return LatencyStats{}, fmt.Errorf("close latency properties: %w", err)
+	}
+	return latencyStats(values), nil
 }
 
-// queryOverviewTrends aggregates event volume and error volume in time buckets.
-// Hourly buckets are used for short windows (1h/24h) and daily buckets for
-// longer windows (7d/30d).
+// queryOverviewTrends aggregates analytics event volume and all-record error
+// volume using the shared UTC range-to-bucket policy.
 func (s *MySQLStore) queryOverviewTrends(ctx context.Context, combineWhere combineWhereFunc, timeRange string) ([]TelemetryMetricPoint, []TelemetryMetricPoint, error) {
-	dateFormat := "%Y-%m-%dT%H:00:00Z"
-	if timeRange == "7d" || timeRange == "30d" {
-		dateFormat = "%Y-%m-%dT00:00:00Z"
-	}
+	dateFormat := overviewTrendDateFormat(timeRange)
 
-	trendWhere, trendArgs := combineWhere("")
+	trendWhere, trendArgs := combineWhere("record_type = 'analytics'")
 	trendQuery := "SELECT DATE_FORMAT(received_at, '" + dateFormat + "') AS bucket, COUNT(*) " +
 		"FROM telemetry_events" + trendWhere + " GROUP BY bucket ORDER BY bucket ASC"
 	rows, err := s.db.QueryContext(ctx, trendQuery, trendArgs...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("overview events trend: %w", err)
 	}
-	defer rows.Close()
-
 	eventsTrend := []TelemetryMetricPoint{}
 	for rows.Next() {
 		var bucket string
 		var val float64
 		if err := rows.Scan(&bucket, &val); err != nil {
+			_ = rows.Close()
 			return nil, nil, fmt.Errorf("scan events trend: %w", err)
 		}
 		eventsTrend = append(eventsTrend, TelemetryMetricPoint{Timestamp: bucket, Value: val})
 	}
 	if err := rows.Err(); err != nil {
+		_ = rows.Close()
 		return nil, nil, fmt.Errorf("iterate events trend: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, nil, fmt.Errorf("close events trend: %w", err)
 	}
 
 	errWhere, errArgs := combineWhere("severity IN ('error', 'critical')")
@@ -275,19 +286,22 @@ func (s *MySQLStore) queryOverviewTrends(ctx context.Context, combineWhere combi
 	if err != nil {
 		return nil, nil, fmt.Errorf("overview errors trend: %w", err)
 	}
-	defer errRows.Close()
-
 	errorsTrend := []TelemetryMetricPoint{}
 	for errRows.Next() {
 		var bucket string
 		var val float64
 		if err := errRows.Scan(&bucket, &val); err != nil {
+			_ = errRows.Close()
 			return nil, nil, fmt.Errorf("scan errors trend: %w", err)
 		}
 		errorsTrend = append(errorsTrend, TelemetryMetricPoint{Timestamp: bucket, Value: val})
 	}
 	if err := errRows.Err(); err != nil {
+		_ = errRows.Close()
 		return nil, nil, fmt.Errorf("iterate errors trend: %w", err)
+	}
+	if err := errRows.Close(); err != nil {
+		return nil, nil, fmt.Errorf("close errors trend: %w", err)
 	}
 
 	return eventsTrend, errorsTrend, nil
@@ -315,64 +329,94 @@ func redisHealthStatus(ctx context.Context, cache RedisCache) string {
 	return "active"
 }
 
+func (s *MySQLStore) queryOverviewCount(ctx context.Context, query string, args ...any) (int64, error) {
+	var count int64
+	if err := s.db.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("overview count query failed: %w", err)
+	}
+	return count, nil
+}
+
 func (s *MySQLStore) QueryOverview(ctx context.Context, filter QueryFilter) (*OverviewMetrics, error) {
+	if s == nil || s.db == nil || s.catalog == nil {
+		return nil, fmt.Errorf("%w: mysql telemetry store is unavailable", ErrServiceUnavailable)
+	}
 	whereSQL, args := overviewTimeWhere(filter)
 	combineWhere := combineOverviewWhere(whereSQL, args)
 
-	var totalEvents int64
-	var totalDiagnostics int64
-	var errorCount int64
-	var criticalCount int64
-	var recentActiveDevices int64
-	var affectedDevicesCount int64
-	var totalSessions int64
-	var errorSessions int64
-
 	w, qArgs := combineWhere("record_type = 'analytics'")
-	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM telemetry_events"+w, qArgs...).Scan(&totalEvents)
+	totalEvents, err := s.queryOverviewCount(ctx, "SELECT COUNT(*) FROM telemetry_events"+w, qArgs...)
+	if err != nil {
+		return nil, err
+	}
 
 	w, qArgs = combineWhere("record_type = 'diagnostic'")
-	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM telemetry_events"+w, qArgs...).Scan(&totalDiagnostics)
+	totalDiagnostics, err := s.queryOverviewCount(ctx, "SELECT COUNT(*) FROM telemetry_events"+w, qArgs...)
+	if err != nil {
+		return nil, err
+	}
 
 	w, qArgs = combineWhere("severity IN ('error', 'critical')")
-	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM telemetry_events"+w, qArgs...).Scan(&errorCount)
+	errorCount, err := s.queryOverviewCount(ctx, "SELECT COUNT(*) FROM telemetry_events"+w, qArgs...)
+	if err != nil {
+		return nil, err
+	}
 
 	w, qArgs = combineWhere("severity = 'critical'")
-	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM telemetry_events"+w, qArgs...).Scan(&criticalCount)
+	criticalCount, err := s.queryOverviewCount(ctx, "SELECT COUNT(*) FROM telemetry_events"+w, qArgs...)
+	if err != nil {
+		return nil, err
+	}
 
 	w, qArgs = combineWhere("")
-	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(DISTINCT device_id) FROM telemetry_events"+w, qArgs...).Scan(&recentActiveDevices)
+	recentActiveDevices, err := s.queryOverviewCount(ctx, "SELECT COUNT(DISTINCT device_id) FROM telemetry_events"+w, qArgs...)
+	if err != nil {
+		return nil, err
+	}
 
 	w, qArgs = combineWhere("severity IN ('error', 'critical')")
-	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(DISTINCT device_id) FROM telemetry_events"+w, qArgs...).Scan(&affectedDevicesCount)
+	affectedDevicesCount, err := s.queryOverviewCount(ctx, "SELECT COUNT(DISTINCT device_id) FROM telemetry_events"+w, qArgs...)
+	if err != nil {
+		return nil, err
+	}
 
 	w, qArgs = combineWhere("")
-	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(DISTINCT session_id) FROM telemetry_events"+w, qArgs...).Scan(&totalSessions)
+	totalSessions, err := s.queryOverviewCount(ctx, "SELECT COUNT(DISTINCT session_id) FROM telemetry_events"+w, qArgs...)
+	if err != nil {
+		return nil, err
+	}
 
 	w, qArgs = combineWhere("severity IN ('error', 'critical')")
-	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(DISTINCT session_id) FROM telemetry_events"+w, qArgs...).Scan(&errorSessions)
+	errorSessions, err := s.queryOverviewCount(ctx, "SELECT COUNT(DISTINCT session_id) FROM telemetry_events"+w, qArgs...)
+	if err != nil {
+		return nil, err
+	}
 
 	businessGroups, succeededCount, failedCount, err := s.queryBusinessOperationMetrics(ctx, combineWhere)
 	if err != nil {
 		return nil, err
 	}
 	businessDenominator := succeededCount + failedCount
-	var successRate float64 = 1.0
+	var successRate float64
 	if businessDenominator > 0 {
 		successRate = float64(succeededCount) / float64(businessDenominator)
 	}
 
-	var errorFreeSessionRate float64 = 1.0
+	var errorFreeSessionRate float64
+	errorFreeSessionSuccesses := int64(0)
 	if totalSessions > 0 {
-		errorFree := totalSessions - errorSessions
-		if errorFree < 0 {
-			errorFree = 0
+		errorFreeSessionSuccesses = totalSessions - errorSessions
+		if errorFreeSessionSuccesses < 0 {
+			errorFreeSessionSuccesses = 0
 		}
-		errorFreeSessionRate = float64(errorFree) / float64(totalSessions)
+		errorFreeSessionRate = float64(errorFreeSessionSuccesses) / float64(totalSessions)
 	}
 
 	// Real latency percentiles from completed/succeeded operations.
-	latency := s.queryLatencyPercentiles(ctx, combineWhere)
+	latency, err := s.queryLatencyPercentiles(ctx, combineWhere)
+	if err != nil {
+		return nil, err
+	}
 
 	// Delivery delay is a client/server clock comparison and is kept separate
 	// from the service-boundary ingest duration exposed by Service.QueryOverview.
@@ -387,12 +431,15 @@ func (s *MySQLStore) QueryOverview(ctx context.Context, filter QueryFilter) (*Ov
 		return nil, err
 	}
 
-	// Live service health: MySQL ping, Redis ping, and aggregate error rate.
-	status := "healthy"
+	// Live service health: MySQL ping and Redis ping. A failed MySQL probe means
+	// the overview is not trustworthy, so it is returned as an admin query error
+	// instead of silently serving zero-valued metrics.
 	redisStatus := redisHealthStatus(ctx, s.redisCache)
 	if err := s.pingMySQL(ctx); err != nil {
-		status = "unhealthy"
-	} else if redisStatus != "active" {
+		return nil, fmt.Errorf("overview mysql health probe: %w", err)
+	}
+	status := "healthy"
+	if redisStatus != "active" {
 		status = "degraded"
 	}
 
@@ -410,6 +457,8 @@ func (s *MySQLStore) QueryOverview(ctx context.Context, filter QueryFilter) (*Ov
 		BusinessOperationDenominator: businessDenominator,
 		BusinessOperationGroups:      businessGroups,
 		ErrorFreeSessionRate:         errorFreeSessionRate,
+		ErrorFreeSessionSuccesses:    errorFreeSessionSuccesses,
+		ErrorFreeSessionDenominator:  totalSessions,
 		EventsTrend:                  eventsTrend,
 		ErrorsTrend:                  errorsTrend,
 		Latency:                      latency,

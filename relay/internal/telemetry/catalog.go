@@ -4,12 +4,14 @@ package telemetry
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	contractgen "github.com/ssh-mobile/relay/internal/telemetry/generated"
 )
@@ -65,6 +67,16 @@ type Catalog struct {
 	events     map[string]EventDefinition
 	errorCodes map[string]ErrorCodeDefinition
 }
+
+// MaxTelemetryFutureSkew bounds how far a client event may lead the trusted
+// server clock. A small allowance covers ordinary device clock drift while
+// rejecting timestamps that would poison delivery-delay trends. Older offline
+// events remain valid without an age limit.
+const MaxTelemetryFutureSkew = 5 * time.Minute
+
+// ErrOccurredAtTooFarInFuture identifies an envelope rejected before storage
+// because its client timestamp exceeds MaxTelemetryFutureSkew.
+var ErrOccurredAtTooFarInFuture = errors.New("telemetry occurredAt is too far in the future")
 
 // NewCatalog creates an empty Catalog.
 func NewCatalog() *Catalog {
@@ -288,6 +300,13 @@ func (c *Catalog) ValidateErrorCode(code string) error {
 
 // ValidateEnvelope performs full validation on an incoming TelemetryEnvelope.
 func (c *Catalog) ValidateEnvelope(env *TelemetryEnvelope) error {
+	return c.ValidateEnvelopeAt(env, time.Now().UTC())
+}
+
+// ValidateEnvelopeAt performs full validation using the supplied trusted
+// server time. Storage paths pass their transaction timestamp here so tests
+// and production validation share one deterministic clock reading.
+func (c *Catalog) ValidateEnvelopeAt(env *TelemetryEnvelope, now time.Time) error {
 	if env == nil {
 		return fmt.Errorf("missing envelope")
 	}
@@ -311,6 +330,12 @@ func (c *Catalog) ValidateEnvelope(env *TelemetryEnvelope) error {
 	}
 	if env.OccurredAt.IsZero() {
 		return fmt.Errorf("missing or invalid occurredAt timestamp")
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if env.OccurredAt.After(now.Add(MaxTelemetryFutureSkew)) {
+		return fmt.Errorf("%w: occurredAt=%s serverNow=%s allowance=%s", ErrOccurredAtTooFarInFuture, env.OccurredAt.UTC().Format(time.RFC3339Nano), now.UTC().Format(time.RFC3339Nano), MaxTelemetryFutureSkew)
 	}
 
 	c.mu.RLock()

@@ -77,7 +77,7 @@ export const TelemetryUploadPolicySchema = z.object({
 export type TelemetryUploadPolicy = z.infer<typeof TelemetryUploadPolicySchema>;
 
 export const TelemetryFilterSchema = z.object({
-  timeRange: z.enum(['1h', '24h', '7d', '30d', 'all']).default('24h'),
+  timeRange: z.enum(['1h', '1d', '24h', '7d', '30d', 'all']).default('24h'),
   startTime: z.string().optional(),
   endTime: z.string().optional(),
   deviceId: z.string().optional(),
@@ -133,13 +133,16 @@ export const TelemetryOverviewResponseSchema = z.object({
   errorCount: z.number(),
   criticalErrorCount: z.number(),
   affectedDevicesCount: z.number(),
-  coreOperationSuccessRate: z.number(),
-  businessOperationSuccessRate: z.number(),
+  /** @deprecated Use businessOperationSuccessRate with its denominator. */
+  coreOperationSuccessRate: z.number().describe('Deprecated compatibility alias; use businessOperationSuccessRate and businessOperationDenominator.'),
+  businessOperationSuccessRate: z.number().describe('Successes divided by the explicit businessOperationDenominator.'),
   businessOperationSuccesses: z.number(),
   businessOperationFailures: z.number(),
-  businessOperationDenominator: z.number(),
+  businessOperationDenominator: z.number().describe('Count of catalog-declared business terminal success and failure events.'),
   businessOperationGroups: z.array(TelemetryBusinessOperationGroupSchema),
-  errorFreeSessionRate: z.number(),
+  errorFreeSessionRate: z.number().describe('Error-free session successes divided by the explicit session denominator.'),
+  errorFreeSessionSuccesses: z.number(),
+  errorFreeSessionDenominator: z.number().describe('Count of sessions observed in the selected receivedAt window.'),
   eventsTrend: z.array(TelemetryMetricPointSchema),
   errorsTrend: z.array(TelemetryMetricPointSchema),
   latency: TelemetryLatencyStatsSchema.optional().default({
@@ -155,10 +158,10 @@ export const TelemetryOverviewResponseSchema = z.object({
     serverIngestLatencyP95Ms: z.number(),
     serverIngestLatencyP99Ms: z.number(),
     serverIngestLatencySamples: z.number(),
-    serverIngestRequests: z.number(),
+    serverIngestRequests: z.number().describe('Count of Service.IngestBatch boundary calls used as the ingest rate denominator.'),
     serverIngestSuccesses: z.number(),
     serverIngestFailures: z.number(),
-    serverIngestErrorRate: z.number(),
+    serverIngestErrorRate: z.number().describe('Service.IngestBatch returned-error calls divided by serverIngestRequests.'),
     redisCacheStatus: z.enum(['active', 'disabled', 'fallback_mysql']),
   }),
   deliveryDelay: TelemetryDeliveryDelayStatsSchema,

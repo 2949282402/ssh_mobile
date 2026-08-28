@@ -26,6 +26,8 @@ const mockOverviewData = {
   businessOperationDenominator: 1000,
   businessOperationGroups: [],
   errorFreeSessionRate: 0.982,
+  errorFreeSessionSuccesses: 98,
+  errorFreeSessionDenominator: 100,
   eventsTrend: [
     { timestamp: '2026-08-27T00:00:00Z', value: 450 },
     { timestamp: '2026-08-27T06:00:00Z', value: 800 },
@@ -97,6 +99,8 @@ describe('TelemetryDashboardPage', () => {
     expect(screen.getByText('服务端 Ingest P95 延迟')).toBeInTheDocument();
     expect(screen.getByText('5.00 ms')).toBeInTheDocument();
     expect(screen.getByText(/Service\.IngestBatch 从调用到返回的平均耗时/)).toBeInTheDocument();
+    expect(screen.getByText(/无论 recordType/)).toBeInTheDocument();
+    expect(screen.getByText(/64 次调用作为分母/)).toBeInTheDocument();
 
     // Check Pipeline Health
     expect(screen.getByText('3.80 ms')).toBeInTheDocument();
@@ -129,8 +133,43 @@ describe('TelemetryDashboardPage', () => {
     renderDashboard();
     await waitFor(() => expect(screen.getByText('1250')).toBeInTheDocument());
 
-    expect(screen.getAllByText('无数据')).toHaveLength(3);
+    expect(screen.getAllByText('No data')).toHaveLength(3);
     expect(screen.getByText('No operations recorded in this time range')).toBeInTheDocument();
+  });
+
+  it('renders no-data rates when their denominators are zero', async () => {
+    const noData = {
+      ...mockOverviewData,
+      businessOperationSuccessRate: 0,
+      businessOperationSuccesses: 0,
+      businessOperationFailures: 0,
+      businessOperationDenominator: 0,
+      errorFreeSessionRate: 0,
+      errorFreeSessionSuccesses: 0,
+      errorFreeSessionDenominator: 0,
+      pipelineHealth: {
+        ...mockOverviewData.pipelineHealth,
+        serverIngestLatencyMs: 0,
+        serverIngestLatencyP50Ms: 0,
+        serverIngestLatencyP95Ms: 0,
+        serverIngestLatencyP99Ms: 0,
+        serverIngestLatencySamples: 0,
+        serverIngestRequests: 0,
+        serverIngestSuccesses: 0,
+        serverIngestFailures: 0,
+        serverIngestErrorRate: 0,
+      },
+    };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(noData));
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderDashboard();
+    await waitFor(() => expect(screen.getByText('1250')).toBeInTheDocument());
+
+    expect(screen.queryByText('100.0%')).not.toBeInTheDocument();
+    expect(screen.queryByText('0.0%')).not.toBeInTheDocument();
+    expect(screen.queryByText('0.00%')).not.toBeInTheDocument();
+    expect(screen.getAllByText('No data')).toHaveLength(5);
   });
 
   it('allows changing time range and refetches metrics', async () => {
@@ -146,6 +185,22 @@ describe('TelemetryDashboardPage', () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining('timeRange=7d'),
+      expect.anything(),
+    ));
+  });
+
+  it('exposes the one-day range with the shared bucket contract', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(mockOverviewData));
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+
+    renderDashboard();
+    await waitFor(() => expect(screen.getByText('1250')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: '1 天' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('timeRange=1d'),
       expect.anything(),
     ));
   });

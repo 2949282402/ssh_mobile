@@ -1,6 +1,12 @@
 import 'dart:io';
 
 /// Centralized URL path constants and endpoint configuration for Telemetry.
+///
+/// The Admin overview response keeps `coreOperationSuccessRate` only as a
+/// deprecated compatibility alias. Consumers must render
+/// `businessOperationSuccessRate` with `businessOperationDenominator`; a zero
+/// denominator means that the rate is not reportable. The Flutter client does
+/// not use the compatibility alias when presenting dashboard metrics.
 class TelemetryEndpoints {
   const TelemetryEndpoints._();
 

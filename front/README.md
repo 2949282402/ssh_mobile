@@ -1,4 +1,4 @@
-> Last updated: 2026-08-27
+> Last updated: 2026-08-28
 
 # SSH Mobile Relay Admin & Observability Console
 
@@ -23,7 +23,9 @@ HttpOnly administrator session same-origin.
 The browser API is versioned under `/api/admin/v1`. Overview and Devices use
 separate response DTOs; the Overview endpoint is polled every three seconds,
 while the device list refreshes every fifteen seconds. The Telemetry Suite provides:
-- Telemetry Overview (`/api/admin/v1/telemetry/overview`): ingest metrics, error counts, and hourly trends.
+- Telemetry Overview (`/api/admin/v1/telemetry/overview`): ingest metrics, error counts, and
+  receivedAt trends (UTC hourly for `1d`/`24h`, UTC daily for `7d`/`30d`). Business and
+  error-free-session rates use explicit denominators; a zero denominator renders `No data`.
 - Event Explorer (`/api/admin/v1/telemetry/events`): filterable event log with property viewer.
 - Diagnostic Stream (`/api/admin/v1/telemetry/diagnostics`): live diagnostic log stream backed by Redis Stream / MySQL.
 - Policy & Retention Settings (`/api/admin/v1/telemetry/settings`): dynamic policy configuration and retention policies.

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -16,11 +17,10 @@ type OverviewMetrics struct {
 	ErrorCount           int64 `json:"errorCount"`
 	CriticalErrorCount   int64 `json:"criticalErrorCount"`
 	AffectedDevicesCount int64 `json:"affectedDevicesCount"`
-	// CoreOperationSuccessRate is retained as a compatibility alias for the
-	// dashboard field that predated the explicit business-operation contract.
-	// It is calculated from the same catalog-defined business outcomes as
-	// BusinessOperationSuccessRate; it never infers an outcome from an event
-	// name suffix or severity.
+	// Deprecated: use BusinessOperationSuccessRate together with
+	// BusinessOperationDenominator. This compatibility alias is calculated from
+	// the same catalog-defined business outcomes and is zero when there is no
+	// denominator; it never infers an outcome from an event name or severity.
 	CoreOperationSuccessRate     float64                         `json:"coreOperationSuccessRate"`
 	BusinessOperationSuccessRate float64                         `json:"businessOperationSuccessRate"`
 	BusinessOperationSuccesses   int64                           `json:"businessOperationSuccesses"`
@@ -28,11 +28,81 @@ type OverviewMetrics struct {
 	BusinessOperationDenominator int64                           `json:"businessOperationDenominator"`
 	BusinessOperationGroups      []BusinessOperationGroupMetrics `json:"businessOperationGroups"`
 	ErrorFreeSessionRate         float64                         `json:"errorFreeSessionRate"`
+	ErrorFreeSessionSuccesses    int64                           `json:"errorFreeSessionSuccesses"`
+	ErrorFreeSessionDenominator  int64                           `json:"errorFreeSessionDenominator"`
 	EventsTrend                  []TelemetryMetricPoint          `json:"eventsTrend"`
 	ErrorsTrend                  []TelemetryMetricPoint          `json:"errorsTrend"`
 	Latency                      LatencyStats                    `json:"latency"`
 	PipelineHealth               PipelineHealthStats             `json:"pipelineHealth"`
 	DeliveryDelay                DeliveryDelayStats              `json:"deliveryDelay"`
+}
+
+type overviewTrendBucket uint8
+
+const (
+	overviewTrendHourly overviewTrendBucket = iota
+	overviewTrendDaily
+)
+
+// overviewTrendBucketForRange is the single range-to-bucket policy shared by
+// MemoryStore and MySQLStore. Empty/one-hour/one-day views (including the
+// legacy 24h alias) use UTC hourly buckets; seven- and thirty-day views use UTC
+// calendar days. Unknown and all-time ranges use daily buckets to keep
+// long-running trends bounded and deterministic.
+func overviewTrendBucketForRange(timeRange string) overviewTrendBucket {
+	switch strings.ToLower(strings.TrimSpace(timeRange)) {
+	case "", "1h", "1d", "24h":
+		return overviewTrendHourly
+	default:
+		return overviewTrendDaily
+	}
+}
+
+func overviewTrendDateFormat(timeRange string) string {
+	if overviewTrendBucketForRange(timeRange) == overviewTrendHourly {
+		return "%Y-%m-%dT%H:00:00Z"
+	}
+	return "%Y-%m-%dT00:00:00Z"
+}
+
+func overviewTrendTimestamp(timestamp time.Time, timeRange string) string {
+	utc := timestamp.UTC()
+	if overviewTrendBucketForRange(timeRange) == overviewTrendHourly {
+		return utc.Truncate(time.Hour).Format("2006-01-02T15:00:00Z")
+	}
+	return time.Date(utc.Year(), utc.Month(), utc.Day(), 0, 0, 0, 0, time.UTC).
+		Format("2006-01-02T00:00:00Z")
+}
+
+// normalizeOverviewFilter derives receivedAt bounds for the shared relative
+// range contract. Explicit bounds always win; an all-time or unknown range is
+// left unbounded. Keeping this normalization in the store layer ensures direct
+// Store callers observe the same window as the Admin HTTP handler.
+func normalizeOverviewFilter(filter QueryFilter, now time.Time) QueryFilter {
+	if !filter.StartTime.IsZero() || filter.TimeRange == "" || strings.EqualFold(strings.TrimSpace(filter.TimeRange), "all") {
+		return filter
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	switch strings.ToLower(strings.TrimSpace(filter.TimeRange)) {
+	case "1h":
+		filter.StartTime = now.Add(-time.Hour)
+	case "1d", "24h":
+		filter.StartTime = now.Add(-24 * time.Hour)
+	case "7d":
+		filter.StartTime = now.Add(-7 * 24 * time.Hour)
+	case "30d":
+		filter.StartTime = now.Add(-30 * 24 * time.Hour)
+	default:
+		if duration, err := time.ParseDuration(filter.TimeRange); err == nil && duration > 0 {
+			filter.StartTime = now.Add(-duration)
+		}
+	}
+	if !filter.StartTime.IsZero() && filter.EndTime.IsZero() {
+		filter.EndTime = now
+	}
+	return filter
 }
 
 // BusinessOperationGroupMetrics contains terminal outcomes for one
@@ -280,7 +350,7 @@ func buildBusinessOperationMetrics(groups map[string]*businessOperationAccumulat
 	for _, group := range keys {
 		accumulator := groups[group]
 		denominator := accumulator.successes + accumulator.failures
-		rate := float64(1)
+		var rate float64
 		if denominator > 0 {
 			rate = float64(accumulator.successes) / float64(denominator)
 		}

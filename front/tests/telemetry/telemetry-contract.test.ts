@@ -9,6 +9,8 @@ import {
   TelemetryRecordSchema,
   TelemetryBatchUploadRequestSchema,
   TelemetryBatchUploadResponseSchema,
+  TelemetryFilterSchema,
+  TelemetryOverviewResponseSchema,
   validateEventCatalogRecord,
 } from '../../src/schemas/telemetry';
 
@@ -27,6 +29,11 @@ describe('Telemetry Contract & Schemas', () => {
     expect(TelemetryEvents.sshSessionConnected.operationRole).toBe('success');
     expect(TelemetryErrorCodes.sshConnectFailed.category).toBe('ssh');
     expect(TelemetryErrorCodes.appFatalError.terminalFailure).toBe(true);
+  });
+
+  it('documents the compatibility alias and supports the one-day trend range', () => {
+    expect(TelemetryOverviewResponseSchema.shape.coreOperationSuccessRate.description).toContain('Deprecated');
+    expect(TelemetryFilterSchema.parse({ timeRange: '1d' }).timeRange).toBe('1d');
   });
 
   it('validates a correct telemetry upload policy', () => {

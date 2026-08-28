@@ -249,6 +249,8 @@ describe('AuthGate', () => {
           businessOperationDenominator: 1,
           businessOperationGroups: [],
           errorFreeSessionRate: 1.0,
+          errorFreeSessionSuccesses: 1,
+          errorFreeSessionDenominator: 1,
           eventsTrend: [],
           errorsTrend: [],
           pipelineHealth: {

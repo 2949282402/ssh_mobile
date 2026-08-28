@@ -51,6 +51,10 @@ There is no `/v1/connect` route; only the V2 control and relay data routes are s
 - `GET /api/admin/v1/access/enrollment-token` — View enrollment token.
 - `POST /api/admin/v1/access/enrollment-token/rotate` — Rotate enrollment token.
 - `GET /api/admin/v1/telemetry/overview` — Telemetry overview metrics and error distribution.
+  `businessOperationSuccessRate` counts Catalog-declared terminal business outcomes
+  regardless of `recordType`; `coreOperationSuccessRate` is a deprecated compatibility alias.
+  `eventsTrend` is Analytics-only and uses UTC hourly buckets for `1d`/`24h`, daily buckets for
+  `7d`/`30d`. A zero metric denominator means no data, not a 0% or 100% result.
 - `GET /api/admin/v1/telemetry/events` — Filterable telemetry event explorer.
 - `GET /api/admin/v1/telemetry/diagnostics` — Real-time diagnostic stream from Redis/MySQL.
 - `GET /api/admin/v1/telemetry/settings` — Read dynamic policy and retention settings.

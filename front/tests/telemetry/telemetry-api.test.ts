@@ -25,6 +25,8 @@ describe('telemetryApi', () => {
       businessOperationDenominator: 100,
       businessOperationGroups: [],
       errorFreeSessionRate: 0.95,
+      errorFreeSessionSuccesses: 95,
+      errorFreeSessionDenominator: 100,
       eventsTrend: [{ timestamp: '2026-08-27T00:00:00Z', value: 100 }],
       errorsTrend: [{ timestamp: '2026-08-27T00:00:00Z', value: 2 }],
       latency: { p50Ms: 120, p95Ms: 340, p99Ms: 512, samples: 12 },

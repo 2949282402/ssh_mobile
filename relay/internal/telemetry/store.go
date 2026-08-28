@@ -144,7 +144,7 @@ func (m *MemoryStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnve
 
 	for i, env := range envelopes {
 		// 1. Schema & Catalog Validation
-		if err := m.catalog.ValidateEnvelope(&env); err != nil {
+		if err := m.catalog.ValidateEnvelopeAt(&env, now); err != nil {
 			results[i] = IngestRecordResult{
 				EventID: env.EventID,
 				Status:  StatusRejected,

@@ -107,7 +107,7 @@ func (s *MySQLStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnvel
 	seenInput := make(map[string]struct{}, len(envelopes))
 
 	for i, env := range envelopes {
-		if err := s.catalog.ValidateEnvelope(&env); err != nil {
+		if err := s.catalog.ValidateEnvelopeAt(&env, now); err != nil {
 			results[i] = IngestRecordResult{
 				EventID: env.EventID,
 				Status:  StatusRejected,

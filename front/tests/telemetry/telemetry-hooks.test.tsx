@@ -48,6 +48,8 @@ describe('telemetry hooks', () => {
       businessOperationDenominator: 10,
       businessOperationGroups: [],
       errorFreeSessionRate: 0.9,
+      errorFreeSessionSuccesses: 9,
+      errorFreeSessionDenominator: 10,
       eventsTrend: [],
       errorsTrend: [],
       latency: { p50Ms: 0, p95Ms: 0, p99Ms: 0, samples: 0 },

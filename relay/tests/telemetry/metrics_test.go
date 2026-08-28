@@ -166,20 +166,29 @@ func TestServiceOverviewUsesBoundaryIngestMetrics(t *testing.T) {
 	}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled ingest error = %v, want context.Canceled", err)
 	}
+	invalid := metricEnvelope(t, catalog, "ingest-rejected", "ssh.session.started", time.Now().UTC())
+	invalid.EventName = "unregistered.ingest.event"
+	results, err := service.IngestBatch(context.Background(), []telemetry.TelemetryEnvelope{invalid})
+	if err != nil {
+		t.Fatalf("rejected ingest returned batch error: %v", err)
+	}
+	if len(results) != 1 || results[0].Status != telemetry.StatusRejected {
+		t.Fatalf("rejected ingest result = %+v, want one rejected result", results)
+	}
 
 	metrics, err := service.QueryOverview(context.Background(), telemetry.QueryFilter{})
 	if err != nil {
 		t.Fatalf("QueryOverview failed: %v", err)
 	}
 	health := metrics.PipelineHealth
-	if health.ServerIngestRequests != 2 || health.ServerIngestSuccesses != 1 || health.ServerIngestFailures != 1 {
-		t.Fatalf("ingest boundary counts = requests=%d successes=%d failures=%d, want 2/1/1", health.ServerIngestRequests, health.ServerIngestSuccesses, health.ServerIngestFailures)
+	if health.ServerIngestRequests != 3 || health.ServerIngestSuccesses != 2 || health.ServerIngestFailures != 1 {
+		t.Fatalf("ingest boundary counts = requests=%d successes=%d failures=%d, want 3/2/1", health.ServerIngestRequests, health.ServerIngestSuccesses, health.ServerIngestFailures)
 	}
-	if health.ServerIngestErrorRate != 0.5 {
-		t.Fatalf("ingest boundary error rate = %v, want 0.5", health.ServerIngestErrorRate)
+	if health.ServerIngestErrorRate != 1.0/3.0 {
+		t.Fatalf("ingest boundary error rate = %v, want 1/3", health.ServerIngestErrorRate)
 	}
-	if health.ServerIngestLatencyMs <= 0 || health.ServerIngestLatencySamples != 2 {
-		t.Fatalf("ingest boundary latency = average=%v samples=%d, want positive/2", health.ServerIngestLatencyMs, health.ServerIngestLatencySamples)
+	if health.ServerIngestLatencyMs <= 0 || health.ServerIngestLatencySamples != 3 {
+		t.Fatalf("ingest boundary latency = average=%v samples=%d, want positive/3", health.ServerIngestLatencyMs, health.ServerIngestLatencySamples)
 	}
 }
 

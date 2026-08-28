@@ -3,9 +3,11 @@ package telemetry
 import (
 	"context"
 	"sort"
+	"time"
 )
 
 func (m *MemoryStore) QueryOverview(ctx context.Context, filter QueryFilter) (*OverviewMetrics, error) {
+	filter = normalizeOverviewFilter(filter, time.Now().UTC())
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -25,8 +27,9 @@ func (m *MemoryStore) QueryOverview(ctx context.Context, filter QueryFilter) (*O
 	var businessSuccesses int64
 	var businessFailures int64
 
-	hourlyEvents := make(map[string]float64)
-	hourlyErrors := make(map[string]float64)
+	trendRange := filter.TimeRange
+	trendEvents := make(map[string]float64)
+	trendErrors := make(map[string]float64)
 
 	for _, env := range m.rawEvents {
 		if !filter.StartTime.IsZero() && env.ReceivedAt.Before(filter.StartTime) {
@@ -73,33 +76,39 @@ func (m *MemoryStore) QueryOverview(ctx context.Context, filter QueryFilter) (*O
 			deliveryRecords = append(deliveryRecords, env)
 		}
 
-		hourKey := env.ReceivedAt.UTC().Format("2006-01-02T15:00:00Z")
-		hourlyEvents[hourKey]++
+		// EventsTrend is the analytics-only series and therefore has the same
+		// denominator as TotalEvents. Diagnostic rows remain in ErrorCount and
+		// ErrorsTrend, whose denominator is the all-record error count.
+		bucket := overviewTrendTimestamp(env.ReceivedAt, trendRange)
+		if env.RecordType == RecordTypeAnalytics {
+			trendEvents[bucket]++
+		}
 		if env.Severity == SeverityError || env.Severity == SeverityCritical {
-			hourlyErrors[hourKey]++
+			trendErrors[bucket]++
 		}
 	}
 
 	businessMetrics := buildBusinessOperationMetrics(businessGroups)
 	businessDenominator := businessSuccesses + businessFailures
-	businessSuccessRate := 1.0
+	var businessSuccessRate float64
 	if businessDenominator > 0 {
 		businessSuccessRate = float64(businessSuccesses) / float64(businessDenominator)
 	}
 
 	latency := latencyStats(latencyValues)
 
-	var errorFreeSessionRate float64 = 1.0
+	var errorFreeSessionRate float64
+	errorFreeSessionSuccesses := 0
 	if len(sessionTotal) > 0 {
-		errorFreeSessions := len(sessionTotal) - len(sessionErrors)
-		if errorFreeSessions < 0 {
-			errorFreeSessions = 0
+		errorFreeSessionSuccesses = len(sessionTotal) - len(sessionErrors)
+		if errorFreeSessionSuccesses < 0 {
+			errorFreeSessionSuccesses = 0
 		}
-		errorFreeSessionRate = float64(errorFreeSessions) / float64(len(sessionTotal))
+		errorFreeSessionRate = float64(errorFreeSessionSuccesses) / float64(len(sessionTotal))
 	}
 
 	var eventsTrend []TelemetryMetricPoint
-	for ts, val := range hourlyEvents {
+	for ts, val := range trendEvents {
 		eventsTrend = append(eventsTrend, TelemetryMetricPoint{Timestamp: ts, Value: val})
 	}
 	sort.Slice(eventsTrend, func(i, j int) bool {
@@ -107,7 +116,7 @@ func (m *MemoryStore) QueryOverview(ctx context.Context, filter QueryFilter) (*O
 	})
 
 	var errorsTrend []TelemetryMetricPoint
-	for ts, val := range hourlyErrors {
+	for ts, val := range trendErrors {
 		errorsTrend = append(errorsTrend, TelemetryMetricPoint{Timestamp: ts, Value: val})
 	}
 	sort.Slice(errorsTrend, func(i, j int) bool {
@@ -136,6 +145,8 @@ func (m *MemoryStore) QueryOverview(ctx context.Context, filter QueryFilter) (*O
 		BusinessOperationDenominator: businessDenominator,
 		BusinessOperationGroups:      businessMetrics,
 		ErrorFreeSessionRate:         errorFreeSessionRate,
+		ErrorFreeSessionSuccesses:    int64(errorFreeSessionSuccesses),
+		ErrorFreeSessionDenominator:  int64(len(sessionTotal)),
 		EventsTrend:                  eventsTrend,
 		ErrorsTrend:                  errorsTrend,
 		Latency:                      latency,
