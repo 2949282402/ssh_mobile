@@ -1,6 +1,6 @@
 // Native 遥测数据库连接实现。
 //
-// 正式环境使用后台 isolate 打开 SQLite，测试环境使用内存数据库。
+// 正式环境使用后台 isolate 打开 SQLite；Flutter 测试环境使用内存数据库。
 
 import 'dart:ffi';
 import 'dart:io';
@@ -70,12 +70,6 @@ QueryExecutor openTelemetryDatabaseConnection() {
     );
     return NativeDatabase.createInBackground(file);
   });
-}
-
-/// 打开内存测试数据库。
-QueryExecutor openTelemetryTestDatabaseConnection() {
-  _ensureSqliteInitialized();
-  return NativeDatabase.memory();
 }
 
 /// 判断当前进程是否由 Flutter 测试 runner 执行。

@@ -31,10 +31,6 @@ final class TelemetryDatabase extends _$TelemetryDatabase
 
   TelemetryDatabase._withExecutor(super.executor);
 
-  /// 使用测试执行器创建隔离的内存数据库。
-  TelemetryDatabase.forTesting([QueryExecutor? executor])
-    : super(executor ?? openTelemetryTestDatabaseConnection());
-
   bool _disposed = false;
 
   @override

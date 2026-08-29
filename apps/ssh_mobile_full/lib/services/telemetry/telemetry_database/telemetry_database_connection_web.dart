@@ -9,8 +9,3 @@ import 'telemetry_database_constants.dart';
 QueryExecutor openTelemetryDatabaseConnection() {
   return driftDatabase(name: telemetryDatabaseName);
 }
-
-/// 使用独立名称的 Web 测试执行器，避免污染正式 IndexedDB 数据。
-QueryExecutor openTelemetryTestDatabaseConnection() {
-  return driftDatabase(name: '${telemetryDatabaseName}_test');
-}

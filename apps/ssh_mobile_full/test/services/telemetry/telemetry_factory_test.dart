@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:app_core/app_core.dart';
 import 'package:cryptography/cryptography.dart';
+import 'package:drift/native.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:network_sdk/network_sdk.dart';
@@ -212,7 +213,7 @@ void main() {
         readError: StateError('secure storage unavailable'),
       );
       final provider = _CountingEnrollmentProvider();
-      final database = TelemetryDatabase.forTesting();
+      final database = TelemetryDatabase(executor: NativeDatabase.memory());
       final storage = DriftTelemetryStorage(database: database);
       final runtime = await createTelemetryRuntime(
         deviceId: 'device-a',

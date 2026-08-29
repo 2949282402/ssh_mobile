@@ -8,7 +8,6 @@ import 'dart:math' as math;
 
 import 'package:app_core/app_core.dart';
 import 'package:drift/drift.dart';
-import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import 'telemetry_database.dart';
 
@@ -20,13 +19,6 @@ class DriftTelemetryStorage
 
   final TelemetryDatabase _database;
   bool _closed = false;
-
-  /// 数据库控制器，供移植测试注入。
-  @visibleForTesting
-  TelemetryDatabase get database => _database;
-
-  @visibleForTesting
-  bool get isClosed => _closed;
 
   @override
   Future<void> insertRecord(TelemetryEventRecord record) async {

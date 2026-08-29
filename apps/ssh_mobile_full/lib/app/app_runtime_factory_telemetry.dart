@@ -18,8 +18,9 @@ extension _AppRuntimeFactoryTelemetry on _AppRuntimeFactoryContext {
     telemetryDatabase = TelemetryDatabase();
     cleanup.add(telemetryDatabase.dispose, priority: _CleanupPriority.module);
     final telemetryStorage = DriftTelemetryStorage(database: telemetryDatabase);
-    final telemetryBuildMetadata = await DeviceInfoBuildMetadataProvider()
-        .load();
+    final telemetryBuildMetadata = await DeviceInfoBuildMetadataProvider(
+      logger: logger,
+    ).load();
     final relayEnrollmentService =
         lanShareModule.coordinator.relayEnrollmentService;
     final telemetryEnrollmentProvider = relayEnrollmentService == null

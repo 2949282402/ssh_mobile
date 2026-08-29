@@ -4,6 +4,7 @@ import 'dart:convert';
 
 import 'package:app_core/app_core.dart';
 import 'package:drift/drift.dart' show Value;
+import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/services/telemetry/drift_telemetry_storage.dart';
 import 'package:ssh_mobile/services/telemetry/telemetry_database.dart';
@@ -39,7 +40,7 @@ void main() {
     late TelemetryDatabase database;
 
     setUp(() {
-      database = TelemetryDatabase.forTesting();
+      database = TelemetryDatabase(executor: NativeDatabase.memory());
       storage = DriftTelemetryStorage(database: database);
     });
 

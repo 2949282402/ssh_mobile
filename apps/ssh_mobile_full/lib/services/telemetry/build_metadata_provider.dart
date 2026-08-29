@@ -7,8 +7,8 @@
 
 import 'dart:io';
 
+import 'package:app_core/app_core.dart';
 import 'package:device_info_plus/device_info_plus.dart';
-import 'package:flutter/foundation.dart';
 
 /// 客户端构建元数据。
 class AppBuildMetadata {
@@ -43,8 +43,11 @@ class DeviceInfoBuildMetadataProvider implements BuildMetadataProvider {
     this.appVersion = defaultAppVersion,
     this.buildNumber = defaultBuildNumber,
     this.releaseChannel = defaultReleaseChannel,
+    String? platform,
     DeviceInfoPlugin? deviceInfo,
-  }) : deviceInfo = deviceInfo ?? DeviceInfoPlugin();
+    this.logger,
+  }) : platform = platform ?? Platform.operatingSystem,
+       deviceInfo = deviceInfo ?? DeviceInfoPlugin();
 
   /// 与 `apps/ssh_mobile_full/pubspec.yaml` 的 `version:` 同步。
   static const String defaultAppVersion = '1.0.0';
@@ -57,7 +60,9 @@ class DeviceInfoBuildMetadataProvider implements BuildMetadataProvider {
   final String appVersion;
   final String buildNumber;
   final String releaseChannel;
+  final String platform;
   final DeviceInfoPlugin deviceInfo;
+  final AppLogger? logger;
 
   @override
   Future<AppBuildMetadata> load() async {
@@ -65,7 +70,7 @@ class DeviceInfoBuildMetadataProvider implements BuildMetadataProvider {
     return AppBuildMetadata(
       appVersion: appVersion,
       buildNumber: buildNumber,
-      platform: Platform.operatingSystem,
+      platform: platform,
       releaseChannel: releaseChannel,
       deviceModel: model,
     );
@@ -73,25 +78,38 @@ class DeviceInfoBuildMetadataProvider implements BuildMetadataProvider {
 
   Future<String> _loadDeviceModel() async {
     try {
-      if (Platform.isAndroid) {
+      if (platform == 'android') {
         final info = await deviceInfo.androidInfo;
         return '${info.brand} ${info.model}'.trim();
-      } else if (Platform.isIOS) {
+      } else if (platform == 'ios') {
         final info = await deviceInfo.iosInfo;
         return info.name.isNotEmpty ? info.name : info.model;
-      } else if (Platform.isMacOS) {
+      } else if (platform == 'macos') {
         final info = await deviceInfo.macOsInfo;
         return info.model.isNotEmpty ? info.model : info.computerName;
-      } else if (Platform.isWindows) {
+      } else if (platform == 'windows') {
         final info = await deviceInfo.windowsInfo;
         return info.computerName.isNotEmpty ? info.computerName : 'Windows';
-      } else if (Platform.isLinux) {
+      } else if (platform == 'linux') {
         final info = await deviceInfo.linuxInfo;
         return info.prettyName.isNotEmpty ? info.prettyName : 'Linux';
       }
-    } catch (e) {
-      debugPrint('[BuildMetadata] Failed to read device model: $e');
+    } catch (_) {
+      // Device metadata is optional. Keep the failure out of telemetry and
+      // logs; the injected AppLogger receives only a safe diagnostic label.
+      try {
+        logger?.log(
+          LogRecord(
+            timestamp: DateTime.now().toUtc(),
+            level: LogLevel.warning,
+            message: 'Device model unavailable; using platform fallback.',
+            source: 'build_metadata',
+          ),
+        );
+      } catch (_) {
+        // Logging must not make the metadata fallback fail.
+      }
     }
-    return Platform.operatingSystem;
+    return platform;
   }
 }
