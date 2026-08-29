@@ -1,6 +1,11 @@
+import 'dart:io';
+
 import 'package:drift/drift.dart' as drift;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:ssh_mobile/services/app_log_database.dart';
+import 'package:ssh_mobile/services/app_log_database_connection_io.dart'
+    as io_connection;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -92,4 +97,28 @@ void main() {
     await productionStyle.dispose();
     await productionStyle.dispose();
   });
+
+  test(
+    'native connection creates the support directory for production mode',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'ssh-mobile-app-logs-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final supportDirectory = Directory(p.join(root.path, 'support'));
+      final executor = io_connection.openAppLogDatabaseConnection(
+        directoryProvider: () async => supportDirectory,
+      );
+      final database = AppLogDatabase(executor: executor);
+      addTearDown(database.dispose);
+
+      await database.appLogDao.getAllLogs();
+
+      expect(await supportDirectory.exists(), isTrue);
+      expect(
+        await File(p.join(supportDirectory.path, 'app_logs.sqlite')).exists(),
+        isTrue,
+      );
+    },
+  );
 }

@@ -62,4 +62,66 @@ void main() {
       );
     },
   );
+
+  test(
+    'generates a key when storage is empty and preserves encryption errors',
+    () async {
+      final generatedStorage = _MemorySecureStorage();
+      final generated = DataProtectionService.forTesting(
+        secureStorage: generatedStorage,
+      );
+
+      final encrypted = await generated.encryptString('generated key');
+      expect(await generated.decryptString(encrypted), 'generated key');
+      expect(generatedStorage.values['data_protection_key_v1'], isNotEmpty);
+      expect(generatedStorage.readCalls, 1);
+
+      await generated.encryptBytes(Uint8List.fromList(<int>[1, 2, 3]));
+      expect(
+        generatedStorage.readCalls,
+        1,
+        reason: 'the generated key should be reused from the in-memory cache',
+      );
+
+      final failingStorage = _MemorySecureStorage(
+        readError: StateError('secure storage unavailable'),
+      );
+      final failing = DataProtectionService.forTesting(
+        secureStorage: failingStorage,
+      );
+      await expectLater(
+        failing.encryptString('failure'),
+        throwsA(isA<StateError>()),
+      );
+      await expectLater(
+        failing.encryptBytes(Uint8List.fromList(<int>[9])),
+        throwsA(isA<StateError>()),
+      );
+    },
+  );
+}
+
+final class _MemorySecureStorage implements FlutterSecureStorage {
+  _MemorySecureStorage({this.readError});
+
+  final Object? readError;
+  final Map<String, String> values = <String, String>{};
+  var readCalls = 0;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) {
+    final key = invocation.namedArguments[#key] as String?;
+    switch (invocation.memberName) {
+      case #read:
+        readCalls++;
+        if (readError != null) throw readError!;
+        return Future<String?>.value(key == null ? null : values[key]);
+      case #write:
+        final value = invocation.namedArguments[#value] as String?;
+        if (key != null && value != null) values[key] = value;
+        return Future<void>.value();
+      default:
+        throw UnimplementedError('Unexpected secure-storage call: $invocation');
+    }
+  }
 }
