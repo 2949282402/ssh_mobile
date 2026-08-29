@@ -246,6 +246,58 @@ void main() {
     },
   );
 
+  test(
+    'AI skills reload from encrypted preferences and import flushes pending data',
+    () async {
+      await initialize();
+      final pending = _skill(
+        'pending-skill',
+        updatedAt: DateTime.utc(2026, 2, 1),
+      );
+      await storage.saveAiSkill(pending);
+
+      // Import uses the immediate path while the debounced write is still
+      // pending.  The imported record must win and be durably available after
+      // recreating the adapter.
+      final imported = _skill(
+        'imported-skill',
+        updatedAt: DateTime.utc(2026, 2, 2),
+      );
+      await storage.importAppDataJson(
+        jsonEncode({
+          'format': 'ssh_mobile_backup',
+          'version': 1,
+          'connections': const [],
+          'aiSkills': [imported.toJson()],
+        }),
+      );
+      expect((await storage.loadAiSkills()).map((item) => item.id), [
+        'imported-skill',
+      ]);
+
+      await storage.shutdown();
+      storage.dispose();
+      storage = TestStorageAdapter();
+      attachTestAiRepository(storage);
+      await storage.init();
+      expect((await storage.loadAiSkills()).map((item) => item.id), [
+        'imported-skill',
+      ]);
+
+      // A subsequent import has no debounced write to replace, so the
+      // immediate path writes directly and leaves the adapter in a clean
+      // empty state.
+      await storage.importAppDataJson(
+        jsonEncode({
+          'format': 'ssh_mobile_backup',
+          'version': 1,
+          'connections': const [],
+        }),
+      );
+      expect(await storage.loadAiSkills(), isEmpty);
+    },
+  );
+
   test('malformed skill preference falls back to an empty list', () async {
     SharedPreferences.setMockInitialValues(<String, Object>{
       'ai_skills': '{not-json',
