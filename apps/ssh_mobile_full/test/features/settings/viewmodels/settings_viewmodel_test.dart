@@ -49,6 +49,15 @@ void main() {
       expect(viewModel.lastOperationMessage, isNull);
     });
 
+    test('dispose detaches settings listeners cleanly', () {
+      final viewModel = SettingsViewModel(
+        appSettings: appSettings,
+        aiStorage: storageService.aiStorage,
+      );
+      viewModel.dispose();
+      appSettings.setThemeMode(ThemeMode.dark);
+    });
+
     test('changeLanguage toggles settings language', () async {
       final viewModel = SettingsViewModel(
         appSettings: appSettings,
@@ -59,6 +68,43 @@ void main() {
       await viewModel.changeLanguage(AppLanguage.en);
       expect(viewModel.language, equals(AppLanguage.en));
     });
+
+    test(
+      'exposes and updates visual, notification, and developer settings',
+      () async {
+        final viewModel = SettingsViewModel(
+          appSettings: appSettings,
+          aiStorage: storageService.aiStorage,
+        );
+
+        expect(viewModel.isEnglish, isFalse);
+        expect(viewModel.isDarkMode, isFalse);
+        expect(viewModel.showServerNamesInNotifications, isFalse);
+        expect(viewModel.oledDark, isFalse);
+        expect(viewModel.developerMode, isFalse);
+        expect(viewModel.developerPanelFloating, isFalse);
+        expect(viewModel.secretCacheTtl, const Duration(minutes: 15));
+        expect(viewModel.secretCacheTtlOptionsMinutes, isNotEmpty);
+
+        await viewModel.changeLanguage(appSettings.language);
+        await viewModel.changeLanguage(AppLanguage.en);
+        viewModel.changeThemeMode(ThemeMode.dark);
+        await viewModel.setOledDark(true);
+        await viewModel.setColorPalette(AppColorPalette.ocean);
+        await viewModel.setDeveloperMode(true);
+        await viewModel.setDeveloperPanelFloating(true);
+        await viewModel.setShowServerNamesInNotifications(true);
+
+        expect(viewModel.isEnglish, isTrue);
+        expect(viewModel.themeMode, ThemeMode.dark);
+        expect(viewModel.isDarkMode, isTrue);
+        expect(viewModel.oledDark, isTrue);
+        expect(viewModel.colorPalette, AppColorPalette.ocean);
+        expect(viewModel.developerMode, isTrue);
+        expect(viewModel.developerPanelFloating, isTrue);
+        expect(viewModel.showServerNamesInNotifications, isTrue);
+      },
+    );
 
     test('changeThemeMode updates AppSettings', () {
       final viewModel = SettingsViewModel(
@@ -97,6 +143,51 @@ void main() {
       await viewModel.clearSecretCache();
       expect(viewModel.secretCacheEnabled, isFalse);
     });
+
+    test(
+      'backup wrappers and picker cancellation preserve operation state',
+      () async {
+        final viewModel = SettingsViewModel(
+          appSettings: appSettings,
+          aiStorage: storageService.aiStorage,
+        );
+
+        final backup = await viewModel.exportBackup();
+        expect(backup, contains('connections'));
+        await viewModel.importBackup(backup);
+
+        expect(await viewModel.exportAppData((_, __) async => null), isFalse);
+        expect(viewModel.isExporting, isFalse);
+        expect(viewModel.lastOperationMessage, isNull);
+        expect(await viewModel.importAppData(() async => null), isFalse);
+        expect(viewModel.isImporting, isFalse);
+        expect(viewModel.lastOperationMessage, isNull);
+      },
+    );
+
+    test(
+      'backup callbacks surface errors and always reset busy flags',
+      () async {
+        final viewModel = SettingsViewModel(
+          appSettings: appSettings,
+          aiStorage: storageService.aiStorage,
+        );
+        final saveError = StateError('save failed');
+        await expectLater(
+          viewModel.exportAppData((_, __) async => throw saveError),
+          throwsA(same(saveError)),
+        );
+        expect(viewModel.isExporting, isFalse);
+        expect(viewModel.lastOperationMessage, contains('save failed'));
+
+        await expectLater(
+          viewModel.importAppData(() async => <int>[0xff, 0xfe]),
+          throwsA(anything),
+        );
+        expect(viewModel.isImporting, isFalse);
+        expect(viewModel.lastOperationMessage, isNotNull);
+      },
+    );
 
     test(
       'exportAppData and importAppData handle state transitions and callbacks',
