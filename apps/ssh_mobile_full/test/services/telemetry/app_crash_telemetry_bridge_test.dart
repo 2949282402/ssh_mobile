@@ -9,9 +9,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/services/telemetry/app_crash_telemetry_bridge.dart';
 
+import '../../app/support/app_runtime_test_support.dart';
 import 'telemetry_test_utils.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('AppCrashTelemetryBridge', () {
     late TelemetryTestHarness harness;
     late AppCrashTelemetryBridge bridge;
@@ -74,6 +77,43 @@ void main() {
         containsPair('category', 'uncaught'),
       );
     });
+
+    test(
+      'reportUncaughtErrorToRuntime delegates to the runtime-owned bridge',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+        addTearDown(() => debugDefaultTargetPlatformOverride = null);
+        final harness = await newRuntimeHarness(disposeLogger: false);
+        try {
+          final runtime = await harness.createFuture;
+
+          await reportUncaughtErrorToRuntime(
+            runtime,
+            error: StateError('uncaught in zone'),
+            stackTrace: StackTrace.current,
+          );
+
+          final records = await runtime.telemetryClient!.storage
+              .fetchAllForReplay();
+          final diagnostics = records.where(
+            (record) =>
+                record.eventName == TelemetryEvents.appErrorCaptured.name,
+          );
+          expect(diagnostics, hasLength(1));
+          expect(
+            diagnostics.single.properties,
+            containsPair('category', 'uncaught'),
+          );
+          expect(
+            diagnostics.single.error?.errorCode,
+            TelemetryErrorCodes.appUncaughtError.code,
+          );
+          await runtime.dispose();
+        } finally {
+          await harness.close();
+        }
+      },
+    );
 
     test('ignores stale callbacks after the bridge is disposed', () async {
       bridge.install();

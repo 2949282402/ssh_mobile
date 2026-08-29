@@ -333,6 +333,113 @@ void main() {
         expect(records.single.properties, isNot(containsPair('rtt_ms', 0)));
       },
     );
+
+    test(
+      'relay peer connected event records one relay span and releases context',
+      () async {
+        traces.bindPeer(peerId: 'peer-a', traceId: 'trace-relay-connected');
+        events.add(
+          PeerStateChanged(
+            eventId: 'relay-connected',
+            timestamp: now,
+            peerId: 'peer-a',
+            state: PeerConnectionState.connected,
+            routeType: NetworkRouteType.relay,
+          ),
+        );
+        await _settle();
+
+        final records = (await harness
+            .recordsByName())[TelemetryEvents.networkRelayConnected.name]!;
+        expect(
+          records.map((record) => record.traceId),
+          contains('trace-relay-connected'),
+        );
+        expect(traces.traceForPeer('peer-a'), isNull);
+      },
+    );
+
+    test(
+      'relay RouteChanged keeps the operation context for late relay events',
+      () async {
+        traces.bindPeer(peerId: 'peer-a', traceId: 'trace-relay-route');
+        events.add(
+          RouteChanged(
+            eventId: 'relay-route',
+            timestamp: now,
+            snapshot: const SdkRouteSnapshot(
+              peerId: 'peer-a',
+              routeType: NetworkRouteType.relay,
+            ),
+          ),
+        );
+        await _settle();
+
+        final records = (await harness
+            .recordsByName())[TelemetryEvents.networkRelayConnected.name]!;
+        expect(
+          records.map((record) => record.traceId),
+          contains('trace-relay-route'),
+        );
+      },
+    );
+
+    test(
+      'relay fallback start without a direct failed phase still recovers',
+      () async {
+        traces.bindPeer(peerId: 'peer-a', traceId: 'trace-fallback-only');
+        events.add(
+          RouteAttemptChanged(
+            eventId: 'fallback-only',
+            timestamp: now,
+            peerId: 'peer-a',
+            attemptId: 'attempt-fallback-only',
+            phase: RouteAttemptPhase.relayFallbackStarted,
+            routeType: NetworkRouteType.relay,
+            error: const NetworkError(
+              code: NetworkErrorCode.quicError,
+              message: 'direct route failed',
+            ),
+          ),
+        );
+        await _settle();
+
+        final records = await harness.recordsByName();
+        final quic = records[TelemetryEvents.networkQuicFailed.name]!;
+        expect(quic.single.properties, containsPair('fallback_used', true));
+        expect(
+          records[TelemetryEvents.networkRelayFallback.name],
+          hasLength(1),
+        );
+      },
+    );
+
+    test('relay failed attempt closes the span with a relay failure', () async {
+      traces.bindPeer(peerId: 'peer-a', traceId: 'trace-relay-failed');
+      events.add(
+        RouteAttemptChanged(
+          eventId: 'relay-failed',
+          timestamp: now,
+          peerId: 'peer-a',
+          attemptId: 'attempt-relay-failed',
+          phase: RouteAttemptPhase.relayFailed,
+          routeType: NetworkRouteType.relay,
+          error: const NetworkError(
+            code: NetworkErrorCode.noRoute,
+            message: 'relay unavailable',
+          ),
+        ),
+      );
+      await _settle();
+
+      final records = (await harness
+          .recordsByName())[TelemetryEvents.networkRelayFailed.name]!;
+      expect(
+        records.map((record) => record.traceId),
+        contains('trace-relay-failed'),
+      );
+      expect(records.single.properties, containsPair('fallback_used', true));
+    });
   });
 }
 

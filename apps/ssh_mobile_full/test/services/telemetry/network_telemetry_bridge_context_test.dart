@@ -314,6 +314,228 @@ void main() {
       bounded.dispose();
     });
 
+    test(
+      'local context stays reusable after the registry releases its trace',
+      () async {
+        traces.bindPeer(peerId: 'peer-a', traceId: 'trace-local');
+        events.add(
+          RouteAttemptChanged(
+            eventId: 'local-direct',
+            timestamp: now,
+            peerId: 'peer-a',
+            attemptId: 'attempt-local',
+            phase: RouteAttemptPhase.directFailed,
+            routeType: NetworkRouteType.quicDirect,
+          ),
+        );
+        await _settle();
+        traces.releasePeerTrace(peerId: 'peer-a', traceId: 'trace-local');
+
+        events.add(
+          RouteChanged(
+            eventId: 'local-late',
+            timestamp: now,
+            snapshot: const SdkRouteSnapshot(
+              peerId: 'peer-a',
+              routeType: NetworkRouteType.quicDirect,
+              rtt: Duration(milliseconds: 5),
+            ),
+          ),
+        );
+        await _settle();
+
+        final records = await harness.recordsByName();
+        final connected =
+            records[TelemetryEvents.networkQuicConnected.name] ?? [];
+        expect(
+          connected.map((record) => record.traceId),
+          contains('trace-local'),
+        );
+      },
+    );
+
+    test(
+      'bridge evicts oldest peer and attempt contexts at capacity',
+      () async {
+        traces.bindPeer(peerId: 'seed', traceId: 'trace-seed');
+        events.add(
+          RouteAttemptChanged(
+            eventId: 'seed-attempt',
+            timestamp: now,
+            peerId: 'seed',
+            attemptId: 'attempt-seed',
+            phase: RouteAttemptPhase.relayConnected,
+            routeType: NetworkRouteType.relay,
+          ),
+        );
+        await _settle();
+
+        for (var index = 0; index < 257; index++) {
+          traces.bindPeer(peerId: 'peer-$index', traceId: 'trace-$index');
+          events.add(
+            RouteAttemptChanged(
+              eventId: 'attempt-$index',
+              timestamp: now,
+              peerId: 'peer-$index',
+              attemptId: 'attempt-$index',
+              phase: RouteAttemptPhase.relayConnected,
+              routeType: NetworkRouteType.relay,
+            ),
+          );
+        }
+        await _settle();
+
+        events.add(
+          RouteChanged(
+            eventId: 'latest-route',
+            timestamp: now,
+            snapshot: const SdkRouteSnapshot(
+              peerId: 'peer-256',
+              routeType: NetworkRouteType.quicDirect,
+              rtt: Duration(milliseconds: 9),
+            ),
+          ),
+        );
+        await _settle();
+
+        final records = (await harness
+            .recordsByName())[TelemetryEvents.networkQuicConnected.name]!;
+        expect(records.map((record) => record.traceId), contains('trace-256'));
+      },
+    );
+
+    test('recorded direct failures deduplicate per attempt context', () async {
+      traces
+        ..bindPeer(peerId: 'peer-a', traceId: 'trace-a')
+        ..bindPeer(peerId: 'peer-a', traceId: 'trace-b');
+      for (final trace in ['trace-a', 'trace-b']) {
+        traces.bindCommand(
+          commandId: 'command-$trace',
+          peerId: 'peer-a',
+          traceId: trace,
+        );
+        events.add(
+          RouteAttemptChanged(
+            eventId: 'direct-$trace',
+            timestamp: now,
+            peerId: 'peer-a',
+            attemptId: 'attempt-$trace',
+            commandId: 'command-$trace',
+            phase: RouteAttemptPhase.directFailed,
+            routeType: NetworkRouteType.quicDirect,
+            error: const NetworkError(
+              code: NetworkErrorCode.quicError,
+              message: 'direct failure',
+            ),
+          ),
+        );
+        events.add(
+          RouteAttemptChanged(
+            eventId: 'fallback-$trace',
+            timestamp: now,
+            peerId: 'peer-a',
+            attemptId: 'attempt-$trace',
+            commandId: 'command-$trace',
+            phase: RouteAttemptPhase.relayFallbackStarted,
+            routeType: NetworkRouteType.relay,
+            error: const NetworkError(
+              code: NetworkErrorCode.quicError,
+              message: 'direct failure',
+            ),
+          ),
+        );
+      }
+      await _settle();
+
+      events.add(
+        PeerStateChanged(
+          eventId: 'terminal-direct',
+          timestamp: now,
+          peerId: 'peer-a',
+          state: PeerConnectionState.failed,
+          routeType: NetworkRouteType.quicDirect,
+          routeTransport: NetworkRouteTransport.quic,
+        ),
+      );
+      await _settle();
+
+      final records = await harness.replayRecords();
+      expect(
+        records.where(
+          (record) =>
+              record.eventName == TelemetryEvents.networkQuicFailed.name,
+        ),
+        hasLength(2),
+      );
+    });
+
+    test(
+      'a terminal direct failure skips an already recorded fallback trace',
+      () async {
+        traces
+          ..bindPeer(peerId: 'peer-other', traceId: 'trace-other')
+          ..bindPeer(peerId: 'peer-final', traceId: 'trace-final');
+
+        for (final entry in {
+          'attempt-other': 'peer-other',
+          'attempt-final': 'peer-final',
+        }.entries) {
+          final peerId = entry.value;
+          events.add(
+            RouteAttemptChanged(
+              eventId: 'direct-${entry.key}',
+              timestamp: now,
+              peerId: peerId,
+              attemptId: entry.key,
+              phase: RouteAttemptPhase.directFailed,
+              routeType: NetworkRouteType.quicDirect,
+              error: const NetworkError(
+                code: NetworkErrorCode.quicError,
+                message: 'direct failure',
+              ),
+            ),
+          );
+          events.add(
+            RouteAttemptChanged(
+              eventId: 'fallback-${entry.key}',
+              timestamp: now,
+              peerId: peerId,
+              attemptId: entry.key,
+              phase: RouteAttemptPhase.relayFallbackStarted,
+              routeType: NetworkRouteType.relay,
+              error: const NetworkError(
+                code: NetworkErrorCode.quicError,
+                message: 'direct failure',
+              ),
+            ),
+          );
+        }
+        await _settle();
+
+        final before = await harness.replayRecords();
+        expect(
+          before.where((record) => record.traceId == 'trace-final'),
+          isNotEmpty,
+        );
+
+        events.add(
+          PeerStateChanged(
+            eventId: 'terminal-final',
+            timestamp: now,
+            peerId: 'peer-final',
+            state: PeerConnectionState.failed,
+            routeType: NetworkRouteType.quicDirect,
+            routeTopology: NetworkRouteTopology.direct,
+            routeTransport: NetworkRouteTransport.quic,
+          ),
+        );
+        await _settle();
+
+        final after = await harness.replayRecords();
+        expect(after, hasLength(before.length));
+      },
+    );
+
     test('bridge disposal does not release a borrower-owned trace', () async {
       traces.bindPeer(peerId: 'peer-a', traceId: 'trace-a');
       await bridge.dispose();
