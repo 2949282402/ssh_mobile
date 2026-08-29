@@ -14,13 +14,16 @@ import 'package:path_provider_platform_interface/path_provider_platform_interfac
 import 'package:permission_handler_platform_interface/permission_handler_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_core/ssh_core.dart' as ssh_core;
+import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 
 import '../../test_utils/test_storage_adapter.dart';
 
 /// Owns the SshService scenario fixture and platform overrides.
 final class SshServiceScenarioHarness {
-  SshServiceScenarioHarness();
+  SshServiceScenarioHarness({this.appSettings});
+
+  final AppSettings? appSettings;
 
   late TestStorageAdapter storage;
   late SshService ssh;
@@ -55,6 +58,7 @@ final class SshServiceScenarioHarness {
     _nativeConnector = _StallingNativeConnector();
     ssh = createTestSshService(
       storage,
+      appSettings: appSettings,
       nativeStreamConnector: _nativeConnector,
       peerIdResolver: (config) {
         if (!config.id.startsWith('server-')) return null;
