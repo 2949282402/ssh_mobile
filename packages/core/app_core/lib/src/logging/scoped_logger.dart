@@ -21,9 +21,7 @@ final class ScopedLogger implements AppLogger {
     final source = record.source == null || record.source!.isEmpty
         ? scopeName
         : '$scopeName/${record.source}';
-    _delegate.log(
-      record.copyWith(source: source),
-    );
+    _delegate.log(record.copyWith(source: source));
   }
 
   /// 创建嵌套作用域，底层 Logger 仍由根 Logger 统一拥有。
