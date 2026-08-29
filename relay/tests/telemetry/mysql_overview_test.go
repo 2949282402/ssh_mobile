@@ -68,6 +68,10 @@ func (c *overviewProbeConn) ExecContext(context.Context, string, []driver.NamedV
 }
 
 func newOverviewProbeStore(t *testing.T, mode string) (*telemetry.MySQLStore, *overviewProbeState, func()) {
+	return newOverviewProbeStoreWithCatalog(t, mode, telemetry.DefaultCatalog())
+}
+
+func newOverviewProbeStoreWithCatalog(t *testing.T, mode string, catalog *telemetry.Catalog) (*telemetry.MySQLStore, *overviewProbeState, func()) {
 	t.Helper()
 	overviewProbeRegister.Do(func() {
 		sql.Register(overviewProbeDriverName, overviewProbeDriver{})
@@ -82,7 +86,7 @@ func newOverviewProbeStore(t *testing.T, mode string) (*telemetry.MySQLStore, *o
 	if err != nil {
 		t.Fatalf("open overview probe: %v", err)
 	}
-	store := telemetry.NewMySQLStore(db, telemetry.DefaultCatalog())
+	store := telemetry.NewMySQLStore(db, catalog)
 	return store, state, func() {
 		_ = store.Close()
 		overviewProbeStates.Delete(dsn)
@@ -92,6 +96,22 @@ func newOverviewProbeStore(t *testing.T, mode string) (*telemetry.MySQLStore, *o
 func (s *overviewProbeState) query(query string) (driver.Rows, error) {
 	lower := strings.ToLower(query)
 	switch {
+	case s.mode == "count-values" && !strings.Contains(lower, "date_format") && strings.Contains(lower, "count(distinct session_id") && strings.Contains(lower, "severity"):
+		return &overviewProbeRows{columns: []string{"COUNT(*)"}, data: [][]driver.Value{{int64(1)}}}, nil
+	case s.mode == "count-values" && !strings.Contains(lower, "date_format") && strings.Contains(lower, "count(distinct session_id"):
+		return &overviewProbeRows{columns: []string{"COUNT(*)"}, data: [][]driver.Value{{int64(3)}}}, nil
+	case s.mode == "count-values" && !strings.Contains(lower, "date_format") && strings.Contains(lower, "count(distinct device_id") && strings.Contains(lower, "severity"):
+		return &overviewProbeRows{columns: []string{"COUNT(*)"}, data: [][]driver.Value{{int64(2)}}}, nil
+	case s.mode == "count-values" && !strings.Contains(lower, "date_format") && strings.Contains(lower, "count(distinct device_id"):
+		return &overviewProbeRows{columns: []string{"COUNT(*)"}, data: [][]driver.Value{{int64(4)}}}, nil
+	case s.mode == "count-values" && !strings.Contains(lower, "date_format") && strings.Contains(lower, "severity = 'critical'"):
+		return &overviewProbeRows{columns: []string{"COUNT(*)"}, data: [][]driver.Value{{int64(1)}}}, nil
+	case s.mode == "count-values" && !strings.Contains(lower, "date_format") && strings.Contains(lower, "severity in"):
+		return &overviewProbeRows{columns: []string{"COUNT(*)"}, data: [][]driver.Value{{int64(3)}}}, nil
+	case s.mode == "count-values" && !strings.Contains(lower, "date_format") && strings.Contains(lower, "record_type = 'analytics'"):
+		return &overviewProbeRows{columns: []string{"COUNT(*)"}, data: [][]driver.Value{{int64(5)}}}, nil
+	case s.mode == "count-values" && !strings.Contains(lower, "date_format") && strings.Contains(lower, "record_type = 'diagnostic'"):
+		return &overviewProbeRows{columns: []string{"COUNT(*)"}, data: [][]driver.Value{{int64(2)}}}, nil
 	case strings.Contains(lower, "count(*)") && s.mode == "count-error":
 		return nil, errors.New("count query failed")
 	case strings.Contains(lower, "count(*)") && s.mode == "count-rows-error":
@@ -100,24 +120,55 @@ func (s *overviewProbeState) query(query string) (driver.Rows, error) {
 		return nil, errors.New("business operation query failed")
 	case strings.Contains(lower, "select event_name, count(*)") && s.mode == "business-rows-error":
 		return &overviewProbeRows{columns: []string{"event_name", "COUNT(*)"}, nextErr: errors.New("business operation rows failed")}, nil
+	case strings.Contains(lower, "select event_name, count(*)") && s.mode == "business-scan-error":
+		return &overviewProbeRows{columns: []string{"event_name", "COUNT(*)"}, data: [][]driver.Value{{struct{}{}, int64(1)}}}, nil
 	case strings.Contains(lower, "select event_name, count(*)") && s.mode == "business-close-error":
 		return &overviewProbeRows{columns: []string{"event_name", "COUNT(*)"}, closeErr: errors.New("business operation close failed")}, nil
+	case strings.Contains(lower, "select event_name, count(*)") && s.mode == "business-data":
+		return &overviewProbeRows{
+			columns: []string{"event_name", "COUNT(*)"},
+			data: [][]driver.Value{
+				{"network.quic.connected", int64(3)},
+				{"network.quic.failed", int64(2)},
+				{"not-in-catalog", int64(99)},
+			},
+		}, nil
 	case strings.Contains(lower, "select properties_json") && s.mode == "latency-query-error":
 		return nil, errors.New("latency query failed")
 	case strings.Contains(lower, "select properties_json") && s.mode == "latency-rows-error":
 		return &overviewProbeRows{columns: []string{"properties_json"}, nextErr: errors.New("latency rows failed")}, nil
+	case strings.Contains(lower, "select properties_json") && s.mode == "latency-scan-error":
+		return &overviewProbeRows{columns: []string{"properties_json"}, data: [][]driver.Value{{struct{}{}}}}, nil
 	case strings.Contains(lower, "select properties_json") && s.mode == "latency-close-error":
 		return &overviewProbeRows{columns: []string{"properties_json"}, closeErr: errors.New("latency close failed")}, nil
+	case strings.Contains(lower, "select properties_json") && s.mode == "latency-data":
+		return &overviewProbeRows{
+			columns: []string{"properties_json"},
+			data:    [][]driver.Value{{`{"duration_ms":10}`}, {`{"latency_ms":20}`}, {nil}, {""}},
+		}, nil
 	case strings.Contains(lower, "select occurred_at, received_at") && s.mode == "delivery-query-error":
 		return nil, errors.New("delivery query failed")
 	case strings.Contains(lower, "select occurred_at, received_at") && s.mode == "delivery-rows-error":
 		return &overviewProbeRows{columns: []string{"occurred_at", "received_at"}, nextErr: errors.New("delivery rows failed")}, nil
+	case strings.Contains(lower, "select occurred_at, received_at") && s.mode == "delivery-scan-error":
+		return &overviewProbeRows{columns: []string{"occurred_at", "received_at"}, data: [][]driver.Value{{struct{}{}, time.Now()}}}, nil
 	case strings.Contains(lower, "select occurred_at, received_at") && s.mode == "delivery-close-error":
 		return &overviewProbeRows{columns: []string{"occurred_at", "received_at"}, closeErr: errors.New("delivery close failed")}, nil
+	case strings.Contains(lower, "select occurred_at, received_at") && s.mode == "delivery-data":
+		return &overviewProbeRows{
+			columns: []string{"occurred_at", "received_at"},
+			data: [][]driver.Value{
+				{time.Date(2026, time.August, 28, 4, 0, 0, 0, time.UTC), time.Date(2026, time.August, 28, 4, 0, 0, 10000000, time.UTC)},
+				{time.Date(2026, time.August, 28, 4, 0, 1, 0, time.UTC), time.Date(2026, time.August, 28, 4, 0, 0, 0, time.UTC)},
+				{time.Time{}, time.Time{}},
+			},
+		}, nil
 	case strings.Contains(lower, "date_format") && s.mode == "trend-query-error":
 		return nil, errors.New("trend query failed")
 	case strings.Contains(lower, "date_format") && s.mode == "trend-rows-error":
 		return &overviewProbeRows{columns: []string{"bucket", "COUNT(*)"}, nextErr: errors.New("trend rows failed")}, nil
+	case strings.Contains(lower, "date_format") && s.mode == "trend-scan-error":
+		return &overviewProbeRows{columns: []string{"bucket", "COUNT(*)"}, data: [][]driver.Value{{struct{}{}, int64(1)}}}, nil
 	case strings.Contains(lower, "date_format") && s.mode == "trend-close-error":
 		return &overviewProbeRows{columns: []string{"bucket", "COUNT(*)"}, closeErr: errors.New("trend close failed")}, nil
 	}
@@ -220,15 +271,19 @@ func TestMySQLOverviewPropagatesEveryAggregationFailure(t *testing.T) {
 		"count-close-error",
 		"business-query-error",
 		"business-rows-error",
+		"business-scan-error",
 		"business-close-error",
 		"latency-query-error",
 		"latency-rows-error",
+		"latency-scan-error",
 		"latency-close-error",
 		"delivery-query-error",
 		"delivery-rows-error",
+		"delivery-scan-error",
 		"delivery-close-error",
 		"trend-query-error",
 		"trend-rows-error",
+		"trend-scan-error",
 		"trend-close-error",
 		"ping-error",
 	} {
