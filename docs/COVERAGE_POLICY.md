@@ -50,6 +50,13 @@ focused client gate uses the same mechanism for
 `CLIENT_COVERAGE_BASE_REF`; an explicit `--source-manifest=<path>` is also
 supported for owners whose source inventory is generated elsewhere.
 
+`apps/ssh_mobile_full/lib/services/telemetry/telemetry_database/tables/telemetry_policy_states.dart`
+is a documented per-file exclusion from this new-file requirement: it is a
+hand-written Drift table whose declarative column and primary-key lines are
+fully overridden by the generated `telemetry_database.g.dart` subclass at
+runtime, so they carry no coverable business logic and cannot be exercised by a
+test.
+
 ## Owner scopes
 
 | Gate | Scope | Threshold |

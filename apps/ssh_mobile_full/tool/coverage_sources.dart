@@ -80,6 +80,20 @@ String? resolveCoverageBaseRef({
   return null;
 }
 
+/// Single-file exclusions whose reasons are recorded in
+/// docs/COVERAGE_POLICY.md. Only paths listed there may be dropped from the
+/// required new-source set; each entry must document why the owner validation
+/// report treats the file as lacking coverable business logic.
+///
+/// `lib/services/telemetry/telemetry_database/tables/telemetry_policy_states.dart`
+/// is a hand-written Drift table whose declarative column/primary-key lines
+/// are fully overridden by the generated `telemetry_database.g.dart` subclass
+/// at runtime, so no test can execute them (see the New-file requirement in
+/// docs/COVERAGE_POLICY.md).
+const _documentedCoverageExclusions = <String>{
+  'lib/services/telemetry/telemetry_database/tables/telemetry_policy_states.dart',
+};
+
 /// Filters a source inventory to hand-written production files. The explicit
 /// source-root/include filters keep ownership with the caller while this
 /// shared filter removes generated, test, tool, third-party, and platform
@@ -102,6 +116,14 @@ List<String> filterHandWrittenProductionSources(
   for (final path in paths) {
     final source = _normalizeSourcePath(path.trim());
     if (source.isEmpty || !_isHandWrittenProductionSource(source)) continue;
+    // Both manifest and git-discovered inventories pass through this filter;
+    // paths whose exclusion is recorded in the coverage policy must not
+    // become missing required sources.
+    if (_documentedCoverageExclusions.any(
+      (excluded) => _coveragePathMatches(source, excluded),
+    )) {
+      continue;
+    }
     if (roots.isNotEmpty &&
         !roots.any((root) => _pathMatchesRoot(source, root))) {
       continue;

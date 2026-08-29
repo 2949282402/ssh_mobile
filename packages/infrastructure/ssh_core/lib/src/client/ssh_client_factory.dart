@@ -33,7 +33,7 @@ final class SshClientAuthOptions {
 typedef SshPeerIdResolver = String? Function(ConnectionConfig config);
 
 /// 通过 Core Repository 创建已认证 SSH Client。
-final class SshClientFactory {
+class SshClientFactory {
   /// 创建 Client 工厂。
   ///
   /// [nativeStreamConnector] 非空时，[connectClient] 优先通过 native

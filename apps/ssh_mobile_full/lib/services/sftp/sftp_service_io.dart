@@ -55,17 +55,9 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
 
   final ConnectionRepository _connectionRepository;
   final CredentialRepository _credentialRepository;
-  final HostKeyRepository _hostKeyRepository;
   final SftpPathHistoryStore _pathHistoryStore;
-  final ssh_core.SshNativeStreamConnector? _nativeStreamConnector;
   final ssh_core.SshPeerIdResolver? _peerIdResolver;
-  late final SshClientFactory _clientFactory = SshClientFactory(
-    credentialRepository: _credentialRepository,
-    hostKeyRepository: _hostKeyRepository,
-    logger: AppLogService.instance,
-    nativeStreamConnector: _nativeStreamConnector,
-    peerIdResolver: _peerIdResolver,
-  );
+  final SshClientFactory _clientFactory;
 
   final Map<String, _SftpSession> _sessions = {};
   final Map<String, String> _lastPaths = {};
@@ -96,33 +88,53 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   SftpService({
     required this._connectionRepository,
     required this._credentialRepository,
-    required this._hostKeyRepository,
+    required HostKeyRepository hostKeyRepository,
     SftpPathHistoryStore? pathHistoryStore,
-    this._nativeStreamConnector,
+    ssh_core.SshNativeStreamConnector? nativeStreamConnector,
     this._peerIdResolver,
+    SshClientFactory? clientFactory,
     this.telemetryClient,
     Duration telemetryFailureTimeout = _defaultTelemetryFailureTimeout,
   }) : _pathHistoryStore = pathHistoryStore ?? InMemorySftpPathHistoryStore(),
        _telemetryFailureTimeout = _validateTelemetryFailureTimeout(
          telemetryFailureTimeout,
-       );
+       ),
+       _clientFactory =
+           clientFactory ??
+           SshClientFactory(
+             credentialRepository: _credentialRepository,
+             hostKeyRepository: hostKeyRepository,
+             logger: AppLogService.instance,
+             nativeStreamConnector: nativeStreamConnector,
+             peerIdResolver: _peerIdResolver,
+           );
 
   @visibleForTesting
   SftpService.forTesting(
     this._connectionRepository,
     this._credentialRepository,
-    this._hostKeyRepository, {
+    HostKeyRepository hostKeyRepository, {
     required ConnectionConfig connection,
     required SftpClient sftpClient,
     String currentPath = '.',
     SftpPathHistoryStore? pathHistoryStore,
-    this._nativeStreamConnector,
+    ssh_core.SshNativeStreamConnector? nativeStreamConnector,
     this._peerIdResolver,
+    SshClientFactory? clientFactory,
     Duration telemetryFailureTimeout = _defaultTelemetryFailureTimeout,
   }) : _pathHistoryStore = pathHistoryStore ?? InMemorySftpPathHistoryStore(),
        _telemetryFailureTimeout = _validateTelemetryFailureTimeout(
          telemetryFailureTimeout,
-       ) {
+       ),
+       _clientFactory =
+           clientFactory ??
+           SshClientFactory(
+             credentialRepository: _credentialRepository,
+             hostKeyRepository: hostKeyRepository,
+             logger: AppLogService.instance,
+             nativeStreamConnector: nativeStreamConnector,
+             peerIdResolver: _peerIdResolver,
+           ) {
     final session =
         _SftpSession(
             connectionId: connection.id,

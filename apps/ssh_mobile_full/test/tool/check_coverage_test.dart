@@ -200,6 +200,16 @@ void main() {
     },
   );
 
+  test('drops documented coverage exclusions while keeping ordinary sources', () {
+    expect(
+      filterHandWrittenProductionSources(const [
+        'lib/services/telemetry/telemetry_database/tables/telemetry_policy_states.dart',
+        'lib/services/telemetry/telemetry_policy_controller.dart',
+      ]),
+      ['lib/services/telemetry/telemetry_policy_controller.dart'],
+    );
+  });
+
   test('discovers added sources relative to a Git base ref', () {
     final directory = Directory.systemTemp.createTempSync(
       'check-coverage-git-',
