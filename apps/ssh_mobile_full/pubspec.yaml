@@ -96,6 +96,7 @@ dev_dependencies:
   build_runner: ^2.15.1
   drift_dev: ^2.34.5
   image: ^4.9.1
+  path_provider_platform_interface: ^2.1.2
   permission_handler_platform_interface: ^4.4.0
 
 flutter:
