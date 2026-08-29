@@ -225,6 +225,36 @@ void main() {
     );
 
     test(
+      'classifies an unverified QUIC failure with the generic error code',
+      () async {
+        traces.bindPeer(peerId: 'peer-a', traceId: 'trace-generic');
+        events.add(
+          PeerStateChanged(
+            eventId: 'failed',
+            timestamp: now,
+            peerId: 'peer-a',
+            state: PeerConnectionState.failed,
+            routeType: NetworkRouteType.quicDirect,
+            routeTransport: NetworkRouteTransport.quic,
+            error: const NetworkError(
+              code: NetworkErrorCode.quicError,
+              message: 'QUIC connection failed during handshake',
+            ),
+          ),
+        );
+        await _settle();
+
+        final records = await harness.recordsByName();
+        final quic = records[TelemetryEvents.networkQuicFailed.name]!;
+        expect(quic, hasLength(1));
+        expect(
+          quic.single.error?.errorCode,
+          TelemetryErrorCodes.netQuicFailed.code,
+        );
+      },
+    );
+
+    test(
       'causal direct failure survives an unspecified terminal peer state',
       () async {
         traces.bindPeer(peerId: 'peer-a', traceId: 'trace-direct');

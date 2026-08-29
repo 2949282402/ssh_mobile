@@ -83,6 +83,39 @@ void main() {
       expect(failedRecord.error?.category, 'ssh');
     });
 
+    test('host-key mismatch maps to SSH_HOST_KEY_MISMATCH', () async {
+      final mismatchService = createTestSshService(
+        storage,
+        telemetryClient: harness.client,
+        nativeStreamConnector: _ThrowingSshConnector(
+          const ssh_core.SshHostKeyMismatchException(
+            connectionName: 'Server',
+            host: '127.0.0.1',
+            port: 22,
+            expectedAlgorithm: 'ssh-ed25519',
+            expectedFingerprint: 'MD5:00:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d:0e:0f',
+            actualAlgorithm: 'ssh-ed25519',
+            actualFingerprint: 'MD5:10:11:12:13:14:15:16:17:18:19:1a:1b:1c:1d:1e:1f',
+          ),
+        ),
+        peerIdResolver: _enrolledPeerId,
+      );
+
+      try {
+        await mismatchService.connect('server-1');
+
+        final failed = (await harness
+            .recordsByName())[TelemetryEvents.sshSessionFailed.name];
+        expect(failed, hasLength(1));
+        expect(
+          failed!.single.error?.errorCode,
+          TelemetryErrorCodes.sshHostKeyMismatch.code,
+        );
+      } finally {
+        await mismatchService.close();
+      }
+    });
+
     test('timeout connect maps to SSH_TIMEOUT error code', () async {
       sshService = createTestSshService(
         storage,
@@ -149,9 +182,9 @@ Future<void> _addPasswordConnection(
 String? _enrolledPeerId(ConnectionConfig config) => 'peer-${config.id}';
 
 final class _ThrowingSshConnector implements ssh_core.SshNativeStreamConnector {
-  _ThrowingSshConnector(this.errorMessage);
+  _ThrowingSshConnector(this.error);
 
-  final String errorMessage;
+  final Object error;
 
   @override
   Future<ssh_core.SshNativeStream> open({
@@ -159,7 +192,7 @@ final class _ThrowingSshConnector implements ssh_core.SshNativeStreamConnector {
     String service = ssh_core.kSshNativeStreamService,
     String? traceId,
   }) {
-    throw StateError(errorMessage);
+    throw error;
   }
 
   @override

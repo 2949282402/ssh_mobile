@@ -641,6 +641,12 @@ var TelemetryErrorCodes = []ErrorCodeDefinition{
 		Description:     "Direct QUIC connection handshake timed out.",
 	},
 	{
+		Code:            "NET_QUIC_FAILED",
+		Category:        "network",
+		TerminalFailure: false,
+		Description:     "Direct QUIC connection failed for an unclassified reason; fallback may proceed.",
+	},
+	{
 		Code:            "NET_RELAY_UNAVAILABLE",
 		Category:        "network",
 		TerminalFailure: true,

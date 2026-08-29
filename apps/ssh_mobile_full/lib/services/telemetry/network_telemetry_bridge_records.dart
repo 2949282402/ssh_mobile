@@ -140,7 +140,16 @@ TelemetryErrorCodeDefinition _quicErrorCode(NetworkError? error) {
   if (error?.code == NetworkErrorCode.timeout) {
     return TelemetryErrorCodes.netQuicTimeout;
   }
-  return TelemetryErrorCodes.netQuicConnRefused;
+  if (_isVerifiedQuicRefusal(error)) {
+    return TelemetryErrorCodes.netQuicConnRefused;
+  }
+  return TelemetryErrorCodes.netQuicFailed;
+}
+
+bool _isVerifiedQuicRefusal(NetworkError? error) {
+  if (error?.code != NetworkErrorCode.quicError) return false;
+  final message = error!.message.trim().toLowerCase();
+  return message.contains('refused');
 }
 
 /// 当前 Relay region 仅作为占位值；正式 region 由 relay 配置/Handshake

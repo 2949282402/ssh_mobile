@@ -24,6 +24,14 @@ class TelemetryErrorCodes {
     description: 'Direct QUIC connection handshake timed out.',
   );
 
+  static const netQuicFailed = TelemetryErrorCodeDefinition(
+    code: 'NET_QUIC_FAILED',
+    category: 'network',
+    terminalFailure: false,
+    description:
+        'Direct QUIC connection failed for an unclassified reason; fallback may proceed.',
+  );
+
   static const netRelayUnavailable = TelemetryErrorCodeDefinition(
     code: 'NET_RELAY_UNAVAILABLE',
     category: 'network',
@@ -167,6 +175,7 @@ class TelemetryErrorCodes {
       <TelemetryErrorCodeDefinition>[
         netQuicConnRefused,
         netQuicTimeout,
+        netQuicFailed,
         netRelayUnavailable,
         sshAuthFailed,
         sshHostKeyMismatch,

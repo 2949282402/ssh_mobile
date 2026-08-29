@@ -308,6 +308,14 @@ extension SshSessionMetadataActions on SshService {
     ConnectionConfig config,
   ) {
     final message = error.toString().toLowerCase();
+    if (error is ssh_core.SshHostKeyMismatchException ||
+        error is ssh_core.SshHostKeyUntrustedException ||
+        error is ssh_core.SshHostKeyRejectedException ||
+        message.contains('host key') ||
+        message.contains('hostkey') ||
+        message.contains('fingerprint')) {
+      return TelemetryErrorCodes.sshHostKeyMismatch;
+    }
     if (message.contains('authentication') ||
         message.contains('authenticate') ||
         message.contains('password') ||
@@ -317,11 +325,6 @@ extension SshSessionMetadataActions on SshService {
     }
     if (message.contains('timeout') || message.contains('timed out')) {
       return TelemetryErrorCodes.sshTimeout;
-    }
-    if (message.contains('host key') ||
-        message.contains('fingerprint') ||
-        message.contains('HostKey')) {
-      return TelemetryErrorCodes.sshHostKeyMismatch;
     }
     return TelemetryErrorCodes.sshConnectFailed;
   }

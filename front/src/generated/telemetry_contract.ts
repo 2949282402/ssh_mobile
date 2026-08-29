@@ -725,6 +725,13 @@ export class TelemetryErrorCodes {
     description: "Direct QUIC connection handshake timed out.",
   };
 
+  static readonly netQuicFailed: TelemetryErrorCodeDefinition = {
+    code: "NET_QUIC_FAILED",
+    category: "network",
+    terminalFailure: false,
+    description: "Direct QUIC connection failed for an unclassified reason; fallback may proceed.",
+  };
+
   static readonly netRelayUnavailable: TelemetryErrorCodeDefinition = {
     code: "NET_RELAY_UNAVAILABLE",
     category: "network",
@@ -861,6 +868,7 @@ export class TelemetryErrorCodes {
   static readonly all: readonly TelemetryErrorCodeDefinition[] = [
     TelemetryErrorCodes.netQuicConnRefused,
     TelemetryErrorCodes.netQuicTimeout,
+    TelemetryErrorCodes.netQuicFailed,
     TelemetryErrorCodes.netRelayUnavailable,
     TelemetryErrorCodes.sshAuthFailed,
     TelemetryErrorCodes.sshHostKeyMismatch,
