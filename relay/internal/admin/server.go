@@ -3,7 +3,7 @@
 package admin
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -20,13 +20,14 @@ type Server struct {
 	telemetryService *telemetry.Service
 	telemetryHandler *telemetry.Handler
 	telemetryWorker  *telemetry.RetentionWorker
+	logger           *slog.Logger
 	startedAt        time.Time
 	closeOnce        sync.Once
 }
 
 // NewServer creates a new Admin backend server with the supplied configuration.
 func NewServer(config Config) *Server {
-	return NewServerWithClient(config, nil)
+	return NewServerWithLogger(config, nil)
 }
 
 // NewServerWithClient allows injecting a custom RelayManagementClient (e.g. in tests).
@@ -36,9 +37,23 @@ func NewServerWithClient(config Config, client RelayManagementClient) *Server {
 
 // NewServerWithClientAndTelemetry allows injecting custom RelayManagementClient and TelemetryService.
 func NewServerWithClientAndTelemetry(config Config, client RelayManagementClient, telemetryService *telemetry.Service) *Server {
+	return newServer(config, client, telemetryService, nil)
+}
+
+// NewServerWithLogger creates the Admin backend with an injected structured
+// logger shared by startup warnings, the telemetry handler, and the retention
+// worker. A nil logger falls back to slog.Default.
+func NewServerWithLogger(config Config, logger *slog.Logger) *Server {
+	return newServer(config, nil, nil, logger)
+}
+
+func newServer(config Config, client RelayManagementClient, telemetryService *telemetry.Service, logger *slog.Logger) *Server {
 	config = withConfigDefaults(config)
 	if len(config.AuthKey) == 0 {
 		config.AuthKey = randomBytes(32)
+	}
+	if logger == nil {
+		logger = slog.Default()
 	}
 
 	adminConfigured := config.AdminUser != "" && len(config.AdminPassword) >= 12
@@ -59,11 +74,13 @@ func NewServerWithClientAndTelemetry(config Config, client RelayManagementClient
 			if err != nil {
 				// Fail-closed: never fall back to an in-memory store in production.
 				// The telemetry service stays unavailable and its endpoints return 503.
-				log.Printf("[admin-telemetry] WARNING: telemetry MySQL unavailable (%v); telemetry endpoints will return 503", err)
+				logger.Warn("telemetry MySQL unavailable; telemetry endpoints will return 503",
+					"component", "admin-telemetry", "error", err)
 				store = nil
 			}
 		} else {
-			log.Printf("[admin-telemetry] WARNING: TELEMETRY_MYSQL_DSN is empty; telemetry endpoints will return 503")
+			logger.Warn("TELEMETRY_MYSQL_DSN is empty; telemetry endpoints will return 503",
+				"component", "admin-telemetry")
 			store = nil
 		}
 
@@ -72,7 +89,8 @@ func NewServerWithClientAndTelemetry(config Config, client RelayManagementClient
 			var err error
 			redisCache, err = telemetry.NewRedisClientCacheFromURL(config.TelemetryRedisURL, "")
 			if err != nil {
-				log.Printf("[admin-telemetry] WARNING: Failed to connect to Redis (%v), falling back to NoopRedisCache", err)
+				logger.Warn("telemetry Redis unavailable; falling back to NoopRedisCache",
+					"component", "admin-telemetry", "error", err)
 				redisCache = &telemetry.NoopRedisCache{}
 			}
 		} else {
@@ -86,8 +104,8 @@ func NewServerWithClientAndTelemetry(config Config, client RelayManagementClient
 	if candidate, ok := client.(telemetry.DeviceAttestor); ok {
 		attestor = candidate
 	}
-	telemetryHandler := telemetry.NewHandlerWithConfig(telemetryService, config.TelemetryIngest, attestor)
-	telemetryWorker := telemetry.NewRetentionWorker(telemetryService, 1*time.Hour)
+	telemetryHandler := telemetry.NewHandlerWithConfig(telemetryService, config.TelemetryIngest, attestor).WithLogger(logger)
+	telemetryWorker := telemetry.NewRetentionWorker(telemetryService, 1*time.Hour).WithLogger(logger)
 	telemetryWorker.Start()
 
 	return &Server{
@@ -103,6 +121,7 @@ func NewServerWithClientAndTelemetry(config Config, client RelayManagementClient
 		telemetryService: telemetryService,
 		telemetryHandler: telemetryHandler,
 		telemetryWorker:  telemetryWorker,
+		logger:           logger,
 		startedAt:        time.Now(),
 	}
 }

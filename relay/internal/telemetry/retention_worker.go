@@ -4,7 +4,7 @@ package telemetry
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -14,6 +14,7 @@ type RetentionWorker struct {
 	interval time.Duration
 	stopCh   chan struct{}
 	wg       sync.WaitGroup
+	logger   *slog.Logger
 }
 
 func NewRetentionWorker(service *Service, interval time.Duration) *RetentionWorker {
@@ -24,7 +25,18 @@ func NewRetentionWorker(service *Service, interval time.Duration) *RetentionWork
 		service:  service,
 		interval: interval,
 		stopCh:   make(chan struct{}),
+		logger:   slog.Default(),
 	}
+}
+
+// WithLogger injects the structured logger used to report retention cycles.
+// Call it before Start; a nil logger falls back to slog.Default.
+func (w *RetentionWorker) WithLogger(logger *slog.Logger) *RetentionWorker {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	w.logger = logger
+	return w
 }
 
 func (w *RetentionWorker) Start() {
@@ -46,9 +58,9 @@ func (w *RetentionWorker) run() {
 			purged, err := w.service.PurgeRetention(ctx)
 			cancel()
 			if err != nil {
-				log.Printf("[telemetry-retention] retention run failed: %v", err)
+				w.logger.Error("telemetry retention run failed", "error", err)
 			} else if purged > 0 {
-				log.Printf("[telemetry-retention] successfully purged %d old raw telemetry records", purged)
+				w.logger.Info("telemetry retention purged old raw telemetry records", "purged", purged)
 			}
 		}
 	}

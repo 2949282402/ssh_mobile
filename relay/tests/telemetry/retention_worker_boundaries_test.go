@@ -1,8 +1,11 @@
 package telemetry_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -76,5 +79,43 @@ func TestRetentionWorkerRunsErrorAndSuccessfulPurgeCycles(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatalf("retention worker did not complete purge cycle %d", i+1)
 		}
+	}
+}
+
+func TestRetentionWorkerLogsThroughInjectedLogger(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	store := &retentionWorkerStore{
+		Store: NewMemoryStore(DefaultCatalog()),
+		settings: TelemetrySettings{
+			RetentionRowsEnabled: true,
+			RetentionMaxRows:     1,
+		},
+		results: []retentionWorkerResult{
+			{err: errors.New("retention backend unavailable")},
+			{count: 1},
+		},
+		called: make(chan struct{}, 6),
+	}
+	service := NewService(store, DefaultCatalog(), &NoopRedisCache{})
+	worker := NewRetentionWorker(service, time.Millisecond).WithLogger(logger)
+	worker.Start()
+	t.Cleanup(worker.Stop)
+
+	// Three cycles guarantee the error and success logs have both been written.
+	for i := 0; i < 3; i++ {
+		select {
+		case <-store.called:
+		case <-time.After(time.Second):
+			t.Fatalf("retention worker did not complete cycle %d", i+1)
+		}
+	}
+
+	text := logs.String()
+	if !strings.Contains(text, "retention run failed") {
+		t.Fatalf("injected logger output = %q, want retention failure log", text)
+	}
+	if !strings.Contains(text, "purged=1") {
+		t.Fatalf("injected logger output = %q, want purged count log", text)
 	}
 }
