@@ -196,10 +196,13 @@ final class MemorySftpClient implements SftpClient {
   final Set<String> openReadPaths = {};
   final Set<String> closedReadPaths = {};
   final Set<String> closedWritePaths = {};
+  final Set<String> listErrorPaths = {};
   final Map<String, int> _listCounts = {};
   final List<String> events = [];
 
   Object? openError;
+  Object? absoluteError;
+  Object? closeReadError;
   Object? readError;
   Object? writeError;
   bool ignoreReadLength = false;
@@ -230,7 +233,11 @@ final class MemorySftpClient implements SftpClient {
   int openReadCount(String path) => openReadCounts[path] ?? 0;
 
   @override
-  Future<String> absolute(String path) async => path;
+  Future<String> absolute(String path) async {
+    final error = absoluteError;
+    if (error != null) throw error;
+    return path;
+  }
 
   @override
   Future<SftpFileAttrs> stat(String path, {bool followLink = true}) async {
@@ -250,6 +257,9 @@ final class MemorySftpClient implements SftpClient {
 
   @override
   Future<List<SftpName>> listdir(String path) async {
+    if (listErrorPaths.contains(path)) {
+      throw StateError('list failed for $path');
+    }
     _listCounts[path] = listCount(path) + 1;
     events.add('list:$path');
     return List<SftpName>.from(listings[path] ?? const []);
@@ -334,6 +344,7 @@ final class MemorySftpFile implements SftpFile {
 
   @override
   Future<void> close() async {
+    if (_client.closeReadError != null) throw _client.closeReadError!;
     _isClosed = true;
     if (writable) {
       _client.closedWritePaths.add(_path);

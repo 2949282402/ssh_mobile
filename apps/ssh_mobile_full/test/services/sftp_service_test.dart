@@ -166,6 +166,39 @@ void main() {
     expect(state, identicalState);
     expect(state.hashCode, identicalState.hashCode);
   });
+
+  test('SFTP path and transfer errors expose stable serializable messages', () {
+    final modifiedAt = DateTime.utc(2026, 8, 30, 12);
+    final pathInfo = SftpPathInfo(
+      path: '/srv/report.txt',
+      isDirectory: false,
+      isLink: false,
+      size: 2048,
+      sizeLabel: '2 KB',
+      modifiedAt: modifiedAt,
+    );
+
+    expect(pathInfo.toJson(), {
+      'path': '/srv/report.txt',
+      'type': 'file',
+      'isDirectory': false,
+      'isLink': false,
+      'size': 2048,
+      'sizeLabel': '2 KB',
+      'modifiedAt': modifiedAt.toIso8601String(),
+    });
+    expect(
+      const SftpTransferCancelledException().toString(),
+      'SftpTransferCancelledException: Transfer cancelled by user',
+    );
+    expect(
+      const SftpTextSizeLimitException(
+        actualBytes: 12,
+        maxBytes: 10,
+      ).toString(),
+      'SftpTextSizeLimitException: text is 12 bytes, limit is 10 bytes',
+    );
+  });
 }
 
 const _textEntry = SftpEntry(
