@@ -7,6 +7,7 @@ import 'dart:io';
 
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -54,14 +55,17 @@ void _ensureSqliteInitialized() {
 }
 
 /// 打开正式环境的遥测数据库。
-QueryExecutor openTelemetryDatabaseConnection() {
+QueryExecutor openTelemetryDatabaseConnection({
+  @visibleForTesting Future<Directory> Function()? directoryProvider,
+}) {
   _ensureSqliteInitialized();
-  if (isFlutterTestEnvironment) {
+  if (isFlutterTestEnvironment && directoryProvider == null) {
     return NativeDatabase.memory();
   }
 
   return LazyDatabase(() async {
-    final directory = await getApplicationSupportDirectory();
+    final directory =
+        await (directoryProvider ?? getApplicationSupportDirectory)();
     if (!await directory.exists()) {
       await directory.create(recursive: true);
     }

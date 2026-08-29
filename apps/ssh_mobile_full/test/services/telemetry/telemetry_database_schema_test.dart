@@ -1,11 +1,16 @@
 // Telemetry Drift schema, migration, and platform-connection tests.
 
+import 'dart:io';
+
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:ssh_mobile/services/telemetry/telemetry_database.dart';
 import 'package:ssh_mobile/services/telemetry/telemetry_database/telemetry_database_connection.dart'
     as connection;
+import 'package:ssh_mobile/services/telemetry/telemetry_database/telemetry_database_connection_io.dart'
+    as io_connection;
 import 'package:ssh_mobile/services/telemetry/telemetry_database/telemetry_database_connection_stub.dart'
     as stub;
 import 'package:ssh_mobile/services/telemetry/telemetry_database/telemetry_database_constants.dart';
@@ -20,6 +25,30 @@ void main() {
       await executor.close();
     });
   });
+
+  test(
+    'native connection creates the support directory for production mode',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'ssh-mobile-telemetry-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final supportDirectory = Directory(p.join(root.path, 'support'));
+      final executor = io_connection.openTelemetryDatabaseConnection(
+        directoryProvider: () async => supportDirectory,
+      );
+      final database = TelemetryDatabase(executor: executor);
+      addTearDown(database.dispose);
+
+      await database.customSelect('SELECT 1').get();
+
+      expect(await supportDirectory.exists(), isTrue);
+      expect(
+        await File(p.join(supportDirectory.path, 'telemetry.sqlite')).exists(),
+        isTrue,
+      );
+    },
+  );
 
   test('schema exposes record columns, policy state, and sync indexes', () async {
     final database = TelemetryDatabase(executor: NativeDatabase.memory());
