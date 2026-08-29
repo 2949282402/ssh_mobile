@@ -1,4 +1,4 @@
-> Last updated: 2026-08-29
+> Last updated: 2026-08-30
 
 # Coverage policy
 
@@ -56,6 +56,14 @@ hand-written Drift table whose declarative column and primary-key lines are
 fully overridden by the generated `telemetry_database.g.dart` subclass at
 runtime, so they carry no coverable business logic and cannot be exercised by a
 test.
+
+The same generated-subclass rule applies to the declarative table definitions
+in `apps/ssh_mobile_full/lib/services/app_log_database/tables/app_log_tables.dart`
+and `apps/ssh_mobile_full/lib/services/telemetry/telemetry_database/tables/telemetry_records.dart`.
+Their column and annotation lines are marked with `coverage:ignore-start/end`;
+the owning schema tests verify the resulting columns, constraints, and indexes
+through SQLite PRAGMA queries. These are precise declaration-only exclusions,
+not a waiver for DAO or database lifecycle behavior.
 
 ## Owner scopes
 

@@ -1494,6 +1494,14 @@ abstract class _$TelemetryDatabase extends GeneratedDatabase {
   );
   late final $TelemetryPolicyStatesTable telemetryPolicyStates =
       $TelemetryPolicyStatesTable(this);
+  late final Index idxTelemetryRecordsEventId = Index(
+    'idx_telemetry_records_event_id',
+    'CREATE UNIQUE INDEX idx_telemetry_records_event_id ON telemetry_records (event_id)',
+  );
+  late final Index idxTelemetryRecordsSyncCreated = Index(
+    'idx_telemetry_records_sync_created',
+    'CREATE INDEX idx_telemetry_records_sync_created ON telemetry_records (sync_state, created_at)',
+  );
   late final TelemetryRecordsDao telemetryRecordsDao = TelemetryRecordsDao(
     this as TelemetryDatabase,
   );
@@ -1504,6 +1512,8 @@ abstract class _$TelemetryDatabase extends GeneratedDatabase {
   List<DatabaseSchemaEntity> get allSchemaEntities => [
     telemetryRecords,
     telemetryPolicyStates,
+    idxTelemetryRecordsEventId,
+    idxTelemetryRecordsSyncCreated,
   ];
 }
 

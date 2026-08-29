@@ -4,6 +4,10 @@ part of '../../telemetry_database.dart';
 ///
 /// The explicit version column lets migrations and diagnostics inspect the
 /// monotonic policy boundary without parsing untrusted JSON first.
+// Drift replaces this declaration with a generated TableInfo subclass; the
+// column builders below are declarative schema input rather than executable
+// business logic.
+// coverage:ignore-start
 class TelemetryPolicyStates extends Table {
   /// There is one policy row per telemetry database.
   IntColumn get id => integer()();
@@ -20,3 +24,4 @@ class TelemetryPolicyStates extends Table {
   @override
   Set<Column> get primaryKey => {id};
 }
+// coverage:ignore-end

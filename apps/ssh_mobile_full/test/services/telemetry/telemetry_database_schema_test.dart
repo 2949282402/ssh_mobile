@@ -21,6 +21,53 @@ void main() {
     });
   });
 
+  test('schema exposes record columns, policy state, and sync indexes', () async {
+    final database = TelemetryDatabase(executor: NativeDatabase.memory());
+    addTearDown(database.dispose);
+
+    final columns = await database
+        .customSelect('PRAGMA table_info(telemetry_records)')
+        .get();
+    expect(
+      columns.map((row) => row.data['name']),
+      containsAll(<Object?>[
+        'event_id',
+        'record_type',
+        'release_channel',
+        'properties',
+        'sync_state',
+        'retry_count',
+        'created_at',
+      ]),
+    );
+    final policyColumns = await database
+        .customSelect('PRAGMA table_info(telemetry_policy_states)')
+        .get();
+    expect(policyColumns.map((row) => row.data['name']).toList(), <Object?>[
+      'id',
+      'policy_json',
+      'policy_version',
+      'updated_at',
+    ]);
+
+    final indexes = await database
+        .customSelect('PRAGMA index_list(telemetry_records)')
+        .get();
+    expect(
+      indexes.map((row) => row.data['name']),
+      containsAll(<Object?>[
+        'idx_telemetry_records_event_id',
+        'idx_telemetry_records_sync_created',
+      ]),
+    );
+    final indexSql = await database
+        .customSelect(
+          "SELECT sql FROM sqlite_master WHERE name = 'idx_telemetry_records_sync_created'",
+        )
+        .getSingle();
+    expect(indexSql.data['sql'], contains('sync_state, created_at'));
+  });
+
   test('stub connection throws UnsupportedError on unsupported platforms', () {
     expect(stub.openTelemetryDatabaseConnection, throwsUnsupportedError);
   });

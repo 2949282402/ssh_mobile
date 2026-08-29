@@ -4,6 +4,18 @@ part of '../../telemetry_database.dart';
 ///
 /// 保存完整 Envelope 字段 + 本地同步状态机字段。索引覆盖 eventId 唯一性
 /// 与 (sync_state, created_at) 的批量拉取路径，避免上传分发器扫描全表。
+// Drift replaces this declaration with a generated TableInfo subclass; the
+// column builders below are declarative schema input rather than executable
+// business logic.
+// coverage:ignore-start
+@TableIndex.sql(
+  'CREATE UNIQUE INDEX idx_telemetry_records_event_id '
+  'ON telemetry_records(event_id)',
+)
+@TableIndex(
+  name: 'idx_telemetry_records_sync_created',
+  columns: {#syncState, #createdAt},
+)
 class TelemetryRecords extends Table {
   /// 服务端幂等事件 ID。
   TextColumn get eventId => text().unique()();
@@ -64,17 +76,5 @@ class TelemetryRecords extends Table {
 
   /// 本地写入时间，用于按时间淘汰和新旧排序。
   DateTimeColumn get createdAt => dateTime()();
-
-  List<Index> get indexes => [
-    Index(
-      'idx_telemetry_records_event_id',
-      'CREATE UNIQUE INDEX idx_telemetry_records_event_id '
-          'ON telemetry_records(event_id)',
-    ),
-    Index(
-      'idx_telemetry_records_sync_created',
-      'CREATE INDEX idx_telemetry_records_sync_created '
-          'ON telemetry_records(sync_state, created_at)',
-    ),
-  ];
 }
+// coverage:ignore-end
