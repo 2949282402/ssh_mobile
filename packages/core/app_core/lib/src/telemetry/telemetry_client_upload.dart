@@ -29,8 +29,14 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
   }
 
   Future<void> _drainUploadRequests() async {
+    await ready;
+    if (_isDisposed || !activePolicy.uploadEnabled) {
+      _uploadRequested = false;
+      return;
+    }
     while (_uploadRequested) {
       _uploadRequested = false;
+      if (_isDisposed || !activePolicy.uploadEnabled) return;
       await _flushWithToken();
 
       final retryWait = _retryWaitCompleter?.future;
@@ -79,10 +85,11 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
       await _ensureAuthenticated();
     } catch (e) {
       _lastSyncError = _describeError(e);
+      await _handleUploadFailure(pending, _asUploadException(e));
       return;
     }
     if (!_hasValidToken) {
-      _lastSyncError = 'Device authentication failed';
+      await _handleAuthenticationFailure(pending);
       return;
     }
 
@@ -105,10 +112,11 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
           await _ensureAuthenticated();
         } catch (authError) {
           _lastSyncError = _describeError(authError);
+          await _handleUploadFailure(pending, _asUploadException(authError));
           return;
         }
         if (!_hasValidToken) {
-          _lastSyncError = 'Device authentication failed';
+          await _handleAuthenticationFailure(pending);
           return;
         }
         try {
@@ -123,6 +131,7 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
           _lastSyncTime = _now();
           _lastSyncError = null;
         } on TelemetryUploadException catch (retryError) {
+          if (retryError.isUnauthorized) _clearAuthToken();
           await _handleUploadFailure(pending, retryError);
         }
       } else if (e.isPermanentClientError) {
@@ -206,23 +215,36 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
     }
   }
 
-  Future<void> _handleUploadFailure(
+  Future<bool> _handleUploadFailure(
     List<TelemetryEventRecord> records,
     TelemetryUploadException error,
   ) async {
     _lastSyncError = _describeError(error);
-    if (!error.isPermanentClientError) {
-      try {
-        await storage.applyRetryCount(
-          records.map((r) => r.eventId).toList(),
-          increment: 1,
-        );
-      } on Object {
-        _recordStorageFailure();
-        return;
-      }
+    if (error.isPermanentClientError) return false;
+    try {
+      await storage.applyRetryCount(
+        records.map((r) => r.eventId).toList(),
+        increment: 1,
+      );
+    } on Object {
+      _recordStorageFailure();
+      return false;
     }
     _scheduleBackoffRetry(records, error);
+    return true;
+  }
+
+  /// Treats an unusable successful auth response as a transient auth failure.
+  /// The safe user-facing diagnostic remains stable while the row receives the
+  /// same durable retry bookkeeping as transport-level auth failures.
+  Future<void> _handleAuthenticationFailure(
+    List<TelemetryEventRecord> records,
+  ) async {
+    final retryScheduled = await _handleUploadFailure(
+      records,
+      const TelemetryUploadException('Device authentication failed'),
+    );
+    if (retryScheduled) _lastSyncError = 'Device authentication failed';
   }
 
   /// 429 prefers Retry-After; other failures use bounded exponential jitter.
@@ -297,6 +319,8 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
 
   Future<int> _replayAllLocalRecords() async {
     try {
+      await ready;
+      if (_isDisposed || !activePolicy.uploadEnabled) return 0;
       final allRecords = await storage.fetchAllForReplay();
       if (allRecords.isEmpty) return 0;
       final records = await _preparePersistedRecords(allRecords);
@@ -306,10 +330,11 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
         await _ensureAuthenticated();
       } catch (e) {
         _lastSyncError = _describeError(e);
+        await _handleUploadFailure(records, _asUploadException(e));
         return 0;
       }
       if (!_hasValidToken) {
-        _lastSyncError = 'Device authentication failed';
+        await _handleAuthenticationFailure(records);
         return 0;
       }
 
@@ -320,12 +345,26 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
       for (var i = 0; i < records.length; i += batchSize) {
         final end = min(i + batchSize, records.length);
         final batch = records.sublist(i, end);
-        final result = await transport.uploadBatch(
-          baseUrl: config.baseUrl,
-          authToken: _authToken!,
-          deviceId: config.deviceId,
-          records: batch,
-        );
+        late final TelemetryBatchUploadResult result;
+        try {
+          result = await transport.uploadBatch(
+            baseUrl: config.baseUrl,
+            authToken: _authToken!,
+            deviceId: config.deviceId,
+            records: batch,
+          );
+        } on TelemetryUploadException catch (error) {
+          if (error.isUnauthorized) _clearAuthToken();
+          if (error.isPermanentClientError) {
+            await _rejectPermanentBatch(batch, error);
+          } else {
+            await _handleUploadFailure(batch, error);
+          }
+          return 0;
+        } on Object catch (error) {
+          await _handleUploadFailure(batch, _asUploadException(error));
+          return 0;
+        }
         if (!await _applyUploadResult(result, records: batch, purge: false)) {
           return 0;
         }
@@ -351,5 +390,33 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
       }
       return 0;
     }
+  }
+
+  TelemetryUploadException _asUploadException(Object error) {
+    if (error is TelemetryUploadException) return error;
+    return TelemetryUploadException(_describeError(error));
+  }
+
+  Future<void> _rejectPermanentBatch(
+    List<TelemetryEventRecord> records,
+    TelemetryUploadException error,
+  ) async {
+    final results = [
+      for (final record in records)
+        TelemetryAckResult(
+          eventId: record.eventId,
+          status: 'rejected',
+          reason:
+              _safeTelemetryErrorCode(error.errorCode) ??
+              'Telemetry upload rejected',
+        ),
+    ];
+    try {
+      await storage.applyAckResults(results);
+    } on Object {
+      _recordStorageFailure();
+      return;
+    }
+    _lastSyncError = _describeError(error);
   }
 }

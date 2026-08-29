@@ -289,6 +289,32 @@ void main() {
       await client.dispose();
     });
 
+    test('reauthenticates after a repeated 401 on the retry attempt', () async {
+      final timers = FakeTelemetryTimerFactory();
+      final transport = ScriptedTelemetryTransport(
+        uploadOutcomes: [
+          const TelemetryUploadException('expired', statusCode: 401),
+          const TelemetryUploadException('still expired', statusCode: 401),
+          null,
+        ],
+      );
+      final client = buildRetryTelemetryClient(timers, transport);
+
+      await client.record(event: TelemetryEvents.sshSessionStarted);
+      await client.flush();
+
+      expect(transport.authCalls, 2);
+      expect(transport.uploadCalls, 2);
+      expect(timers.oneShotTimers.single.isActive, isTrue);
+
+      await timers.oneShotTimers.single.fire();
+
+      expect(transport.authCalls, 3);
+      expect(transport.uploadCalls, 3);
+      expect(await client.storage.fetchPendingBatch(10), isEmpty);
+      await client.dispose();
+    });
+
     test('clears the token when replay receives unauthorized', () async {
       final timers = FakeTelemetryTimerFactory();
       final transport = ScriptedTelemetryTransport(

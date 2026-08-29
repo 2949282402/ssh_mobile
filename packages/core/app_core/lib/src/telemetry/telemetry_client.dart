@@ -47,6 +47,6 @@ class TelemetryClient extends _TelemetryClientBase
     super.clock,
     super.random,
   }) {
-    _startTimers();
+    _beginPolicyRestore();
   }
 }

@@ -104,10 +104,14 @@ final class ScriptedTelemetryTransport implements TelemetryTransport {
     this.secondUploadGate,
     this.policyGate,
     this.policyRequestStarted,
+    Iterable<TelemetryUploadException?> authOutcomes = const [],
+    Iterable<TelemetryAuthResult?> authResultOutcomes = const [],
     Iterable<TelemetryUploadException?> uploadOutcomes = const [],
     Iterable<List<TelemetryAckResult>?> ackResultOutcomes = const [],
     this.remotePolicy,
-  }) : uploadOutcomes = List<TelemetryUploadException?>.from(uploadOutcomes),
+  }) : authOutcomes = List<TelemetryUploadException?>.from(authOutcomes),
+       authResultOutcomes = List<TelemetryAuthResult?>.from(authResultOutcomes),
+       uploadOutcomes = List<TelemetryUploadException?>.from(uploadOutcomes),
        ackResultOutcomes = List<List<TelemetryAckResult>?>.from(
          ackResultOutcomes,
        );
@@ -118,10 +122,13 @@ final class ScriptedTelemetryTransport implements TelemetryTransport {
   final Completer<void>? policyRequestStarted;
   final Completer<void> firstUploadStarted = Completer<void>();
   final Completer<void> secondUploadStarted = Completer<void>();
+  final List<TelemetryUploadException?> authOutcomes;
+  final List<TelemetryAuthResult?> authResultOutcomes;
   final List<TelemetryUploadException?> uploadOutcomes;
   final List<List<TelemetryAckResult>?> ackResultOutcomes;
   final TelemetryUploadPolicy? remotePolicy;
   final List<List<TelemetryEventRecord>> uploadedBatches = [];
+  int authCalls = 0;
   int uploadCalls = 0;
   int policyCalls = 0;
 
@@ -133,10 +140,20 @@ final class ScriptedTelemetryTransport implements TelemetryTransport {
     required String appVersion,
     String? authSecret,
     int? expEpoch,
-  }) async => const TelemetryAuthResult(
-    token: 'state-machine-token',
-    expiresInSeconds: 3600,
-  );
+  }) async {
+    authCalls++;
+    if (authResultOutcomes.isNotEmpty) {
+      return authResultOutcomes.removeAt(0);
+    }
+    if (authOutcomes.isNotEmpty) {
+      final outcome = authOutcomes.removeAt(0);
+      if (outcome != null) throw outcome;
+    }
+    return const TelemetryAuthResult(
+      token: 'state-machine-token',
+      expiresInSeconds: 3600,
+    );
+  }
 
   @override
   Future<TelemetryEnrollmentResult?> enrollDevice({

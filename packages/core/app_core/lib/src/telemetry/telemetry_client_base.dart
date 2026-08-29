@@ -50,6 +50,7 @@ abstract class _TelemetryClientBase {
   Future<void>? _authenticationFuture;
   Future<void>? _uploadFuture;
   Future<bool>? _policyRefreshFuture;
+  Future<void>? _policyReadyFuture;
 
   // All producers share one durable storage-write queue. This preserves
   // invocation order for fire-and-forget record calls.
@@ -67,6 +68,10 @@ abstract class _TelemetryClientBase {
   TelemetryTimer? _periodicFlushTimer;
   TelemetryTimer? _retryTimer;
   TelemetryTimer? _policyRefreshTimer;
+
+  /// Completes after durable last-known-good policy restoration and timer
+  /// startup. App composition can await this before exposing the client.
+  Future<void> get ready => _policyReadyFuture ?? Future<void>.value();
 
   String _newTraceId() => _telemetryUuid.v4();
 

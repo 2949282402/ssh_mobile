@@ -1,6 +1,63 @@
 part of 'telemetry_client.dart';
 
 mixin _TelemetryClientLifecycle on _TelemetryClientBase {
+  /// Loads the durable policy before timers or upload work can observe it.
+  ///
+  /// Storage failures keep the configured policy in force. A failed restore is
+  /// intentionally non-fatal to telemetry recording, but is visible through
+  /// the existing diagnostics channel.
+  void _beginPolicyRestore() {
+    final operation = _restoreLastKnownGoodPolicy();
+    _policyReadyFuture = operation;
+  }
+
+  Future<void> _restoreLastKnownGoodPolicy() async {
+    try {
+      final persisted = await storage.loadLastKnownGoodPolicy();
+      if (persisted != null && _isValidPolicy(persisted)) {
+        // Equal versions are safe to restore; lower versions can never
+        // replace a policy already selected by configuration.
+        if (persisted.policyVersion >= activePolicy.policyVersion) {
+          activePolicy = persisted;
+        }
+      }
+    } on Object {
+      _recordStorageFailure();
+    }
+    if (!_isDisposed) _startTimers();
+  }
+
+  /// Restored and remote policies must stay within the client safety envelope.
+  /// The server parser may clamp untrusted JSON, but typed policy instances
+  /// still need this boundary before they reach timers or storage.
+  bool _isValidPolicy(TelemetryUploadPolicy policy) {
+    const supportedTriggers = {
+      'highPriorityError',
+      'appBackground',
+      'networkRecovered',
+      'appForegroundWithBacklog',
+    };
+    return policy.policyVersion > 0 &&
+        policy.policyVersion <= 0x7fffffff &&
+        policy.batchSizeThreshold >=
+            TelemetryUploadPolicy.minBatchSizeThreshold &&
+        policy.batchSizeThreshold <=
+            TelemetryUploadPolicy.maxBatchSizeThreshold &&
+        policy.timeIntervalSeconds >=
+            TelemetryUploadPolicy.minTimeIntervalSeconds &&
+        policy.timeIntervalSeconds <=
+            TelemetryUploadPolicy.maxTimeIntervalSeconds &&
+        policy.maxBatchSize >= TelemetryUploadPolicy.minMaxBatchSize &&
+        policy.maxBatchSize <= TelemetryUploadPolicy.maxMaxBatchSize &&
+        policy.clientMaxLocalRecords >=
+            TelemetryUploadPolicy.minClientMaxLocalRecords &&
+        policy.clientMaxLocalRecords <=
+            TelemetryUploadPolicy.maxClientMaxLocalRecords &&
+        policy.specialTriggers.length ==
+            policy.specialTriggers.toSet().length &&
+        policy.specialTriggers.every(supportedTriggers.contains);
+  }
+
   void _startTimers() {
     _resetPeriodicFlushTimer();
     _policyRefreshTimer?.cancel();
@@ -58,6 +115,8 @@ mixin _TelemetryClientLifecycle on _TelemetryClientBase {
     String? requestedToken;
     var requestedTokenGeneration = _authTokenGeneration;
     try {
+      await ready;
+      if (_isDisposed) return false;
       await _ensureAuthenticated();
       if (!_hasValidToken) return false;
 
@@ -68,6 +127,16 @@ mixin _TelemetryClientLifecycle on _TelemetryClientBase {
         authToken: requestedToken!,
       );
       if (policy != null) {
+        if (!_isValidPolicy(policy) ||
+            policy.policyVersion < activePolicy.policyVersion) {
+          return false;
+        }
+        try {
+          await storage.saveLastKnownGoodPolicy(policy);
+        } on Object {
+          _recordStorageFailure();
+          return false;
+        }
         activePolicy = policy;
         _lastPolicyFetchTime = _now();
         if (!_isDisposed) _resetPeriodicFlushTimer();
@@ -122,6 +191,7 @@ mixin _TelemetryClientLifecycle on _TelemetryClientBase {
 
   /// Retrieves fresh diagnostics and storage health.
   Future<TelemetryDiagnosticsSnapshot> getDiagnostics() async {
+    await ready;
     final health = await storage.getHealthStats(
       targetCapacity: activePolicy.clientMaxLocalRecords,
     );
@@ -168,6 +238,15 @@ mixin _TelemetryClientLifecycle on _TelemetryClientBase {
   }
 
   Future<void> _disposeResources() async {
+    final policyReady = _policyReadyFuture;
+    if (policyReady != null) {
+      try {
+        await policyReady;
+      } on Object {
+        // Restore failures retain the configured policy and diagnostics.
+      }
+    }
+
     final authentication = _authenticationFuture;
     if (authentication != null) {
       try {

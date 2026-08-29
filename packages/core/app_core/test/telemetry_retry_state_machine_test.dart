@@ -44,6 +44,136 @@ void main() {
     );
 
     test(
+      'counts authentication failures and retries without stopping periodic flush',
+      () async {
+        final timers = FakeTelemetryTimerFactory();
+        final transport = ScriptedTelemetryTransport(
+          authOutcomes: [
+            const TelemetryUploadException(
+              'authentication unavailable',
+              statusCode: 503,
+            ),
+            null,
+          ],
+        );
+        final client = buildRetryTelemetryClient(timers, transport);
+
+        await client.record(event: TelemetryEvents.sshSessionStarted);
+        await client.flush();
+
+        final failed = (await client.storage.fetchAllForReplay()).single;
+        expect(transport.authCalls, 1);
+        expect(transport.uploadCalls, 0);
+        expect(failed.retryCount, 1);
+        expect(timers.oneShotTimers.single.isActive, isTrue);
+        expect(timers.periodicTimers.single.isActive, isTrue);
+
+        await timers.oneShotTimers.single.fire();
+
+        expect(transport.authCalls, 2);
+        expect(transport.uploadCalls, 1);
+        expect(await client.storage.fetchPendingBatch(10), isEmpty);
+        expect(timers.periodicTimers.single.isActive, isTrue);
+
+        await client.dispose();
+      },
+    );
+
+    test(
+      'counts an unusable authentication response and retries with backoff',
+      () async {
+        final timers = FakeTelemetryTimerFactory();
+        final transport = ScriptedTelemetryTransport(
+          authResultOutcomes: [
+            const TelemetryAuthResult(token: '', expiresInSeconds: 0),
+            const TelemetryAuthResult(
+              token: 'state-machine-token',
+              expiresInSeconds: 3600,
+            ),
+          ],
+        );
+        final client = buildRetryTelemetryClient(timers, transport);
+
+        await client.record(event: TelemetryEvents.sshSessionStarted);
+        await client.flush();
+
+        final failed = (await client.storage.fetchAllForReplay()).single;
+        expect(failed.retryCount, 1);
+        expect(
+          client.latestDiagnostics.lastSyncError,
+          'Device authentication failed',
+        );
+        expect(timers.oneShotTimers.single.isActive, isTrue);
+        expect(timers.periodicTimers.single.isActive, isTrue);
+
+        await timers.oneShotTimers.single.fire();
+
+        expect(transport.authCalls, 2);
+        expect(transport.uploadCalls, 1);
+        expect(await client.storage.fetchPendingBatch(10), isEmpty);
+        expect(timers.periodicTimers.single.isActive, isTrue);
+
+        await client.dispose();
+      },
+    );
+
+    test(
+      'counts replay upload failures and routes the row through normal backoff',
+      () async {
+        final timers = FakeTelemetryTimerFactory();
+        final transport = ScriptedTelemetryTransport(
+          uploadOutcomes: [
+            const TelemetryUploadException(
+              'replay server unavailable',
+              statusCode: 503,
+            ),
+            null,
+          ],
+        );
+        final client = buildRetryTelemetryClient(timers, transport);
+
+        await client.record(event: TelemetryEvents.sshSessionStarted);
+        expect(await client.replayAllLocalRecords(), 0);
+
+        final failed = (await client.storage.fetchAllForReplay()).single;
+        expect(failed.retryCount, 1);
+        expect(transport.authCalls, 1);
+        expect(transport.uploadCalls, 1);
+        expect(timers.oneShotTimers.single.isActive, isTrue);
+
+        await timers.oneShotTimers.single.fire();
+
+        expect(transport.uploadCalls, 2);
+        expect(await client.storage.fetchPendingBatch(10), isEmpty);
+
+        await client.dispose();
+      },
+    );
+
+    test('does not retry permanent authentication failures', () async {
+      final timers = FakeTelemetryTimerFactory();
+      final transport = ScriptedTelemetryTransport(
+        authOutcomes: [
+          const TelemetryUploadException(
+            'invalid enrollment proof',
+            statusCode: 400,
+          ),
+        ],
+      );
+      final client = buildRetryTelemetryClient(timers, transport);
+
+      await client.record(event: TelemetryEvents.sshSessionStarted);
+      await client.flush();
+
+      final record = (await client.storage.fetchAllForReplay()).single;
+      expect(record.retryCount, 0);
+      expect(timers.oneShotTimers, isEmpty);
+      expect(timers.periodicTimers.single.isActive, isTrue);
+
+      await client.dispose();
+    });
+
+    test(
       'coalesces a trigger during an active upload into a follow-up drain',
       () async {
         final timers = FakeTelemetryTimerFactory();

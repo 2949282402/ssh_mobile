@@ -1,4 +1,5 @@
 import 'telemetry_model.dart';
+import 'telemetry_policy.dart';
 
 /// 单条记录的上传确认结果。
 ///
@@ -45,6 +46,34 @@ class TelemetryStorageHealth {
   final bool cacheOverflow;
 }
 
+/// Durable owner for the last policy accepted by the telemetry client.
+///
+/// Policy state is kept beside telemetry records by the production storage
+/// implementation. The separate capability keeps existing test and migration
+/// implementations source-compatible while allowing the client to require
+/// this capability on its production path.
+abstract interface class TelemetryPolicyStorage {
+  Future<TelemetryUploadPolicy?> loadLastKnownGoodPolicy();
+  Future<void> saveLastKnownGoodPolicy(TelemetryUploadPolicy policy);
+}
+
+/// Compatibility bridge for storage implementations that predate policy
+/// persistence. Production storage implements [TelemetryPolicyStorage].
+extension TelemetryPolicyStorageOperations on TelemetryStorage {
+  Future<TelemetryUploadPolicy?> loadLastKnownGoodPolicy() async {
+    if (this is TelemetryPolicyStorage) {
+      return (this as TelemetryPolicyStorage).loadLastKnownGoodPolicy();
+    }
+    return null;
+  }
+
+  Future<void> saveLastKnownGoodPolicy(TelemetryUploadPolicy policy) async {
+    if (this is TelemetryPolicyStorage) {
+      await (this as TelemetryPolicyStorage).saveLastKnownGoodPolicy(policy);
+    }
+  }
+}
+
 /// 客户端遥测记录的本地持久化契约。
 ///
 /// 生产实现必须保证：
@@ -68,8 +97,20 @@ abstract class TelemetryStorage {
 ///
 /// 仅用于单元测试；生产路径必须使用 SQLite/Drift 实现，绝不使用内存或
 /// JSONL 存储。
-class MemoryTelemetryStorage implements TelemetryStorage {
+class MemoryTelemetryStorage
+    implements TelemetryStorage, TelemetryPolicyStorage {
   final List<TelemetryEventRecord> _records = [];
+  TelemetryUploadPolicy? _lastKnownGoodPolicy;
+
+  @override
+  Future<TelemetryUploadPolicy?> loadLastKnownGoodPolicy() async {
+    return _lastKnownGoodPolicy;
+  }
+
+  @override
+  Future<void> saveLastKnownGoodPolicy(TelemetryUploadPolicy policy) async {
+    _lastKnownGoodPolicy = policy;
+  }
 
   @override
   Future<void> insertRecord(TelemetryEventRecord record) async {
