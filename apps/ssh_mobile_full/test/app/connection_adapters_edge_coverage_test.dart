@@ -4,16 +4,23 @@ import 'dart:typed_data';
 
 import 'package:connection_core/connection_core.dart';
 import 'package:feature_connection/feature_connection.dart';
+import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:network_sdk/network_sdk.dart';
 import 'package:provider/provider.dart';
+import 'package:ssh_core/ssh_core.dart' as ssh_core;
 import 'package:ssh_mobile/app/connection_repository_adapters.dart';
 import 'package:ssh_mobile/app/connection_runtime_adapters.dart';
 import 'package:ssh_mobile/app/connection_ui_adapters.dart';
 import 'package:ssh_mobile/app/network_sdk_adapters.dart';
+import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
+import 'package:ssh_mobile/services/sftp_service.dart';
+import 'package:ssh_mobile/services/ssh_service.dart';
 
+import 'support/sftp_service_test_fakes.dart';
+import 'support/ssh_terminal_test_fakes.dart';
 import '../test_utils/test_storage_adapter.dart';
 
 void main() {
@@ -89,6 +96,146 @@ void main() {
     await adapter.disconnectSessionsForConnection('missing');
     await adapter.cleanupConnectionResources('missing');
     expect(await adapter.openTerminalSession('missing', 'window'), isNull);
+  });
+
+  test(
+    'runtime adapter forwards lifecycle and host-key prompt contracts',
+    () async {
+      final ssh = FakeSshService()
+        ..errorMessage = 'last error'
+        ..sessions = <SshSession>[]
+        ..sessionCountResult = 3
+        ..sessionConnectedResult = true
+        ..openSessionResult = 'session-42'
+        ..invokeUnknownHostKey = true
+        ..unknownHostKeyRequest = const ssh_core.SshHostKeyPromptRequest(
+          connectionId: 'server-1',
+          connectionName: 'Server 1',
+          host: 'server.example.test',
+          port: 22,
+          username: 'operator',
+          algorithm: 'ssh-ed25519',
+          fingerprint: 'SHA256:test',
+        );
+      final sftp = FakeSftpService();
+      final monitoringService = _RecordingMonitoringService();
+      final adapter = AppConnectionRuntimeAdapter(
+        sshServiceFactory: () => ssh,
+        sftpServiceFactory: () => sftp,
+        monitoringServiceFactory: () => monitoringService,
+      );
+
+      expect(adapter.errorMessage, 'last error');
+      expect(await adapter.activeWindowCount('server-1'), 3);
+      expect(ssh.ensureInitializedCalls, 1);
+      await adapter.disconnectSessionsForConnection('server-1');
+      expect(ssh.disconnectSessionsForConnectionCalls, 1);
+      expect(ssh.ensureInitializedCalls, 2);
+
+      await adapter.cleanupConnectionResources('server-1');
+      expect(ssh.disconnectSessionsForConnectionCalls, 2);
+      expect(sftp.connectionDisconnects.single, (
+        connectionId: 'server-1',
+        notify: true,
+        forgetPath: true,
+      ));
+      expect(monitoringService.stoppedIds, ['server-1']);
+
+      ConnectionHostKeyPrompt? seenPrompt;
+      final sessionId = await adapter.openTerminalSession(
+        'server-1',
+        'window',
+        onUnknownHostKey: (prompt) async {
+          seenPrompt = prompt;
+          return true;
+        },
+      );
+      expect(sessionId, 'session-42');
+      expect(seenPrompt?.host, 'server.example.test');
+      expect(seenPrompt?.fingerprint, 'SHA256:test');
+      expect(ssh.capturedUnknownHostKey, isNotNull);
+    },
+  );
+
+  test('verification adapter uses the injected client and closes it', () async {
+    final storage = TestStorageAdapter();
+    addTearDown(storage.dispose);
+    final clients = <_RecordingVerificationClient>[];
+    ssh_core.SshCredentials? seenCredentials;
+    ssh_core.SshHostKeyPromptRequest? seenRequest;
+    final adapter = AppConnectionVerificationAdapter(
+      credentialRepository: storage.credentialRepository,
+      hostKeyRepository: storage.hostKeyRepository,
+      logger: AppLogService.instance,
+      connector: (config, credentials, onUnknownHostKey) async {
+        expect(config.id, 'verify-1');
+        seenCredentials = credentials;
+        if (onUnknownHostKey != null) {
+          final accepted = await onUnknownHostKey(
+            const ssh_core.SshHostKeyPromptRequest(
+              connectionId: 'verify-1',
+              connectionName: 'Verify',
+              host: 'verify.example.test',
+              port: 22,
+              username: 'operator',
+              algorithm: 'ssh-ed25519',
+              fingerprint: 'SHA256:verify',
+            ),
+          );
+          expect(accepted, isTrue);
+          seenRequest = const ssh_core.SshHostKeyPromptRequest(
+            connectionId: 'verify-1',
+            connectionName: 'Verify',
+            host: 'verify.example.test',
+            port: 22,
+            username: 'operator',
+            algorithm: 'ssh-ed25519',
+            fingerprint: 'SHA256:verify',
+          );
+        }
+        final client = _RecordingVerificationClient();
+        clients.add(client);
+        return client;
+      },
+    );
+    final config = _connection('verify-1')
+      ..hostKeyAlgorithm = 'ssh-ed25519'
+      ..hostKeyFingerprint = 'SHA256:stored'
+      ..hostKeyTrustedAt = DateTime.utc(2026, 8, 30);
+
+    final result = await adapter.verify(
+      config,
+      password: 'password',
+      privateKey: 'private-key',
+      onUnknownHostKey: (prompt) async {
+        expect(prompt.connectionId, 'verify-1');
+        expect(prompt.algorithm, 'ssh-ed25519');
+        return true;
+      },
+    );
+    expect(seenCredentials?.password, 'password');
+    expect(seenCredentials?.privateKey, 'private-key');
+    expect(seenRequest?.fingerprint, 'SHA256:verify');
+    expect(result.algorithm, 'ssh-ed25519');
+    expect(result.fingerprint, 'SHA256:stored');
+    expect(result.trustedAt, DateTime.utc(2026, 8, 30));
+    expect(clients.single.pingCalls, 1);
+    expect(clients.single.closed, isTrue);
+
+    final failing = _RecordingVerificationClient(
+      pingError: StateError('ping failed'),
+    );
+    final failingAdapter = AppConnectionVerificationAdapter(
+      credentialRepository: storage.credentialRepository,
+      hostKeyRepository: storage.hostKeyRepository,
+      logger: AppLogService.instance,
+      connector: (_, __, ___) async => failing,
+    );
+    await expectLater(
+      failingAdapter.verify(config, password: null, privateKey: null),
+      throwsA(isA<StateError>()),
+    );
+    expect(failing.closed, isTrue);
   });
 
   testWidgets('UI adapter maps host-key prompts and logs both save contexts', (
@@ -209,3 +356,30 @@ ConnectionConfig _connection(String id) => ConnectionConfig(
   host: '$id.example.test',
   username: 'operator',
 );
+
+final class _RecordingMonitoringService extends Fake
+    implements monitoring.MonitoringService {
+  final List<String> stoppedIds = <String>[];
+
+  @override
+  void stopForConnection(String connectionId) => stoppedIds.add(connectionId);
+}
+
+final class _RecordingVerificationClient
+    implements AppConnectionVerificationClient {
+  _RecordingVerificationClient({this.pingError});
+
+  final Object? pingError;
+  int pingCalls = 0;
+  bool closed = false;
+
+  @override
+  Future<void> ping() async {
+    pingCalls++;
+    final error = pingError;
+    if (error != null) throw error;
+  }
+
+  @override
+  void close() => closed = true;
+}

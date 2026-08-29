@@ -22,11 +22,13 @@ final class FakeSshService extends Fake implements SshService {
   String? openSessionResult = 'session-1';
   bool sessionConnectedResult = true;
   bool connectedResult = true;
+  int sessionCountResult = 0;
   String historyText = 'history';
   bool invokeUnknownHostKey = false;
   ssh_core.SshHostKeyPromptRequest? unknownHostKeyRequest;
   int ensureInitializedCalls = 0;
   int disconnectCalls = 0;
+  int disconnectSessionsForConnectionCalls = 0;
   int closeCalls = 0;
   Object? closeError;
   ssh_core.SshHostKeyConfirmation? capturedUnknownHostKey;
@@ -90,6 +92,11 @@ final class FakeSshService extends Fake implements SshService {
     disconnectCalls++;
   }
 
+  @override
+  Future<void> disconnectSessionsForConnection(String connectionId) async {
+    disconnectSessionsForConnectionCalls++;
+  }
+
   bool isSessionNameAvailable(String name) => sessionNameAvailable;
 
   @override
@@ -113,6 +120,9 @@ final class FakeSshService extends Fake implements SshService {
 
   @override
   Future<bool> ensureConnected(String connectionId) async => connectedResult;
+
+  @override
+  int sessionCountForConnection(String connectionId) => sessionCountResult;
 
   String defaultDisplayNameForConnection(String connectionId) =>
       defaultDisplayName;
