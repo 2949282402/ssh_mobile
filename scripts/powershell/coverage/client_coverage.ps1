@@ -23,7 +23,10 @@ try {
     Invoke-CommandWithTimeout $Flutter @('test','--no-pub','--no-test-assets','--coverage','--coverage-path',$profile,'--reporter','expanded',$test) $FlutterTimeout $app $environment
     $profiles += "--file=$profile"
   }
-  Invoke-CommandChecked dart (@('run','tool/check_coverage.dart',"--minimum=$Minimum",'--details') + $profiles + '--include=lib/services/network/') $app
+  $sourceArguments = @('--source-root=lib/services/network/')
+  $coverageBaseRef = if ($env:CLIENT_COVERAGE_BASE_REF) { $env:CLIENT_COVERAGE_BASE_REF } else { $env:GITHUB_EVENT_BEFORE }
+  if ($coverageBaseRef) { $sourceArguments += "--base-ref=$coverageBaseRef" }
+  Invoke-CommandChecked dart (@('run','tool/check_coverage.dart',"--minimum=$Minimum",'--details') + $profiles + $sourceArguments + '--include=lib/services/network/') $app
 } finally {
   Remove-Item $run -Recurse -Force -ErrorAction SilentlyContinue
 }

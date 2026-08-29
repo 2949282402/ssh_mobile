@@ -239,6 +239,21 @@ void main() {
     'Bash and PowerShell backend coverage must report both active thresholds.',
   );
   _expect(
+    coverageScripts['bash client coverage']!.contains(
+          '--source-root=lib/services/network/',
+        ) &&
+        coverageScripts['PowerShell client coverage']!.contains(
+          "'--source-root=lib/services/network/'",
+        ) &&
+        coverageScripts['bash client coverage']!.contains(
+          'CLIENT_COVERAGE_BASE_REF',
+        ) &&
+        coverageScripts['PowerShell client coverage']!.contains(
+          'CLIENT_COVERAGE_BASE_REF',
+        ),
+    'Bash and PowerShell client coverage must discover new sources in the owned Network scope.',
+  );
+  _expect(
     coverageAlias.contains('client_coverage.sh'),
     'Bash coverage_test.sh must remain the client-gate compatibility alias.',
   );
@@ -267,6 +282,13 @@ void main() {
         !bashAppCoverage.contains('--minimum=35') &&
         !powerShellAppCoverage.contains('--minimum=35'),
     'Bash and PowerShell Full App coverage helpers must enforce 90%.',
+  );
+  _expect(
+    bashAppCoverage.contains('--source-root=lib') &&
+        powerShellAppCoverage.contains("'--source-root=lib'") &&
+        bashAppCoverage.contains('FULL_TEST_COVERAGE_BASE_REF') &&
+        powerShellAppCoverage.contains('FULL_TEST_COVERAGE_BASE_REF'),
+    'Bash and PowerShell Full App coverage must enforce the new-source inventory.',
   );
   for (final marker in const [
     'analytics-mysql:',

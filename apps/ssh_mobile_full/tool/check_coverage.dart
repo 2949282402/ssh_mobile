@@ -1,9 +1,18 @@
 import 'dart:io';
 
+import 'coverage_sources.dart';
+
+export 'coverage_sources.dart';
+
+const _newSourceMinimum = 90.0;
+
 void main(List<String> arguments) {
   var minimum = 0.0;
   final coveragePaths = <String>[];
   final includePrefixes = <String>[];
+  final sourceManifestPaths = <String>[];
+  final sourceRoots = <String>[];
+  String? baseRef;
   var showDetails = false;
 
   for (final argument in arguments) {
@@ -13,6 +22,12 @@ void main(List<String> arguments) {
       coveragePaths.add(argument.substring('--file='.length));
     } else if (argument.startsWith('--include=')) {
       includePrefixes.add(argument.substring('--include='.length));
+    } else if (argument.startsWith('--source-manifest=')) {
+      sourceManifestPaths.add(argument.substring('--source-manifest='.length));
+    } else if (argument.startsWith('--source-root=')) {
+      sourceRoots.add(argument.substring('--source-root='.length));
+    } else if (argument.startsWith('--base-ref=')) {
+      baseRef = argument.substring('--base-ref='.length);
     } else if (argument == '--details') {
       showDetails = true;
     } else {
@@ -20,6 +35,33 @@ void main(List<String> arguments) {
       exitCode = 64;
       return;
     }
+  }
+
+  final requiredSources = <String>{};
+  try {
+    for (final manifestPath in sourceManifestPaths) {
+      requiredSources.addAll(
+        filterHandWrittenProductionSources(
+          readSourceManifest(manifestPath),
+          sourceRoots: sourceRoots,
+          includePrefixes: includePrefixes,
+        ),
+      );
+    }
+    if (sourceRoots.isNotEmpty) {
+      final resolvedBaseRef = resolveCoverageBaseRef(explicitBaseRef: baseRef);
+      requiredSources.addAll(
+        discoverProductionSources(
+          sourceRoots: sourceRoots,
+          baseRef: resolvedBaseRef,
+          includePrefixes: includePrefixes,
+        ),
+      );
+    }
+  } on Object catch (error) {
+    stderr.writeln('Unable to discover required coverage sources: $error');
+    exitCode = 69;
+    return;
   }
 
   final paths = coveragePaths.isEmpty
@@ -36,6 +78,7 @@ void main(List<String> arguments) {
   final summary = summarizeLcovFiles(
     paths.map((path) => File(path).readAsLinesSync()),
     includePrefixes: includePrefixes,
+    requiredSources: requiredSources,
   );
   if (summary.linesFound == 0) {
     stderr.writeln('Coverage file contains no coverable lines.');
@@ -49,16 +92,55 @@ void main(List<String> arguments) {
     '${includePrefixes.isEmpty ? '' : ', scoped to ${includePrefixes.join(', ')}'})',
   );
 
+  if (summary.requiredSourceCoverage.isNotEmpty) {
+    stdout.writeln(
+      'Required new hand-written production sources checked: '
+      '${summary.requiredSourceCoverage.length}',
+    );
+  }
+
   if (showDetails || summary.percentage + 0.000001 < minimum) {
     for (final entry in summary.uncoveredLinesBySource.entries) {
       stdout.writeln('Uncovered ${entry.key}: ${entry.value.join(', ')}');
     }
   }
 
-  if (summary.percentage + 0.000001 < minimum) {
-    stderr.writeln(
-      'Coverage is below the required ${minimum.toStringAsFixed(1)}%.',
-    );
+  final aggregateFailed = summary.percentage + 0.000001 < minimum;
+  var failed = aggregateFailed;
+  var requiredSourceFailed = false;
+  for (final entry in summary.requiredSourceCoverage.entries) {
+    final source = entry.key;
+    final coverage = entry.value;
+    if (coverage.linesFound == 0) {
+      stderr.writeln('Required new source is missing from LCOV: $source');
+      failed = true;
+      requiredSourceFailed = true;
+    } else if (coverage.percentage + 0.000001 < _newSourceMinimum) {
+      stderr.writeln(
+        'Coverage for required new source $source is below the required '
+        '${_newSourceMinimum.toStringAsFixed(1)}% '
+        '(${coverage.linesHit}/${coverage.linesFound}).',
+      );
+      failed = true;
+      requiredSourceFailed = true;
+    } else if (showDetails) {
+      stdout.writeln(
+        'Required new source $source: '
+        '${coverage.percentage.toStringAsFixed(1)}% '
+        '(${coverage.linesHit}/${coverage.linesFound})',
+      );
+    }
+  }
+
+  if (failed) {
+    if (aggregateFailed) {
+      stderr.writeln(
+        'Coverage is below the required ${minimum.toStringAsFixed(1)}%.',
+      );
+    }
+    if (requiredSourceFailed) {
+      stderr.writeln('Required new source coverage check failed.');
+    }
     exitCode = 1;
   }
 }
@@ -66,13 +148,19 @@ void main(List<String> arguments) {
 CoverageSummary summarizeLcov(
   Iterable<String> lines, {
   Iterable<String> includePrefixes = const <String>[],
+  Iterable<String> requiredSources = const <String>[],
 }) {
-  return summarizeLcovFiles([lines], includePrefixes: includePrefixes);
+  return summarizeLcovFiles(
+    [lines],
+    includePrefixes: includePrefixes,
+    requiredSources: requiredSources,
+  );
 }
 
 CoverageSummary summarizeLcovFiles(
   Iterable<Iterable<String>> files, {
   Iterable<String> includePrefixes = const <String>[],
+  Iterable<String> requiredSources = const <String>[],
 }) {
   final foundLines = <String, Set<int>>{};
   final hitLines = <String, Set<int>>{};
@@ -90,7 +178,7 @@ CoverageSummary summarizeLcovFiles(
         final source = line.substring(3).replaceAll('\\', '/');
         currentSource = source;
         skipCurrentFile =
-            source.endsWith('.g.dart') ||
+            _isGeneratedCoverageSource(source) ||
             source.startsWith('third_party/') ||
             source.contains('/third_party/') ||
             (normalizedPrefixes.isNotEmpty &&
@@ -140,12 +228,52 @@ CoverageSummary summarizeLcovFiles(
     }
   }
 
+  final requiredSourceCoverage = <String, FileCoverage>{};
+  final missingRequiredSources = <String>[];
+  final normalizedRequiredSources =
+      requiredSources
+          .map(_normalizeCoveragePath)
+          .where((source) => source.isNotEmpty)
+          .where(
+            (source) =>
+                normalizedPrefixes.isEmpty ||
+                normalizedPrefixes.any(
+                  (prefix) => _coveragePathMatches(source, prefix),
+                ),
+          )
+          .toSet()
+          .toList()
+        ..sort();
+  for (final requiredSource in normalizedRequiredSources) {
+    final requiredFoundLines = <int>{};
+    final requiredHitLines = <int>{};
+    for (final entry in foundLines.entries) {
+      if (!_coveragePathMatchesFile(entry.key, requiredSource)) {
+        continue;
+      }
+      requiredFoundLines.addAll(entry.value);
+      requiredHitLines.addAll(hitLines[entry.key] ?? <int>{});
+    }
+    final coverage = FileCoverage(
+      linesFound: requiredFoundLines.length,
+      linesHit: requiredHitLines.length,
+    );
+    requiredSourceCoverage[requiredSource] = coverage;
+    if (coverage.linesFound == 0) {
+      missingRequiredSources.add(requiredSource);
+    }
+  }
+
   return CoverageSummary(
     linesFound: linesFound,
     linesHit: linesHit,
     uncoveredLinesBySource: Map<String, List<int>>.unmodifiable(
       uncoveredLinesBySource,
     ),
+    requiredSourceCoverage: Map<String, FileCoverage>.unmodifiable(
+      requiredSourceCoverage,
+    ),
+    missingRequiredSources: List<String>.unmodifiable(missingRequiredSources),
   );
 }
 
@@ -161,16 +289,47 @@ bool _coveragePathMatches(String source, String prefix) {
       normalizedSource.contains('/$normalizedPrefix/');
 }
 
+bool _coveragePathMatchesFile(String source, String expected) {
+  final normalizedSource = _normalizeCoveragePath(source);
+  final normalizedExpected = _normalizeCoveragePath(expected);
+  return normalizedSource == normalizedExpected ||
+      normalizedSource.endsWith('/$normalizedExpected');
+}
+
+bool _isGeneratedCoverageSource(String source) {
+  final normalized = _normalizeCoveragePath(source);
+  final fileName = normalized.split('/').last;
+  return normalized.split('/').contains('generated') ||
+      fileName.endsWith('.g.dart') ||
+      fileName.endsWith('.freezed.dart') ||
+      fileName.endsWith('.mocks.dart') ||
+      fileName.endsWith('.gen.dart') ||
+      fileName.endsWith('.generated.dart');
+}
+
+class FileCoverage {
+  const FileCoverage({required this.linesFound, required this.linesHit});
+
+  final int linesFound;
+  final int linesHit;
+
+  double get percentage => linesFound == 0 ? 0 : (linesHit * 100) / linesFound;
+}
+
 class CoverageSummary {
   const CoverageSummary({
     required this.linesFound,
     required this.linesHit,
     this.uncoveredLinesBySource = const <String, List<int>>{},
+    this.requiredSourceCoverage = const <String, FileCoverage>{},
+    this.missingRequiredSources = const <String>[],
   });
 
   final int linesFound;
   final int linesHit;
   final Map<String, List<int>> uncoveredLinesBySource;
+  final Map<String, FileCoverage> requiredSourceCoverage;
+  final List<String> missingRequiredSources;
 
   double get percentage => linesFound == 0 ? 0 : (linesHit * 100) / linesFound;
 }

@@ -101,8 +101,15 @@ for test_file in "${test_files[@]}"; do
   fi
 done
 
+source_arguments=(--source-root=lib/services/network/)
+coverage_base_ref="${CLIENT_COVERAGE_BASE_REF:-${GITHUB_EVENT_BEFORE:-}}"
+if [[ -n "$coverage_base_ref" ]]; then
+  source_arguments+=("--base-ref=$coverage_base_ref")
+fi
+
 dart run tool/check_coverage.dart \
   --minimum="$MINIMUM" \
   --details \
   "${coverage_arguments[@]}" \
+  "${source_arguments[@]}" \
   --include=lib/services/network/

@@ -711,6 +711,8 @@ jobs:
         working-directory: apps/ssh_mobile_full
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -746,6 +748,8 @@ jobs:
 
           dart run tool/check_coverage.dart \
             --minimum=90 \
+            --base-ref="${{ github.event.before }}" \
+            --source-root=lib \
             "${coverage_args[@]}"
 
   android-build:

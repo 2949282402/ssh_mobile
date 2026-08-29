@@ -204,6 +204,12 @@ void main() {
         !appCoverage.contains('--minimum=35'),
     'app-coverage 必须执行仓库统一的 90% 覆盖率阈值',
   );
+  _expect(
+    appCoverage.contains('fetch-depth: 0') &&
+        appCoverage.contains('--base-ref="\${{ github.event.before }}"') &&
+        appCoverage.contains('--source-root=lib'),
+    'app-coverage 必须从 CI base 发现新增手写生产源并传入覆盖率门禁',
+  );
 
   for (final jobName in _buildOnlyJobNames) {
     final job = _jobSection(workflow, jobName);
