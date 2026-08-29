@@ -1,11 +1,15 @@
 import 'dart:convert';
 
+import 'package:connection_core/connection_core.dart';
 import 'package:feature_ai/feature_ai.dart' as ai;
 import 'package:feature_playbook/feature_playbook.dart' as playbook;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:ssh_core/ssh_core.dart' as ssh_core;
 import 'package:ssh_mobile/services/ai_storage_adapter.dart';
+import 'package:ssh_mobile/services/terminal_session_metadata_store.dart'
+    show RestorableTmuxSession;
 
 import '../test_utils/ai_port_adapters.dart';
 import '../test_utils/test_storage_adapter.dart';
@@ -305,6 +309,176 @@ void main() {
     await initialize();
     expect(await storage.loadAiSkills(), isEmpty);
   });
+
+  test(
+    'App AI adapter forwards connection, repository, and runtime contracts',
+    () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'power_guide_seen': true,
+      });
+      await initialize();
+      final adapter = storage.aiStorage;
+      expect(adapter.initialized, isTrue);
+      expect(adapter.initFuture, completes);
+      expect(adapter.initialize(), completes);
+      expect(adapter.powerGuideSeen, isTrue);
+      expect(adapter.secretCacheTtlOptionsMinutes, [1, 5, 15, 30, 60]);
+
+      final first = ConnectionConfig(
+        id: 'adapter-server-a',
+        name: 'Adapter A',
+        host: 'a.example.test',
+        username: 'tester',
+        password: 'pw-a',
+        privateKey: 'key-a',
+      );
+      final second = ConnectionConfig(
+        id: 'adapter-server-b',
+        name: 'Adapter B',
+        host: 'b.example.test',
+        username: 'tester',
+      );
+      await adapter.addConnection(first);
+      await adapter.addConnection(second);
+      expect(adapter.getConnection(first.id)?.name, 'Adapter A');
+      expect(await adapter.getPassword(first.id), 'pw-a');
+      expect(await adapter.getPrivateKey(first.id), 'key-a');
+
+      // Null credentials on an edit preserve the existing secure values.
+      await adapter.updateConnection(
+        ConnectionConfig(
+          id: first.id,
+          name: 'Adapter A updated',
+          host: first.host,
+          username: first.username,
+        ),
+      );
+      expect(await adapter.getPassword(first.id), 'pw-a');
+      expect(await adapter.getPrivateKey(first.id), 'key-a');
+      await adapter.trustHostKey(
+        first.id,
+        algorithm: 'ssh-ed25519',
+        fingerprint: 'SHA256:fixture',
+        trustedAt: DateTime.utc(2026, 2, 3),
+      );
+      await adapter.reorderConnections(0, 1);
+
+      final binding = ssh_core.SshTargetBinding.fromConfig(
+        adapter.getConnection(first.id)!,
+      );
+      final bindings = adapter.captureConnectionTargetBindings([
+        first.id,
+        first.id,
+        'missing',
+      ]);
+      expect(bindings.keys, contains(first.id));
+      expect(bindings.length, 1);
+      final target = await adapter.resolveConnectionTarget(binding);
+      expect(target?.credentials.password, 'pw-a');
+      expect(target?.credentials.privateKey, 'key-a');
+      final changedBinding = ssh_core.SshTargetBinding.fromConfig(
+        adapter.getConnection(first.id)!.copyWith(host: 'changed.example.test'),
+      );
+      expect(await adapter.resolveConnectionTarget(changedBinding), isNull);
+
+      await adapter.terminalMetadataStore.saveRestorableTmuxSession(
+        RestorableTmuxSession(
+          sessionId: 'adapter-session',
+          connectionId: first.id,
+          displayName: 'Adapter terminal',
+          tmuxSessionName: 'tmux-adapter',
+          fontSize: 15,
+          updatedAt: DateTime.utc(2026, 2, 3),
+        ),
+      );
+      final snapshots = await adapter.loadRestorableTmuxSessions();
+      expect(snapshots.single.connectionName, 'Adapter A updated');
+      expect(snapshots.single.isConnected, isFalse);
+      expect(snapshots.single.state, ai.AiSshConnectionState.disconnected);
+
+      // Exercise the typed settings overload in addition to the legacy facade.
+      final settings = await adapter.loadAiConnectionSettings();
+      await adapter.saveAiConnectionSettings(settings);
+      expect(
+        await adapter.getAiRequestTimeoutSeconds(),
+        settings.timeoutSeconds,
+      );
+      await adapter.removeAiBaseUrlHistoryEntry(settings.baseUrl);
+
+      await adapter.saveCachedAiModels(
+        baseUrl: 'https://adapter.example.test',
+        models: const ['adapter-model'],
+      );
+      expect(
+        await adapter.loadCachedAiModels(
+          baseUrl: 'https://adapter.example.test',
+        ),
+        ['adapter-model'],
+      );
+      await adapter.removeAiBaseUrlHistoryEntry('https://missing.example.test');
+
+      final playbookItem = _playbook(
+        'adapter-playbook',
+        DateTime.utc(2026, 2, 3),
+      );
+      await adapter.savePlaybook(playbookItem);
+      final savedPlaybook = (await adapter.loadPlaybooks()).single;
+      expect(savedPlaybook.revision, 1);
+      final nextRevision = await adapter.savePlaybookIfRevisionMatches(
+        playbookId: savedPlaybook.id,
+        expectedRevision: savedPlaybook.revision,
+        playbook: savedPlaybook.copyWith(name: 'Updated playbook'),
+      );
+      expect(nextRevision, 2);
+      await adapter.deletePlaybook(playbookItem.id);
+      expect(await adapter.loadPlaybooks(), isEmpty);
+
+      await adapter.deleteConnections([first.id, second.id]);
+      expect(adapter.connections, isEmpty);
+
+      var importCallbacks = 0;
+      Future<void> callback() async {
+        importCallbacks++;
+      }
+
+      adapter.registerOnImportCallback(callback);
+      adapter.registerOnImportCallback(callback);
+      await adapter.importAppDataJson(
+        jsonEncode({
+          'format': 'ssh_mobile_backup',
+          'version': 1,
+          'connections': const [],
+        }),
+      );
+      expect(importCallbacks, 1);
+      adapter.unregisterOnImportCallback(callback);
+      await adapter.importAppDataJson(
+        jsonEncode({
+          'format': 'ssh_mobile_backup',
+          'version': 1,
+          'connections': const [],
+        }),
+      );
+      expect(importCallbacks, 1);
+      adapter.notifyStorageListeners();
+    },
+  );
+
+  test(
+    'AI adapter reports initialization failures while settling its future',
+    () async {
+      final failing = TestStorageAdapter(
+        initializationCheckpoint: () async {
+          throw StateError('fixture initialization failure');
+        },
+      );
+      expect(failing.init(), throwsA(isA<StateError>()));
+      await failing.initFuture;
+      expect(failing.initialized, isTrue);
+      await failing.shutdown();
+      failing.dispose();
+    },
+  );
 
   test(
     'ordering helpers replace duplicate records without leaking stale values',
