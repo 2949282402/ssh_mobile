@@ -1,12 +1,19 @@
 // DriftTelemetryStorage 的 SQLite 持久化与状态机测试。
 
+import 'dart:convert';
+
 import 'package:app_core/app_core.dart';
+import 'package:drift/drift.dart' show Value;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/services/telemetry/drift_telemetry_storage.dart';
 import 'package:ssh_mobile/services/telemetry/telemetry_database.dart';
 
 /// 构造一条测试记录。
-TelemetryEventRecord record(String id, {DateTime? occurredAt}) {
+TelemetryEventRecord record(
+  String id, {
+  DateTime? occurredAt,
+  String? releaseChannel,
+}) {
   return TelemetryEventRecord(
     eventId: id,
     recordType: TelemetryRecordType.analytics,
@@ -21,6 +28,7 @@ TelemetryEventRecord record(String id, {DateTime? occurredAt}) {
     appVersion: '1.0.0',
     buildNumber: '1',
     platform: 'linux',
+    releaseChannel: releaseChannel,
     properties: {'session_type': 'interactive'},
   );
 }
@@ -55,6 +63,111 @@ void main() {
       expect(pending[0].retryCount, 0);
     });
 
+    test('persists an optional release channel', () async {
+      await storage.insertRecord(
+        record('release-beta', releaseChannel: 'beta'),
+      );
+
+      final fetched = (await storage.fetchPendingBatch(10)).single;
+      expect(fetched.releaseChannel, 'beta');
+    });
+
+    test('persists and restores the last-known-good policy', () async {
+      const policy = TelemetryUploadPolicy(
+        uploadEnabled: true,
+        batchSizeThreshold: 7,
+        timeIntervalSeconds: 60,
+        maxBatchSize: 25,
+        clientMaxLocalRecords: 100,
+        specialTriggers: [
+          'highPriorityError',
+          'appBackground',
+          'networkRecovered',
+          'appForegroundWithBacklog',
+        ],
+        policyVersion: 3,
+      );
+
+      await storage.saveLastKnownGoodPolicy(policy);
+
+      final restored = await storage.loadLastKnownGoodPolicy();
+      expect(restored, isNotNull);
+      expect(restored!.policyVersion, 3);
+      expect(restored.batchSizeThreshold, 7);
+      expect(restored.maxBatchSize, 25);
+    });
+
+    test(
+      'rejects invalid policy writes instead of clamping durable state',
+      () async {
+        const invalid = TelemetryUploadPolicy(
+          uploadEnabled: true,
+          batchSizeThreshold: 7,
+          timeIntervalSeconds: 60,
+          maxBatchSize: 25,
+          clientMaxLocalRecords: 100,
+          specialTriggers: ['unsupportedTrigger'],
+          policyVersion: 3,
+        );
+
+        await expectLater(
+          storage.saveLastKnownGoodPolicy(invalid),
+          throwsArgumentError,
+        );
+        expect(await storage.loadLastKnownGoodPolicy(), isNull);
+      },
+    );
+
+    test(
+      'ignores a policy row whose denormalized version does not match',
+      () async {
+        const policy = TelemetryUploadPolicy(
+          uploadEnabled: true,
+          batchSizeThreshold: 7,
+          timeIntervalSeconds: 60,
+          maxBatchSize: 25,
+          clientMaxLocalRecords: 100,
+          specialTriggers: ['networkRecovered'],
+          policyVersion: 3,
+        );
+        await database
+            .into(database.telemetryPolicyStates)
+            .insert(
+              TelemetryPolicyStatesCompanion.insert(
+                id: const Value(1),
+                policyJson: jsonEncode(policy.toJson()),
+                policyVersion: 99,
+                updatedAt: DateTime.utc(2026, 8, 28),
+              ),
+            );
+
+        expect(await storage.loadLastKnownGoodPolicy(), isNull);
+      },
+    );
+
+    test('rejects durable policy values outside the safety envelope', () async {
+      await database
+          .into(database.telemetryPolicyStates)
+          .insert(
+            TelemetryPolicyStatesCompanion.insert(
+              id: const Value(1),
+              policyJson: jsonEncode({
+                'uploadEnabled': true,
+                'batchSizeThreshold': 0,
+                'timeIntervalSeconds': 60,
+                'maxBatchSize': 25,
+                'clientMaxLocalRecords': 100,
+                'specialTriggers': ['networkRecovered'],
+                'policyVersion': 3,
+              }),
+              policyVersion: 3,
+              updatedAt: DateTime.utc(2026, 8, 28),
+            ),
+          );
+
+      expect(await storage.loadLastKnownGoodPolicy(), isNull);
+    });
+
     test('eventId unique constraint preserves original on duplicate', () async {
       await storage.insertRecord(record('dup-1'));
       await storage.insertRecord(record('dup-1'));
@@ -84,6 +197,15 @@ void main() {
         expect(await storage.fetchPendingBatch(10), isEmpty);
       },
     );
+
+    test('applyRetryCount honors the requested increment', () async {
+      await storage.insertRecord(record('retry-increment'));
+
+      await storage.applyRetryCount(['retry-increment'], increment: 3);
+
+      final persisted = (await storage.fetchAllForReplay()).single;
+      expect(persisted.retryCount, 3);
+    });
 
     test('partial ACK only transitions matching records', () async {
       await storage.insertRecord(record('ack-a'));

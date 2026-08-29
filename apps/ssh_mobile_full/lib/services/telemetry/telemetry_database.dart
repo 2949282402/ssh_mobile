@@ -9,13 +9,17 @@ import 'telemetry_database/telemetry_database_connection.dart';
 
 part 'telemetry_database.g.dart';
 part 'telemetry_database/tables/telemetry_records.dart';
+part 'telemetry_database/tables/telemetry_policy_states.dart';
 part 'telemetry_database/daos/telemetry_records_dao.dart';
 
 /// 遥测本地 SQLite 数据库的唯一句柄 Owner。
 ///
 /// 数据库句柄由 [DriftTelemetryStorage] 显式创建并关闭，避免业务层重复释放
 /// 同一个连接。
-@DriftDatabase(tables: [TelemetryRecords], daos: [TelemetryRecordsDao])
+@DriftDatabase(
+  tables: [TelemetryRecords, TelemetryPolicyStates],
+  daos: [TelemetryRecordsDao],
+)
 final class TelemetryDatabase extends _$TelemetryDatabase
     implements AppDisposable {
   /// 打开当前平台的独立遥测数据库。
@@ -34,11 +38,22 @@ final class TelemetryDatabase extends _$TelemetryDatabase
   bool _disposed = false;
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
     onCreate: (migrator) => migrator.createAll(),
+    onUpgrade: (migrator, from, to) async {
+      if (from < 2) {
+        await migrator.addColumn(
+          telemetryRecords,
+          telemetryRecords.releaseChannel,
+        );
+      }
+      if (from < 3) {
+        await migrator.createTable(telemetryPolicyStates);
+      }
+    },
     beforeOpen: (details) async {
       await customStatement('PRAGMA foreign_keys = ON');
     },

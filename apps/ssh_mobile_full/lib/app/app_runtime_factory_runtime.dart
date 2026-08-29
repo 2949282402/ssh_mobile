@@ -50,6 +50,7 @@ extension _AppRuntimeFactoryRuntime on _AppRuntimeFactoryContext {
       aiServerDiagnosticsAdapter: aiServerDiagnosticsAdapter,
       aiChatRuntimeFactory: aiChatRuntimeFactory,
       telemetryClient: telemetryClient,
+      telemetryConnectivityMonitor: telemetryConnectivityMonitor,
       networkTelemetryBridge: networkTelemetryBridge,
       crashTelemetryBridge: crashTelemetryBridge,
       telemetryLogSink: telemetryLogSink,

@@ -31,6 +31,7 @@ import '../services/shortcut_command_service.dart';
 import '../services/ssh_service.dart';
 import '../services/terminal_session_metadata_store.dart';
 import '../services/telemetry/network_telemetry_bridge.dart';
+import '../services/telemetry/network_telemetry_connectivity.dart';
 import '../services/telemetry/app_crash_telemetry_bridge.dart';
 import '../services/telemetry/telemetry_span.dart';
 
@@ -88,6 +89,7 @@ final class AppRuntime implements Disposable {
     required this.aiServerDiagnosticsAdapter,
     required this.aiChatRuntimeFactory,
     this.telemetryClient,
+    this.telemetryConnectivityMonitor,
     this.networkTelemetryBridge,
     this.crashTelemetryBridge,
     this.telemetryLogSink,
@@ -227,6 +229,9 @@ final class AppRuntime implements Disposable {
   /// Telemetry 客户端运行时（若已启用）。
   final TelemetryClient? telemetryClient;
 
+  /// App Scope owner of the connectivity subscription that triggers recovery.
+  final TelemetryConnectivityMonitor? telemetryConnectivityMonitor;
+
   /// App Scope network telemetry borrower; disposed before its telemetry client.
   final NetworkTelemetryBridge? networkTelemetryBridge;
 
@@ -352,7 +357,10 @@ final class AppRuntime implements Disposable {
       playbookConnectionCatalogAdapter.dispose,
     );
 
-    // Network telemetry must stop consuming events before its client is flushed.
+    await attempt(
+      'telemetry-connectivity-monitor.dispose',
+      () => telemetryConnectivityMonitor?.dispose() ?? Future<void>.value(),
+    );
     await attempt(
       'network-telemetry-bridge.dispose',
       () => networkTelemetryBridge?.dispose() ?? Future<void>.value(),

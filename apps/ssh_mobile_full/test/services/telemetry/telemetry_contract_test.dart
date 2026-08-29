@@ -22,8 +22,8 @@ void main() {
           buildNumber: '1',
           platform: 'linux',
           properties: {
-            for (final key in definition.allowedProperties)
-              key: _sampleValue(key),
+            for (final entry in definition.propertyTypes.entries)
+              entry.key: _sampleValue(entry.value),
           },
         );
         expect(
@@ -57,14 +57,13 @@ void main() {
   });
 }
 
-Object _sampleValue(String key) {
-  if (key.endsWith('_ms') ||
-      key.endsWith('_bytes') ||
-      key == 'exit_code' ||
-      key == 'rtt_ms' ||
-      key == 'retry_count') {
-    return 1;
+Object _sampleValue(String type) {
+  switch (type) {
+    case 'integer':
+      return 1;
+    case 'boolean':
+      return true;
+    default:
+      return 'sample';
   }
-  if (key == 'fallback_used') return true;
-  return 'sample';
 }

@@ -24,6 +24,7 @@ import '../services/telemetry/app_crash_telemetry_bridge.dart';
 import '../services/telemetry/build_metadata_provider.dart';
 import '../services/telemetry/drift_telemetry_storage.dart';
 import '../services/telemetry/network_telemetry_bridge.dart';
+import '../services/telemetry/network_telemetry_connectivity.dart';
 import '../services/telemetry/telemetry_database.dart';
 import '../services/telemetry/telemetry_database/telemetry_database_constants.dart';
 import '../services/telemetry/telemetry_factory.dart';

@@ -44,6 +44,9 @@ class TelemetryRecords extends Table {
   /// 平台。
   TextColumn get platform => text()();
 
+  /// 发布渠道；旧记录可能没有该字段。
+  TextColumn get releaseChannel => text().nullable()();
+
   /// 序列化的属性 JSON。
   TextColumn get properties => text()();
 

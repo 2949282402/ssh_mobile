@@ -42,6 +42,8 @@ void main() {
         expect(runtime.networkIdentityService, isNotNull);
         expect(runtime.realtimeClient, isA<RealtimeClient>());
         expect(runtime.networkFacade, isA<NetworkFacade>());
+        expect(runtime.telemetryClient, isNotNull);
+        expect(runtime.telemetryConnectivityMonitor, isNotNull);
         expect(network.ensureCapabilityCalls, 1);
         expect(network.openCommandGatewayCalls, 1);
         expect(network.gateway.commands, hasLength(1));

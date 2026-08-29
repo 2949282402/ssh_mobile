@@ -1,7 +1,7 @@
 part of '../../telemetry_database.dart';
 
 /// 遥测记录表的最小持久化访问面。
-@DriftAccessor(tables: [TelemetryRecords])
+@DriftAccessor(tables: [TelemetryRecords, TelemetryPolicyStates])
 class TelemetryRecordsDao extends DatabaseAccessor<TelemetryDatabase>
     with _$TelemetryRecordsDaoMixin {
   TelemetryRecordsDao(super.db);
@@ -36,13 +36,39 @@ class TelemetryRecordsDao extends DatabaseAccessor<TelemetryDatabase>
   /// 递增指定 eventId 的重试次数。
   ///
   /// 使用参数化的 `UPDATE` 确保不会把用户数据拼进 SQL。
-  Future<void> incrementRetryCount(Set<String> eventIds) async {
-    if (eventIds.isEmpty) return;
+  Future<void> incrementRetryCount(
+    Set<String> eventIds, {
+    required int increment,
+  }) async {
+    if (eventIds.isEmpty || increment == 0) return;
     final placeholders = List.filled(eventIds.length, '?').join(', ');
     await customStatement(
-      'UPDATE telemetry_records SET retry_count = retry_count + 1 '
+      'UPDATE telemetry_records SET retry_count = retry_count + ? '
       'WHERE event_id IN ($placeholders)',
-      [for (final id in eventIds) id],
+      [increment, for (final id in eventIds) id],
+    );
+  }
+
+  /// Reads the singleton last-known-good policy row, if one exists.
+  Future<TelemetryPolicyState?> fetchLastKnownGoodPolicy() {
+    return (select(
+      telemetryPolicyStates,
+    )..where((t) => t.id.equals(1))).getSingleOrNull();
+  }
+
+  /// Atomically replaces the singleton last-known-good policy row.
+  Future<void> saveLastKnownGoodPolicy({
+    required String policyJson,
+    required int policyVersion,
+    required DateTime updatedAt,
+  }) async {
+    await into(telemetryPolicyStates).insertOnConflictUpdate(
+      TelemetryPolicyStatesCompanion.insert(
+        id: const Value(1),
+        policyJson: policyJson,
+        policyVersion: policyVersion,
+        updatedAt: updatedAt,
+      ),
     );
   }
 

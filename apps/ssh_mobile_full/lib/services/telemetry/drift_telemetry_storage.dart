@@ -13,7 +13,8 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'telemetry_database.dart';
 
 /// SQLite（Drift）支撑的遥测存储实现。
-class DriftTelemetryStorage implements TelemetryStorage {
+class DriftTelemetryStorage
+    implements TelemetryStorage, TelemetryPolicyStorage {
   DriftTelemetryStorage({TelemetryDatabase? database})
     : _database = database ?? TelemetryDatabase();
 
@@ -39,6 +40,95 @@ class DriftTelemetryStorage implements TelemetryStorage {
           recordRow,
           onConflict: DoNothing(target: [_database.telemetryRecords.eventId]),
         );
+  }
+
+  @override
+  Future<TelemetryUploadPolicy?> loadLastKnownGoodPolicy() async {
+    if (_closed) {
+      throw StateError('Telemetry storage already closed');
+    }
+    final row = await _database.telemetryRecordsDao.fetchLastKnownGoodPolicy();
+    if (row == null) return null;
+    try {
+      final decoded = jsonDecode(row.policyJson);
+      if (decoded is! Map<String, dynamic>) return null;
+      final policy = _decodePersistedPolicy(decoded);
+      if (policy == null) return null;
+      return policy.policyVersion == row.policyVersion ? policy : null;
+    } on Object {
+      // A malformed durable row must never prevent recording from starting.
+      return null;
+    }
+  }
+
+  /// Persists only complete, in-range policy JSON. [fromJson] intentionally
+  /// clamps remote input, but a durable row must not silently turn tampered
+  /// values into a different policy during restart recovery.
+  TelemetryUploadPolicy? _decodePersistedPolicy(Map<String, dynamic> json) {
+    const allowedKeys = {
+      'uploadEnabled',
+      'batchSizeThreshold',
+      'timeIntervalSeconds',
+      'maxBatchSize',
+      'clientMaxLocalRecords',
+      'specialTriggers',
+      'policyVersion',
+    };
+    final uploadEnabled = json['uploadEnabled'];
+    final batchThreshold = json['batchSizeThreshold'];
+    final interval = json['timeIntervalSeconds'];
+    final maxBatch = json['maxBatchSize'];
+    final maxLocal = json['clientMaxLocalRecords'];
+    final triggers = json['specialTriggers'];
+    final version = json['policyVersion'];
+    if (json.length != allowedKeys.length ||
+        json.keys.any((key) => !allowedKeys.contains(key)) ||
+        uploadEnabled is! bool ||
+        batchThreshold is! int ||
+        interval is! int ||
+        maxBatch is! int ||
+        maxLocal is! int ||
+        triggers is! List<dynamic> ||
+        triggers.any((trigger) => trigger is! String) ||
+        version is! int ||
+        version <= 0 ||
+        version > 0x7fffffff) {
+      return null;
+    }
+    if (batchThreshold < TelemetryUploadPolicy.minBatchSizeThreshold ||
+        batchThreshold > TelemetryUploadPolicy.maxBatchSizeThreshold ||
+        interval < TelemetryUploadPolicy.minTimeIntervalSeconds ||
+        interval > TelemetryUploadPolicy.maxTimeIntervalSeconds ||
+        maxBatch < TelemetryUploadPolicy.minMaxBatchSize ||
+        maxBatch > TelemetryUploadPolicy.maxMaxBatchSize ||
+        maxLocal < TelemetryUploadPolicy.minClientMaxLocalRecords ||
+        maxLocal > TelemetryUploadPolicy.maxClientMaxLocalRecords) {
+      return null;
+    }
+    final policy = TelemetryUploadPolicy.fromJson(json);
+    return _isValidPolicy(policy) ? policy : null;
+  }
+
+  @override
+  Future<void> saveLastKnownGoodPolicy(TelemetryUploadPolicy policy) async {
+    if (_closed) {
+      throw StateError('Telemetry storage already closed');
+    }
+    if (!_isValidPolicy(policy)) {
+      throw ArgumentError('Invalid telemetry upload policy.');
+    }
+    await _database.transaction(() async {
+      final current = await _database.telemetryRecordsDao
+          .fetchLastKnownGoodPolicy();
+      if (current != null && current.policyVersion > policy.policyVersion) {
+        return;
+      }
+      await _database.telemetryRecordsDao.saveLastKnownGoodPolicy(
+        policyJson: jsonEncode(policy.toJson()),
+        policyVersion: policy.policyVersion,
+        updatedAt: DateTime.now().toUtc(),
+      );
+    });
   }
 
   @override
@@ -97,12 +187,18 @@ class DriftTelemetryStorage implements TelemetryStorage {
     if (_closed) {
       throw StateError('Telemetry storage already closed');
     }
+    if (increment < 0) {
+      throw ArgumentError.value(increment, 'increment', 'must not be negative');
+    }
     if (eventIds.isEmpty) return;
     if (increment == 0) return;
     final idBatches = _chunked(eventIds, 200);
     await _database.transaction(() async {
       for (final batch in idBatches) {
-        await _database.telemetryRecordsDao.incrementRetryCount(batch.toSet());
+        await _database.telemetryRecordsDao.incrementRetryCount(
+          batch.toSet(),
+          increment: increment,
+        );
       }
     });
   }
@@ -221,6 +317,7 @@ class DriftTelemetryStorage implements TelemetryStorage {
       appVersion: Value(record.appVersion),
       buildNumber: Value(record.buildNumber),
       platform: Value(record.platform),
+      releaseChannel: Value(record.releaseChannel),
       properties: Value(jsonEncode(record.properties)),
       error: Value(
         record.error != null ? jsonEncode(record.error!.toJson()) : null,
@@ -249,6 +346,7 @@ class DriftTelemetryStorage implements TelemetryStorage {
       appVersion: row.appVersion,
       buildNumber: row.buildNumber,
       platform: row.platform,
+      releaseChannel: row.releaseChannel,
       properties:
           (jsonDecode(row.properties) as Map<String, dynamic>?) ?? const {},
       error: row.error != null
@@ -288,5 +386,34 @@ class DriftTelemetryStorage implements TelemetryStorage {
       case TelemetrySyncState.rejected:
         return 'rejected';
     }
+  }
+
+  static const _supportedPolicyTriggers = {
+    'highPriorityError',
+    'appBackground',
+    'networkRecovered',
+    'appForegroundWithBacklog',
+  };
+
+  static bool _isValidPolicy(TelemetryUploadPolicy policy) {
+    return policy.policyVersion > 0 &&
+        policy.policyVersion <= 0x7fffffff &&
+        policy.batchSizeThreshold >=
+            TelemetryUploadPolicy.minBatchSizeThreshold &&
+        policy.batchSizeThreshold <=
+            TelemetryUploadPolicy.maxBatchSizeThreshold &&
+        policy.timeIntervalSeconds >=
+            TelemetryUploadPolicy.minTimeIntervalSeconds &&
+        policy.timeIntervalSeconds <=
+            TelemetryUploadPolicy.maxTimeIntervalSeconds &&
+        policy.maxBatchSize >= TelemetryUploadPolicy.minMaxBatchSize &&
+        policy.maxBatchSize <= TelemetryUploadPolicy.maxMaxBatchSize &&
+        policy.clientMaxLocalRecords >=
+            TelemetryUploadPolicy.minClientMaxLocalRecords &&
+        policy.clientMaxLocalRecords <=
+            TelemetryUploadPolicy.maxClientMaxLocalRecords &&
+        policy.specialTriggers.length ==
+            policy.specialTriggers.toSet().length &&
+        policy.specialTriggers.every(_supportedPolicyTriggers.contains);
   }
 }

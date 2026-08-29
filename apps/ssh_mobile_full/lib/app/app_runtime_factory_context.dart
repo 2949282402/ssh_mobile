@@ -101,6 +101,7 @@ final class _AppRuntimeFactoryContext {
   late final TelemetryDatabase telemetryDatabase;
   late final TelemetryClient telemetryClient;
   late final NetworkTelemetryBridge networkTelemetryBridge;
+  late final TelemetryConnectivityMonitor telemetryConnectivityMonitor;
   late final AppCrashTelemetryBridge crashTelemetryBridge;
   late final TelemetryLogSink telemetryLogSink;
   late final AppDeveloperDiagnosticsAdapter developerDiagnosticsAdapter;

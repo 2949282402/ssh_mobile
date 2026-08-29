@@ -209,6 +209,7 @@ Future<TelemetryRuntime> createTelemetryRuntime({
     storage: driftStorage,
     initialPolicy: initialPolicy,
   );
+  await client.ready;
 
   return TelemetryRuntime(client: client, storage: driftStorage);
 }

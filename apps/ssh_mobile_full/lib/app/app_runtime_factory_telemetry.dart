@@ -135,5 +135,18 @@ extension _AppRuntimeFactoryTelemetry on _AppRuntimeFactoryContext {
       developerDiagnosticsAdapter.dispose,
       priority: _CleanupPriority.adapter,
     );
+
+    // Start recovery only after every telemetry producer and sink is attached.
+    // An online-at-startup recovery can flush durable backlog immediately, so
+    // starting it earlier would race bridge/sink installation.
+    telemetryConnectivityMonitor = TelemetryConnectivityMonitor(
+      client: telemetryClient,
+      source: PlatformTelemetryConnectivitySource(),
+    );
+    cleanup.add(
+      telemetryConnectivityMonitor.dispose,
+      priority: _CleanupPriority.adapter,
+    );
+    await telemetryConnectivityMonitor.start();
   }
 }
