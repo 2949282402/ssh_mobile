@@ -25,6 +25,32 @@ import 'ssh/ssh_connection_attempt.dart';
 /// 预留，保持 socket 接缝可替换。
 ssh_core.SshNativeStreamConnector? sshBackgroundNativeStreamConnector;
 
+/// Test seam for exercising the background session lifecycle without opening a
+/// real SSH socket. Production always leaves this unset and follows the normal
+/// socket, authentication, and shell construction path below.
+typedef BackgroundSshSessionFactory =
+    Future<SSHClient> Function(Map<String, dynamic> data);
+
+/// Starts an isolated background SSH runtime with an optional test session
+/// factory. The platform entry point uses [sshBackgroundServiceEntryPoint]
+/// directly and therefore retains the production transport path.
+@visibleForTesting
+void startBackgroundSshRuntimeForTesting(
+  ServiceInstance service, {
+  BackgroundSshSessionFactory? sessionFactory,
+}) {
+  _BackgroundSshRuntime(service, sessionFactory: sessionFactory).start();
+}
+
+/// Opens a background SSH socket through the same native-first/fallback
+/// boundary used by the production isolate.
+@visibleForTesting
+Future<SSHSocket> openBackgroundSshSocketForTesting({
+  required String host,
+  required int port,
+  String? peerId,
+}) => _openBackgroundSshSocket(host: host, port: port, peerId: peerId);
+
 /// 打开后台 SSH socket：native ReliableStream 优先，原始 TCP 回退。
 Future<SSHSocket> _openBackgroundSshSocket({
   required String host,
@@ -406,9 +432,10 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) =>
 /// 只消费 [ServiceInstance] 事件总线，不调用通知权限或 power MethodChannel。
 final class _BackgroundSshRuntime {
   /// 为一个后台 isolate service 创建独立运行时。
-  _BackgroundSshRuntime(this.service);
+  _BackgroundSshRuntime(this.service, {this._sessionFactory});
 
   final ServiceInstance service;
+  final BackgroundSshSessionFactory? _sessionFactory;
   final Map<String, _BackgroundSshSession> sessions = {};
   final SshSessionConnectGate _connectGate = SshSessionConnectGate();
   final Set<Future<void>> _connectOperations = <Future<void>>{};
@@ -690,63 +717,69 @@ final class _BackgroundSshRuntime {
             86400,
           );
       final peerId = data['peerId'] as String?;
-      final socket = await _openBackgroundSshSocket(
-        host: host,
-        port: port,
-        peerId: peerId,
-      );
-      owner.ownSocket(socket.destroy);
-      _ensureConnectCurrent(sessionId, connectToken);
-      emitLog(
-        'service',
-        'SSH socket connected',
-        details: 'sessionId=$sessionId host=$host:$port',
-      );
+      late final SSHClient client;
+      final sessionFactory = _sessionFactory;
+      if (sessionFactory != null) {
+        client = await sessionFactory(data);
+      } else {
+        final socket = await _openBackgroundSshSocket(
+          host: host,
+          port: port,
+          peerId: peerId,
+        );
+        owner.ownSocket(socket.destroy);
+        _ensureConnectCurrent(sessionId, connectToken);
+        emitLog(
+          'service',
+          'SSH socket connected',
+          details: 'sessionId=$sessionId host=$host:$port',
+        );
 
-      final config = ConnectionConfig(
-        id: connectionId ?? sessionId,
-        name: name,
-        host: host,
-        port: port,
-        username: username,
-        authMethod: AuthMethod.fromName(authMethod),
-        hostKeyFingerprint: data['hostKeyFingerprint'] as String?,
-        hostKeyAlgorithm: data['hostKeyAlgorithm'] as String?,
-        hostKeyTrustedAt: DateTime.tryParse(
-          data['hostKeyTrustedAt'] as String? ?? '',
-        ),
-      );
-      final credentials = SshCredentials(
-        password: password,
-        privateKey: privateKey,
-      );
-      final hostKeyPolicy = SshHostKeyPolicy();
+        final config = ConnectionConfig(
+          id: connectionId ?? sessionId,
+          name: name,
+          host: host,
+          port: port,
+          username: username,
+          authMethod: AuthMethod.fromName(authMethod),
+          hostKeyFingerprint: data['hostKeyFingerprint'] as String?,
+          hostKeyAlgorithm: data['hostKeyAlgorithm'] as String?,
+          hostKeyTrustedAt: DateTime.tryParse(
+            data['hostKeyTrustedAt'] as String? ?? '',
+          ),
+        );
+        final credentials = SshCredentials(
+          password: password,
+          privateKey: privateKey,
+        );
+        final hostKeyPolicy = SshHostKeyPolicy();
 
-      final identities = await SshClientFactory.identitiesFor(
-        config,
-        credentials,
-      );
-      _ensureConnectCurrent(sessionId, connectToken);
+        final identities = await SshClientFactory.identitiesFor(
+          config,
+          credentials,
+        );
+        _ensureConnectCurrent(sessionId, connectToken);
 
-      final authOptions = SshClientFactory.buildAuthOptions(
-        config: config,
-        credentials: credentials,
-        identities: identities,
-      );
+        final authOptions = SshClientFactory.buildAuthOptions(
+          config: config,
+          credentials: credentials,
+          identities: identities,
+        );
 
-      final client = SSHClient(
-        socket,
-        username: username,
-        onVerifyHostKey: (algorithm, fingerprint) =>
-            hostKeyPolicy.verifyHostKey(
-              config: config,
-              algorithm: algorithm,
-              md5Fingerprint: fingerprint,
-            ),
-        identities: authOptions.identities,
-        onPasswordRequest: authOptions.onPasswordRequest,
-        onUserInfoRequest: authOptions.onUserInfoRequest,
-      );
+        client = SSHClient(
+          socket,
+          username: username,
+          onVerifyHostKey: (algorithm, fingerprint) =>
+              hostKeyPolicy.verifyHostKey(
+                config: config,
+                algorithm: algorithm,
+                md5Fingerprint: fingerprint,
+              ),
+          identities: authOptions.identities,
+          onPasswordRequest: authOptions.onPasswordRequest,
+          onUserInfoRequest: authOptions.onUserInfoRequest,
+        );
+      }
       owner.ownClient(client.close);
 
       await client.authenticated.timeout(const Duration(seconds: 15));

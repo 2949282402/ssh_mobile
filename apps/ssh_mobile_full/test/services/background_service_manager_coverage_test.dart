@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_background_service_platform_interface/flutter_background_service_platform_interface.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:permission_handler_platform_interface/permission_handler_platform_interface.dart';
 import 'package:ssh_mobile/services/background_service.dart';
 
@@ -26,6 +25,9 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(powerChannel, (call) async {
           powerCalls.add(call.method);
+          if (background.throwOnPowerCall) {
+            throw StateError('power channel failed');
+          }
           return call.method == 'isIgnoringBatteryOptimizations' ? false : true;
         });
   });
@@ -134,6 +136,51 @@ void main() {
       await service.dispose();
     },
   );
+
+  test(
+    'reports platform refusal and startup errors without updating state',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      background.startResult = false;
+
+      await BackgroundServiceManager.start(
+        connectionName: 'refused',
+        showConnectionName: true,
+      );
+      expect(background.invocations, isNot(contains('update')));
+
+      background.running = false;
+      background.startResult = true;
+      background.throwOnStart = true;
+      await expectLater(
+        BackgroundServiceManager.start(),
+        throwsA(isA<StateError>()),
+      );
+      background.throwOnStart = false;
+    },
+  );
+
+  test(
+    'contains platform power-channel failures and preserves safe defaults',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      background.throwOnPowerCall = true;
+
+      expect(
+        await BackgroundServiceManager.isIgnoringBatteryOptimizations(),
+        isFalse,
+      );
+      await BackgroundServiceManager.requestBatteryOptimizationExemption();
+      await BackgroundServiceManager.openAppSettings();
+
+      background.throwOnPowerCall = false;
+      await BackgroundServiceManager.start();
+      await Future<void>.delayed(Duration.zero);
+      background.throwOnPowerCall = true;
+      await BackgroundServiceManager.stop();
+      background.throwOnPowerCall = false;
+    },
+  );
 }
 
 Future<void> _waitUntil(bool Function() condition) async {
@@ -150,6 +197,9 @@ final class _FakeBackgroundPlatform extends FlutterBackgroundServicePlatform {
   Map<String, dynamic> lastArguments = <String, dynamic>{};
   bool running = false;
   bool throwOnConfigure = false;
+  bool throwOnStart = false;
+  bool startResult = true;
+  bool throwOnPowerCall = false;
   int configureCalls = 0;
 
   @override
@@ -164,8 +214,9 @@ final class _FakeBackgroundPlatform extends FlutterBackgroundServicePlatform {
 
   @override
   Future<bool> start() async {
+    if (throwOnStart) throw StateError('start failed');
     running = true;
-    return true;
+    return startResult;
   }
 
   @override
