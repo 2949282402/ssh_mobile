@@ -117,6 +117,40 @@ void main() {
         );
       },
     );
+
+    test(
+      'accepts integer-valued doubles and rejects fractions and non-finite values',
+      () {
+        expect(
+          redactor.sanitizeProperties(event, {
+            'message': 'failure',
+            'count': 15.0,
+          }),
+          {'message': 'failure', 'count': 15.0},
+        );
+        expect(
+          redactor.sanitizeProperties(event, {
+            'message': 'failure',
+            'count': 15.5,
+          }),
+          isNull,
+        );
+        expect(
+          redactor.sanitizeProperties(event, {
+            'message': 'failure',
+            'count': double.infinity,
+          }),
+          isNull,
+        );
+        expect(
+          redactor.sanitizeProperties(event, {
+            'message': 'failure',
+            'count': double.nan,
+          }),
+          isNull,
+        );
+      },
+    );
   });
 
   test('redacts credential, endpoint, command, and path variants', () {

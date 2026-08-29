@@ -2,7 +2,8 @@
 //
 // 取代工厂里的硬编码 `'1.0.0'/'100'/'prod'`。为了在无网络（无法新增
 // package_info_plus 依赖）的离线环境下工作，当前使用 `device_info_plus`
-// 读取设备型号名称作为 platform 后缀，配合 pubspec 声明的版本常量。
+// 读取设备型号名称作为 platform 后缀，配合 pubspec 声明的版本常量；发布渠道
+// 从 `--dart-define=TELEMETRY_RELEASE_CHANNEL=...` 读取并在无效时回退。
 // 接入 package_info_plus 后可无缝替换 [BaseBuildMetadataProvider]。
 
 import 'dart:io';
@@ -42,11 +43,14 @@ class DeviceInfoBuildMetadataProvider implements BuildMetadataProvider {
   DeviceInfoBuildMetadataProvider({
     this.appVersion = defaultAppVersion,
     this.buildNumber = defaultBuildNumber,
-    this.releaseChannel = defaultReleaseChannel,
+    String? releaseChannel,
     String? platform,
     DeviceInfoPlugin? deviceInfo,
     this.logger,
-  }) : platform = platform ?? Platform.operatingSystem,
+  }) : releaseChannel = _normalizeReleaseChannel(
+         releaseChannel ?? defaultReleaseChannel,
+       ),
+       platform = platform ?? Platform.operatingSystem,
        deviceInfo = deviceInfo ?? DeviceInfoPlugin();
 
   /// 与 `apps/ssh_mobile_full/pubspec.yaml` 的 `version:` 同步。
@@ -55,7 +59,24 @@ class DeviceInfoBuildMetadataProvider implements BuildMetadataProvider {
   /// 与 `version: 1.0.0+1` 的 build 字段同步。
   static const String defaultBuildNumber = '1';
 
-  static const String defaultReleaseChannel = 'prod';
+  /// 数据库列宽对齐的非回退渠道（MySQL `release_channel VARCHAR(32)`）。
+  static const String fallbackReleaseChannel = 'prod';
+
+  /// 编译时发布渠道；未通过
+  /// `--dart-define=TELEMETRY_RELEASE_CHANNEL=...` 指定时使用 [fallbackReleaseChannel]。
+  static const String defaultReleaseChannel = String.fromEnvironment(
+    'TELEMETRY_RELEASE_CHANNEL',
+    defaultValue: fallbackReleaseChannel,
+  );
+
+  static const int _maxReleaseChannelLength = 32;
+
+  static String _normalizeReleaseChannel(String value) {
+    if (value.isEmpty || value.length > _maxReleaseChannelLength) {
+      return fallbackReleaseChannel;
+    }
+    return value;
+  }
 
   final String appVersion;
   final String buildNumber;

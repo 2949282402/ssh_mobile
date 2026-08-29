@@ -144,10 +144,19 @@ final class TelemetryRedactor {
           if (sanitized == null) return null;
           output[key] = sanitized;
         case 'integer':
-          // bool is not an int in Dart, but keeping this explicit documents the
-          // wire contract and rejects doubles before JSON encoding can coerce.
-          if (value is! int || value is bool) return null;
-          output[key] = value;
+          // JSON numbers are integer-valued when they have no fractional part.
+          // Accept both Dart representations so decoded `1` and `1.0` agree
+          // with the catalog and the Go/TypeScript validators; reject bools,
+          // fractions, and non-finite values.
+          if (value is bool) return null;
+          if (value is int ||
+              (value is double &&
+                  value.isFinite &&
+                  value == value.truncateToDouble())) {
+            output[key] = value;
+          } else {
+            return null;
+          }
         case 'boolean':
           if (value is! bool) return null;
           output[key] = value;

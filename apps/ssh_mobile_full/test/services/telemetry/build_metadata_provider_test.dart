@@ -65,6 +65,55 @@ void main() {
   });
 
   test(
+    'honors explicit channels and bounds invalid release channels',
+    () async {
+      final deviceInfo = DeviceInfoPlugin.setMockInitialValues(
+        linuxDeviceInfo: LinuxDeviceInfo(
+          name: 'Linux',
+          id: 'linux',
+          prettyName: 'Debian GNU/Linux',
+          machineId: 'machine',
+        ),
+      );
+
+      final valid = await DeviceInfoBuildMetadataProvider(
+        platform: 'linux',
+        deviceInfo: deviceInfo,
+        releaseChannel: 'beta-rc-1',
+      ).load();
+      expect(valid.releaseChannel, 'beta-rc-1');
+
+      final maxLength = await DeviceInfoBuildMetadataProvider(
+        platform: 'linux',
+        deviceInfo: deviceInfo,
+        releaseChannel: 'a' * 32,
+      ).load();
+      expect(maxLength.releaseChannel, 'a' * 32);
+
+      final tooLong = await DeviceInfoBuildMetadataProvider(
+        platform: 'linux',
+        deviceInfo: deviceInfo,
+        releaseChannel: 'a' * 33,
+      ).load();
+      expect(
+        tooLong.releaseChannel,
+        DeviceInfoBuildMetadataProvider.defaultReleaseChannel,
+      );
+      expect(tooLong.releaseChannel.length, lessThanOrEqualTo(32));
+
+      final empty = await DeviceInfoBuildMetadataProvider(
+        platform: 'linux',
+        deviceInfo: deviceInfo,
+        releaseChannel: '',
+      ).load();
+      expect(
+        empty.releaseChannel,
+        DeviceInfoBuildMetadataProvider.defaultReleaseChannel,
+      );
+    },
+  );
+
+  test(
     'uses safe platform fallbacks when optional model values are empty',
     () async {
       final deviceInfo = _deviceInfo(
