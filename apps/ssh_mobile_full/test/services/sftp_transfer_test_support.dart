@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:app_core/app_core.dart';
 import 'package:connection_core/connection_core.dart';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/services.dart';
@@ -62,6 +63,8 @@ class TransferFixture {
     required this.remote,
     required this.entry,
     String currentPath = '/srv',
+    TelemetryClient? telemetryClient,
+    Duration telemetryFailureTimeout = const Duration(milliseconds: 250),
   }) : storage = NoopStorageService() {
     service = SftpService.forTesting(
       storage.connectionRepository,
@@ -70,6 +73,8 @@ class TransferFixture {
       connection: connection,
       sftpClient: remote,
       currentPath: currentPath,
+      telemetryClient: telemetryClient,
+      telemetryFailureTimeout: telemetryFailureTimeout,
     );
   }
 

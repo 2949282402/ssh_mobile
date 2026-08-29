@@ -121,6 +121,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     ssh_core.SshNativeStreamConnector? nativeStreamConnector,
     this._peerIdResolver,
     SshClientFactory? clientFactory,
+    this.telemetryClient,
     Duration telemetryFailureTimeout = _defaultTelemetryFailureTimeout,
   }) : _pathHistoryStore = pathHistoryStore ?? InMemorySftpPathHistoryStore(),
        _telemetryFailureTimeout = _validateTelemetryFailureTimeout(
