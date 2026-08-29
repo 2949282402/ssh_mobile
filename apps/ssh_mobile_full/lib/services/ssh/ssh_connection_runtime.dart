@@ -289,9 +289,11 @@ extension _SshConnectionRuntime on SshService {
           error: e,
           details: 'sessionId=$sessionId attempt=$i',
         );
-        final delay = min(30, pow(2, i).toInt());
+        final delay =
+            _reconnectDelayOverride?.call(i) ??
+            Duration(seconds: min(30, pow(2, i).toInt()));
         await Future.any<void>(<Future<void>>[
-          Future<void>.delayed(Duration(seconds: delay)),
+          Future<void>.delayed(delay),
           _shutdownSignal.future,
         ]);
         if (_shutdownRequested) return;
@@ -306,7 +308,8 @@ extension _SshConnectionRuntime on SshService {
   }
 
   void _startLocalKeepAlive(_LocalSshRuntime runtime) {
-    runtime.keepAliveTimer = Timer.periodic(const Duration(seconds: 15), (
+    final timerFactory = _timerFactoryOverride ?? Timer.periodic;
+    runtime.keepAliveTimer = timerFactory(const Duration(seconds: 15), (
       timer,
     ) async {
       if (_shutdownRequested ||

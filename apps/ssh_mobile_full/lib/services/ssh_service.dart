@@ -64,13 +64,18 @@ class SshService extends ChangeNotifier
   final AppSettings? _appSettings;
   final ssh_core.SshNativeStreamConnector? _nativeStreamConnector;
   final ssh_core.SshPeerIdResolver? _peerIdResolver;
-  late final SshClientFactory _clientFactory = SshClientFactory(
-    credentialRepository: _credentialRepository,
-    hostKeyRepository: _hostKeyRepository,
-    logger: AppLogService.instance,
-    nativeStreamConnector: _nativeStreamConnector,
-    peerIdResolver: _peerIdResolver,
-  );
+  final SshClientFactory? _clientFactoryOverride;
+  final Duration Function(int attempt)? _reconnectDelayOverride;
+  final Timer Function(Duration, void Function(Timer))? _timerFactoryOverride;
+  late final SshClientFactory _clientFactory =
+      _clientFactoryOverride ??
+      SshClientFactory(
+        credentialRepository: _credentialRepository,
+        hostKeyRepository: _hostKeyRepository,
+        logger: AppLogService.instance,
+        nativeStreamConnector: _nativeStreamConnector,
+        peerIdResolver: _peerIdResolver,
+      );
   final FlutterBackgroundService _backgroundService =
       FlutterBackgroundService();
   final TerminalHistoryService _historyService = TerminalHistoryService();
@@ -130,6 +135,10 @@ class SshService extends ChangeNotifier
     AppSettings? appSettings,
     ssh_core.SshNativeStreamConnector? nativeStreamConnector,
     ssh_core.SshPeerIdResolver? peerIdResolver,
+    @visibleForTesting SshClientFactory? clientFactory,
+    @visibleForTesting Duration Function(int attempt)? reconnectDelay,
+    @visibleForTesting
+    Timer Function(Duration, void Function(Timer))? timerFactory,
     this.telemetryClient,
   }) : _connectionRepository = connectionRepository,
        _credentialRepository = credentialRepository,
@@ -137,7 +146,10 @@ class SshService extends ChangeNotifier
        _terminalMetadataStore = terminalMetadataStore,
        _appSettings = appSettings,
        _nativeStreamConnector = nativeStreamConnector,
-       _peerIdResolver = peerIdResolver {
+       _peerIdResolver = peerIdResolver,
+       _clientFactoryOverride = clientFactory,
+       _reconnectDelayOverride = reconnectDelay,
+       _timerFactoryOverride = timerFactory {
     _backgroundBridge = SshBackgroundEventBridge(
       events: _backgroundService.on,
       onState: _handleBackgroundState,

@@ -7,6 +7,9 @@ SshService createTestSshService(
   TelemetryClient? telemetryClient,
   ssh_core.SshNativeStreamConnector? nativeStreamConnector,
   ssh_core.SshPeerIdResolver? peerIdResolver,
+  SshClientFactory? clientFactory,
+  Duration Function(int attempt)? reconnectDelay,
+  Timer Function(Duration, void Function(Timer))? timerFactory,
 }) => SshService(
   connectionRepository: storage.connectionRepository,
   credentialRepository: storage.credentialRepository,
@@ -16,6 +19,9 @@ SshService createTestSshService(
   telemetryClient: telemetryClient,
   nativeStreamConnector: nativeStreamConnector,
   peerIdResolver: peerIdResolver,
+  clientFactory: clientFactory,
+  reconnectDelay: reconnectDelay,
+  timerFactory: timerFactory,
 );
 
 /// 创建使用测试夹具中显式 Repository 的旧 App SFTP 服务。

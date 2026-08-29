@@ -29,6 +29,7 @@ import 'package:ssh_mobile/services/ssh_service.dart'
 import 'package:ssh_mobile/services/terminal_session_metadata_store.dart';
 import 'package:ssh_mobile/app/monitoring_feature_adapters.dart';
 import 'package:ssh_mobile/app/playbook_feature_adapters.dart';
+import 'package:ssh_mobile/core/services/ssh_client_factory.dart';
 
 part 'test_storage_adapter_connections.dart';
 part 'test_storage_adapter_ai.dart';
