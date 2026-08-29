@@ -182,6 +182,8 @@ final class FakeBackgroundServicePlatform
     extends FlutterBackgroundServicePlatform {
   final Map<String, StreamController<Map<String, dynamic>?>> _events = {};
   final List<String> invocations = <String>[];
+  final List<({String method, Map<String, dynamic>? args})> invocationRecords =
+      <({String method, Map<String, dynamic>? args})>[];
   bool running = false;
   int stopRequests = 0;
 
@@ -203,6 +205,7 @@ final class FakeBackgroundServicePlatform
   @override
   void invoke(String method, [Map<String, dynamic>? args]) {
     invocations.add(method);
+    invocationRecords.add((method: method, args: args));
     if (method == 'stopService') {
       stopRequests++;
       running = false;
