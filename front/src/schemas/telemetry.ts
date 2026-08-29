@@ -49,7 +49,7 @@ export const TelemetryRecordSchema = z.object({
   appVersion: z.string().min(1),
   buildNumber: z.string().min(1),
   platform: PlatformSchema,
-  releaseChannel: z.string().min(1).optional(),
+  releaseChannel: z.string().min(1).max(32).optional(),
   properties: z.record(z.string(), TelemetryPropertyValueSchema).default({}),
   error: TelemetryErrorSchema.optional(),
 });
@@ -95,7 +95,7 @@ export const TelemetryFilterSchema = z.object({
   errorCode: z.string().optional(),
   appVersion: z.string().optional(),
   platform: PlatformSchema.optional(),
-  releaseChannel: z.string().min(1).optional(),
+  releaseChannel: z.string().min(1).max(32).optional(),
   page: z.number().int().min(1).default(1),
   pageSize: z.number().int().min(1).max(200).default(50),
 });

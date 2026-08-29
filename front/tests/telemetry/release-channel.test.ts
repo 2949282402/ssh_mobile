@@ -57,4 +57,18 @@ describe('release channel telemetry contract', () => {
     expect(response.items[0].releaseChannel).toBe('beta');
     expect(fetchMock.mock.calls[0][0]).toContain('releaseChannel=beta');
   });
+
+  it('enforces the 32-character release channel schema bound', () => {
+    const overlong = 'c'.repeat(33);
+    expect(() =>
+      TelemetryRecordSchema.parse({ ...baseRecord, releaseChannel: overlong }),
+    ).toThrow();
+    expect(() => TelemetryFilterSchema.parse({ releaseChannel: overlong })).toThrow();
+
+    const boundary = 'c'.repeat(32);
+    expect(
+      TelemetryRecordSchema.parse({ ...baseRecord, releaseChannel: boundary }).releaseChannel,
+    ).toBe(boundary);
+    expect(TelemetryFilterSchema.parse({ releaseChannel: boundary }).releaseChannel).toBe(boundary);
+  });
 });
