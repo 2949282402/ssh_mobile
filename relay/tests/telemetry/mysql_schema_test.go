@@ -34,6 +34,7 @@ type schemaProbeState struct {
 	execErrors               map[string]error
 	receiptCoverageQueryErr  error
 	receiptBackfillVerifyErr error
+	releaseChannelColumn     bool
 }
 
 func (s *schemaProbeState) reset() {
@@ -53,6 +54,7 @@ func (s *schemaProbeState) reset() {
 	s.execErrors = nil
 	s.receiptCoverageQueryErr = nil
 	s.receiptBackfillVerifyErr = nil
+	s.releaseChannelColumn = true
 }
 
 type schemaProbeDriver struct{}
@@ -127,6 +129,16 @@ func (c *schemaProbeConn) QueryContext(_ context.Context, query string, _ []driv
 			keepOpen: indexKeepOpen,
 		}, nil
 	case strings.Contains(lower, "information_schema.columns"):
+		if strings.Contains(lower, "column_name = 'release_channel'") {
+			c.state.mu.Lock()
+			releaseChannel := c.state.releaseChannelColumn
+			c.state.mu.Unlock()
+			count := int64(0)
+			if releaseChannel {
+				count = 1
+			}
+			return &schemaProbeRows{columns: []string{"COUNT(*)"}, values: []driver.Value{count}}, nil
+		}
 		c.state.mu.Lock()
 		dataType := "varbinary"
 		if c.state.legacyColumn {
@@ -267,6 +279,47 @@ func TestEnsureSchemaBackfillsMissingReceiptsBeforeUniqueIndex(t *testing.T) {
 	}
 	if !binarySchema {
 		t.Fatal("telemetry schema DDL does not use exact binary event IDs")
+	}
+}
+
+func TestEnsureSchemaAddsReleaseChannelOnlyForLegacyTables(t *testing.T) {
+	db := openSchemaProbe(t)
+	schemaProbe.mu.Lock()
+	schemaProbe.releaseChannelColumn = false
+	schemaProbe.mu.Unlock()
+	store := NewMySQLStore(db, DefaultCatalog())
+	if err := store.EnsureSchema(context.Background()); err != nil {
+		t.Fatalf("EnsureSchema legacy release-channel column: %v", err)
+	}
+
+	schemaProbe.mu.Lock()
+	var addCount int
+	for _, query := range schemaProbe.execs {
+		lower := strings.ToLower(query)
+		if strings.Contains(lower, "add column release_channel") {
+			addCount++
+		}
+		if strings.Contains(lower, "add column if not exists") && strings.Contains(lower, "release_channel") {
+			schemaProbe.mu.Unlock()
+			t.Fatalf("release-channel migration still relies on unsupported ADD COLUMN IF NOT EXISTS: %s", query)
+		}
+	}
+	schemaProbe.mu.Unlock()
+	if addCount != 1 {
+		t.Fatalf("legacy release-channel column migration count = %d, want 1", addCount)
+	}
+
+	db = openSchemaProbe(t)
+	store = NewMySQLStore(db, DefaultCatalog())
+	if err := store.EnsureSchema(context.Background()); err != nil {
+		t.Fatalf("EnsureSchema existing release-channel column: %v", err)
+	}
+	schemaProbe.mu.Lock()
+	defer schemaProbe.mu.Unlock()
+	for _, query := range schemaProbe.execs {
+		if strings.Contains(strings.ToLower(query), "add column release_channel") {
+			t.Fatalf("existing release-channel column was altered: %s", query)
+		}
 	}
 }
 

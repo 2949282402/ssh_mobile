@@ -32,7 +32,7 @@ func TestEnsureSchemaHandlesPublicFailurePaths(t *testing.T) {
 		{
 			name: "event id column inspection failure",
 			configure: func() {
-				schemaProbe.queryErrors = map[string]error{"information_schema.columns": errors.New("column metadata unavailable")}
+				schemaProbe.queryErrors = map[string]error{"column_name = 'event_id'": errors.New("column metadata unavailable")}
 			},
 			wantErr: "inspect telemetry_events event id column",
 		},

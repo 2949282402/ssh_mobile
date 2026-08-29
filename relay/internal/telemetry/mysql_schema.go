@@ -76,14 +76,27 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 			return fmt.Errorf("failed executing telemetry schema DDL: %w", err)
 		}
 	}
-	// Existing telemetry databases predate the release-channel dimension. The
-	// nullable column keeps those rows valid and lets MySQL retain the old
-	// records without manufacturing a channel value.
-	if _, err := s.db.ExecContext(ctx, `
-		ALTER TABLE telemetry_events
-			ADD COLUMN IF NOT EXISTS release_channel VARCHAR(32) DEFAULT NULL
-	`); err != nil {
-		return fmt.Errorf("failed adding telemetry release channel column: %w", err)
+	// Existing telemetry databases predate the release-channel dimension. MySQL
+	// does not support IF NOT EXISTS for ADD COLUMN, so inspect the catalog first
+	// and only issue the ALTER for legacy tables. The nullable column keeps old
+	// rows valid without manufacturing a channel value.
+	var releaseChannelColumns int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM information_schema.columns
+		WHERE table_schema = DATABASE()
+		  AND table_name = 'telemetry_events'
+		  AND column_name = 'release_channel'
+	`).Scan(&releaseChannelColumns); err != nil {
+		return fmt.Errorf("inspect telemetry release channel column: %w", err)
+	}
+	if releaseChannelColumns == 0 {
+		if _, err := s.db.ExecContext(ctx, `
+			ALTER TABLE telemetry_events
+				ADD COLUMN release_channel VARCHAR(32) DEFAULT NULL
+		`); err != nil {
+			return fmt.Errorf("failed adding telemetry release channel column: %w", err)
+		}
 	}
 	if err := s.ensureEventIDBinaryColumns(ctx); err != nil {
 		return err

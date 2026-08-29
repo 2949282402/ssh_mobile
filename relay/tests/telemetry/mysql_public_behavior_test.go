@@ -112,6 +112,9 @@ func TestMySQLIngestRetriesDeadlockAndLockWaitConflicts(t *testing.T) {
 				trigger, code,
 			)
 			if _, err := db.ExecContext(context.Background(), createTrigger); err != nil {
+				if strings.Contains(strings.ToLower(err.Error()), "super privilege") {
+					t.Skipf("test MySQL user cannot create conflict trigger: %v", err)
+				}
 				t.Fatalf("create MySQL %d conflict trigger: %v", code, err)
 			}
 			defer func() {

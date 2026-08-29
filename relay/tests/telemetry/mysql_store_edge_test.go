@@ -43,8 +43,9 @@ func TestMySQLStoreIngestRejectsBoundedAndInvalidPublicInputs(t *testing.T) {
 
 	marshalFailure := testEnvelope("evt-mysql-edge-marshal", "dev-mysql-edge")
 	marshalFailure.Properties["session_type"] = func() {}
-	if _, err := store.IngestBatch(context.Background(), []TelemetryEnvelope{marshalFailure}); err == nil || !strings.Contains(err.Error(), "marshal properties") {
-		t.Fatalf("unmarshalable MySQL properties error = %v, want marshal properties", err)
+	results, err = store.IngestBatch(context.Background(), []TelemetryEnvelope{marshalFailure})
+	if err != nil || len(results) != 1 || results[0].Status != StatusRejected || !strings.Contains(results[0].Reason, "invalid type") {
+		t.Fatalf("unmarshalable MySQL properties = %#v, err=%v, want validation rejection", results, err)
 	}
 }
 
