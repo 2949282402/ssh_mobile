@@ -94,8 +94,12 @@ func TestCatalogRejectsInvalidEnvelopeBoundaries(t *testing.T) {
 		{name: "event id", mutate: func(env *TelemetryEnvelope) { env.EventID = "  " }, want: "missing eventId"},
 		{name: "event id bytes", mutate: func(env *TelemetryEnvelope) { env.EventID = strings.Repeat("é", 33) }, want: "maximum length"},
 		{name: "device id", mutate: func(env *TelemetryEnvelope) { env.DeviceID = " " }, want: "missing deviceId"},
+		{name: "device id bytes", mutate: func(env *TelemetryEnvelope) { env.DeviceID = strings.Repeat("d", 129) }, want: "maximum length"},
 		{name: "session id", mutate: func(env *TelemetryEnvelope) { env.SessionID = "" }, want: "missing sessionId"},
+		{name: "session id bytes", mutate: func(env *TelemetryEnvelope) { env.SessionID = strings.Repeat("s", 129) }, want: "maximum length"},
 		{name: "trace id", mutate: func(env *TelemetryEnvelope) { env.TraceID = "" }, want: "missing traceId"},
+		{name: "trace id bytes", mutate: func(env *TelemetryEnvelope) { env.TraceID = strings.Repeat("t", 129) }, want: "maximum length"},
+		{name: "release channel bytes", mutate: func(env *TelemetryEnvelope) { env.ReleaseChannel = strings.Repeat("c", 33) }, want: "maximum length"},
 		{name: "occurred at", mutate: func(env *TelemetryEnvelope) { env.OccurredAt = time.Time{} }, want: "occurredAt"},
 		{name: "event name", mutate: func(env *TelemetryEnvelope) { env.EventName = "unknown.event" }, want: "unregistered event name"},
 	}

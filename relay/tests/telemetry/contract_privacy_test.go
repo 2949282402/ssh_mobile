@@ -106,6 +106,48 @@ func TestTelemetryIngestRejectsBodyDeviceMismatch(t *testing.T) {
 	}
 }
 
+func TestTelemetryIngestBackfillsLegacyEnvelopeDeviceID(t *testing.T) {
+	service, store := newTestService(testAuthSecret)
+	token := mustAuth(t, service, store, "authenticated-device")
+	handler := NewHandler(service)
+	mux := contractPrivacyMux(handler)
+
+	record := testEnvelope("legacy-no-device-id", "authenticated-device")
+	record.DeviceID = ""
+	body, err := json.Marshal(IngestBatchRequest{Records: []TelemetryEnvelope{record}})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, PathPublicIngest, bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Device-Id", "authenticated-device")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("legacy batch status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var ingestResp IngestBatchResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &ingestResp); err != nil {
+		t.Fatalf("decode ingest response: %v", err)
+	}
+	if len(ingestResp.Results) != 1 || ingestResp.Results[0].Status != StatusAccepted {
+		t.Fatalf("legacy batch ACK = %#v, want accepted", ingestResp.Results)
+	}
+
+	rows, total, err := store.QueryEvents(context.Background(), QueryFilter{
+		DeviceID: "authenticated-device",
+		Page:     1,
+		PageSize: 50,
+	})
+	if err != nil {
+		t.Fatalf("query events after legacy backfill: %v", err)
+	}
+	if total != 1 || len(rows) != 1 || rows[0].DeviceID != "authenticated-device" {
+		t.Fatalf("legacy backfilled rows = %#v total = %d, want one authenticated-device record", rows, total)
+	}
+}
+
 func contractPrivacyMux(handler *Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	handler.RegisterPublicRoutes(mux)

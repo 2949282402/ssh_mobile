@@ -33,6 +33,7 @@ type schemaProbeState struct {
 	receiptCoverageQueryErr  error
 	receiptBackfillVerifyErr error
 	releaseChannelColumn     bool
+	releaseChannelIndex      bool
 }
 
 func (s *schemaProbeState) reset() {
@@ -53,6 +54,7 @@ func (s *schemaProbeState) reset() {
 	s.receiptCoverageQueryErr = nil
 	s.receiptBackfillVerifyErr = nil
 	s.releaseChannelColumn = true
+	s.releaseChannelIndex = true
 }
 
 type schemaProbeDriver struct{}
@@ -108,6 +110,18 @@ func (c *schemaProbeConn) QueryContext(_ context.Context, query string, _ []driv
 			rows = append(rows, []driver.Value{eventID})
 		}
 		return &schemaProbeMultiRows{columns: []string{"event_id"}, rows: rows}, nil
+	case strings.Contains(lower, "idx_telemetry_release_channel_received"):
+		c.state.mu.Lock()
+		present := c.state.releaseChannelIndex
+		c.state.mu.Unlock()
+		rows := make([][]driver.Value, 0, 2)
+		if present {
+			rows = append(rows,
+				[]driver.Value{int64(1), "release_channel"},
+				[]driver.Value{int64(2), "received_at"},
+			)
+		}
+		return &schemaProbeMultiRows{columns: []string{"SEQ_IN_INDEX", "COLUMN_NAME"}, rows: rows}, nil
 	case strings.Contains(lower, "information_schema.statistics"):
 		c.state.mu.Lock()
 		indexRows := append([][]driver.Value(nil), c.state.indexRows...)

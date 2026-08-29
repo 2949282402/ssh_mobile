@@ -98,6 +98,9 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 			return fmt.Errorf("failed adding telemetry release channel column: %w", err)
 		}
 	}
+	if err := s.ensureReleaseChannelIndex(ctx); err != nil {
+		return err
+	}
 	if err := s.ensureEventIDBinaryColumns(ctx); err != nil {
 		return err
 	}
@@ -106,6 +109,64 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 	}
 	if err := s.ensureEventIDUniqueIndex(ctx); err != nil {
 		return err
+	}
+	return nil
+}
+
+// ensureReleaseChannelIndex installs the canonical release-channel index on
+// legacy telemetry tables. CREATE TABLE defines idx_telemetry_release_channel_received
+// for fresh schemas, but the legacy ADD COLUMN migration never created the
+// index; admin releaseChannel filters must see the same execution plan on every
+// deployment history. A malformed legacy index is replaced rather than assumed
+// correct.
+func (s *MySQLStore) ensureReleaseChannelIndex(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT SEQ_IN_INDEX, COLUMN_NAME
+		FROM information_schema.statistics
+		WHERE table_schema = DATABASE()
+		  AND table_name = 'telemetry_events'
+		  AND index_name = 'idx_telemetry_release_channel_received'
+		ORDER BY SEQ_IN_INDEX
+	`)
+	if err != nil {
+		return fmt.Errorf("inspect telemetry release channel index: %w", err)
+	}
+	type indexPart struct {
+		seqInIndex sql.NullInt64
+		columnName sql.NullString
+	}
+	parts := make([]indexPart, 0, 2)
+	for rows.Next() {
+		var part indexPart
+		if err := rows.Scan(&part.seqInIndex, &part.columnName); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("inspect telemetry release channel index: scan metadata: %w", err)
+		}
+		parts = append(parts, part)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("inspect telemetry release channel index: iterate metadata: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("inspect telemetry release channel index: close metadata: %w", err)
+	}
+
+	canonical := len(parts) == 2 &&
+		parts[0].seqInIndex.Valid && parts[0].seqInIndex.Int64 == 1 &&
+		parts[0].columnName.Valid && parts[0].columnName.String == "release_channel" &&
+		parts[1].seqInIndex.Valid && parts[1].seqInIndex.Int64 == 2 &&
+		parts[1].columnName.Valid && parts[1].columnName.String == "received_at"
+	if canonical {
+		return nil
+	}
+	if len(parts) > 0 {
+		if _, err := s.db.ExecContext(ctx, "ALTER TABLE telemetry_events DROP INDEX idx_telemetry_release_channel_received"); err != nil {
+			return fmt.Errorf("replace invalid telemetry release channel index: drop existing index: %w", err)
+		}
+	}
+	if _, err := s.db.ExecContext(ctx, "ALTER TABLE telemetry_events ADD INDEX idx_telemetry_release_channel_received (release_channel, received_at)"); err != nil {
+		return fmt.Errorf("add telemetry release channel index: %w", err)
 	}
 	return nil
 }

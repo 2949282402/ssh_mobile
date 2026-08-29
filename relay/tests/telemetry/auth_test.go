@@ -114,6 +114,29 @@ func TestAuthenticateDevice_ValidProofIssuesToken(t *testing.T) {
 	}
 }
 
+func TestAuthenticateDeviceAcceptsRelayScaleDeviceID(t *testing.T) {
+	service, store := newTestService(testAuthSecret)
+
+	// The Relay bootstrap identity contract bounds device_id at 128 bytes and
+	// the telemetry schema stores VARCHAR(128); telemetry auth must admit the
+	// full Relay identity space instead of rejecting 65-128 byte identifiers.
+	deviceID := strings.Repeat("d", 128)
+	token := mustAuth(t, service, store, deviceID)
+	if !service.VerifyDeviceToken(deviceID, token) {
+		t.Fatal("128-byte device token did not verify")
+	}
+
+	overlong := strings.Repeat("o", 129)
+	_, deviceHash := registerDevice(t, store, overlong)
+	exp := futureEpoch()
+	if _, _, err := service.AuthenticateDevice(context.Background(), overlong, deviceProof(overlong, deviceHash, exp), exp); !errors.Is(err, ErrAuthFailed) {
+		t.Fatalf("129-byte device authentication error = %v, want ErrAuthFailed", err)
+	}
+	if token, _ := service.GenerateDeviceToken(overlong, time.Hour); token != "" {
+		t.Fatalf("129-byte device token = %q, want empty", token)
+	}
+}
+
 func TestVerifyDeviceToken_NoSecretFails(t *testing.T) {
 	service, _ := newTestService("")
 	token, exp := service.GenerateDeviceToken("dev-x", DefaultTokenTTL)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -131,5 +132,32 @@ func TestTelemetryReleaseChannelPersistsAndFiltersMySQL(t *testing.T) {
 	}
 	if total != 1 || len(rows) != 1 || rows[0].ReleaseChannel != "beta" {
 		t.Fatalf("MySQL rows = %#v total=%d, want one beta record", rows, total)
+	}
+}
+
+func TestTelemetryReleaseChannelLengthBoundary(t *testing.T) {
+	store := NewMemoryStore(DefaultCatalog())
+
+	results, err := store.IngestBatch(context.Background(), []TelemetryEnvelope{
+		releaseChannelEnvelope("release-channel-33", strings.Repeat("c", 33)),
+	})
+	if err != nil {
+		t.Fatalf("ingest overlong release channel: %v", err)
+	}
+	if len(results) != 1 || results[0].Status != StatusRejected {
+		t.Fatalf("overlong release channel ACK = %#v, want rejected", results)
+	}
+	if !strings.Contains(results[0].Reason, "releaseChannel exceeds maximum length of 32 bytes") {
+		t.Fatalf("overlong release channel reason = %q, want length rejection", results[0].Reason)
+	}
+
+	results, err = store.IngestBatch(context.Background(), []TelemetryEnvelope{
+		releaseChannelEnvelope("release-channel-32", strings.Repeat("c", 32)),
+	})
+	if err != nil {
+		t.Fatalf("ingest boundary release channel: %v", err)
+	}
+	if len(results) != 1 || results[0].Status != StatusAccepted {
+		t.Fatalf("boundary release channel ACK = %#v, want accepted", results)
 	}
 }

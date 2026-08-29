@@ -78,6 +78,48 @@ func TestEnsureSchemaAddsReleaseChannelOnlyForLegacyTables(t *testing.T) {
 	}
 }
 
+func TestEnsureSchemaRestoresReleaseChannelIndexForLegacyTables(t *testing.T) {
+	db := openSchemaProbe(t)
+	schemaProbe.mu.Lock()
+	schemaProbe.releaseChannelColumn = false
+	schemaProbe.releaseChannelIndex = false
+	schemaProbe.mu.Unlock()
+	store := NewMySQLStore(db, DefaultCatalog())
+	if err := store.EnsureSchema(context.Background()); err != nil {
+		t.Fatalf("EnsureSchema legacy release-channel index: %v", err)
+	}
+
+	schemaProbe.mu.Lock()
+	var addIndexCount, dropIndexCount int
+	for _, query := range schemaProbe.execs {
+		lower := strings.ToLower(query)
+		if strings.Contains(lower, "add index idx_telemetry_release_channel_received") &&
+			strings.Contains(lower, "release_channel") && strings.Contains(lower, "received_at") {
+			addIndexCount++
+		}
+		if strings.Contains(lower, "drop index idx_telemetry_release_channel_received") {
+			dropIndexCount++
+		}
+	}
+	schemaProbe.mu.Unlock()
+	if addIndexCount != 1 || dropIndexCount != 0 {
+		t.Fatalf("legacy release-channel index migration add=%d drop=%d, want exactly one add", addIndexCount, dropIndexCount)
+	}
+
+	db = openSchemaProbe(t)
+	store = NewMySQLStore(db, DefaultCatalog())
+	if err := store.EnsureSchema(context.Background()); err != nil {
+		t.Fatalf("EnsureSchema fresh release-channel index: %v", err)
+	}
+	schemaProbe.mu.Lock()
+	defer schemaProbe.mu.Unlock()
+	for _, query := range schemaProbe.execs {
+		if strings.Contains(strings.ToLower(query), "add index idx_telemetry_release_channel_received") {
+			t.Fatalf("fresh schema re-created release-channel index: %s", query)
+		}
+	}
+}
+
 func TestEnsureSchemaFailsExplicitlyOnDuplicateLegacyEventIDs(t *testing.T) {
 	db := openSchemaProbe(t)
 	schemaProbe.mu.Lock()

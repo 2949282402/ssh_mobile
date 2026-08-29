@@ -244,13 +244,20 @@ func (h *Handler) handlePublicIngest(w http.ResponseWriter, r *http.Request) {
 
 	// The body field remains optional at the decoding boundary for legacy
 	// partial batches, but when present it is an authenticated binding and must
-	// agree with the header. Never overwrite client data after authentication:
-	// doing so would hide a confused-deputy or replay attempt from validation
-	// and auditing.
+	// agree with the header. Never overwrite a non-empty client value after
+	// authentication: doing so would hide a confused-deputy or replay attempt
+	// from validation and auditing. Whitespace-only values are treated as
+	// absent and stamped from the verified header so legacy batches keep the
+	// authenticated identity instead of failing catalog validation.
 	for i := range req.Records {
-		if req.Records[i].DeviceID != "" && req.Records[i].DeviceID != deviceID {
+		if strings.TrimSpace(req.Records[i].DeviceID) != "" && req.Records[i].DeviceID != deviceID {
 			h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "telemetry record deviceId does not match authenticated device")
 			return
+		}
+	}
+	for i := range req.Records {
+		if strings.TrimSpace(req.Records[i].DeviceID) == "" {
+			req.Records[i].DeviceID = deviceID
 		}
 	}
 

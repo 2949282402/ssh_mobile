@@ -17,11 +17,14 @@ import (
 	"time"
 )
 
-var validDeviceIDRegex = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+var validDeviceIDRegex = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 
-// isValidDeviceID validates that a device identifier contains only safe characters
-// (alphanumeric, dot, underscore, dash) and is within 1-64 characters, strictly
-// prohibiting delimiters such as ':' to prevent delimiter-collision attacks.
+// isValidDeviceID validates that a device identifier contains only safe ASCII
+// characters (alphanumeric, dot, underscore, dash) and is within 1-128 bytes.
+// The bound matches the Relay bootstrap identity contract (device_id ≤ 128
+// bytes) and the telemetry MySQL VARCHAR(128) columns; the strict character set
+// keeps delimiters such as ':' out of auth token transcripts to prevent
+// delimiter-collision forgery.
 func isValidDeviceID(deviceID string) bool {
 	return validDeviceIDRegex.MatchString(deviceID)
 }

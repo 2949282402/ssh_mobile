@@ -428,11 +428,30 @@ func (c *Catalog) ValidateEnvelopeAt(env *TelemetryEnvelope, now time.Time) erro
 	if strings.TrimSpace(env.DeviceID) == "" {
 		return fmt.Errorf("missing deviceId")
 	}
+	// Relay device identities are bounded at 128 bytes by the bootstrap
+	// contract and telemetry_events.device_id stores VARCHAR(128). Reject
+	// oversized identities explicitly instead of failing inside the durable
+	// store or silently truncating an identity.
+	if len([]byte(env.DeviceID)) > 128 {
+		return fmt.Errorf("deviceId exceeds maximum length of 128 bytes")
+	}
 	if strings.TrimSpace(env.SessionID) == "" {
 		return fmt.Errorf("missing sessionId")
 	}
+	if len([]byte(env.SessionID)) > 128 {
+		return fmt.Errorf("sessionId exceeds maximum length of 128 bytes")
+	}
 	if strings.TrimSpace(env.TraceID) == "" {
 		return fmt.Errorf("missing traceId")
+	}
+	if len([]byte(env.TraceID)) > 128 {
+		return fmt.Errorf("traceId exceeds maximum length of 128 bytes")
+	}
+	// telemetry_events.release_channel is VARCHAR(32); enforce the same byte
+	// bound so overlong channel labels are rejected explicitly rather than
+	// failing inside the durable store.
+	if len([]byte(env.ReleaseChannel)) > 32 {
+		return fmt.Errorf("releaseChannel exceeds maximum length of 32 bytes")
 	}
 	if env.OccurredAt.IsZero() {
 		return fmt.Errorf("missing or invalid occurredAt timestamp")

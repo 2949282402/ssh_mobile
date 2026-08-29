@@ -1,4 +1,4 @@
-> Last updated: 2026-08-28
+> Last updated: 2026-08-29
 
 # Backend Current State
 
@@ -160,7 +160,7 @@ Current boundaries:
 - Telemetry & Observability Pipeline (`internal/telemetry`) is decoupled from Relay core:
   - Ingestion (`POST /api/v1/telemetry/ingest`), authentication (`POST /api/v1/telemetry/auth`),
     and dynamic policy (`GET /api/v1/telemetry/policy`) run on dedicated HTTP endpoints.
-  - Device authentication uses HMAC-SHA256 proofs (`telemetry:auth:<deviceId>:<expEpoch>` signed with `sha256Hex(secret)` derived key) within ±120s clock skew window and issues 2-hour scoped bearer tokens `<exp>.<hmac(tokenKey, "telemetry:auth:<deviceId>:<exp>")>`. Device ID is validated against `^[A-Za-z0-9._-]{1,64}$` to prevent delimiter-collision forgery.
+  - Device authentication uses HMAC-SHA256 proofs (`telemetry:auth:<deviceId>:<expEpoch>` signed with `sha256Hex(secret)` derived key) within ±120s clock skew window and issues 2-hour scoped bearer tokens `<exp>.<hmac(tokenKey, "telemetry:auth:<deviceId>:<exp>")>`. Device ID is validated against `^[A-Za-z0-9._-]{1,128}$` to prevent delimiter-collision forgery, matching the Relay bootstrap identity bound and the telemetry MySQL VARCHAR(128) columns.
   - Ingestion enforces device binding via `X-Device-Id` and token HMAC verification.
   - Fail-closed guarantees: missing/short `TELEMETRY_AUTH_SECRET` (<16 chars) or MySQL store failure returns 503 Service Unavailable, preserving client-side pending telemetry records.
   - Ingestion processes batch records atomically: each record writes to `telemetry_events` (or
