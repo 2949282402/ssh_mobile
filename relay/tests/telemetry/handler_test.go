@@ -38,6 +38,9 @@ func TestTelemetryHTTPHandler(t *testing.T) {
 	if authRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK from auth, got %d: %s", authRec.Code, authRec.Body.String())
 	}
+	if cacheControl := authRec.Header().Get("Cache-Control"); cacheControl != "no-store" {
+		t.Fatalf("expected auth response Cache-Control no-store, got %q", cacheControl)
+	}
 
 	var authResp map[string]any
 	_ = json.Unmarshal(authRec.Body.Bytes(), &authResp)
@@ -53,6 +56,9 @@ func TestTelemetryHTTPHandler(t *testing.T) {
 
 	if policyRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK from policy, got %d", policyRec.Code)
+	}
+	if cacheControl := policyRec.Header().Get("Cache-Control"); cacheControl != "no-store" {
+		t.Fatalf("expected policy response Cache-Control no-store, got %q", cacheControl)
 	}
 
 	var policyResp TelemetryUploadPolicy
@@ -106,6 +112,9 @@ func TestTelemetryHTTPHandler(t *testing.T) {
 	if ingestRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK from ingest, got %d: %s", ingestRec.Code, ingestRec.Body.String())
 	}
+	if cacheControl := ingestRec.Header().Get("Cache-Control"); cacheControl != "no-store" {
+		t.Fatalf("expected ingest response Cache-Control no-store, got %q", cacheControl)
+	}
 
 	var ingestResp IngestBatchResponse
 	if err := json.Unmarshal(ingestRec.Body.Bytes(), &ingestResp); err != nil {
@@ -127,6 +136,9 @@ func TestTelemetryHTTPHandler(t *testing.T) {
 	_ = json.Unmarshal(replayRec.Body.Bytes(), &replayResp)
 	if len(replayResp.Results) != 1 || replayResp.Results[0].Status != StatusAlreadySeen {
 		t.Fatalf("expected already_seen on replay, got %+v", replayResp)
+	}
+	if cacheControl := replayRec.Header().Get("Cache-Control"); cacheControl != "no-store" {
+		t.Fatalf("expected replay response Cache-Control no-store, got %q", cacheControl)
 	}
 }
 

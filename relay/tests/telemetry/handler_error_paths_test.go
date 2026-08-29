@@ -1,10 +1,12 @@
 package telemetry_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -234,6 +236,134 @@ func TestAdminHandlersReportStoreFailuresAndNormalizeFilters(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"page":1`) || !strings.Contains(rec.Body.String(), `"pageSize":50`) {
 		t.Fatalf("normalized admin event filter = %d %s", rec.Code, rec.Body.String())
 	}
+}
+
+const telemetryHTTPErrorSentinel = "telemetry-http-internal-secret"
+
+func TestTelemetryHTTPErrorsUseGenericPublicMessages(t *testing.T) {
+	store := &sentinelHTTPErrorStore{MemoryStore: NewMemoryStore(DefaultCatalog())}
+	service := NewServiceWithSecret(store, DefaultCatalog(), &NoopRedisCache{}, testAuthSecret)
+	deviceID := "http-error-device"
+	token := mustAuth(t, service, store.MemoryStore, deviceID)
+	mux := handlerMux(NewHandler(service))
+
+	ingestBody, _ := json.Marshal(IngestBatchRequest{Records: []TelemetryEnvelope{testEnvelope("http-error-event", deviceID)}})
+	cases := []struct {
+		name        string
+		method      string
+		path        string
+		body        string
+		wantStatus  int
+		wantCode    string
+		wantMessage string
+		deviceToken string
+	}{
+		{
+			name: "ingest", method: http.MethodPost, path: RoutePublicIngest, body: string(ingestBody),
+			wantStatus: http.StatusServiceUnavailable, wantCode: "SERVICE_UNAVAILABLE",
+			wantMessage: "telemetry ingest processing failed", deviceToken: token,
+		},
+		{
+			name: "policy", method: http.MethodGet, path: PathPublicPolicy,
+			wantStatus: http.StatusInternalServerError, wantCode: "INTERNAL_ERROR",
+			wantMessage: "telemetry policy query failed",
+		},
+		{
+			name: "overview", method: http.MethodGet, path: PathAdminOverview,
+			wantStatus: http.StatusInternalServerError, wantCode: "QUERY_ERROR",
+			wantMessage: "telemetry overview query failed",
+		},
+		{
+			name: "settings put", method: http.MethodPut, path: PathAdminSettings, body: `{"retentionDays":30}`,
+			wantStatus: http.StatusInternalServerError, wantCode: "UPDATE_SETTINGS_ERROR",
+			wantMessage: "telemetry settings update failed",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			if tc.deviceToken != "" {
+				req.Header.Set("Authorization", "Bearer "+tc.deviceToken)
+				req.Header.Set("X-Device-Id", deviceID)
+			}
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("%s status = %d, want %d: %s", tc.name, rec.Code, tc.wantStatus, rec.Body.String())
+			}
+			body := rec.Body.String()
+			if !strings.Contains(body, tc.wantCode) || !strings.Contains(body, tc.wantMessage) {
+				t.Fatalf("%s error body = %s, want code %q and message %q", tc.name, body, tc.wantCode, tc.wantMessage)
+			}
+			if strings.Contains(body, telemetryHTTPErrorSentinel) {
+				t.Fatalf("%s error body leaked internal detail: %s", tc.name, body)
+			}
+		})
+	}
+}
+
+func TestTelemetryHandlerLogsInternalErrorDetail(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	store := &sentinelHTTPErrorStore{MemoryStore: NewMemoryStore(DefaultCatalog())}
+	service := NewServiceWithSecret(store, DefaultCatalog(), &NoopRedisCache{}, testAuthSecret)
+	mux := handlerMux(NewHandler(service).WithLogger(logger))
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, PathAdminSettings, strings.NewReader(`{}`)))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("settings failure status = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(logs.String(), telemetryHTTPErrorSentinel) {
+		t.Fatalf("expected internal error detail in handler logs, got: %s", logs.String())
+	}
+}
+
+func TestTelemetryHTTPErrorsRedactInternalDetailsAndAreNotCacheable(t *testing.T) {
+	store := &sentinelHTTPErrorStore{MemoryStore: NewMemoryStore(DefaultCatalog())}
+	service := NewServiceWithSecret(store, DefaultCatalog(), &NoopRedisCache{}, testAuthSecret)
+	mux := handlerMux(NewHandler(service))
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, PathAdminSettings, strings.NewReader(`{}`)))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("settings failure status = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	if cacheControl := rec.Header().Get("Cache-Control"); cacheControl != "no-store" {
+		t.Fatalf("expected error response Cache-Control no-store, got %q", cacheControl)
+	}
+	if body := rec.Body.String(); strings.Contains(body, telemetryHTTPErrorSentinel) {
+		t.Fatalf("error response leaked internal details: %s", body)
+	}
+}
+
+type sentinelHTTPErrorStore struct {
+	*MemoryStore
+}
+
+func (s *sentinelHTTPErrorStore) IngestBatch(context.Context, []TelemetryEnvelope) ([]IngestRecordResult, error) {
+	return nil, errors.New(telemetryHTTPErrorSentinel)
+}
+
+func (s *sentinelHTTPErrorStore) QueryOverview(context.Context, QueryFilter) (*OverviewMetrics, error) {
+	return nil, errors.New(telemetryHTTPErrorSentinel)
+}
+
+func (s *sentinelHTTPErrorStore) QueryEvents(context.Context, QueryFilter) ([]TelemetryEnvelope, int, error) {
+	return nil, 0, errors.New(telemetryHTTPErrorSentinel)
+}
+
+func (s *sentinelHTTPErrorStore) QueryDiagnostics(context.Context, QueryFilter) ([]TelemetryEnvelope, int, error) {
+	return nil, 0, errors.New(telemetryHTTPErrorSentinel)
+}
+
+func (s *sentinelHTTPErrorStore) GetSettings(context.Context) (*TelemetrySettings, error) {
+	return nil, errors.New(telemetryHTTPErrorSentinel)
+}
+
+func (s *sentinelHTTPErrorStore) SaveSettings(context.Context, TelemetrySettings) error {
+	return errors.New(telemetryHTTPErrorSentinel)
 }
 
 type handlerErrorStore struct {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ type Handler struct {
 	config   IngestConfig
 	writer   chan struct{}
 	limiter  *deviceRateLimiter
+	logger   *slog.Logger
 }
 
 // NewHandler creates a telemetry handler. The optional attestor keeps existing
@@ -45,7 +47,26 @@ func NewHandlerWithConfig(service *Service, config IngestConfig, attestors ...De
 		config:   config,
 		writer:   make(chan struct{}, config.MaxConcurrentWriters),
 		limiter:  newDeviceRateLimiter(config),
+		logger:   slog.Default(),
 	}
+}
+
+// WithLogger injects the structured logger used to record internal error
+// detail that must not be exposed to HTTP clients.
+func (h *Handler) WithLogger(logger *slog.Logger) *Handler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	h.logger = logger
+	return h
+}
+
+func (h *Handler) logError(message string, err error) {
+	logger := h.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger.Error(message, "error", err)
 }
 
 func (h *Handler) RegisterPublicRoutes(mux *http.ServeMux) {
@@ -126,6 +147,7 @@ func (h *Handler) RegisterAdminRoutes(mux *http.ServeMux, adminAuth func(http.Ha
 }
 
 func (h *Handler) writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
@@ -283,7 +305,8 @@ func (h *Handler) handlePublicIngest(w http.ResponseWriter, r *http.Request) {
 	// Any backing-store error surfaces as 503 so the client retries later.
 	results, err := h.service.IngestBatch(r.Context(), req.Records)
 	if err != nil {
-		h.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "ingest processing error: "+err.Error())
+		h.logError("telemetry ingest processing failed", err)
+		h.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "telemetry ingest processing failed")
 		return
 	}
 
@@ -328,7 +351,8 @@ func (h *Handler) handlePublicPolicy(w http.ResponseWriter, r *http.Request) {
 
 	policy, err := h.service.GetPolicy(r.Context())
 	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "get policy error: "+err.Error())
+		h.logError("telemetry policy query failed", err)
+		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "telemetry policy query failed")
 		return
 	}
 
@@ -349,7 +373,8 @@ func (h *Handler) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
 	filter := parseQueryFilter(r)
 	metrics, err := h.service.QueryOverview(r.Context(), filter)
 	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, "QUERY_ERROR", "query overview error: "+err.Error())
+		h.logError("telemetry overview query failed", err)
+		h.writeError(w, http.StatusInternalServerError, "QUERY_ERROR", "telemetry overview query failed")
 		return
 	}
 
@@ -370,7 +395,8 @@ func (h *Handler) handleAdminEvents(w http.ResponseWriter, r *http.Request) {
 	filter := parseQueryFilter(r)
 	items, total, err := h.service.QueryEvents(r.Context(), filter)
 	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, "QUERY_ERROR", "query events error: "+err.Error())
+		h.logError("telemetry events query failed", err)
+		h.writeError(w, http.StatusInternalServerError, "QUERY_ERROR", "telemetry events query failed")
 		return
 	}
 
@@ -396,7 +422,8 @@ func (h *Handler) handleAdminDiagnostics(w http.ResponseWriter, r *http.Request)
 	filter := parseQueryFilter(r)
 	items, total, source, err := h.service.QueryDiagnostics(r.Context(), filter)
 	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, "QUERY_ERROR", "query diagnostics error: "+err.Error())
+		h.logError("telemetry diagnostics query failed", err)
+		h.writeError(w, http.StatusInternalServerError, "QUERY_ERROR", "telemetry diagnostics query failed")
 		return
 	}
 
@@ -419,7 +446,8 @@ func (h *Handler) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		settings, err := h.service.GetSettings(r.Context())
 		if err != nil {
-			h.writeError(w, http.StatusInternalServerError, "GET_SETTINGS_ERROR", "get settings error: "+err.Error())
+			h.logError("telemetry settings read failed", err)
+			h.writeError(w, http.StatusInternalServerError, "GET_SETTINGS_ERROR", "telemetry settings read failed")
 			return
 		}
 		h.writeJSON(w, http.StatusOK, settings)
@@ -435,7 +463,8 @@ func (h *Handler) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := h.service.UpdateSettings(r.Context(), settings); err != nil {
-			h.writeError(w, http.StatusInternalServerError, "UPDATE_SETTINGS_ERROR", "update settings error: "+err.Error())
+			h.logError("telemetry settings update failed", err)
+			h.writeError(w, http.StatusInternalServerError, "UPDATE_SETTINGS_ERROR", "telemetry settings update failed")
 			return
 		}
 		h.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
