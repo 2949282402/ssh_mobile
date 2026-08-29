@@ -101,16 +101,51 @@ class FrozenContractAcceptanceMixin:
             self.assertIn(f"flutter test --no-pub {selector}", script)
 
     def test_protocol_job_preflights_flutter_and_coverage_gate_is_opt_in(self) -> None:
+        workflow = _read(".github/workflows/flutter.yml")
         full_test = _read("scripts/bash/ci/full_test.sh")
+        full_test_jobs = _read("scripts/bash/ci/full_test_jobs.sh")
+        full_test_config = _read("scripts/bash/ci/full_test_config.sh")
         coverage_test = _read("scripts/bash/coverage/coverage_test.sh")
         client_coverage = _read("scripts/bash/coverage/client_coverage.sh")
-        protocol_job = re.search(
-            r"job_protocol\(\) \{(.*?)\n\}", full_test, flags=re.DOTALL
+
+        workflow_lines = workflow.splitlines()
+        start = next(
+            index
+            for index, line in enumerate(workflow_lines)
+            if line.strip() == "protocol-v2-contract:"
         )
-        self.assertIsNotNone(protocol_job)
-        assert protocol_job is not None
-        self.assertIn("need bash cargo go python3 protoc buf dart flutter", protocol_job.group(1))
-        self.assertIn('DEFAULT_APP_COVERAGE="${FULL_TEST_COVERAGE:-0}"', full_test)
+        protocol_job_lines = [workflow_lines[start]]
+        for line in workflow_lines[start + 1 :]:
+            if re.match(r"^  [A-Za-z0-9_-]+:\s*(?:#.*)?$", line):
+                break
+            protocol_job_lines.append(line)
+        protocol_job = "\n".join(protocol_job_lines)
+        self.assertIn("subosito/flutter-action@v2", protocol_job)
+        self.assertIn("flutter pub get", protocol_job)
+        self.assertIn("dart run scripts/bash/contracts/check_network_v2_contract.dart --test", protocol_job)
+        self.assertIn(
+            "bash scripts/bash/contracts/network_v2_acceptance.sh strict",
+            protocol_job,
+        )
+        self.assertNotIn("client_coverage.sh", protocol_job)
+        self.assertNotIn("--coverage", protocol_job)
+
+        self.assertIn("protocol-v2-contract:job_protocol", full_test)
+        local_protocol_job = re.search(
+            r"job_protocol\(\) \{(.*?)\n\}", full_test_jobs, flags=re.DOTALL
+        )
+        self.assertIsNotNone(local_protocol_job)
+        assert local_protocol_job is not None
+        self.assertIn(
+            "need bash cargo go python3 protoc buf dart flutter",
+            local_protocol_job.group(1),
+        )
+        self.assertIn(
+            "bash scripts/bash/contracts/network_v2_acceptance.sh strict",
+            local_protocol_job.group(1),
+        )
+
+        self.assertIn('DEFAULT_APP_COVERAGE="${FULL_TEST_COVERAGE:-0}"', full_test_config)
         self.assertIn("scripts/bash/coverage/client_coverage.sh", full_test)
         self.assertIn("client_coverage.sh", coverage_test)
         self.assertIn('MINIMUM="${CLIENT_COVERAGE_MINIMUM:-90}"', client_coverage)

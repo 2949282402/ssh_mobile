@@ -100,20 +100,137 @@ def _read(relative_path: str) -> str:
     return (ROOT / relative_path).read_text(encoding="utf-8")
 
 
+_RUST_MOD = re.compile(
+    r"^\s*(?P<attrs>(?:#\[[^\]]*\]\s*)*)"
+    r"(?:pub(?:\([^)]*\))?\s+)?mod\s+(?P<name>[A-Za-z0-9_]+)\s*;",
+    re.MULTILINE,
+)
+_RUST_PATH_ATTR = re.compile(r"#\[\s*path\s*=\s*[\"']([^\"']+)[\"']\s*\]")
+_RUST_INCLUDE = re.compile(
+    r"^\s*include!\s*\(\s*[\"']([^\"']+)[\"']\s*\)\s*;",
+    re.MULTILINE,
+)
+_DART_PART = re.compile(
+    r"""^\s*part\s+['"]([^'"]+)['"]\s*;""",
+    re.MULTILINE,
+)
+
+
+def _rust_module_declarations(source: str) -> list[tuple[str, str | None, bool]]:
+    """Return ``(name, path_attribute, is_test_only)`` for each file module."""
+    declarations: list[tuple[str, str | None, bool]] = []
+    pending_attrs: list[str] = []
+    for line in source.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#[") and stripped.endswith("]"):
+            pending_attrs.append(stripped)
+            continue
+        match = _RUST_MOD.search(line)
+        if match is None:
+            if stripped:
+                pending_attrs = []
+            continue
+        attrs = list(pending_attrs)
+        attrs.extend(re.findall(r"#\[[^\]]*\]", match.group("attrs") or ""))
+        pending_attrs = []
+        path_attr: str | None = None
+        for attr in attrs:
+            path_match = _RUST_PATH_ATTR.search(attr)
+            if path_match is not None:
+                path_attr = path_match.group(1)
+        declarations.append(
+            (
+                match.group("name"),
+                path_attr,
+                any("cfg(test)" in attr for attr in attrs),
+            )
+        )
+    return declarations
+
+
+def _resolve_rust_module(
+    source_file: Path,
+    name: str,
+    path_attr: str | None,
+) -> Path | None:
+    """Resolve a Rust module file from its declaration and ``#[path]``."""
+    if path_attr is not None:
+        candidate = source_file.parent / path_attr
+        return candidate.resolve() if candidate.is_file() else None
+    if source_file.name in {"lib.rs", "main.rs", "mod.rs"}:
+        module_root = source_file.parent
+    else:
+        module_root = source_file.with_suffix("")
+    flat = module_root / f"{name}.rs"
+    if flat.is_file():
+        return flat.resolve()
+    nested = module_root / name / "mod.rs"
+    if nested.is_file():
+        return nested.resolve()
+    return None
+
+
+def _rust_tree(entry: Path) -> list[Path]:
+    """Return every Rust file reachable through ``mod`` and ``include!``."""
+    results: list[Path] = []
+    seen: set[Path] = set()
+    pending = [entry.resolve()]
+    while pending:
+        path = pending.pop(0)
+        if path in seen or not path.is_file():
+            continue
+        seen.add(path)
+        results.append(path)
+        source = path.read_text(encoding="utf-8")
+        for name, path_attr, is_test_only in _rust_module_declarations(source):
+            if is_test_only:
+                continue
+            child = _resolve_rust_module(path, name, path_attr)
+            if child is not None:
+                pending.append(child)
+        for include_path in _RUST_INCLUDE.findall(source):
+            child = (path.parent / include_path).resolve()
+            if child.is_file():
+                pending.append(child)
+    return results
+
+
+def _dart_tree(entry: Path) -> list[Path]:
+    """Return the entrypoint and every Dart ``part`` file it reaches."""
+    results: list[Path] = []
+    seen: set[Path] = set()
+    pending = [entry.resolve()]
+    while pending:
+        path = pending.pop(0)
+        if path in seen or not path.is_file():
+            continue
+        seen.add(path)
+        results.append(path)
+        source = path.read_text(encoding="utf-8")
+        for part_path in _DART_PART.findall(source):
+            child = (path.parent / part_path).resolve()
+            if child.is_file():
+                pending.append(child)
+    return results
+
+
 def _source_paths(path: Path) -> list[Path]:
-    """Return a source file and any extracted Rust test sidecar(s).
-
-    The acceptance matrix names the owning production module, while Rust test
-    implementations live under ``src/tests``.  Static evidence and behavior
-    checks must inspect both locations after that migration.
-    """
+    """Return a source tree plus any extracted Rust test sidecar tree."""
     paths: list[Path] = []
+    src_root = (
+        next((parent for parent in path.parents if parent.name == "src"), None)
+        if path.suffix == ".rs"
+        else None
+    )
     if path.is_file():
-        paths.append(path)
-
-    src_root = next((parent for parent in path.parents if parent.name == "src"), None)
+        if path.suffix == ".rs":
+            paths.extend(_rust_tree(path))
+        elif path.suffix == ".dart":
+            paths.extend(_dart_tree(path))
+        else:
+            paths.append(path)
     if src_root is None:
-        return paths
+        return list(dict.fromkeys(paths))
 
     if path.name == "tests.rs":
         sidecar_root = src_root / "tests"
@@ -127,7 +244,7 @@ def _source_paths(path: Path) -> list[Path]:
     sidecar_root = src_root / "tests"
     for sidecar in (sidecar_root / relative, sidecar_root / relative.name):
         if sidecar.is_file():
-            paths.append(sidecar)
+            paths.extend(_rust_tree(sidecar) if sidecar.suffix == ".rs" else [sidecar])
     return list(dict.fromkeys(paths))
 
 

@@ -7,8 +7,8 @@ except ImportError:
 class FrozenContractCompatibilityMixin:
     def test_network_protocol_v2_canonical_parity(self) -> None:
         proto = _read("protocol/proto/network/v2/network.proto")
-        rust = _read("native/network_core/crates/network-protocol/src/lib.rs")
-        dart = _read("apps/ssh_mobile_full/lib/services/network/network_protocol_v2_codec.dart")
+        rust = _read_with_tests("native/network_core/crates/network-protocol/src/lib.rs")
+        dart = _read_with_tests("apps/ssh_mobile_full/lib/services/network/network_protocol_v2_codec.dart")
 
         # TransferProgressEvent
         self.assertIn("string peer_id = 4;", proto)
