@@ -7,6 +7,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/app/webview_feature_adapters.dart';
 
 void main() {
+  test('DNS resolver returns deduplicated localhost addresses', () async {
+    final addresses = await const AppWebViewDnsResolver().lookup('localhost');
+    expect(addresses, isNotEmpty);
+    expect(addresses, orderedEquals(addresses.toSet().toList()));
+  });
+
   test('pinned transport rejects a non-IP selected address', () async {
     await expectLater(
       const AppWebViewPinnedTransport().get(
@@ -70,6 +76,69 @@ void main() {
             ),
           ),
         );
+        await expectLater(
+          connectionFactory!(
+            Uri.parse('http://public.example.com:$port/status'),
+            'proxy.example.com',
+            null,
+          ),
+          throwsA(isA<ClientWebViewNetworkException>()),
+        );
+        await expectLater(
+          connectionFactory!(
+            Uri.parse('http://public.example.com:$port/status'),
+            null,
+            8080,
+          ),
+          throwsA(isA<ClientWebViewNetworkException>()),
+        );
+        await expectLater(
+          connectionFactory!(
+            Uri.parse('https://public.example.com:$port/status'),
+            null,
+            null,
+          ),
+          throwsA(isA<ClientWebViewNetworkException>()),
+        );
+        await expectLater(
+          connectionFactory!(
+            Uri.parse('http://public.example.com:43124/status'),
+            null,
+            null,
+          ),
+          throwsA(isA<ClientWebViewNetworkException>()),
+        );
+
+        final defaultPortResponse = await transport.get(
+          Uri.parse('http://public.example.com/status'),
+          address: loopback,
+          maxBytes: 1024,
+        );
+        expect(defaultPortResponse.statusCode, HttpStatus.ok);
+        final defaultPortFactory = clients.last.connectionFactory!;
+        await expectLater(
+          defaultPortFactory(
+            Uri.parse('http://attacker.example.com/status'),
+            null,
+            null,
+          ),
+          throwsA(isA<ClientWebViewNetworkException>()),
+        );
+        final httpsResponse = await transport.get(
+          Uri.parse('https://public.example.com/status'),
+          address: loopback,
+          maxBytes: 1024,
+        );
+        expect(httpsResponse.statusCode, HttpStatus.ok);
+        final httpsFactory = clients.last.connectionFactory!;
+        await expectLater(
+          httpsFactory(
+            Uri.parse('https://attacker.example.com/status'),
+            null,
+            null,
+          ),
+          throwsA(isA<ClientWebViewNetworkException>()),
+        );
 
         final redirect = await transport.get(
           Uri.parse('http://public.example.com:$port/redirect'),
@@ -115,7 +184,7 @@ void main() {
         return client;
       },
     );
-    expect(clients, hasLength(4));
+    expect(clients, hasLength(6));
     expect(clients.every((client) => client.closed), isTrue);
   });
 }
