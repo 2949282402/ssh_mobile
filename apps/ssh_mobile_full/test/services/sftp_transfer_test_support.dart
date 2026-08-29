@@ -196,6 +196,9 @@ final class MemorySftpClient implements SftpClient {
   final Set<String> openReadPaths = {};
   final Set<String> closedReadPaths = {};
   final Set<String> closedWritePaths = {};
+  final Set<String> createdDirectories = {};
+  final Set<String> removedDirectories = {};
+  final Map<String, String> renamedPaths = {};
   final Set<String> listErrorPaths = {};
   final Map<String, int> _listCounts = {};
   final List<String> events = [];
@@ -205,6 +208,10 @@ final class MemorySftpClient implements SftpClient {
   Object? closeReadError;
   Object? readError;
   Object? writeError;
+  Object? removeError;
+  Object? rmdirError;
+  Object? mkdirError;
+  Object? renameError;
   bool ignoreReadLength = false;
   Completer<void>? readGate;
   Completer<void>? writeGate;
@@ -284,8 +291,32 @@ final class MemorySftpClient implements SftpClient {
 
   @override
   Future<void> remove(String path) async {
+    if (removeError != null) throw removeError!;
     removedPaths.add(path);
     files.remove(path);
+  }
+
+  @override
+  Future<void> mkdir(String path, [SftpFileAttrs? attrs]) async {
+    if (mkdirError != null) throw mkdirError!;
+    createdDirectories.add(path);
+    directories.add(path);
+  }
+
+  @override
+  Future<void> rmdir(String path) async {
+    if (rmdirError != null) throw rmdirError!;
+    removedDirectories.add(path);
+    directories.remove(path);
+  }
+
+  @override
+  Future<void> rename(String oldPath, String newPath) async {
+    if (renameError != null) throw renameError!;
+    renamedPaths[oldPath] = newPath;
+    final bytes = files.remove(oldPath);
+    if (bytes != null) files[newPath] = bytes;
+    if (directories.remove(oldPath)) directories.add(newPath);
   }
 
   @override
