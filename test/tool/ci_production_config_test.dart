@@ -63,6 +63,9 @@ void main() {
   final bashTelemetryE2e = File(
     '${root.path}/scripts/bash/e2e/client_backend_telemetry.sh',
   ).readAsStringSync();
+  final rustTelemetryE2e = File(
+    '${root.path}/native/network_core/crates/network-relay/tests/telemetry_e2e.rs',
+  ).readAsStringSync();
   final powerShellE2e = File(
     '${root.path}/scripts/powershell/e2e/client_backend_e2e.ps1',
   ).readAsStringSync();
@@ -311,14 +314,33 @@ void main() {
   _expect(
     bashTelemetryE2e.contains('TELEMETRY_INGESTION_PASS') &&
         bashTelemetryE2e.contains('telemetry_ingest') &&
+        bashTelemetryE2e.contains('--test telemetry_e2e') &&
+        !bashTelemetryE2e.contains('/api/admin/v1/telemetry/devices') &&
+        !bashTelemetryE2e.contains('/api/admin/v1/auth/login') &&
+        !bashTelemetryE2e.contains('ADMIN_USER') &&
+        !bashTelemetryE2e.contains('TELEMETRY_DEVICE_SECRET') &&
         bashE2e.contains('assert_storage_after_restart'),
-    'Bash E2E must assert telemetry ingestion and persistence behavior.',
+    'Bash E2E must use the proof-bound telemetry flow without copying secrets.',
   );
   _expect(
     powerShellTelemetryE2e.contains('TELEMETRY_INGESTION_PASS') &&
         powerShellE2e.contains('TelemetryIngestion') &&
+        powerShellTelemetryE2e.contains("'--test', 'telemetry_e2e'") &&
+        !powerShellTelemetryE2e.contains('/api/admin/v1/telemetry/devices') &&
+        !powerShellTelemetryE2e.contains('/api/admin/v1/auth/login') &&
+        !powerShellTelemetryE2e.contains('adminPassword') &&
+        !powerShellTelemetryE2e.contains('TELEMETRY_DEVICE_SECRET') &&
         powerShellE2e.contains('AssertStorageAfterRestart'),
-    'PowerShell E2E must match Bash telemetry and persistence assertions.',
+    'PowerShell E2E must match Bash proof-bound telemetry assertions.',
+  );
+  _expect(
+    rustTelemetryE2e.contains('/v2/devices/enroll') &&
+        rustTelemetryE2e.contains('/api/v1/telemetry/enroll') &&
+        rustTelemetryE2e.contains('/api/v1/telemetry/auth') &&
+        rustTelemetryE2e.contains('/api/v1/telemetry/ingest') &&
+        rustTelemetryE2e.contains('ingest_with_automatic_refresh') &&
+        rustTelemetryE2e.contains('status != 401'),
+    'Telemetry live E2E must cover Relay enrollment, proof auth, ingest, and 401 refresh.',
   );
   _expect(
     bashE2e.contains('COMPOSE_PROFILE_ARGS=(--profile storage)') &&

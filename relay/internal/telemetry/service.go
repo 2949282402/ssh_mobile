@@ -240,18 +240,11 @@ func (s *Service) VerifyDeviceToken(deviceID, token string) bool {
 	return hmac.Equal([]byte(expectedSig), []byte(parts[1]))
 }
 
-// RegisterDeviceCredential enrolls a device's secret hash, guarded by availability.
-func (s *Service) RegisterDeviceCredential(ctx context.Context, deviceID, secretHash string) error {
-	if s.store == nil {
-		return ErrServiceUnavailable
-	}
-	return s.store.RegisterDeviceCredential(ctx, deviceID, secretHash)
-}
-
 // EnrollDevice verifies an existing Relay device identity and creates one
 // telemetry credential. The plaintext secret is returned only once; only its
 // SHA-256-derived hash is handed to the backing store. The creator capability
-// is intentionally separate from RegisterDeviceCredential's legacy upsert.
+// is intentionally separate from RegisterDeviceCredential, which is reserved
+// for explicit proof-bound rotation.
 func (s *Service) EnrollDevice(ctx context.Context, request TelemetryEnrollmentRequest, attestor DeviceAttestor) (TelemetryEnrollmentResponse, error) {
 	return s.issueDeviceCredential(ctx, request, attestor, false)
 }

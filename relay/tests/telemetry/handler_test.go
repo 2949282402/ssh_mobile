@@ -2,7 +2,6 @@ package telemetry_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -238,71 +237,5 @@ func TestTelemetryAdminHTTPHandlers(t *testing.T) {
 	mux.ServeHTTP(putRec, putReq)
 	if putRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 from settings PUT, got %d: %s", putRec.Code, putRec.Body.String())
-	}
-}
-
-func TestTelemetryAdminRegisterDevice(t *testing.T) {
-	service, store := newTestService(testAuthSecret)
-	handler := NewHandler(service)
-
-	mux := http.NewServeMux()
-	handler.RegisterAdminRoutes(mux, func(next http.HandlerFunc) http.HandlerFunc {
-		return next
-	})
-
-	regBody, _ := json.Marshal(map[string]string{"deviceId": "dev-enrolled"})
-	req := httptest.NewRequest(http.MethodPost, PathAdminRegisterDevice, bytes.NewReader(regBody))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("expected 201 from register device, got %d: %s", rec.Code, rec.Body.String())
-	}
-
-	var resp struct {
-		DeviceID string `json:"deviceId"`
-		Secret   string `json:"secret"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode register response: %v", err)
-	}
-	if resp.DeviceID != "dev-enrolled" || len(resp.Secret) != 64 {
-		t.Fatalf("unexpected register response: %+v", resp)
-	}
-
-	// The credential hash is stored; the returned secret can authenticate.
-	storedHash, err := store.GetDeviceCredential(context.Background(), "dev-enrolled")
-	if err != nil {
-		t.Fatalf("expected stored credential: %v", err)
-	}
-	if storedHash != hashSecret(resp.Secret) {
-		t.Fatal("stored hash does not match generated secret")
-	}
-
-	ctx := context.Background()
-	exp := futureEpoch()
-	token, _, err := service.AuthenticateDevice(ctx, "dev-enrolled", deviceProof("dev-enrolled", storedHash, exp), exp)
-	if err != nil {
-		t.Fatalf("expected enrolled device to authenticate with generated secret: %v", err)
-	}
-	if !service.VerifyDeviceToken("dev-enrolled", token) {
-		t.Fatal("expected token to verify")
-	}
-
-	// Re-registration is idempotent (upsert), returns a NEW secret hash.
-	req2 := httptest.NewRequest(http.MethodPost, PathAdminRegisterDevice, bytes.NewReader(regBody))
-	req2.Header.Set("Content-Type", "application/json")
-	rec2 := httptest.NewRecorder()
-	mux.ServeHTTP(rec2, req2)
-	if rec2.Code != http.StatusCreated {
-		t.Fatalf("expected 201 from repeat registration, got %d", rec2.Code)
-	}
-	var resp2 struct {
-		Secret string `json:"secret"`
-	}
-	_ = json.Unmarshal(rec2.Body.Bytes(), &resp2)
-	if resp2.Secret == resp.Secret {
-		t.Fatal("expected a fresh secret on re-registration")
 	}
 }

@@ -3,8 +3,6 @@
 package telemetry
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -125,7 +123,6 @@ func (h *Handler) RegisterAdminRoutes(mux *http.ServeMux, adminAuth func(http.Ha
 	mux.HandleFunc(RouteAdminEvents, adminAuth(h.handleAdminEvents))
 	mux.HandleFunc(RouteAdminDiagnostics, adminAuth(h.handleAdminDiagnostics))
 	mux.HandleFunc(RouteAdminSettings, adminAuth(h.handleAdminSettings))
-	mux.HandleFunc(RouteAdminRegisterDevice, adminAuth(h.handleAdminRegisterDevice))
 }
 
 func (h *Handler) writeJSON(w http.ResponseWriter, status int, v any) {
@@ -329,52 +326,6 @@ func (h *Handler) handlePublicPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeJSON(w, http.StatusOK, policy)
-}
-
-// handleAdminRegisterDevice enrolls a telemetry device and returns a one-time
-// secret the device uses to prove ownership during authentication.
-//
-//	POST /api/admin/v1/telemetry/devices
-//	{"deviceId": "..."}  ->  201 {"deviceId": "...", "secret": "<32-byte hex>"}
-func (h *Handler) handleAdminRegisterDevice(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		h.writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
-		return
-	}
-	if h.service == nil {
-		h.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "telemetry service unavailable")
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
-	var body struct {
-		DeviceID string `json:"deviceId"`
-	}
-	if err := decodeStrictJSON(r.Body, &body); err != nil || strings.TrimSpace(body.DeviceID) == "" {
-		h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid request: missing or empty deviceId")
-		return
-	}
-	if !isValidDeviceID(body.DeviceID) {
-		h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid request: invalid deviceId format")
-		return
-	}
-	deviceID := strings.TrimSpace(body.DeviceID)
-
-	randomSecret := make([]byte, 32)
-	if _, err := rand.Read(randomSecret); err != nil {
-		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to generate device secret")
-		return
-	}
-	secret := hex.EncodeToString(randomSecret)
-	if err := h.service.RegisterDeviceCredential(r.Context(), deviceID, hashSecret(secret)); err != nil {
-		h.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "failed to persist device credential: "+err.Error())
-		return
-	}
-
-	h.writeJSON(w, http.StatusCreated, map[string]any{
-		"deviceId": deviceID,
-		"secret":   secret,
-	})
 }
 
 // handleAdminOverview returns aggregated metrics for Admin Dashboard.

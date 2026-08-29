@@ -59,9 +59,11 @@ func TestAdminTelemetryFailClosedNoMySQL(t *testing.T) {
 	}
 }
 
-// TestAdminTelemetryRegisterDeviceRoute verifies the device enrollment endpoint
-// is registered (not 404) and protected by admin auth.
-func TestAdminTelemetryRegisterDeviceRoute(t *testing.T) {
+// TestAdminTelemetryRegistrationRouteIsRemoved verifies administrators cannot
+// mint or read a device telemetry secret. Device credentials are issued only
+// after the device proves possession of its existing Relay identity through
+// the public enrollment flow.
+func TestAdminTelemetryRegistrationRouteIsRemoved(t *testing.T) {
 	server := NewServer(Config{
 		Address:           ":0",
 		AdminUser:         "contract-admin",
@@ -80,12 +82,10 @@ func TestAdminTelemetryRegisterDeviceRoute(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
-	// Route exists and is behind admin auth: without a session cookie it must
-	// be 401 (auth middleware), not 404 (route missing).
-	if rec.Code == http.StatusNotFound {
-		t.Fatalf("expected telemetry device route to be registered, got 404")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected removed admin telemetry registration route to return 404, got %d", rec.Code)
 	}
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 from admin auth middleware for device enrollment, got %d", rec.Code)
+	if rec.Header().Get("Content-Type") != "text/plain; charset=utf-8" {
+		t.Fatalf("removed admin telemetry registration route returned unexpected content type %q", rec.Header().Get("Content-Type"))
 	}
 }

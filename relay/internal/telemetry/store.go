@@ -13,8 +13,7 @@ import (
 )
 
 // ErrDeviceCredentialAlreadyExists is returned by the create-only enrollment
-// operation when a device already has a telemetry credential. Existing admin
-// registration remains an explicit upsert for backward compatibility.
+// operation when a device already has a telemetry credential.
 var ErrDeviceCredentialAlreadyExists = errors.New("device telemetry credential already exists")
 
 // QueryFilter defines filtering criteria for telemetry queries.
@@ -60,7 +59,8 @@ type Store interface {
 	// Receipts in ingest_receipts are NEVER deleted.
 	PurgeRetention(ctx context.Context, cutoff time.Time, maxRows int, batchSize int) (int, error)
 
-	// Device credential management
+	// Device credential management. RegisterDeviceCredential is reserved for
+	// explicit proof-bound rotation; callers must not expose it as an admin API.
 	RegisterDeviceCredential(ctx context.Context, deviceID, secretHash string) error
 	GetDeviceCredential(ctx context.Context, deviceID string) (string, error)
 

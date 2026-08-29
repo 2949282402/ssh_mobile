@@ -291,6 +291,8 @@ func (s *MySQLStore) PurgeRetention(ctx context.Context, cutoff time.Time, maxRo
 }
 
 func (s *MySQLStore) RegisterDeviceCredential(ctx context.Context, deviceID, secretHash string) error {
+	// This upsert is used only by explicit proof-bound rotation. The public
+	// enrollment path calls CreateDeviceCredential, which is create-only.
 	now := time.Now().UTC()
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO telemetry_device_credentials (device_id, secret_hash, created_at, updated_at)

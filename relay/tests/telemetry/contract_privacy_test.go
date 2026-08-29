@@ -55,12 +55,6 @@ func TestTelemetryJSONHandlersRejectUnknownFields(t *testing.T) {
 			auth:   true,
 		},
 		{
-			name:   "admin registration",
-			method: http.MethodPost,
-			path:   PathAdminRegisterDevice,
-			body:   `{"deviceId":"strict-json-device","unknown":true}`,
-		},
-		{
 			name:   "admin settings",
 			method: http.MethodPut,
 			path:   PathAdminSettings,

@@ -29,7 +29,7 @@ func TestTelemetryHandlersRejectUnsupportedMethods(t *testing.T) {
 	}{
 		{RoutePublicEnroll, http.MethodGet}, {RoutePublicRotate, http.MethodGet},
 		{RoutePublicAuth, http.MethodGet}, {RoutePublicIngest, http.MethodGet},
-		{RoutePublicPolicy, http.MethodPost}, {PathAdminRegisterDevice, http.MethodGet},
+		{RoutePublicPolicy, http.MethodPost},
 		{PathAdminOverview, http.MethodPost}, {PathAdminEvents, http.MethodPost},
 		{PathAdminDiagnostics, http.MethodPost}, {PathAdminSettings, http.MethodPatch},
 	}
@@ -53,7 +53,7 @@ func TestTelemetryHandlersRejectUnavailableServices(t *testing.T) {
 	}{
 		{"enroll", RoutePublicEnroll, http.MethodPost}, {"rotate", RoutePublicRotate, http.MethodPost},
 		{"auth", RoutePublicAuth, http.MethodPost}, {"ingest", RoutePublicIngest, http.MethodPost},
-		{"policy", RoutePublicPolicy, http.MethodGet}, {"register", PathAdminRegisterDevice, http.MethodPost},
+		{"policy", RoutePublicPolicy, http.MethodGet},
 		{"overview", PathAdminOverview, http.MethodGet}, {"events", PathAdminEvents, http.MethodGet},
 		{"diagnostics", PathAdminDiagnostics, http.MethodGet}, {"settings get", PathAdminSettings, http.MethodGet},
 		{"settings put", PathAdminSettings, http.MethodPut},
@@ -236,26 +236,6 @@ func TestAdminHandlersReportStoreFailuresAndNormalizeFilters(t *testing.T) {
 	}
 }
 
-func TestAdminHandlersRejectInvalidRegistrationAndPersistFailures(t *testing.T) {
-	service, _ := newTestService(testAuthSecret)
-	mux := handlerMux(NewHandler(service))
-	for _, body := range []string{"{", `{"deviceId":"bad:device"}`} {
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, PathAdminRegisterDevice, strings.NewReader(body)))
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("invalid registration %q status = %d, want 400", body, rec.Code)
-		}
-	}
-
-	failing := &handlerRegistrationFailureStore{MemoryStore: NewMemoryStore(DefaultCatalog()), err: errors.New("credential persistence failed")}
-	failureMux := handlerMux(NewHandler(NewServiceWithSecret(failing, DefaultCatalog(), &NoopRedisCache{}, testAuthSecret)))
-	rec := httptest.NewRecorder()
-	failureMux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, PathAdminRegisterDevice, strings.NewReader(`{"deviceId":"register-failure"}`)))
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("registration persistence failure = %d, want 503", rec.Code)
-	}
-}
-
 type handlerErrorStore struct {
 	*MemoryStore
 	credentialErr error
@@ -263,13 +243,4 @@ type handlerErrorStore struct {
 
 func (s *handlerErrorStore) GetDeviceCredential(context.Context, string) (string, error) {
 	return "", s.credentialErr
-}
-
-type handlerRegistrationFailureStore struct {
-	*MemoryStore
-	err error
-}
-
-func (s *handlerRegistrationFailureStore) RegisterDeviceCredential(context.Context, string, string) error {
-	return s.err
 }

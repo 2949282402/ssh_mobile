@@ -13,6 +13,11 @@ name = "client_backend_e2e"
 path = "tests/client_backend_e2e.rs"
 required-features = ["test-support"]
 
+[[test]]
+name = "telemetry_e2e"
+path = "tests/telemetry_e2e.rs"
+required-features = ["test-support"]
+
 [features]
 test-support = []
 
@@ -32,4 +37,6 @@ url = "2.5"
 hex = "0.4"
 
 [dev-dependencies]
+hmac = "0.12"
+sha2 = "0.10"
 tokio = { version = "1.38", features = ["test-util"] }

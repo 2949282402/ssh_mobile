@@ -1,17 +1,31 @@
-# Live Analytics readiness and ingestion probe dot-sourced by the client E2E.
+# Live Analytics ingestion probe dot-sourced by client_backend_e2e.ps1.
+#
+# The deployment launcher owns only Compose setup.  The Rust test owns the
+# device identity and keeps the one-time telemetry secret in process memory:
+# Relay enrollment -> signed telemetry enrollment -> HMAC proof -> short token
+# -> ingest -> expired-token 401 -> automatic re-authentication and retry.
 
-function TelemetryProof([string]$DeviceId,[string]$Secret,[long]$Expiry){
-  $sha=[Security.Cryptography.SHA256]::Create();$storedHash=[Convert]::ToHexString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Secret))).ToLowerInvariant();$sha.Dispose()
-  $hmac=[Security.Cryptography.HMACSHA256]::new([Text.Encoding]::UTF8.GetBytes($storedHash));$message="telemetry:auth:${DeviceId}:$Expiry"
-  try{[Convert]::ToHexString($hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes($message))).ToLowerInvariant()}finally{$hmac.Dispose()}
-}
-function TelemetryIngestion{
-  if(-not$adminUser-or-not$adminPassword){throw'Telemetry E2E requires CLIENT_BACKEND_E2E_ADMIN_USER and CLIENT_BACKEND_E2E_ADMIN_PASSWORD.'}
-  $cookie=Join-Path $run 'telemetry-admin-cookie';$login=Join-Path $run 'telemetry-admin-login.json';$register=Join-Path $run 'telemetry-register.json';$registerResponse=Join-Path $run 'telemetry-register-response.json';$auth=Join-Path $run 'telemetry-auth.json';$authResponse=Join-Path $run 'telemetry-auth-response.json';$ingest=Join-Path $run 'telemetry-ingest.json';$ingestResponse=Join-Path $run 'telemetry-ingest-response.json';$events=Join-Path $run 'telemetry-events-response.json';$overview=Join-Path $run 'telemetry-overview-response.json';$device='e2e-telemetry';$event="e2e-telemetry-$(Hex 12)"
-  $ready=$false;foreach($i in 1..90){$status=CurlStatus ((TlsArgs)+@('-sS','--max-time','5','-o','NUL','-w','%{http_code}',"$base/api/v1/telemetry/policy"));if($status-eq'200'){$ready=$true;break};Start-Sleep 1};if(-not$ready){throw'Telemetry policy readiness probe failed.'}
-  @{username=$adminUser;password=$adminPassword}|ConvertTo-Json -Compress|Set-Content $login -Encoding utf8NoBOM;$status=CurlStatus ((TlsArgs)+@('-sS','--max-time','10','-H','Content-Type: application/json','-c',$cookie,'--data-binary',"@$login",'-o','NUL','-w','%{http_code}',"$base/api/admin/v1/auth/login"));if($status-ne'200'){throw"Telemetry admin login failed: $status"}
-  @{deviceId=$device}|ConvertTo-Json -Compress|Set-Content $register -Encoding utf8NoBOM;$status=CurlStatus ((TlsArgs)+@('-sS','--max-time','10','-H','Content-Type: application/json','-b',$cookie,'--data-binary',"@$register",'-o',$registerResponse,'-w','%{http_code}',"$base/api/admin/v1/telemetry/devices"));if($status-ne'201'){throw"Telemetry device registration failed: $status"};$secret=(Get-Content $registerResponse -Raw|ConvertFrom-Json).secret
-  $expiry=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()+60;$proof=TelemetryProof $device $secret $expiry;@{deviceId=$device;proof=$proof;expEpoch=$expiry}|ConvertTo-Json -Compress|Set-Content $auth -Encoding utf8NoBOM;$status=CurlStatus ((TlsArgs)+@('-sS','--max-time','10','-H','Content-Type: application/json','--data-binary',"@$auth",'-o',$authResponse,'-w','%{http_code}',"$base/api/v1/telemetry/auth"));if($status-ne'200'){throw"Telemetry device authentication failed: $status"};$token=(Get-Content $authResponse -Raw|ConvertFrom-Json).token
-  @{records=@(@{eventId=$event;recordType='analytics';eventName='ssh.session.started';eventVersion=1;deviceId=$device;sessionId='e2e-telemetry-session';traceId='e2e-telemetry-trace';occurredAt=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ');feature='ssh';severity='info';appVersion='ci';buildNumber='ci';platform='windows';properties=@{session_type='interactive';auth_method='key'}})}|ConvertTo-Json -Depth 6 -Compress|Set-Content $ingest -Encoding utf8NoBOM;$status=CurlStatus ((TlsArgs)+@('-sS','--max-time','10','-H','Content-Type: application/json',"-H","X-Device-Id: $device","-H","Authorization: Bearer $token",'--data-binary',"@$ingest",'-o',$ingestResponse,'-w','%{http_code}',"$base/api/v1/telemetry/ingest"));if($status-ne'200'){throw"Telemetry ingestion failed: $status"};if((Get-Content $ingestResponse -Raw)-notmatch'accepted'){throw'Telemetry ingestion did not accept the event.'}
-  $status=CurlStatus ((TlsArgs)+@('-sS','--max-time','10','-b',$cookie,'-o',$events,'-w','%{http_code}',"$base/api/admin/v1/telemetry/events?eventName=ssh.session.started&deviceId=$device"));if($status-ne'200'){throw"Telemetry event query failed: $status"};if((Get-Content $events -Raw)-notmatch[regex]::Escape($event)){throw'Telemetry event was not readable after ingestion.'};$status=CurlStatus ((TlsArgs)+@('-sS','--max-time','10','-b',$cookie,'-o',$overview,'-w','%{http_code}',"$base/api/admin/v1/telemetry/overview?timeRange=24h"));if($status-ne'200'){throw"Telemetry overview readiness query failed: $status"};Write-Host "TELEMETRY_INGESTION_PASS event=$event"
+function TelemetryIngestion {
+  Assert-Commands @('cargo', 'curl.exe') 125
+
+  $nativeRoot = Join-Path $root 'native\network_core'
+  $strict = if ($Mode -eq 'strict') { '1' } else { '' }
+  Invoke-CommandChecked cargo @(
+    'test',
+    '-p', 'network-relay',
+    '--features', 'test-support',
+    '--test', 'telemetry_e2e',
+    '--locked',
+    '--',
+    '--ignored',
+    '--test-threads=1'
+  ) $nativeRoot @{
+    CLIENT_BACKEND_E2E_BASE_URL = $base
+    RELAY_ENROLLMENT_TOKEN = $token
+    CLIENT_BACKEND_E2E_STRICT = $strict
+  }
+
+  # Keep a stable CI marker for the paired Bash gate and downstream log
+  # collection.  No credential or response body is included in the marker.
+  Write-Host 'TELEMETRY_INGESTION_PASS identity_attestation=1 token_refresh=1'
 }
