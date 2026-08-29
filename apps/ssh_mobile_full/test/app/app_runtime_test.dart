@@ -59,6 +59,17 @@ void main() {
         expect(runtime.lanReceiverCoordinator, isNotNull);
         expect(runtime.ragModule.service, same(runtime.ragService));
 
+        await runtime.ragModule.deactivate();
+        final diagnostics = runtime.developerDiagnosticsPort.snapshot;
+        expect(diagnostics.databases, isNotEmpty);
+        expect(
+          diagnostics.databases
+              .where((database) => database.moduleId == 'feature_ai')
+              .single
+              .opened,
+          isFalse,
+        );
+
         final firstDispose = runtime.dispose();
         final secondDispose = runtime.dispose();
 
@@ -66,6 +77,21 @@ void main() {
         await firstDispose;
         expect(runtime.isDisposed, isTrue);
         expect(network.disposeCalls, 1);
+      } finally {
+        await harness.close();
+      }
+    },
+  );
+
+  test(
+    'custom connection repositories require an explicit host-key port',
+    () async {
+      final harness = await newRuntimeHarness(
+        connectionRepository: HangingConnectionRepository(),
+        disposeLogger: false,
+      );
+      try {
+        await expectLater(harness.createFuture, throwsArgumentError);
       } finally {
         await harness.close();
       }
