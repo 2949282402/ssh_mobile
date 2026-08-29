@@ -7,10 +7,18 @@ import 'package:flutter/foundation.dart';
 ///
 /// Examples: "vivo X100", "iPhone 15 Pro", "MacBook Pro", "DESKTOP-XYZ".
 /// Falls back to [Platform.operatingSystem] if the info cannot be read.
-Future<String> getDeviceName() async {
+Future<String> getDeviceName({
+  TargetPlatform? targetPlatform,
+  DeviceInfoPlugin? deviceInfoPlugin,
+}) async {
   try {
-    final plugin = DeviceInfoPlugin();
-    if (Platform.isAndroid) {
+    final plugin = deviceInfoPlugin ?? DeviceInfoPlugin();
+    bool matches(TargetPlatform platform, bool hostPlatform) {
+      return targetPlatform == platform ||
+          (targetPlatform == null && hostPlatform);
+    }
+
+    if (matches(TargetPlatform.android, Platform.isAndroid)) {
       final info = await plugin.androidInfo;
       // Combine brand + model, e.g. "vivo X100"
       final brand = _capitalize(info.brand);
@@ -20,17 +28,17 @@ Future<String> getDeviceName() async {
         return model;
       }
       return '$brand $model';
-    } else if (Platform.isIOS) {
+    } else if (matches(TargetPlatform.iOS, Platform.isIOS)) {
       final info = await plugin.iosInfo;
       // e.g. "iPhone 15 Pro"
       return info.name.isNotEmpty ? info.name : info.utsname.machine;
-    } else if (Platform.isMacOS) {
+    } else if (matches(TargetPlatform.macOS, Platform.isMacOS)) {
       final info = await plugin.macOsInfo;
       return info.computerName.isNotEmpty ? info.computerName : info.model;
-    } else if (Platform.isWindows) {
+    } else if (matches(TargetPlatform.windows, Platform.isWindows)) {
       final info = await plugin.windowsInfo;
       return info.computerName.isNotEmpty ? info.computerName : 'Windows';
-    } else if (Platform.isLinux) {
+    } else if (matches(TargetPlatform.linux, Platform.isLinux)) {
       final info = await plugin.linuxInfo;
       return info.prettyName.isNotEmpty ? info.prettyName : 'Linux';
     }

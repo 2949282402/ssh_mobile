@@ -65,6 +65,16 @@ the owning schema tests verify the resulting columns, constraints, and indexes
 through SQLite PRAGMA queries. These are precise declaration-only exclusions,
 not a waiver for DAO or database lifecycle behavior.
 
+The App Network V2 boundary keeps two native-only status edges precise as well:
+`network_service_support.dart`'s `_networkNativeStatusError` and the
+`NativeOperationStatus.failure` arm in `network_service_runtime_gateway.dart`
+are marked with `coverage:ignore-start/end`. They translate failure codes that
+are emitted by the native ABI when a Windows/CI runtime stop or command handle
+fails; the WSL Flutter runner can exercise success, invalid-argument, and
+stopped states but cannot inject a failing native handle. The native Windows/CI
+smoke gate owns those two lines; all App command, transport, and lifecycle
+error mapping remains covered by Flutter tests.
+
 ## Owner scopes
 
 | Gate | Scope | Threshold |
