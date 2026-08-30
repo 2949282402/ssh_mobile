@@ -203,6 +203,7 @@ void main() {
       'covers idle, loading, running and disabled telemetry branches',
       () async {
         final telemetry = _FakeTelemetryClient()
+          ..recording = false
           ..policy = const app_core.TelemetryUploadPolicy(
             uploadEnabled: false,
             batchSizeThreshold: 50,
@@ -619,6 +620,8 @@ final class _FakeAppModule extends Fake implements app_core.AppModule {
 
 final class _FakeTelemetryClient extends Fake
     implements app_core.TelemetryClient {
+  bool recording = true;
+
   app_core.TelemetryUploadPolicy policy = const app_core.TelemetryUploadPolicy(
     uploadEnabled: true,
     batchSizeThreshold: 50,
@@ -661,7 +664,7 @@ final class _FakeTelemetryClient extends Fake
   app_core.TelemetryDiagnosticsSnapshot get latestDiagnostics => diagnostics;
 
   @override
-  bool get recordingEnabled => diagnostics.telemetryEnabled;
+  bool get recordingEnabled => recording;
 
   @override
   Future<int> replayAllLocalRecords() async {
