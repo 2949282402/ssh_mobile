@@ -101,12 +101,35 @@ func (s *MySQLStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnvel
 		return nil, fmt.Errorf("%w: mysql telemetry store is unavailable", ErrServiceUnavailable)
 	}
 	now := time.Now().UTC()
+	receiptOwners, err := s.lookupReceiptOwners(ctx, envelopes)
+	if err != nil {
+		return nil, err
+	}
 	results := make([]IngestRecordResult, len(envelopes))
 	valid := make([]TelemetryEnvelope, 0, len(envelopes))
 	validIndexes := make([]int, 0, len(envelopes))
-	seenInput := make(map[string]struct{}, len(envelopes))
+	seenInput := make(map[string]string, len(envelopes))
 
 	for i, env := range envelopes {
+		// A receipt is the durable idempotency authority. Resolve it before
+		// validating the current event catalog so historical replays remain
+		// already_seen even after a schema evolution.
+		if owner, exists := receiptOwners[env.EventID]; exists {
+			if owner == env.DeviceID {
+				results[i] = IngestRecordResult{
+					EventID: env.EventID,
+					Status:  StatusAlreadySeen,
+				}
+			} else {
+				results[i] = IngestRecordResult{
+					EventID: env.EventID,
+					Status:  StatusRejected,
+					Reason:  telemetryReceiptOwnershipConflictReason,
+				}
+			}
+			continue
+		}
+
 		if err := s.catalog.ValidateEnvelopeAt(&env, now); err != nil {
 			results[i] = IngestRecordResult{
 				EventID: env.EventID,
@@ -122,14 +145,17 @@ func (s *MySQLStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnvel
 		if env.ReceivedAt.IsZero() {
 			env.ReceivedAt = now
 		}
-		if _, duplicate := seenInput[env.EventID]; duplicate {
-			results[i] = IngestRecordResult{
-				EventID: env.EventID,
-				Status:  StatusAlreadySeen,
+		if existingDevice, duplicate := seenInput[env.EventID]; duplicate {
+			results[i] = IngestRecordResult{EventID: env.EventID}
+			if existingDevice == env.DeviceID {
+				results[i].Status = StatusAlreadySeen
+			} else {
+				results[i].Status = StatusRejected
+				results[i].Reason = telemetryReceiptOwnershipConflictReason
 			}
 			continue
 		}
-		seenInput[env.EventID] = struct{}{}
+		seenInput[env.EventID] = env.DeviceID
 		valid = append(valid, env)
 		validIndexes = append(validIndexes, i)
 	}
@@ -173,6 +199,58 @@ func (s *MySQLStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnvel
 	return nil, fmt.Errorf("ingest batch retry exhausted after %d attempts: %w", maxIngestTransactionAttempts, errConcurrentIngestDuplicate)
 }
 
+func (s *MySQLStore) lookupReceiptOwners(ctx context.Context, envelopes []TelemetryEnvelope) (map[string]string, error) {
+	ids := make([]string, 0, len(envelopes))
+	seen := make(map[string]struct{}, len(envelopes))
+	for _, env := range envelopes {
+		eventID, _, ok := telemetryReceiptIdentity(env)
+		if !ok {
+			continue
+		}
+		if _, exists := seen[eventID]; exists {
+			continue
+		}
+		seen[eventID] = struct{}{}
+		ids = append(ids, eventID)
+	}
+	owners := make(map[string]string, len(ids))
+	if len(ids) == 0 {
+		return owners, nil
+	}
+	rows, err := s.db.QueryContext(
+		ctx,
+		"SELECT event_id, device_id FROM telemetry_ingest_receipts WHERE event_id IN ("+mysqlPlaceholders(len(ids))+") ORDER BY event_id",
+		stringIDs(ids)...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query receipts before validation: %w", err)
+	}
+	for rows.Next() {
+		var eventID, deviceID string
+		if err := rows.Scan(&eventID, &deviceID); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("scan receipt before validation: %w", err)
+		}
+		owners[eventID] = deviceID
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, fmt.Errorf("iterate receipts before validation: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close receipts before validation: %w", err)
+	}
+	return owners, nil
+}
+
+func stringIDs(ids []string) []any {
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	return args
+}
+
 func (s *MySQLStore) ingestValidBatch(ctx context.Context, envelopes []TelemetryEnvelope, now time.Time) (map[string]IngestStatus, error) {
 	envelopes = orderedIngestEnvelopes(envelopes)
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -191,22 +269,22 @@ func (s *MySQLStore) ingestValidBatch(ctx context.Context, envelopes []Telemetry
 
 	placeholders := mysqlPlaceholders(len(envelopes))
 	rows, err := tx.QueryContext(ctx,
-		"SELECT event_id FROM telemetry_ingest_receipts WHERE event_id IN ("+placeholders+") ORDER BY event_id FOR UPDATE",
+		"SELECT event_id, device_id FROM telemetry_ingest_receipts WHERE event_id IN ("+placeholders+") ORDER BY event_id FOR UPDATE",
 		telemetryEventIDs(envelopes)...,
 	)
 	if err != nil {
 		rollback()
 		return nil, retryableIngestConflict(fmt.Errorf("query receipts: %w", err))
 	}
-	existing := make(map[string]struct{}, len(envelopes))
+	existing := make(map[string]string, len(envelopes))
 	for rows.Next() {
-		var eventID string
-		if err := rows.Scan(&eventID); err != nil {
+		var eventID, deviceID string
+		if err := rows.Scan(&eventID, &deviceID); err != nil {
 			_ = rows.Close()
 			rollback()
 			return nil, retryableIngestConflict(fmt.Errorf("scan receipt: %w", err))
 		}
-		existing[eventID] = struct{}{}
+		existing[eventID] = deviceID
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
@@ -221,8 +299,12 @@ func (s *MySQLStore) ingestValidBatch(ctx context.Context, envelopes []Telemetry
 	statuses := make(map[string]IngestStatus, len(envelopes))
 	newEnvelopes := make([]TelemetryEnvelope, 0, len(envelopes))
 	for _, env := range envelopes {
-		if _, ok := existing[env.EventID]; ok {
-			statuses[env.EventID] = StatusAlreadySeen
+		if owner, ok := existing[env.EventID]; ok {
+			if owner == env.DeviceID {
+				statuses[env.EventID] = StatusAlreadySeen
+			} else {
+				statuses[env.EventID] = StatusRejected
+			}
 			continue
 		}
 		newEnvelopes = append(newEnvelopes, env)

@@ -70,13 +70,30 @@ type Store interface {
 
 // MemoryStore provides a thread-safe in-memory Store for tests and hermetic execution.
 type MemoryStore struct {
-	mu          sync.RWMutex
-	catalog     *Catalog
-	rawEvents   []TelemetryEnvelope
-	receipts    map[string]time.Time // eventId -> receivedAt (never purged)
-	credentials map[string]string    // deviceId -> secretHash
-	settings    TelemetrySettings
-	redisCache  RedisCache
+	mu             sync.RWMutex
+	catalog        *Catalog
+	rawEvents      []TelemetryEnvelope
+	receipts       map[string]time.Time // eventId -> receivedAt (never purged)
+	receiptDevices map[string]string    // eventId -> deviceId (never purged)
+	credentials    map[string]string    // deviceId -> secretHash
+	settings       TelemetrySettings
+	redisCache     RedisCache
+}
+
+const telemetryReceiptOwnershipConflictReason = "event id ownership conflict"
+
+// telemetryReceiptIdentity performs only the bounded identity checks needed to
+// look up an existing receipt before full catalog/schema validation. Invalid
+// identities are left for the normal validator so callers still receive the
+// precise schema rejection.
+func telemetryReceiptIdentity(env TelemetryEnvelope) (eventID, deviceID string, ok bool) {
+	if strings.TrimSpace(env.EventID) == "" || len([]byte(env.EventID)) > 64 {
+		return "", "", false
+	}
+	if strings.TrimSpace(env.DeviceID) == "" || len([]byte(env.DeviceID)) > 128 {
+		return "", "", false
+	}
+	return env.EventID, env.DeviceID, true
 }
 
 // CreateDeviceCredential persists a credential hash exactly once. It is
@@ -113,11 +130,12 @@ func NewMemoryStore(catalog *Catalog) *MemoryStore {
 		catalog = DefaultCatalog()
 	}
 	return &MemoryStore{
-		catalog:     catalog,
-		rawEvents:   make([]TelemetryEnvelope, 0),
-		receipts:    make(map[string]time.Time),
-		credentials: make(map[string]string),
-		settings:    DefaultSettings(),
+		catalog:        catalog,
+		rawEvents:      make([]TelemetryEnvelope, 0),
+		receipts:       make(map[string]time.Time),
+		receiptDevices: make(map[string]string),
+		credentials:    make(map[string]string),
+		settings:       DefaultSettings(),
 	}
 }
 
@@ -141,10 +159,53 @@ func (m *MemoryStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnve
 	now := time.Now().UTC()
 	results := make([]IngestRecordResult, len(envelopes))
 	accepted := make([]TelemetryEnvelope, 0, len(envelopes))
-	pending := make(map[string]struct{}, len(envelopes))
+	pending := make(map[string]string, len(envelopes))
+	receiptOwners := make(map[string]string, len(envelopes))
+	for _, env := range envelopes {
+		eventID, _, ok := telemetryReceiptIdentity(env)
+		if !ok {
+			continue
+		}
+		if owner, exists := m.receiptDevices[eventID]; exists {
+			receiptOwners[eventID] = owner
+			continue
+		}
+		if _, exists := m.receipts[eventID]; exists {
+			// Compatibility for a store value created before receiptDevices was
+			// introduced: recover ownership from the retained raw row when one
+			// is still available, otherwise fail closed as an ownership conflict.
+			owner := ""
+			for i := len(m.rawEvents) - 1; i >= 0; i-- {
+				if m.rawEvents[i].EventID == eventID {
+					owner = m.rawEvents[i].DeviceID
+					break
+				}
+			}
+			receiptOwners[eventID] = owner
+		}
+	}
 
 	for i, env := range envelopes {
-		// 1. Schema & Catalog Validation
+		// 1. Receipt lookup precedes schema/catalog validation. A durable
+		// receipt is authoritative even when the current catalog no longer
+		// accepts the historical payload.
+		if owner, exists := receiptOwners[env.EventID]; exists {
+			if owner == env.DeviceID {
+				results[i] = IngestRecordResult{
+					EventID: env.EventID,
+					Status:  StatusAlreadySeen,
+				}
+			} else {
+				results[i] = IngestRecordResult{
+					EventID: env.EventID,
+					Status:  StatusRejected,
+					Reason:  telemetryReceiptOwnershipConflictReason,
+				}
+			}
+			continue
+		}
+
+		// 2. Schema & Catalog Validation
 		if err := m.catalog.ValidateEnvelopeAt(&env, now); err != nil {
 			results[i] = IngestRecordResult{
 				EventID: env.EventID,
@@ -154,7 +215,7 @@ func (m *MemoryStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnve
 			continue
 		}
 
-		// 2. Check Idempotent Receipt
+		// 3. Check duplicate identities introduced within this batch.
 		if _, exists := m.receipts[env.EventID]; exists {
 			results[i] = IngestRecordResult{
 				EventID: env.EventID,
@@ -162,10 +223,13 @@ func (m *MemoryStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnve
 			}
 			continue
 		}
-		if _, exists := pending[env.EventID]; exists {
-			results[i] = IngestRecordResult{
-				EventID: env.EventID,
-				Status:  StatusAlreadySeen,
+		if existingDevice, exists := pending[env.EventID]; exists {
+			results[i] = IngestRecordResult{EventID: env.EventID}
+			if existingDevice == env.DeviceID {
+				results[i].Status = StatusAlreadySeen
+			} else {
+				results[i].Status = StatusRejected
+				results[i].Reason = telemetryReceiptOwnershipConflictReason
 			}
 			continue
 		}
@@ -177,7 +241,7 @@ func (m *MemoryStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnve
 			env.ReceivedAt = now
 		}
 		accepted = append(accepted, env)
-		pending[env.EventID] = struct{}{}
+		pending[env.EventID] = env.DeviceID
 
 		results[i] = IngestRecordResult{
 			EventID: env.EventID,
@@ -195,6 +259,10 @@ func (m *MemoryStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnve
 	m.rawEvents = append(m.rawEvents, accepted...)
 	for _, env := range accepted {
 		m.receipts[env.EventID] = env.ReceivedAt
+		if m.receiptDevices == nil {
+			m.receiptDevices = make(map[string]string)
+		}
+		m.receiptDevices[env.EventID] = env.DeviceID
 	}
 
 	return results, nil

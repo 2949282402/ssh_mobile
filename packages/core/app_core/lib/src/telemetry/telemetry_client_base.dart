@@ -64,6 +64,7 @@ abstract class _TelemetryClientBase {
   Future<void>? _disposeFuture;
   bool _uploadRequested = false;
   bool _policyRefreshRequested = false;
+  bool _hasRunCapacityMaintenance = false;
   int _writesSinceCapacityCheck = 0;
   Completer<void>? _retryWaitCompleter;
   TelemetryTimer? _periodicFlushTimer;
@@ -133,6 +134,7 @@ abstract class _TelemetryClientBase {
   Future<List<TelemetryEventRecord>> _preparePersistedRecords(
     Iterable<TelemetryEventRecord> records,
   );
+  TelemetryEventRecord? _sanitizePersistedRecord(TelemetryEventRecord record);
   Future<void> _ensureAuthenticated();
   void _cancelRetryTimer();
 }

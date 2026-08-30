@@ -83,6 +83,179 @@ void main() {
       },
     );
 
+    test(
+      'replay keeps originally synced rows unchanged for every replay outcome',
+      () async {
+        final scenarios = <String, void Function(TestTelemetryTransport)>{
+          'already_seen': (scenarioTransport) {
+            scenarioTransport.nextAckResults.add(
+              const TelemetryAckResult(
+                eventId: 'evt-synced-replay',
+                status: 'already_seen',
+              ),
+            );
+          },
+          'rejected': (scenarioTransport) {
+            scenarioTransport.nextAckResults.add(
+              const TelemetryAckResult(
+                eventId: 'evt-synced-replay',
+                status: 'rejected',
+              ),
+            );
+          },
+          'http-400': (scenarioTransport) {
+            scenarioTransport.nextUploadStatusCodes.add(400);
+          },
+          'http-503': (scenarioTransport) {
+            scenarioTransport.nextUploadStatusCodes.add(503);
+          },
+          'timeout': (scenarioTransport) {
+            scenarioTransport.uploadFailure = const SocketException(
+              'telemetry upload timed out',
+            );
+          },
+          'invalid-response': (scenarioTransport) {
+            scenarioTransport.nextAckResults.add(
+              const TelemetryAckResult(
+                eventId: 'evt-not-in-batch',
+                status: 'accepted',
+              ),
+            );
+          },
+        };
+
+        for (final entry in scenarios.entries) {
+          final scenarioStorage = MemoryTelemetryStorage();
+          final scenarioTransport = TestTelemetryTransport();
+          final scenarioClient = buildTestTelemetryClient(
+            storage: scenarioStorage,
+            transport: scenarioTransport,
+            initialPolicy: const TelemetryUploadPolicy(
+              uploadEnabled: true,
+              batchSizeThreshold: 100,
+              timeIntervalSeconds: 60,
+              maxBatchSize: 10,
+              clientMaxLocalRecords: 100,
+              specialTriggers: <String>[],
+              policyVersion: 1,
+            ),
+          );
+
+          final seeded = persistedDiagnosticRecord(
+            eventId: 'evt-synced-replay',
+            message: 'historical replay',
+          );
+          await scenarioStorage.insertRecord(seeded);
+          await scenarioStorage.applyAckResults([
+            const TelemetryAckResult(
+              eventId: 'evt-synced-replay',
+              status: 'accepted',
+            ),
+          ]);
+          await scenarioStorage.applyRetryCount(const [
+            'evt-synced-replay',
+          ], increment: 3);
+          final before = (await scenarioStorage.fetchAllForReplay()).single;
+          entry.value(scenarioTransport);
+
+          final replayed = await scenarioClient.replayAllLocalRecords();
+
+          expect(
+            replayed,
+            entry.key == 'already_seen' || entry.key == 'rejected' ? 1 : 0,
+            reason: entry.key,
+          );
+          final after = (await scenarioStorage.fetchAllForReplay()).single;
+          expect(after.eventId, before.eventId, reason: entry.key);
+          expect(after.deviceId, before.deviceId, reason: entry.key);
+          expect(after.sessionId, before.sessionId, reason: entry.key);
+          expect(after.traceId, before.traceId, reason: entry.key);
+          expect(after.occurredAt, before.occurredAt, reason: entry.key);
+          expect(after.properties, before.properties, reason: entry.key);
+          expect(after.syncState, before.syncState, reason: entry.key);
+          expect(
+            after.logicalDeletedAt,
+            before.logicalDeletedAt,
+            reason: entry.key,
+          );
+          expect(after.retryCount, before.retryCount, reason: entry.key);
+          await scenarioClient.dispose();
+        }
+      },
+    );
+
+    test(
+      'mixed replay applies pending ACKs without mutating synced rows',
+      () async {
+        final mixedStorage = MemoryTelemetryStorage();
+        final mixedTransport = TestTelemetryTransport();
+        final mixedClient = buildTestTelemetryClient(
+          storage: mixedStorage,
+          transport: mixedTransport,
+          initialPolicy: const TelemetryUploadPolicy(
+            uploadEnabled: true,
+            batchSizeThreshold: 100,
+            timeIntervalSeconds: 60,
+            maxBatchSize: 10,
+            clientMaxLocalRecords: 100,
+            specialTriggers: <String>[],
+            policyVersion: 1,
+          ),
+        );
+        addTearDown(mixedClient.dispose);
+
+        await mixedStorage.insertRecord(
+          persistedDiagnosticRecord(
+            eventId: 'evt-pending-replay',
+            message: 'pending replay',
+          ),
+        );
+        await mixedStorage.insertRecord(
+          persistedDiagnosticRecord(
+            eventId: 'evt-synced-mixed',
+            message: 'synced replay',
+          ),
+        );
+        await mixedStorage.applyAckResults([
+          const TelemetryAckResult(
+            eventId: 'evt-synced-mixed',
+            status: 'accepted',
+          ),
+        ]);
+        await mixedStorage.applyRetryCount(const [
+          'evt-synced-mixed',
+        ], increment: 4);
+        final beforeSynced = (await mixedStorage.fetchAllForReplay())
+            .singleWhere((record) => record.eventId == 'evt-synced-mixed');
+        mixedTransport.nextAckResults.addAll([
+          const TelemetryAckResult(
+            eventId: 'evt-pending-replay',
+            status: 'accepted',
+          ),
+          const TelemetryAckResult(
+            eventId: 'evt-synced-mixed',
+            status: 'rejected',
+          ),
+        ]);
+
+        expect(await mixedClient.replayAllLocalRecords(), 2);
+        final after = {
+          for (final record in await mixedStorage.fetchAllForReplay())
+            record.eventId: record,
+        };
+        expect(
+          after['evt-pending-replay']!.syncState,
+          TelemetrySyncState.synced,
+        );
+        expect(after['evt-synced-mixed']!.syncState, beforeSynced.syncState);
+        expect(
+          after['evt-synced-mixed']!.logicalDeletedAt,
+          beforeSynced.logicalDeletedAt,
+        );
+        expect(after['evt-synced-mixed']!.retryCount, beforeSynced.retryCount);
+      },
+    );
+
     test('replayAllLocalRecords excludes rejected records', () async {
       await client.record(
         event: TelemetryEvents.sshSessionStarted,

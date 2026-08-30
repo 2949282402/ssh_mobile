@@ -225,6 +225,42 @@ func TestServiceIngestStampsOneAuthoritativeReceivedAtPerBatch(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreReceiptReplayPrecedesCurrentSchemaAndEnforcesOwnership(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore(DefaultCatalog())
+	original := testEnvelope("historical-memory-receipt", "memory-owner")
+	if results, err := store.IngestBatch(ctx, []TelemetryEnvelope{original}); err != nil ||
+		len(results) != 1 || results[0].Status != StatusAccepted {
+		t.Fatalf("seed historical receipt = %+v, err=%v", results, err)
+	}
+
+	deleted, err := store.PurgeRetention(ctx, time.Now().UTC().Add(time.Hour), 0, 100)
+	if err != nil || deleted != 1 {
+		t.Fatalf("purge historical raw event = deleted %d err=%v, want 1", deleted, err)
+	}
+
+	historicalReplay := original
+	historicalReplay.EventName = "schema.removed.after.ingest"
+	historicalReplay.Properties = map[string]any{"unexpected": "property"}
+	results, err := store.IngestBatch(ctx, []TelemetryEnvelope{historicalReplay})
+	if err != nil || len(results) != 1 || results[0].Status != StatusAlreadySeen {
+		t.Fatalf("same-device historical replay = %+v, err=%v, want already_seen", results, err)
+	}
+	if _, total, err := store.QueryEvents(ctx, QueryFilter{Page: 1, PageSize: 10}); err != nil || total != 0 {
+		t.Fatalf("historical replay resurrected raw event: total=%d err=%v", total, err)
+	}
+
+	crossDevice := historicalReplay
+	crossDevice.DeviceID = "memory-attacker"
+	results, err = store.IngestBatch(ctx, []TelemetryEnvelope{crossDevice})
+	if err != nil || len(results) != 1 || results[0].Status != StatusRejected {
+		t.Fatalf("cross-device receipt replay = %+v, err=%v, want rejected", results, err)
+	}
+	if _, total, err := store.QueryEvents(ctx, QueryFilter{Page: 1, PageSize: 10}); err != nil || total != 0 {
+		t.Fatalf("cross-device replay changed raw event count: total=%d err=%v", total, err)
+	}
+}
+
 func enrollmentBoundaryRequest() TelemetryEnrollmentRequest {
 	return TelemetryEnrollmentRequest{
 		DeviceID:        "service-enrollment-device",

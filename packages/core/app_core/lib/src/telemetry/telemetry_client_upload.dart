@@ -326,24 +326,62 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
       // Rejected rows have an explicit manual-retry operation. Keeping them
       // out of the broad replay prevents a historical replay from silently
       // changing the meaning of a permanent server rejection.
-      final replayableRecords = allRecords.where(
-        (record) =>
-            record.syncState == TelemetrySyncState.pending ||
-            record.syncState == TelemetrySyncState.synced,
-      );
+      final replayableRecords = allRecords
+          .where(
+            (record) =>
+                record.syncState == TelemetrySyncState.pending ||
+                record.syncState == TelemetrySyncState.synced,
+          )
+          .toList();
       if (replayableRecords.isEmpty) return 0;
-      final records = await _preparePersistedRecords(replayableRecords);
+
+      // Pending rows retain the normal persisted-record quarantine semantics.
+      // A historical synced row must never be changed to rejected merely
+      // because a current contract or privacy rule no longer accepts it.
+      final pendingSource = replayableRecords.where(
+        (record) => record.syncState == TelemetrySyncState.pending,
+      );
+      final pending = await _preparePersistedRecords(pendingSource);
+      final preparedById = <String, TelemetryEventRecord>{
+        for (final record in pending) record.eventId: record,
+      };
+      for (final record in replayableRecords.where(
+        (record) => record.syncState == TelemetrySyncState.synced,
+      )) {
+        final safe = _sanitizePersistedRecord(record);
+        if (safe == null) {
+          // Do not quarantine an originally synced row. It remains available
+          // for a future replay after a compatible catalog is restored.
+          _lastSyncError = _persistedRecordRejectedReason;
+          continue;
+        }
+        preparedById[safe.eventId] = safe;
+      }
+      final records = <TelemetryEventRecord>[];
+      for (final record in replayableRecords) {
+        final prepared = preparedById[record.eventId];
+        if (prepared != null) records.add(prepared);
+      }
       if (records.isEmpty) return 0;
+      final pendingRecords = records
+          .where((record) => record.syncState == TelemetrySyncState.pending)
+          .toList();
 
       try {
         await _ensureAuthenticated();
       } catch (e) {
         _lastSyncError = _describeError(e);
-        await _handleUploadFailure(records, _asUploadException(e));
+        if (pendingRecords.isNotEmpty) {
+          await _handleUploadFailure(pendingRecords, _asUploadException(e));
+        }
         return 0;
       }
       if (!_hasValidToken) {
-        await _handleAuthenticationFailure(records);
+        if (pendingRecords.isNotEmpty) {
+          await _handleAuthenticationFailure(pendingRecords);
+        } else {
+          _lastSyncError = 'Device authentication failed';
+        }
         return 0;
       }
 
@@ -354,40 +392,17 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
       for (var i = 0; i < records.length; i += batchSize) {
         final end = min(i + batchSize, records.length);
         final batch = records.sublist(i, end);
-        late final TelemetryBatchUploadResult result;
-        try {
-          result = await transport.uploadBatch(
-            baseUrl: config.baseUrl,
-            authToken: _authToken!,
-            deviceId: config.deviceId,
-            records: batch,
-          );
-        } on TelemetryUploadException catch (error) {
-          if (error.isUnauthorized) _clearAuthToken();
-          if (error.isPermanentClientError) {
-            await _rejectPermanentBatch(batch, error);
-          } else {
-            await _handleUploadFailure(batch, error);
-          }
-          return 0;
-        } on Object catch (error) {
-          await _handleUploadFailure(batch, _asUploadException(error));
-          return 0;
-        }
-        if (!await _applyUploadResult(result, records: batch, purge: false)) {
+        final result = await _uploadReplayBatch(batch);
+        if (result == null ||
+            !await _applyReplayUploadResult(result, records: batch)) {
           return 0;
         }
         totalReplayed += batch.length;
       }
 
-      try {
-        await storage.purgeOldSyncedRecords(
-          targetCapacity: activePolicy.clientMaxLocalRecords,
-        );
-      } on Object {
-        _recordStorageFailure();
-        return 0;
-      }
+      // Replay is a state-preserving developer operation for rows that were
+      // already synced. Capacity maintenance runs on the durable recording
+      // cadence; purging here could physically delete a replayed synced row.
       _cancelRetryTimer();
       _lastSyncTime = _now();
       _lastSyncError = null;
@@ -398,6 +413,128 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
         _clearAuthToken();
       }
       return 0;
+    }
+  }
+
+  Future<TelemetryBatchUploadResult?> _uploadReplayBatch(
+    List<TelemetryEventRecord> batch,
+  ) async {
+    final pending = batch
+        .where((record) => record.syncState == TelemetrySyncState.pending)
+        .toList();
+
+    Future<void> handleFailure(TelemetryUploadException error) async {
+      if (pending.isEmpty) {
+        _lastSyncError = _describeError(error);
+      } else if (error.isPermanentClientError) {
+        await _rejectPermanentBatch(pending, error);
+      } else {
+        await _handleUploadFailure(pending, error);
+      }
+    }
+
+    try {
+      return await transport.uploadBatch(
+        baseUrl: config.baseUrl,
+        authToken: _authToken!,
+        deviceId: config.deviceId,
+        records: batch,
+      );
+    } on TelemetryUploadException catch (error) {
+      if (!error.isUnauthorized) {
+        await handleFailure(error);
+        return null;
+      }
+
+      // Replay follows the same single re-authentication boundary as normal
+      // upload, while keeping originally synced rows out of retry bookkeeping.
+      _clearAuthToken();
+      try {
+        await _ensureAuthenticated();
+        if (!_hasValidToken) {
+          await handleFailure(
+            const TelemetryUploadException('Device authentication failed'),
+          );
+          return null;
+        }
+        return await transport.uploadBatch(
+          baseUrl: config.baseUrl,
+          authToken: _authToken!,
+          deviceId: config.deviceId,
+          records: batch,
+        );
+      } on Object catch (retryError) {
+        if (retryError is TelemetryUploadException &&
+            retryError.isUnauthorized) {
+          _clearAuthToken();
+        }
+        await handleFailure(_asUploadException(retryError));
+        return null;
+      }
+    } on Object catch (error) {
+      await handleFailure(_asUploadException(error));
+      return null;
+    }
+  }
+
+  Future<bool> _applyReplayUploadResult(
+    TelemetryBatchUploadResult result, {
+    required List<TelemetryEventRecord> records,
+  }) async {
+    final expectedIds = records.map((record) => record.eventId).toSet();
+    final acknowledgedIds = <String>{};
+    final validAcks = <TelemetryAckResult>[];
+    var invalidResponse = expectedIds.length != records.length;
+    for (final ack in result.ackResults) {
+      if (!_isKnownTelemetryAckStatus(ack.status) ||
+          !expectedIds.contains(ack.eventId) ||
+          !acknowledgedIds.add(ack.eventId)) {
+        invalidResponse = true;
+        continue;
+      }
+      validAcks.add(ack);
+    }
+
+    const invalidAckError = TelemetryUploadException(
+      'Telemetry upload response is invalid',
+      statusCode: 502,
+      errorCode: 'INVALID_RESPONSE',
+    );
+    final pending = records
+        .where((record) => record.syncState == TelemetrySyncState.pending)
+        .toList();
+    if (invalidResponse) {
+      // An ambiguous response only advances normal pending rows. Originally
+      // synced rows are deliberately excluded from retry bookkeeping.
+      if (pending.isNotEmpty) {
+        await _handleUploadFailure(pending, invalidAckError);
+      } else {
+        _lastSyncError = _describeError(invalidAckError);
+      }
+      return false;
+    }
+
+    final pendingIds = pending.map((record) => record.eventId).toSet();
+    final pendingAcks = validAcks
+        .where((ack) => pendingIds.contains(ack.eventId))
+        .toList();
+    final unacknowledgedPending = pending
+        .where((record) => !acknowledgedIds.contains(record.eventId))
+        .toList();
+    try {
+      if (pendingAcks.isNotEmpty) {
+        await storage.applyAckResults(pendingAcks);
+      }
+      if (unacknowledgedPending.isNotEmpty) {
+        await _handleUploadFailure(unacknowledgedPending, invalidAckError);
+        return false;
+      }
+      return true;
+    } on Object {
+      // Without a durable local ACK, pending rows remain replayable. Synced
+      // rows are never touched by this failure path.
+      _recordStorageFailure();
+      return false;
     }
   }
 

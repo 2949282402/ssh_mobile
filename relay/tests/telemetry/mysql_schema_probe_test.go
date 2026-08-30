@@ -28,6 +28,7 @@ type schemaProbeState struct {
 	indexRowsCloseErr        error
 	indexRowsKeepOpen        bool
 	receiptIDs               []string
+	receiptDevices           map[string]string
 	queryErrors              map[string]error
 	execErrors               map[string]error
 	receiptCoverageQueryErr  error
@@ -49,6 +50,7 @@ func (s *schemaProbeState) reset() {
 	s.indexRowsCloseErr = nil
 	s.indexRowsKeepOpen = false
 	s.receiptIDs = nil
+	s.receiptDevices = nil
 	s.queryErrors = nil
 	s.execErrors = nil
 	s.receiptCoverageQueryErr = nil
@@ -101,15 +103,23 @@ func (c *schemaProbeConn) QueryContext(_ context.Context, query string, _ []driv
 		return nil, queryErr
 	}
 	switch {
-	case strings.Contains(lower, "select event_id from telemetry_ingest_receipts"):
+	case strings.Contains(lower, "select event_id") && strings.Contains(lower, "telemetry_ingest_receipts"):
 		c.state.mu.Lock()
 		receiptIDs := append([]string(nil), c.state.receiptIDs...)
+		receiptDevices := make(map[string]string, len(c.state.receiptDevices))
+		for eventID, deviceID := range c.state.receiptDevices {
+			receiptDevices[eventID] = deviceID
+		}
 		c.state.mu.Unlock()
 		rows := make([][]driver.Value, 0, len(receiptIDs))
 		for _, eventID := range receiptIDs {
-			rows = append(rows, []driver.Value{eventID})
+			deviceID := receiptDevices[eventID]
+			if deviceID == "" {
+				deviceID = "device-1"
+			}
+			rows = append(rows, []driver.Value{eventID, deviceID})
 		}
-		return &schemaProbeMultiRows{columns: []string{"event_id"}, rows: rows}, nil
+		return &schemaProbeMultiRows{columns: []string{"event_id", "device_id"}, rows: rows}, nil
 	case strings.Contains(lower, "idx_telemetry_release_channel_received"):
 		c.state.mu.Lock()
 		present := c.state.releaseChannelIndex

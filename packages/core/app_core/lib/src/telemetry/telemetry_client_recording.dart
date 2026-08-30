@@ -1,5 +1,8 @@
 part of 'telemetry_client.dart';
 
+const _persistedRecordRejectedReason =
+    'Telemetry record failed local validation';
+
 mixin _TelemetryClientRecording on _TelemetryClientBase {
   /// Records an event using generated contract metadata and schema allowlists.
   Future<bool> record({
@@ -141,10 +144,14 @@ mixin _TelemetryClientRecording on _TelemetryClientBase {
   static const _capacityMaintenanceInterval = 32;
 
   Future<void> _maintainLocalCapacityIfDue() async {
-    _writesSinceCapacityCheck++;
+    final firstWrite = !_hasRunCapacityMaintenance;
+    if (firstWrite) {
+      _hasRunCapacityMaintenance = true;
+    } else {
+      _writesSinceCapacityCheck++;
+    }
     final due =
-        _writesSinceCapacityCheck == 1 ||
-        _writesSinceCapacityCheck >= _capacityMaintenanceInterval;
+        firstWrite || _writesSinceCapacityCheck >= _capacityMaintenanceInterval;
     if (!due) return;
 
     try {
@@ -160,9 +167,6 @@ mixin _TelemetryClientRecording on _TelemetryClientBase {
       _recordStorageFailure();
     }
   }
-
-  static const _persistedRecordRejectedReason =
-      'Telemetry record failed local validation';
 
   /// Re-applies privacy and contract boundaries to rows read from storage.
   @override
@@ -190,6 +194,7 @@ mixin _TelemetryClientRecording on _TelemetryClientBase {
     return valid;
   }
 
+  @override
   TelemetryEventRecord? _sanitizePersistedRecord(TelemetryEventRecord record) {
     final event = catalog.eventDefinition(record.eventName);
     final eventId = redactor.sanitizeIdentifier(record.eventId);

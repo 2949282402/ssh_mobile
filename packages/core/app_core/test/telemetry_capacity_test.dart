@@ -44,6 +44,16 @@ final class _FailingPurgeStorage extends MemoryTelemetryStorage {
   }
 }
 
+final class _CountingPurgeStorage extends MemoryTelemetryStorage {
+  int purgeCalls = 0;
+
+  @override
+  Future<int> purgeOldSyncedRecords({required int targetCapacity}) async {
+    purgeCalls++;
+    return super.purgeOldSyncedRecords(targetCapacity: targetCapacity);
+  }
+}
+
 final class _DuplicateStorage extends MemoryTelemetryStorage {
   @override
   Future<void> insertRecord(TelemetryEventRecord record) async {
@@ -139,6 +149,40 @@ void main() {
       isFalse,
     );
   });
+
+  test(
+    'capacity maintenance checks the first write and every 32 later writes',
+    () async {
+      final storage = _CountingPurgeStorage();
+      final client = buildTestTelemetryClient(
+        storage: storage,
+        transport: TestTelemetryTransport(),
+        initialPolicy: _capacityPolicy(1000),
+      );
+      addTearDown(client.dispose);
+
+      Future<void> recordCadenceEvent(int index) async {
+        expect(
+          await client.record(
+            event: TelemetryEvents.sshSessionStarted,
+            properties: {'session_type': 'cadence-$index'},
+          ),
+          isTrue,
+        );
+      }
+
+      await recordCadenceEvent(1);
+      expect(storage.purgeCalls, 1);
+
+      for (var index = 2; index <= 32; index++) {
+        await recordCadenceEvent(index);
+      }
+      expect(storage.purgeCalls, 1);
+
+      await recordCadenceEvent(33);
+      expect(storage.purgeCalls, 2);
+    },
+  );
 
   test('health reports backlog ages and exact overflow count', () async {
     final storage = MemoryTelemetryStorage();

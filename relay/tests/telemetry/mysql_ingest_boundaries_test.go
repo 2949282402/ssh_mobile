@@ -138,7 +138,7 @@ type ingestProbeRows struct {
 	errRaised bool
 }
 
-func (*ingestProbeRows) Columns() []string { return []string{"event_id"} }
+func (*ingestProbeRows) Columns() []string { return []string{"event_id", "device_id"} }
 
 func (r *ingestProbeRows) Close() error { return r.closeErr }
 
@@ -182,7 +182,7 @@ func ingestProbeStateSnapshot(state *ingestProbeState) (begin, query, event, rec
 }
 
 func TestMySQLIngestCommitsAcceptedAndAlreadySeenRecords(t *testing.T) {
-	state := &ingestProbeState{rowData: [][]driver.Value{{"already-seen"}}}
+	state := &ingestProbeState{rowData: [][]driver.Value{{"already-seen", "ingest-probe-device"}}}
 	store, closeStore := newIngestProbeStore(t, state)
 	defer closeStore()
 
@@ -197,20 +197,50 @@ func TestMySQLIngestCommitsAcceptedAndAlreadySeenRecords(t *testing.T) {
 		t.Fatalf("mixed ingest acknowledgements = %+v, want accepted/already_seen", accepted)
 	}
 	_, queries, events, receipts, commits := ingestProbeStateSnapshot(state)
-	if queries != 1 || events != 1 || receipts != 1 || commits != 1 {
-		t.Fatalf("mixed ingest calls = query=%d events=%d receipts=%d commits=%d, want 1 each", queries, events, receipts, commits)
+	if queries != 2 || events != 1 || receipts != 1 || commits != 1 {
+		t.Fatalf("mixed ingest calls = query=%d events=%d receipts=%d commits=%d, want 2 queries and 1 write/commit", queries, events, receipts, commits)
 	}
 
-	state = &ingestProbeState{rowData: [][]driver.Value{{"already-seen"}}}
+	state = &ingestProbeState{rowData: [][]driver.Value{{"already-seen", "ingest-probe-device"}}}
 	store, closeStore = newIngestProbeStore(t, state)
 	defer closeStore()
 	seen, err := store.IngestBatch(context.Background(), []telemetry.TelemetryEnvelope{testEnvelope("already-seen", "ingest-probe-device")})
 	if err != nil || len(seen) != 1 || seen[0].Status != telemetry.StatusAlreadySeen {
 		t.Fatalf("receipt-only ingest = %+v, err=%v, want already_seen", seen, err)
 	}
-	_, _, events, receipts, commits = ingestProbeStateSnapshot(state)
-	if events != 0 || receipts != 0 || commits != 1 {
-		t.Fatalf("receipt-only calls = events=%d receipts=%d commits=%d, want 0/0/1", events, receipts, commits)
+	_, queries, events, receipts, commits = ingestProbeStateSnapshot(state)
+	if queries != 1 || events != 0 || receipts != 0 || commits != 0 {
+		t.Fatalf("receipt-only calls = query=%d events=%d receipts=%d commits=%d, want 1/0/0/0", queries, events, receipts, commits)
+	}
+}
+
+func TestMySQLIngestChecksReceiptOwnershipBeforeSchemaValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		deviceID   string
+		wantStatus telemetry.IngestStatus
+	}{
+		{name: "same device is already seen", deviceID: "receipt-owner-device", wantStatus: telemetry.StatusAlreadySeen},
+		{name: "different device is rejected", deviceID: "other-device", wantStatus: telemetry.StatusRejected},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			state := &ingestProbeState{
+				rowData: [][]driver.Value{{"historical-receipt", "receipt-owner-device"}},
+			}
+			store, closeStore := newIngestProbeStore(t, state)
+			defer closeStore()
+
+			envelope := testEnvelope("historical-receipt", tc.deviceID)
+			envelope.EventName = "schema.removed.after.ingest"
+			results, err := store.IngestBatch(context.Background(), []telemetry.TelemetryEnvelope{envelope})
+			if err != nil || len(results) != 1 || results[0].Status != tc.wantStatus {
+				t.Fatalf("receipt-before-schema ingest = %+v, err=%v, want %q", results, err, tc.wantStatus)
+			}
+			_, queries, events, receipts, commits := ingestProbeStateSnapshot(state)
+			if queries != 1 || events != 0 || receipts != 0 || commits != 0 {
+				t.Fatalf("receipt-only ownership calls = query=%d events=%d receipts=%d commits=%d, want 1/0/0/0", queries, events, receipts, commits)
+			}
+		})
 	}
 }
 
@@ -283,9 +313,9 @@ func TestMySQLIngestRejectsInvalidAndDuplicateInputWithoutOpeningTransaction(t *
 	if err != nil || len(results) != 3 || results[0].Status != telemetry.StatusRejected || results[1].Status != telemetry.StatusAccepted || results[2].Status != telemetry.StatusAlreadySeen {
 		t.Fatalf("invalid/duplicate ingest = %+v, err=%v, want rejected/accepted/already_seen", results, err)
 	}
-	_, _, events, receipts, commits := ingestProbeStateSnapshot(state)
-	if events != 1 || receipts != 1 || commits != 1 {
-		t.Fatalf("invalid/duplicate calls = events=%d receipts=%d commits=%d, want 1/1/1", events, receipts, commits)
+	_, queries, events, receipts, commits := ingestProbeStateSnapshot(state)
+	if queries != 2 || events != 1 || receipts != 1 || commits != 1 {
+		t.Fatalf("invalid/duplicate calls = query=%d events=%d receipts=%d commits=%d, want 2/1/1/1", queries, events, receipts, commits)
 	}
 }
 
@@ -343,7 +373,7 @@ func TestMySQLIngestReturnsUnavailableForNilStoreAndNoValidRecords(t *testing.T)
 		t.Fatalf("no-valid ingest = %+v, err=%v, want one rejected result", results, err)
 	}
 	begin, query, events, receipts, commits := ingestProbeStateSnapshot(state)
-	if begin != 0 || query != 0 || events != 0 || receipts != 0 || commits != 0 {
-		t.Fatalf("no-valid transaction calls = begin=%d query=%d events=%d receipts=%d commits=%d, want all zero", begin, query, events, receipts, commits)
+	if begin != 0 || query != 1 || events != 0 || receipts != 0 || commits != 0 {
+		t.Fatalf("no-valid transaction calls = begin=%d query=%d events=%d receipts=%d commits=%d, want 0/1/0/0/0", begin, query, events, receipts, commits)
 	}
 }
