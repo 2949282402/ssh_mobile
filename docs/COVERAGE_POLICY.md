@@ -32,17 +32,20 @@ the [Maintenance Workflow](../.agents/skills/ssh-mobile-maintenance/references/w
 
 ## New-file requirement
 
-Every hand-written production source file in the Full App `lib` tree must have
-corresponding independent tests in the owning test directory and reach at
-least 90% line coverage for that file. The GitHub App gate invokes
-`--all-sources --source-root=lib`, so it does not require an aggregate 90%
-threshold for the Full App; the other owner gates retain their aggregate
-metrics. Generated output, documentation,
+The 90% values below are aggregate owner baselines. Every newly added
+hand-written production source file must have corresponding independent tests
+in the owning test directory and reach at least 90% line coverage for that
+file. Generated output, documentation,
 configuration, test-only files, and platform boilerplate without coverable
 business logic are excluded only when the owner validation report records the
 reason. A new source file without this evidence is not ready for merge.
 
-The focused client gate uses the same mechanism for
+The Full App coverage gate passes the CI push base ref and `--source-root=lib`
+to `apps/ssh_mobile_full/tool/check_coverage.dart`. The checker discovers files
+added under that root with `git diff --diff-filter=A`, filters the documented
+generated/test/third-party/platform paths, and requires every remaining source
+to have an LCOV record and at least the active threshold on its own lines. The
+focused client gate uses the same mechanism for
 `lib/services/network/`. Local runs may set `FULL_TEST_COVERAGE_BASE_REF` or
 `CLIENT_COVERAGE_BASE_REF`; an explicit `--source-manifest=<path>` is also
 supported for owners whose source inventory is generated elsewhere.

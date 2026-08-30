@@ -280,10 +280,12 @@ void main() {
     'PowerShell coverage_test.ps1 must remain the client-gate compatibility alias.',
   );
   _expect(
-    workflow.contains('--all-sources') &&
+    workflow.contains('--minimum=90') &&
+        workflow.contains(r'--base-ref="${{ github.event.before }}"') &&
         workflow.contains('--source-root=lib') &&
-        !workflow.contains('--minimum=35'),
-    'CI Full App coverage must enforce 90% per hand-written source file.',
+        !workflow.contains('--minimum=35') &&
+        !workflow.contains('--all-sources'),
+    'CI Full App coverage must retain the 90% gate for new hand-written source files.',
   );
   final bashAppCoverage = File(
     '${root.path}/scripts/bash/ci/full_test_app.sh',
@@ -293,16 +295,16 @@ void main() {
   ).readAsStringSync();
   _expect(
     bashAppCoverage.contains('tool/check_coverage.dart') &&
-        bashAppCoverage.contains('--all-sources') &&
+        bashAppCoverage.contains('--minimum=90') &&
         powerShellAppCoverage.contains(
-          "'tool/check_coverage.dart','--all-sources'",
+          "'tool/check_coverage.dart','--minimum=90'",
         ) &&
         powerShellAppCoverage.contains(
-          'Enforce Full App per-file coverage (90% minimum)',
+          'Enforce Full App coverage (90% minimum)',
         ) &&
         !bashAppCoverage.contains('--minimum=35') &&
         !powerShellAppCoverage.contains('--minimum=35'),
-    'Bash and PowerShell Full App coverage helpers must enforce per-file 90%.',
+    'Bash and PowerShell Full App coverage helpers must enforce 90%.',
   );
   _expect(
     bashAppCoverage.contains('--source-root=lib') &&

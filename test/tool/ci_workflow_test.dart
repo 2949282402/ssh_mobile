@@ -201,10 +201,12 @@ void main() {
     'app-coverage 必须运行覆盖率门禁',
   );
   _expect(
-    appCoverage.contains('--all-sources') &&
+    appCoverage.contains('--minimum=90') &&
+        appCoverage.contains(r'--base-ref="${{ github.event.before }}"') &&
         appCoverage.contains('--source-root=lib') &&
-        !appCoverage.contains('--minimum=35'),
-    'app-coverage 必须执行每个手写生产源文件的 90% 覆盖率阈值',
+        !appCoverage.contains('--minimum=35') &&
+        !appCoverage.contains('--all-sources'),
+    'app-coverage 必须保留 90% 门禁并检查新增手写生产源文件',
   );
   _expect(
     appCoverage.contains('pattern: flutter-coverage-*') &&

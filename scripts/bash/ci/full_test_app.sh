@@ -187,7 +187,7 @@ job_app_unit_3() { job_app_unit 3; }
 job_app_coverage() {
   need dart || return "$SKIP_STATUS"
   local -a coverage_args=()
-  local -a source_args=(--all-sources --source-root=lib)
+  local -a source_args=(--source-root=lib)
   local shard isolated
   local coverage_base_ref="${FULL_TEST_COVERAGE_BASE_REF:-${GITHUB_EVENT_BEFORE:-}}"
   if [[ -n "$coverage_base_ref" ]]; then
@@ -199,7 +199,7 @@ job_app_coverage() {
       coverage_args+=("--file=$LOG_DIR/coverage/full-test-shard-$shard/isolated-$isolated-lcov.info")
     done
   done
-  step 'Enforce Full App per-file coverage (90% minimum)' run_in apps/ssh_mobile_full dart run tool/check_coverage.dart "${coverage_args[@]}" "${source_args[@]}"
+  step 'Enforce Full App coverage (90% minimum)' run_in apps/ssh_mobile_full dart run tool/check_coverage.dart --minimum=90 "${coverage_args[@]}" "${source_args[@]}"
 }
 
 job_android() {

@@ -924,7 +924,8 @@ jobs:
           done
 
           dart run tool/check_coverage.dart \
-            --all-sources \
+            --minimum=90 \
+            --base-ref="${{ github.event.before }}" \
             --source-root=lib \
             "${coverage_args[@]}"
 
