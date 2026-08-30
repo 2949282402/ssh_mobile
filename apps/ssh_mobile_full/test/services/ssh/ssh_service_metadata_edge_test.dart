@@ -1,6 +1,7 @@
 import 'package:connection_core/connection_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/terminal_session_metadata_store.dart';
@@ -132,6 +133,7 @@ void main() {
   test(
     'notification summaries and tmux names handle active collisions',
     () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
       final settings = AppSettings();
       await settings.setShowServerNamesInNotifications(true);
       final harness = SshServiceScenarioHarness(appSettings: settings);
