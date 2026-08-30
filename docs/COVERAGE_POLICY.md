@@ -50,16 +50,22 @@ focused client gate uses the same mechanism for
 `CLIENT_COVERAGE_BASE_REF`; an explicit `--source-manifest=<path>` is also
 supported for owners whose source inventory is generated elsewhere.
 
-`apps/ssh_mobile_full/lib/services/telemetry/telemetry_database/tables/telemetry_policy_states.dart`
-is a documented per-file exclusion from this new-file requirement: it is a
-hand-written Drift table whose declarative column and primary-key lines are
-fully overridden by the generated `telemetry_database.g.dart` subclass at
-runtime, so they carry no coverable business logic and cannot be exercised by a
-test.
+The following telemetry database files are documented per-file exclusions from
+this new-file requirement. `tables/telemetry_policy_states.dart` and
+`tables/telemetry_records.dart` are hand-written Drift tables whose declarative
+column, index, and primary-key lines are fully overridden by the generated
+`telemetry_database.g.dart` subclass at runtime, so they carry no coverable
+business logic and cannot be exercised by a test. The shared
+`telemetry_database_connection.dart` file is a conditional-export shim, while
+`telemetry_database_constants.dart` contains only a compile-time constant; both
+have no executable lines. The Web connection wrapper is selected only by the
+browser compiler and is owned by the native Web coverage job; the WSL Flutter
+runner cannot load its `dart.library.html` branch. These are precise platform or
+declaration-only exclusions, not waivers for the native connection, DAO, schema,
+or database lifecycle behavior, which remain covered by the App tests.
 
 The same generated-subclass rule applies to the declarative table definitions
-in `apps/ssh_mobile_full/lib/services/app_log_database/tables/app_log_tables.dart`
-and `apps/ssh_mobile_full/lib/services/telemetry/telemetry_database/tables/telemetry_records.dart`.
+in `apps/ssh_mobile_full/lib/services/app_log_database/tables/app_log_tables.dart`.
 Their column and annotation lines are marked with `coverage:ignore-start/end`;
 the owning schema tests verify the resulting columns, constraints, and indexes
 through SQLite PRAGMA queries. These are precise declaration-only exclusions,
