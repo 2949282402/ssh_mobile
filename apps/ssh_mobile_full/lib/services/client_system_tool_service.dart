@@ -91,6 +91,17 @@ class ClientSystemToolService implements ClientSystemToolAdapter {
 
   ClientSystemToolService._();
 
+  // The in-app timer works on every platform, while the native notification
+  // integration currently has mobile-only permission and channel semantics.
+  // Avoid asking the plugin to initialize with an unsupported desktop/web
+  // settings object; those platforms still receive a durable tool response
+  // with the local reminder scheduled in memory.
+  bool get _supportsLocalNotifications =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.macOS);
+
   String get _platformLocaleName => kIsWeb ? 'en_US' : Platform.localeName;
   String get _platformOS => kIsWeb ? 'web' : Platform.operatingSystem;
   String get _platformOSVersion =>
@@ -376,8 +387,10 @@ class ClientSystemToolService implements ClientSystemToolAdapter {
       };
     }
     alarm.timer.cancel();
-    await _ensureNotificationsInitialized();
-    await _notifications.cancel(id: alarm.notificationId);
+    if (_supportsLocalNotifications) {
+      await _ensureNotificationsInitialized();
+      await _notifications.cancel(id: alarm.notificationId);
+    }
     return {
       'execution': 'client',
       'target': 'client_device',
@@ -525,6 +538,7 @@ class ClientSystemToolService implements ClientSystemToolAdapter {
   }
 
   Future<void> _ensureNotificationsInitialized() {
+    if (!_supportsLocalNotifications) return Future<void>.value();
     final existing = _initFuture;
     if (existing != null) return existing;
     final future = _initializeNotifications();
@@ -569,6 +583,7 @@ class ClientSystemToolService implements ClientSystemToolAdapter {
     String title,
     String body,
   ) {
+    if (!_supportsLocalNotifications) return Future<void>.value();
     const details = NotificationDetails(
       android: AndroidNotificationDetails(
         _channelId,
