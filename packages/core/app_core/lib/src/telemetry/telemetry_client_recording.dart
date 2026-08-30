@@ -109,6 +109,12 @@ mixin _TelemetryClientRecording on _TelemetryClientBase {
       return false;
     }
 
+    // Capacity maintenance is deliberately independent of successful upload
+    // ACKs. The first durable write checks immediately so an already-overfull
+    // cache converges even while the network is offline; subsequent checks are
+    // bounded to avoid a COUNT + purge query for every event.
+    await _maintainLocalCapacityIfDue();
+
     final isHighPriorityError =
         event.severity == TelemetrySeverity.error ||
         event.severity == TelemetrySeverity.critical;
@@ -130,6 +136,29 @@ mixin _TelemetryClientRecording on _TelemetryClientBase {
     }
 
     return true;
+  }
+
+  static const _capacityMaintenanceInterval = 32;
+
+  Future<void> _maintainLocalCapacityIfDue() async {
+    _writesSinceCapacityCheck++;
+    final due =
+        _writesSinceCapacityCheck == 1 ||
+        _writesSinceCapacityCheck >= _capacityMaintenanceInterval;
+    if (!due) return;
+
+    try {
+      await storage.purgeOldSyncedRecords(
+        targetCapacity: activePolicy.clientMaxLocalRecords,
+      );
+      _writesSinceCapacityCheck = 0;
+    } on Object {
+      // A purge failure is a degraded diagnostics condition only. The record
+      // already crossed the durable boundary and must still report success.
+      // Leave the counter near the threshold so the next write retries.
+      _writesSinceCapacityCheck = _capacityMaintenanceInterval - 1;
+      _recordStorageFailure();
+    }
   }
 
   static const _persistedRecordRejectedReason =

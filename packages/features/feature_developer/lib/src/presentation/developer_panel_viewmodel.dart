@@ -102,6 +102,12 @@ final class DeveloperPanelViewModel extends ChangeNotifier {
     return count;
   }
 
+  Future<int> retryRejectedTelemetry() async {
+    final count = await _diagnostics.retryRejectedTelemetry();
+    notifyListeners();
+    return count;
+  }
+
   Future<void> flushTelemetry() async {
     await _diagnostics.flushTelemetry();
     notifyListeners();

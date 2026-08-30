@@ -91,6 +91,9 @@ class TelemetryDiagnosticsSnapshot {
     required this.timeIntervalSeconds,
     required this.maxBatchSize,
     required this.clientMaxLocalRecords,
+    this.oldestPendingAge,
+    this.oldestRejectedAge,
+    this.overflowCount = 0,
     this.lastSyncTime,
     this.lastSyncError,
     this.lastPolicyFetchTime,
@@ -108,6 +111,9 @@ class TelemetryDiagnosticsSnapshot {
   final int timeIntervalSeconds;
   final int maxBatchSize;
   final int clientMaxLocalRecords;
+  final Duration? oldestPendingAge;
+  final Duration? oldestRejectedAge;
+  final int overflowCount;
   final DateTime? lastSyncTime;
   final String? lastSyncError;
   final DateTime? lastPolicyFetchTime;

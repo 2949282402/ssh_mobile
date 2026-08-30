@@ -134,6 +134,9 @@ final class DeveloperTelemetrySnapshot {
     required this.localSyncedCount,
     required this.totalCount,
     required this.cacheOverflow,
+    this.oldestPendingAge,
+    this.oldestRejectedAge,
+    this.overflowCount = 0,
     required this.uploadEnabled,
     required this.policyVersion,
     required this.batchSizeThreshold,
@@ -157,6 +160,15 @@ final class DeveloperTelemetrySnapshot {
 
   /// 是否发生缓存超限（非丢失不变量激活）。
   final bool cacheOverflow;
+
+  /// Age of the oldest pending local record, if present.
+  final Duration? oldestPendingAge;
+
+  /// Age of the oldest rejected local record, if present.
+  final Duration? oldestRejectedAge;
+
+  /// Number of rows above the configured local target capacity.
+  final int overflowCount;
 
   /// 上传是否开启。
   final bool uploadEnabled;

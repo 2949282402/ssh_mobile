@@ -32,6 +32,19 @@ type serviceBoundaryStore struct {
 	closeErr         error
 }
 
+type serviceIngestCaptureStore struct {
+	Store
+	captured []TelemetryEnvelope
+}
+
+func (s *serviceIngestCaptureStore) IngestBatch(
+	ctx context.Context,
+	envelopes []TelemetryEnvelope,
+) ([]IngestRecordResult, error) {
+	s.captured = append([]TelemetryEnvelope(nil), envelopes...)
+	return s.Store.IngestBatch(ctx, envelopes)
+}
+
 func (s *serviceBoundaryStore) GetDeviceCredential(context.Context, string) (string, error) {
 	if s.credentialErr != nil {
 		return "", s.credentialErr
@@ -175,6 +188,40 @@ func TestServiceAuthAndTokenBoundaries(t *testing.T) {
 	noStore := NewService(nil, DefaultCatalog(), nil)
 	if err := noStore.UpdateSettings(context.Background(), TelemetrySettings{}); !errors.Is(err, ErrServiceUnavailable) {
 		t.Fatalf("UpdateSettings without a store = %v, want unavailable", err)
+	}
+}
+
+func TestServiceIngestStampsOneAuthoritativeReceivedAtPerBatch(t *testing.T) {
+	base := NewMemoryStore(DefaultCatalog())
+	store := &serviceIngestCaptureStore{Store: base}
+	service := NewServiceWithSecret(store, DefaultCatalog(), nil, testAuthSecret)
+	spoofed := time.Unix(1, 0).UTC()
+	first := testEnvelope("service-received-1", "service-received-device")
+	second := testEnvelope("service-received-2", "service-received-device")
+	first.ReceivedAt = spoofed
+	second.ReceivedAt = spoofed.Add(time.Hour)
+
+	results, err := service.IngestBatch(context.Background(), []TelemetryEnvelope{first, second})
+	if err != nil {
+		t.Fatalf("service ingest failed: %v", err)
+	}
+	if len(results) != 2 || len(store.captured) != 2 {
+		t.Fatalf("captured batch = results=%d envelopes=%d, want 2/2", len(results), len(store.captured))
+	}
+	if store.captured[0].ReceivedAt.IsZero() ||
+		!store.captured[0].ReceivedAt.Equal(store.captured[1].ReceivedAt) {
+		t.Fatalf("service receivedAt values = %v and %v, want one shared non-zero timestamp", store.captured[0].ReceivedAt, store.captured[1].ReceivedAt)
+	}
+	if store.captured[0].ReceivedAt.Equal(spoofed) || store.captured[1].ReceivedAt.Equal(spoofed.Add(time.Hour)) {
+		t.Fatalf("client supplied receivedAt was retained: %+v", store.captured)
+	}
+	stored, _, err := base.QueryEvents(context.Background(), QueryFilter{DeviceID: "service-received-device"})
+	if err != nil || len(stored) != 2 {
+		t.Fatalf("persisted service batch = len=%d err=%v, want 2 rows", len(stored), err)
+	}
+	if !stored[0].ReceivedAt.Equal(store.captured[0].ReceivedAt) ||
+		!stored[1].ReceivedAt.Equal(store.captured[0].ReceivedAt) {
+		t.Fatalf("store changed service timestamp: captured=%v persisted=%v", store.captured[0].ReceivedAt, stored)
 	}
 }
 

@@ -170,10 +170,12 @@ func (m *MemoryStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnve
 			continue
 		}
 
-		// 3. Set trusted receivedAt. The in-memory implementation mirrors
-		// MySQL: every newly accepted row receives the current server time,
-		// regardless of any client-supplied value.
-		env.ReceivedAt = now
+		// Service.IngestBatch stamps ReceivedAt before reaching the store. Keep
+		// that authoritative value; only legacy direct Store callers with a zero
+		// value receive a compatibility timestamp.
+		if env.ReceivedAt.IsZero() {
+			env.ReceivedAt = now
+		}
 		accepted = append(accepted, env)
 		pending[env.EventID] = struct{}{}
 

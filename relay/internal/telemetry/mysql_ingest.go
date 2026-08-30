@@ -116,8 +116,12 @@ func (s *MySQLStore) IngestBatch(ctx context.Context, envelopes []TelemetryEnvel
 			continue
 		}
 
-		// Server receive time is authoritative; client-supplied receivedAt is ignored.
-		env.ReceivedAt = now
+		// Service.IngestBatch stamps ReceivedAt before reaching the store. Keep
+		// that value unchanged; the zero-value fallback is only for legacy direct
+		// Store callers that bypass the service boundary.
+		if env.ReceivedAt.IsZero() {
+			env.ReceivedAt = now
+		}
 		if _, duplicate := seenInput[env.EventID]; duplicate {
 			results[i] = IngestRecordResult{
 				EventID: env.EventID,

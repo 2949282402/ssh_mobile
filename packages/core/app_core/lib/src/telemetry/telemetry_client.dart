@@ -22,6 +22,7 @@ part 'telemetry_client_base.dart';
 part 'telemetry_client_recording.dart';
 part 'telemetry_client_authentication.dart';
 part 'telemetry_client_upload.dart';
+part 'telemetry_client_replay.dart';
 part 'telemetry_client_lifecycle.dart';
 
 /// Client-side telemetry recorder and upload dispatcher.
@@ -35,6 +36,7 @@ class TelemetryClient extends _TelemetryClientBase
         _TelemetryClientRecording,
         _TelemetryClientAuthentication,
         _TelemetryClientUpload,
+        _TelemetryClientReplay,
         _TelemetryClientLifecycle {
   TelemetryClient({
     required super.config,

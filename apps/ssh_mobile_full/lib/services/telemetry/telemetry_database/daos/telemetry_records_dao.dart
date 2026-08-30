@@ -33,6 +33,18 @@ class TelemetryRecordsDao extends DatabaseAccessor<TelemetryDatabase>
         .get();
   }
 
+  /// Reads rejected rows for the explicit developer retry path.
+  Future<List<TelemetryRecord>> fetchRejectedForReplay() {
+    return (select(telemetryRecords)
+          ..where((t) => t.syncState.equals(TelemetrySyncStateWire.rejected))
+          ..orderBy([
+            (t) =>
+                OrderingTerm(expression: t.createdAt, mode: OrderingMode.asc),
+            (t) => OrderingTerm(expression: t.eventId, mode: OrderingMode.asc),
+          ]))
+        .get();
+  }
+
   /// 递增指定 eventId 的重试次数。
   ///
   /// 使用参数化的 `UPDATE` 确保不会把用户数据拼进 SQL。
@@ -86,6 +98,34 @@ class TelemetryRecordsDao extends DatabaseAccessor<TelemetryDatabase>
     );
     final total = await _countAll();
     return (pending: pending, rejected: rejected, synced: synced, total: total);
+  }
+
+  /// Returns the oldest local event time for pending and rejected rows.
+  Future<({DateTime? pending, DateTime? rejected})>
+  fetchOldestStateTimes() async {
+    Future<DateTime?> oldest(String state) async {
+      final row =
+          await (select(telemetryRecords)
+                ..where((t) => t.syncState.equals(state))
+                ..orderBy([
+                  (t) => OrderingTerm(
+                    expression: t.createdAt,
+                    mode: OrderingMode.asc,
+                  ),
+                  (t) => OrderingTerm(
+                    expression: t.eventId,
+                    mode: OrderingMode.asc,
+                  ),
+                ])
+                ..limit(1))
+              .getSingleOrNull();
+      return row?.createdAt;
+    }
+
+    return (
+      pending: await oldest(TelemetrySyncStateWire.pending),
+      rejected: await oldest(TelemetrySyncStateWire.rejected),
+    );
   }
 
   Future<int> _countWhere(

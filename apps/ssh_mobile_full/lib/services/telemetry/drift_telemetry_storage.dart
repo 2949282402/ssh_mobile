@@ -13,7 +13,10 @@ import 'telemetry_database.dart';
 
 /// SQLite（Drift）支撑的遥测存储实现。
 class DriftTelemetryStorage
-    implements TelemetryStorage, TelemetryPolicyStorage {
+    implements
+        TelemetryStorage,
+        TelemetryPolicyStorage,
+        TelemetryRejectedReplayStorage {
   DriftTelemetryStorage({TelemetryDatabase? database})
     : _database = database ?? TelemetryDatabase();
 
@@ -26,12 +29,21 @@ class DriftTelemetryStorage
       throw StateError('Telemetry storage already closed');
     }
     final recordRow = _toCompanion(record);
-    await _database
-        .into(_database.telemetryRecords)
-        .insert(
-          recordRow,
-          onConflict: DoNothing(target: [_database.telemetryRecords.eventId]),
-        );
+    try {
+      await _database.telemetryRecordsDao.insertRecord(recordRow);
+    } on TelemetryStorageDuplicateException {
+      rethrow;
+    } catch (error) {
+      // Drift's native and web executors expose different concrete SQLite
+      // exception types. Classify the unique event-id constraint by its stable
+      // message while preserving every other storage failure as-is.
+      final message = error.toString().toLowerCase();
+      if (message.contains('unique constraint') ||
+          message.contains('duplicate') && message.contains('event_id')) {
+        throw TelemetryStorageDuplicateException(record.eventId);
+      }
+      rethrow;
+    }
   }
 
   @override
@@ -205,6 +217,15 @@ class DriftTelemetryStorage
   }
 
   @override
+  Future<List<TelemetryEventRecord>> fetchRejectedForReplay() async {
+    if (_closed) {
+      throw StateError('Telemetry storage already closed');
+    }
+    final rows = await _database.telemetryRecordsDao.fetchRejectedForReplay();
+    return rows.map(_fromRow).toList();
+  }
+
+  @override
   Future<int> purgeOldSyncedRecords({required int targetCapacity}) async {
     if (_closed) {
       throw StateError('Telemetry storage already closed');
@@ -215,7 +236,7 @@ class DriftTelemetryStorage
       final total = await _database.telemetryRecordsDao.countStates();
       if (total.total <= targetCapacity) return 0;
 
-      // 找出所有 synced + logicalDeletedAt != null 的记录（按淘汰时间最旧优先）。
+      // 找出所有 synced + logicalDeletedAt != null 的记录（按本地写入 FIFO）。
       final rows =
           await (_database.select(_database.telemetryRecords)
                 ..where(
@@ -261,12 +282,26 @@ class DriftTelemetryStorage
       throw StateError('Telemetry storage already closed');
     }
     final counts = await _database.telemetryRecordsDao.countStates();
+    final oldest = await _database.telemetryRecordsDao.fetchOldestStateTimes();
+    final overflowCount = counts.total > targetCapacity
+        ? counts.total - targetCapacity
+        : 0;
+    final now = DateTime.now().toUtc();
+    Duration? ageOf(DateTime? occurredAt) {
+      if (occurredAt == null) return null;
+      final age = now.difference(occurredAt.toUtc());
+      return age.isNegative ? Duration.zero : age;
+    }
+
     final health = TelemetryStorageHealth(
       localPendingCount: counts.pending,
       localRejectedCount: counts.rejected,
       localSyncedCount: counts.synced,
       totalCount: counts.total,
-      cacheOverflow: counts.total > targetCapacity,
+      cacheOverflow: overflowCount > 0,
+      oldestPendingAge: ageOf(oldest.pending),
+      oldestRejectedAge: ageOf(oldest.rejected),
+      overflowCount: overflowCount,
     );
     _lastHealthSnapshot = health;
     return health;

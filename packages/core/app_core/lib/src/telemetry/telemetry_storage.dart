@@ -29,6 +29,20 @@ class TelemetryAckResult {
   }
 }
 
+/// Raised when a local durable insert collides with an existing event ID.
+///
+/// Event IDs are the idempotency identity of a record. A collision therefore
+/// is a failed insert, never a successful no-op or an instruction to generate
+/// a replacement ID.
+final class TelemetryStorageDuplicateException implements Exception {
+  const TelemetryStorageDuplicateException(this.eventId);
+
+  final String eventId;
+
+  @override
+  String toString() => 'TelemetryStorageDuplicateException($eventId)';
+}
+
 /// 本地存储健康快照。
 class TelemetryStorageHealth {
   const TelemetryStorageHealth({
@@ -37,6 +51,9 @@ class TelemetryStorageHealth {
     required this.localSyncedCount,
     required this.totalCount,
     required this.cacheOverflow,
+    this.oldestPendingAge,
+    this.oldestRejectedAge,
+    this.overflowCount = 0,
   });
 
   final int localPendingCount;
@@ -44,6 +61,15 @@ class TelemetryStorageHealth {
   final int localSyncedCount;
   final int totalCount;
   final bool cacheOverflow;
+
+  /// Age of the oldest pending row at snapshot time, if one exists.
+  final Duration? oldestPendingAge;
+
+  /// Age of the oldest rejected row at snapshot time, if one exists.
+  final Duration? oldestRejectedAge;
+
+  /// Number of rows above the configured target capacity.
+  final int overflowCount;
 }
 
 /// Durable owner for the last policy accepted by the telemetry client.
@@ -93,12 +119,40 @@ abstract class TelemetryStorage {
   Future<void> close();
 }
 
+/// Reads only rejected rows for an explicit developer retry.
+///
+/// This extension keeps storage implementations source-compatible while the
+/// production Drift implementation can provide a bounded query member with
+/// the same name.
+extension TelemetryStorageReplayOperations on TelemetryStorage {
+  Future<List<TelemetryEventRecord>> fetchRejectedForReplay() async {
+    if (this is TelemetryRejectedReplayStorage) {
+      return (this as TelemetryRejectedReplayStorage).fetchRejectedForReplay();
+    }
+    final records = await fetchAllForReplay();
+    return records
+        .where((record) => record.syncState == TelemetrySyncState.rejected)
+        .toList();
+  }
+}
+
+/// Optional bounded query capability for production stores.
+///
+/// It is separate from [TelemetryStorage] so older test and migration stores
+/// remain source-compatible; callers use [TelemetryStorageReplayOperations].
+abstract interface class TelemetryRejectedReplayStorage {
+  Future<List<TelemetryEventRecord>> fetchRejectedForReplay();
+}
+
 /// 纯内存测试替身。
 ///
 /// 仅用于单元测试；生产路径必须使用 SQLite/Drift 实现，绝不使用内存或
 /// JSONL 存储。
 class MemoryTelemetryStorage
-    implements TelemetryStorage, TelemetryPolicyStorage {
+    implements
+        TelemetryStorage,
+        TelemetryPolicyStorage,
+        TelemetryRejectedReplayStorage {
   final List<TelemetryEventRecord> _records = [];
   TelemetryUploadPolicy? _lastKnownGoodPolicy;
 
@@ -114,6 +168,9 @@ class MemoryTelemetryStorage
 
   @override
   Future<void> insertRecord(TelemetryEventRecord record) async {
+    if (_records.any((existing) => existing.eventId == record.eventId)) {
+      throw TelemetryStorageDuplicateException(record.eventId);
+    }
     _records.add(record);
   }
 
@@ -169,6 +226,15 @@ class MemoryTelemetryStorage
   }
 
   @override
+  Future<List<TelemetryEventRecord>> fetchRejectedForReplay() async {
+    return List.unmodifiable(
+      _records.where(
+        (record) => record.syncState == TelemetrySyncState.rejected,
+      ),
+    );
+  }
+
+  @override
   Future<int> purgeOldSyncedRecords({required int targetCapacity}) async {
     if (targetCapacity <= 0) return 0;
     final total = _records.length;
@@ -183,11 +249,12 @@ class MemoryTelemetryStorage
                   r.logicalDeletedAt != null,
             )
             .toList()
-          ..sort(
-            (a, b) => (a.logicalDeletedAt ?? a.occurredAt).compareTo(
-              b.logicalDeletedAt ?? b.occurredAt,
-            ),
-          );
+          ..sort((a, b) {
+            final byOccurredAt = a.occurredAt.compareTo(b.occurredAt);
+            return byOccurredAt != 0
+                ? byOccurredAt
+                : a.eventId.compareTo(b.eventId);
+          });
 
     final excess = total - targetCapacity;
     final toDeleteCount = excess < syncedRecords.length
@@ -226,14 +293,30 @@ class MemoryTelemetryStorage
     }
 
     final total = _records.length;
-    final overflow = total > targetCapacity;
+    final overflowCount = total > targetCapacity ? total - targetCapacity : 0;
+    final now = DateTime.now().toUtc();
+    Duration? ageOf(TelemetrySyncState state) {
+      final oldest = _records
+          .where((record) => record.syncState == state)
+          .map((record) => record.occurredAt)
+          .fold<DateTime?>(null, (current, value) {
+            if (current == null || value.isBefore(current)) return value;
+            return current;
+          });
+      if (oldest == null) return null;
+      final age = now.difference(oldest.toUtc());
+      return age.isNegative ? Duration.zero : age;
+    }
 
     return TelemetryStorageHealth(
       localPendingCount: pending,
       localRejectedCount: rejected,
       localSyncedCount: synced,
       totalCount: total,
-      cacheOverflow: overflow,
+      cacheOverflow: overflowCount > 0,
+      oldestPendingAge: ageOf(TelemetrySyncState.pending),
+      oldestRejectedAge: ageOf(TelemetrySyncState.rejected),
+      overflowCount: overflowCount,
     );
   }
 

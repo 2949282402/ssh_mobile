@@ -64,6 +64,7 @@ abstract class _TelemetryClientBase {
   Future<void>? _disposeFuture;
   bool _uploadRequested = false;
   bool _policyRefreshRequested = false;
+  int _writesSinceCapacityCheck = 0;
   Completer<void>? _retryWaitCompleter;
   TelemetryTimer? _periodicFlushTimer;
   TelemetryTimer? _retryTimer;
@@ -128,6 +129,7 @@ abstract class _TelemetryClientBase {
   // Cross-part contracts. Implementations remain in their owning behavior
   // part, while these declarations let each mixin type-check independently.
   Future<void> _requestUpload();
+  void _completeUpload(Future<void> operation);
   Future<List<TelemetryEventRecord>> _preparePersistedRecords(
     Iterable<TelemetryEventRecord> records,
   );

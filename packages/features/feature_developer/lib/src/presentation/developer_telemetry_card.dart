@@ -76,6 +76,33 @@ class _DeveloperTelemetryCardState extends State<DeveloperTelemetryCard> {
     }
   }
 
+  Future<void> _handleRetryRejected() async {
+    setState(() {
+      _isProcessing = true;
+      _actionFeedback = 'Retrying rejected records...';
+    });
+    try {
+      final count = await widget.vm.retryRejectedTelemetry();
+      if (mounted) {
+        setState(() {
+          _actionFeedback = 'Retried $count rejected records';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _actionFeedback = 'Error: $e';
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+        });
+      }
+    }
+  }
+
   Future<void> _handleRefreshPolicy() async {
     setState(() {
       _isProcessing = true;
@@ -211,6 +238,14 @@ class _DeveloperTelemetryCardState extends State<DeveloperTelemetryCard> {
                     icon: const Icon(Icons.replay_rounded, size: 14),
                     label: const Text(
                       'Replay All Data',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _isProcessing ? null : _handleRetryRejected,
+                    icon: const Icon(Icons.replay_circle_filled, size: 14),
+                    label: const Text(
+                      'Retry Rejected',
                       style: TextStyle(fontSize: 12),
                     ),
                   ),

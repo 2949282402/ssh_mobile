@@ -268,6 +268,9 @@ final class AppDeveloperDiagnosticsAdapter extends ChangeNotifier
                   localSyncedCount: diag.localSyncedCount,
                   totalCount: diag.totalCount,
                   cacheOverflow: diag.cacheOverflow,
+                  oldestPendingAge: diag.oldestPendingAge,
+                  oldestRejectedAge: diag.oldestRejectedAge,
+                  overflowCount: diag.overflowCount,
                   uploadEnabled: diag.uploadEnabled,
                   policyVersion: diag.policyVersion,
                   batchSizeThreshold: diag.batchSizeThreshold,
@@ -280,6 +283,10 @@ final class AppDeveloperDiagnosticsAdapter extends ChangeNotifier
   @override
   Future<int> replayTelemetry() async =>
       telemetryClient?.replayAllLocalRecords() ?? 0;
+
+  @override
+  Future<int> retryRejectedTelemetry() async =>
+      telemetryClient?.retryRejectedRecords() ?? 0;
 
   @override
   Future<void> flushTelemetry() async =>

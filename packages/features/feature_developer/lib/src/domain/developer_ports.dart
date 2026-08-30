@@ -231,6 +231,9 @@ abstract interface class DeveloperDiagnosticsPort implements Listenable {
   /// 一键重传本地所有 Telemetry 数据。
   Future<int> replayTelemetry() async => 0;
 
+  /// 显式重试本地 rejected Telemetry 数据；不会影响 pending/synced rows。
+  Future<int> retryRejectedTelemetry() async => 0;
+
   /// 立即触发一次 Telemetry 批次上传。
   Future<void> flushTelemetry() async {}
 

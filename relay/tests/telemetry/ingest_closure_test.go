@@ -115,8 +115,8 @@ func TestMemoryStoreCanceledContextAndReceivedAtParity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query after initial ingest: %v", err)
 	}
-	if len(events) != 1 || events[0].ReceivedAt.Equal(old) {
-		t.Fatalf("memory store ReceivedAt = %#v, want current receipt time replacing %v", events, old)
+	if len(events) != 1 || !events[0].ReceivedAt.Equal(old) {
+		t.Fatalf("memory store ReceivedAt = %#v, want store to preserve service-stamped value %v", events, old)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

@@ -17,6 +17,7 @@ class TelemetryFakeDiagnostics extends ChangeNotifier
   Future<DeveloperNativeMemorySnapshot?> readNativeMemory() async => null;
 
   bool replayCalled = false;
+  bool retryRejectedCalled = false;
   bool flushCalled = false;
   bool refreshCalled = false;
 
@@ -24,6 +25,12 @@ class TelemetryFakeDiagnostics extends ChangeNotifier
   Future<int> replayTelemetry() async {
     replayCalled = true;
     return 42;
+  }
+
+  @override
+  Future<int> retryRejectedTelemetry() async {
+    retryRejectedCalled = true;
+    return 3;
   }
 
   @override
@@ -118,6 +125,11 @@ void main() {
 
       expect(diagnostics.replayCalled, isTrue);
       expect(find.text('Replayed 42 records'), findsOneWidget);
+
+      await tester.tap(find.text('Retry Rejected'));
+      await tester.pumpAndSettle();
+      expect(diagnostics.retryRejectedCalled, isTrue);
+      expect(find.text('Retried 3 rejected records'), findsOneWidget);
     },
   );
 }

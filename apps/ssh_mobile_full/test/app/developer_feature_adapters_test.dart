@@ -320,6 +320,7 @@ void main() {
         final adapter = _adapter();
 
         expect(await adapter.replayTelemetry(), 0);
+        expect(await adapter.retryRejectedTelemetry(), 0);
         expect(await adapter.refreshTelemetryPolicy(), isFalse);
         await adapter.flushTelemetry();
         expect(adapter.snapshot.telemetry, isNull);
@@ -332,9 +333,11 @@ void main() {
       final adapter = _adapter(telemetry: telemetry);
 
       expect(await adapter.replayTelemetry(), 7);
+      expect(await adapter.retryRejectedTelemetry(), 3);
       expect(await adapter.refreshTelemetryPolicy(), isTrue);
       await adapter.flushTelemetry();
       expect(telemetry.replayCount, 1);
+      expect(telemetry.retryRejectedCount, 1);
       expect(telemetry.flushCount, 1);
       expect(telemetry.refreshCount, 1);
     });
@@ -646,6 +649,7 @@ final class _FakeTelemetryClient extends Fake
         isUploading: true,
       );
   int replayCount = 0;
+  int retryRejectedCount = 0;
   int flushCount = 0;
   int refreshCount = 0;
 
@@ -659,6 +663,12 @@ final class _FakeTelemetryClient extends Fake
   Future<int> replayAllLocalRecords() async {
     replayCount++;
     return 7;
+  }
+
+  @override
+  Future<int> retryRejectedRecords() async {
+    retryRejectedCount++;
+    return 3;
   }
 
   @override

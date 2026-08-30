@@ -47,6 +47,7 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
     }
   }
 
+  @override
   void _completeUpload(Future<void> operation) {
     if (!identical(_uploadFuture, operation)) return;
     _uploadFuture = null;
@@ -322,8 +323,16 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
       await ready;
       if (_isDisposed || !activePolicy.uploadEnabled) return 0;
       final allRecords = await storage.fetchAllForReplay();
-      if (allRecords.isEmpty) return 0;
-      final records = await _preparePersistedRecords(allRecords);
+      // Rejected rows have an explicit manual-retry operation. Keeping them
+      // out of the broad replay prevents a historical replay from silently
+      // changing the meaning of a permanent server rejection.
+      final replayableRecords = allRecords.where(
+        (record) =>
+            record.syncState == TelemetrySyncState.pending ||
+            record.syncState == TelemetrySyncState.synced,
+      );
+      if (replayableRecords.isEmpty) return 0;
+      final records = await _preparePersistedRecords(replayableRecords);
       if (records.isEmpty) return 0;
 
       try {

@@ -83,6 +83,167 @@ void main() {
       },
     );
 
+    test('replayAllLocalRecords excludes rejected records', () async {
+      await client.record(
+        event: TelemetryEvents.sshSessionStarted,
+        properties: {'session_type': 'pending'},
+      );
+      await client.record(
+        event: TelemetryEvents.sshSessionStarted,
+        properties: {'session_type': 'rejected'},
+      );
+      await client.flush();
+      final records = await storage.fetchAllForReplay();
+      final rejectedId = records
+          .singleWhere(
+            (record) => record.properties['session_type'] == 'rejected',
+          )
+          .eventId;
+      await storage.applyAckResults([
+        TelemetryAckResult(eventId: rejectedId, status: 'rejected'),
+      ]);
+      transport.uploadedBatches.clear();
+      final callsBefore = transport.uploadCalls;
+
+      final replayed = await client.replayAllLocalRecords();
+
+      expect(replayed, 1);
+      expect(transport.uploadCalls, callsBefore + 1);
+      expect(
+        transport.uploadedBatches.single.single.properties['session_type'],
+        'pending',
+      );
+      expect(
+        (await storage.fetchAllForReplay())
+            .singleWhere((record) => record.eventId == rejectedId)
+            .syncState,
+        TelemetrySyncState.rejected,
+      );
+    });
+
+    test(
+      'retryRejectedRecords only retries rejected rows and accepts them',
+      () async {
+        await client.record(
+          event: TelemetryEvents.sshSessionStarted,
+          properties: {'session_type': 'rejected'},
+        );
+        await client.flush();
+        final rejected = (await storage.fetchAllForReplay()).single;
+        await storage.applyAckResults([
+          TelemetryAckResult(eventId: rejected.eventId, status: 'rejected'),
+        ]);
+
+        final callsBefore = transport.uploadCalls;
+        final retried = await client.retryRejectedRecords();
+
+        expect(retried, 1);
+        expect(transport.uploadCalls, callsBefore + 1);
+        final restored = (await storage.fetchAllForReplay()).single;
+        expect(restored.eventId, rejected.eventId);
+        expect(restored.deviceId, rejected.deviceId);
+        expect(restored.sessionId, rejected.sessionId);
+        expect(restored.traceId, rejected.traceId);
+        expect(restored.occurredAt, rejected.occurredAt);
+        expect(restored.properties, rejected.properties);
+        expect(restored.syncState, TelemetrySyncState.synced);
+        expect(restored.logicalDeletedAt, isNotNull);
+      },
+    );
+
+    test(
+      'retryRejectedRecords leaves pending and synced rows untouched',
+      () async {
+        final localStorage = MemoryTelemetryStorage();
+        final localTransport = TestTelemetryTransport();
+        final localClient = buildTestTelemetryClient(
+          storage: localStorage,
+          transport: localTransport,
+          initialPolicy: const TelemetryUploadPolicy(
+            uploadEnabled: true,
+            batchSizeThreshold: 100,
+            timeIntervalSeconds: 60,
+            maxBatchSize: 10,
+            clientMaxLocalRecords: 100,
+            specialTriggers: <String>[],
+            policyVersion: 1,
+          ),
+        );
+        addTearDown(localClient.dispose);
+
+        await localClient.record(
+          event: TelemetryEvents.sshSessionStarted,
+          properties: {'session_type': 'pending'},
+        );
+        await localClient.record(
+          event: TelemetryEvents.sshSessionStarted,
+          properties: {'session_type': 'synced'},
+        );
+        await localClient.record(
+          event: TelemetryEvents.sshSessionStarted,
+          properties: {'session_type': 'rejected'},
+        );
+        final localRecords = await localStorage.fetchAllForReplay();
+        final syncedId = localRecords
+            .singleWhere(
+              (record) => record.properties['session_type'] == 'synced',
+            )
+            .eventId;
+        final rejectedId = localRecords
+            .singleWhere(
+              (record) => record.properties['session_type'] == 'rejected',
+            )
+            .eventId;
+        await localStorage.applyAckResults([
+          TelemetryAckResult(eventId: syncedId, status: 'accepted'),
+          TelemetryAckResult(eventId: rejectedId, status: 'rejected'),
+        ]);
+        localTransport.nextAckResults.add(
+          TelemetryAckResult(eventId: rejectedId, status: 'rejected'),
+        );
+
+        expect(await localClient.retryRejectedRecords(), 1);
+        expect(localTransport.uploadedBatches, hasLength(1));
+        expect(
+          localTransport.uploadedBatches.single.single.eventId,
+          rejectedId,
+        );
+        final afterRetry = {
+          for (final record in await localStorage.fetchAllForReplay())
+            record.properties['session_type'] as String: record,
+        };
+        expect(afterRetry['pending']!.syncState, TelemetrySyncState.pending);
+        expect(afterRetry['synced']!.syncState, TelemetrySyncState.synced);
+        expect(afterRetry['synced']!.logicalDeletedAt, isNotNull);
+        expect(afterRetry['rejected']!.syncState, TelemetrySyncState.rejected);
+        expect(afterRetry['rejected']!.logicalDeletedAt, isNull);
+      },
+    );
+
+    test(
+      'retryRejectedRecords keeps rejected rows on transient failure',
+      () async {
+        await client.record(
+          event: TelemetryEvents.sshSessionStarted,
+          properties: {'session_type': 'rejected'},
+        );
+        await client.flush();
+        final rejected = (await storage.fetchAllForReplay()).single;
+        await storage.applyAckResults([
+          TelemetryAckResult(eventId: rejected.eventId, status: 'rejected'),
+        ]);
+        transport.nextUploadStatusCodes.add(503);
+
+        final retried = await client.retryRejectedRecords();
+
+        expect(retried, 0);
+        final unchanged = (await storage.fetchAllForReplay()).single;
+        expect(unchanged.syncState, TelemetrySyncState.rejected);
+        expect(unchanged.logicalDeletedAt, isNull);
+        expect(unchanged.retryCount, 0);
+      },
+    );
+
     test('replay revalidates persisted rows before sending them', () async {
       final persistedStorage = TestTelemetryStorage([
         persistedDiagnosticRecord(

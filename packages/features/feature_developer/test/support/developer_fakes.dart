@@ -156,6 +156,9 @@ final class FakeDeveloperDiagnostics extends ChangeNotifier
   Future<int> replayTelemetry() async => 0;
 
   @override
+  Future<int> retryRejectedTelemetry() async => 0;
+
+  @override
   Future<void> flushTelemetry() async {}
 
   @override

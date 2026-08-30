@@ -185,6 +185,7 @@ mixin _TelemetryClientLifecycle on _TelemetryClientBase {
           localSyncedCount: 0,
           totalCount: 0,
           cacheOverflow: false,
+          overflowCount: 0,
         );
     return _diagnosticsFromHealth(health);
   }
@@ -213,6 +214,9 @@ mixin _TelemetryClientLifecycle on _TelemetryClientBase {
       timeIntervalSeconds: activePolicy.timeIntervalSeconds,
       maxBatchSize: activePolicy.maxBatchSize,
       clientMaxLocalRecords: activePolicy.clientMaxLocalRecords,
+      oldestPendingAge: health.oldestPendingAge,
+      oldestRejectedAge: health.oldestRejectedAge,
+      overflowCount: health.overflowCount,
       lastSyncTime: _lastSyncTime,
       lastSyncError: _lastSyncError,
       lastPolicyFetchTime: _lastPolicyFetchTime,

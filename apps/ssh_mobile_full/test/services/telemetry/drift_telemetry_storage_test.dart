@@ -169,12 +169,29 @@ void main() {
       expect(await storage.loadLastKnownGoodPolicy(), isNull);
     });
 
-    test('eventId unique constraint preserves original on duplicate', () async {
-      await storage.insertRecord(record('dup-1'));
-      await storage.insertRecord(record('dup-1'));
-      final all = await storage.fetchAllForReplay();
-      expect(all.length, 1);
-    });
+    test(
+      'eventId duplicate is surfaced without mutating the original',
+      () async {
+        await storage.insertRecord(record('dup-1'));
+        await expectLater(
+          storage.insertRecord(
+            record(
+              'dup-1',
+            ).copyWith(properties: const {'session_type': 'replacement'}),
+          ),
+          throwsA(
+            isA<TelemetryStorageDuplicateException>().having(
+              (error) => error.eventId,
+              'eventId',
+              'dup-1',
+            ),
+          ),
+        );
+        final all = await storage.fetchAllForReplay();
+        expect(all.length, 1);
+        expect(all.single.properties['session_type'], 'interactive');
+      },
+    );
 
     test(
       'applyAckResults marks accepted as synced with logicalDeletedAt and resets retryCount',
@@ -286,6 +303,7 @@ void main() {
       expect(stats.localRejectedCount, 1);
       expect(stats.localSyncedCount, 0);
       expect(stats.cacheOverflow, isTrue);
+      expect(stats.overflowCount, 2);
     });
 
     test(
