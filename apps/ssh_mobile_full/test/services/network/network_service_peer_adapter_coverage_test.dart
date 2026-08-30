@@ -4,7 +4,6 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:network_sdk/network_sdk.dart';
-import 'package:network_transport/network_transport.dart';
 import 'package:ssh_mobile/services/network/network_service.dart';
 import 'package:ssh_mobile/services/telemetry/telemetry_span.dart';
 
