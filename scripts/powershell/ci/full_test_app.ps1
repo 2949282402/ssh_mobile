@@ -21,7 +21,7 @@ function JobApp([int]$Shard){
   for($offset=0;$offset -lt $files.Count;$offset+=$batchSize){
     $batch=@($files|Select-Object -Skip $offset -First $batchSize)
     $batchIndex=[int]($offset/$batchSize);$batchCoverage=Join-Path $coverageDir "lcov-batch-$batchIndex.info"
-    $arguments=@('test','--no-pub','--no-test-assets','--exclude-tags','client-backend,native-loopback','--reporter','compact','--fail-fast','--timeout','60s','--concurrency',"$FlutterConcurrency")
+    $arguments=@('test','--no-pub','--exclude-tags','client-backend,native-loopback','--reporter','compact','--fail-fast','--timeout','60s','--concurrency',"$FlutterConcurrency")
     if($coverage){$arguments+=@('--coverage','--coverage-path',$batchCoverage)}
     $arguments+=$batch
     Invoke-AppTestWithRetry $arguments $directory
@@ -37,7 +37,7 @@ function JobApp([int]$Shard){
     @{Name='system-admin';File='test/screens/system_admin/system_admin_snapshot_tabs_test.dart';Coverage=$true},
     @{Name='native-transfer';File='test/services/network/transfer_transport_test.dart';Coverage=$false}
   )){
-    $isolatedArguments=@('test','--no-pub','--no-test-assets','--reporter','compact','--fail-fast','--timeout','60s','--concurrency',"$FlutterConcurrency",'--total-shards',"$AppShards",'--shard-index',"$Shard")
+    $isolatedArguments=@('test','--no-pub','--reporter','compact','--fail-fast','--timeout','60s','--concurrency',"$FlutterConcurrency",'--total-shards',"$AppShards",'--shard-index',"$Shard")
     if($coverage-and$isolated.Coverage){$isolatedArguments+=@('--coverage','--coverage-path',(Join-Path $coverageDir "isolated-$($isolated.Name)-lcov.info"))}
     $isolatedArguments+=$isolated.File
     Invoke-CommandWithTimeout flutter $isolatedArguments $AppTimeout $directory @{HTTP_PROXY='';HTTPS_PROXY='';ALL_PROXY='';NO_PROXY='localhost,127.0.0.1,::1'}

@@ -96,7 +96,7 @@ run_app_test_with_retry() {
     fi
     printf 'Running App shard %s (attempt %s) with Flutter concurrency %s.\n' "$shard" "$attempt" "$FLUTTER_CONCURRENCY"
     timeout --signal=TERM --kill-after=30s "$APP_TIMEOUT" \
-      env "XDG_CONFIG_HOME=$flutter_config_root" "${FLUTTER_LOCAL_TEST_ENV[@]}" flutter test --no-pub --no-test-assets "${coverage_args[@]}" \
+      env "XDG_CONFIG_HOME=$flutter_config_root" "${FLUTTER_LOCAL_TEST_ENV[@]}" flutter test --no-pub "${coverage_args[@]}" \
       --exclude-tags client-backend,native-loopback \
       --reporter compact --fail-fast --timeout 60s \
       --concurrency "$FLUTTER_CONCURRENCY" \
@@ -167,15 +167,15 @@ job_app_unit() {
     system_admin_coverage_args=(--coverage --coverage-path "$isolated_system_admin")
   fi
   step "Run isolated startup test for shard $shard" run_in apps/ssh_mobile_full timeout --signal=TERM --kill-after=30s "$APP_TIMEOUT" \
-    env "XDG_CONFIG_HOME=$flutter_config_root" "${FLUTTER_LOCAL_TEST_ENV[@]}" flutter test --no-pub --no-test-assets "${startup_coverage_args[@]}" --reporter compact --fail-fast \
+    env "XDG_CONFIG_HOME=$flutter_config_root" "${FLUTTER_LOCAL_TEST_ENV[@]}" flutter test --no-pub "${startup_coverage_args[@]}" --reporter compact --fail-fast \
     --timeout 60s --concurrency "$FLUTTER_CONCURRENCY" --total-shards "$APP_SHARD_COUNT" --shard-index "$shard" \
     test/features/startup/views/startup_screen_test.dart
   step "Run isolated system-admin test for shard $shard" run_in apps/ssh_mobile_full timeout --signal=TERM --kill-after=30s "$APP_TIMEOUT" \
-    env "XDG_CONFIG_HOME=$flutter_config_root" "${FLUTTER_LOCAL_TEST_ENV[@]}" flutter test --no-pub --no-test-assets "${system_admin_coverage_args[@]}" --reporter compact --fail-fast \
+    env "XDG_CONFIG_HOME=$flutter_config_root" "${FLUTTER_LOCAL_TEST_ENV[@]}" flutter test --no-pub "${system_admin_coverage_args[@]}" --reporter compact --fail-fast \
     --timeout 60s --concurrency "$FLUTTER_CONCURRENCY" --total-shards "$APP_SHARD_COUNT" --shard-index "$shard" \
     test/screens/system_admin/system_admin_snapshot_tabs_test.dart
   step "Run native transfer test for shard $shard" run_in apps/ssh_mobile_full timeout --signal=TERM --kill-after=30s "$APP_TIMEOUT" \
-    env "XDG_CONFIG_HOME=$flutter_config_root" "${FLUTTER_LOCAL_TEST_ENV[@]}" flutter test --no-pub --no-test-assets --reporter compact --fail-fast --timeout 60s --concurrency "$FLUTTER_CONCURRENCY" \
+    env "XDG_CONFIG_HOME=$flutter_config_root" "${FLUTTER_LOCAL_TEST_ENV[@]}" flutter test --no-pub --reporter compact --fail-fast --timeout 60s --concurrency "$FLUTTER_CONCURRENCY" \
     --total-shards "$APP_SHARD_COUNT" --shard-index "$shard" "$non_coverage_file"
 }
 

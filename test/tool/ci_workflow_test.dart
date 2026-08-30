@@ -277,7 +277,7 @@ const _requiredWorkflowMarkers = <String>[
   'macos-build:',
   'ios-build:',
   'flutter analyze --no-fatal-infos',
-  'flutter test --no-pub --no-test-assets',
+  'flutter test --no-pub',
   '--reporter compact',
   'dart run tool/architecture_check.dart',
   'dart run tool/check_agent_docs.dart',
