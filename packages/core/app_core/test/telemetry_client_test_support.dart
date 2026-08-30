@@ -127,6 +127,7 @@ final class TestTelemetryTransport implements TelemetryTransport {
   TelemetryUploadPolicy? remotePolicy;
   final List<List<TelemetryEventRecord>> uploadedBatches = [];
   final List<TelemetryAckResult> nextAckResults = [];
+  TelemetryBatchUploadResult? uploadResultOverride;
   final List<int> nextUploadStatusCodes = [];
   final List<int?> nextRetryAfters = [];
 
@@ -227,6 +228,11 @@ final class TestTelemetryTransport implements TelemetryTransport {
     }
 
     uploadedBatches.add(List.from(records));
+    if (uploadResultOverride != null) {
+      final override = uploadResultOverride!;
+      uploadResultOverride = null;
+      return override;
+    }
     if (nextAckResults.isNotEmpty) {
       final results = List<TelemetryAckResult>.from(nextAckResults);
       nextAckResults.clear();

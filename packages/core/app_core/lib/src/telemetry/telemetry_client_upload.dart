@@ -503,9 +503,11 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
     final pending = records
         .where((record) => record.syncState == TelemetrySyncState.pending)
         .toList();
-    if (invalidResponse) {
-      // An ambiguous response only advances normal pending rows. Originally
-      // synced rows are deliberately excluded from retry bookkeeping.
+    final incompleteResponse = acknowledgedIds.length != expectedIds.length;
+    if (invalidResponse || incompleteResponse) {
+      // Validate the complete ACK set before applying any state transition.
+      // Pending rows receive transient failure bookkeeping; originally synced
+      // rows are deliberately excluded from retry bookkeeping.
       if (pending.isNotEmpty) {
         await _handleUploadFailure(pending, invalidAckError);
       } else {

@@ -87,6 +87,14 @@ void main() {
       'replay keeps originally synced rows unchanged for every replay outcome',
       () async {
         final scenarios = <String, void Function(TestTelemetryTransport)>{
+          'accepted': (scenarioTransport) {
+            scenarioTransport.nextAckResults.add(
+              const TelemetryAckResult(
+                eventId: 'evt-synced-replay',
+                status: 'accepted',
+              ),
+            );
+          },
           'already_seen': (scenarioTransport) {
             scenarioTransport.nextAckResults.add(
               const TelemetryAckResult(
@@ -162,7 +170,11 @@ void main() {
 
           expect(
             replayed,
-            entry.key == 'already_seen' || entry.key == 'rejected' ? 1 : 0,
+            entry.key == 'accepted' ||
+                    entry.key == 'already_seen' ||
+                    entry.key == 'rejected'
+                ? 1
+                : 0,
             reason: entry.key,
           );
           final after = (await scenarioStorage.fetchAllForReplay()).single;
@@ -255,6 +267,199 @@ void main() {
         expect(after['evt-synced-mixed']!.retryCount, beforeSynced.retryCount);
       },
     );
+
+    test('replay fails closed when a synced row has no ACK', () async {
+      final localStorage = MemoryTelemetryStorage();
+      final localTransport = TestTelemetryTransport();
+      final localClient = buildTestTelemetryClient(
+        storage: localStorage,
+        transport: localTransport,
+        initialPolicy: const TelemetryUploadPolicy(
+          uploadEnabled: true,
+          batchSizeThreshold: 100,
+          timeIntervalSeconds: 60,
+          maxBatchSize: 10,
+          clientMaxLocalRecords: 100,
+          specialTriggers: <String>[],
+          policyVersion: 1,
+        ),
+      );
+      addTearDown(localClient.dispose);
+
+      await localStorage.insertRecord(
+        persistedDiagnosticRecord(
+          eventId: 'evt-synced-missing-ack',
+          message: 'synced missing ack',
+        ),
+      );
+      await localStorage.applyAckResults([
+        const TelemetryAckResult(
+          eventId: 'evt-synced-missing-ack',
+          status: 'accepted',
+        ),
+      ]);
+      await localStorage.applyRetryCount(const [
+        'evt-synced-missing-ack',
+      ], increment: 2);
+      final before = (await localStorage.fetchAllForReplay()).single;
+      localTransport.uploadResultOverride = const TelemetryBatchUploadResult(
+        ackResults: [],
+      );
+
+      expect(await localClient.replayAllLocalRecords(), 0);
+
+      final after = (await localStorage.fetchAllForReplay()).single;
+      expect(after.syncState, before.syncState);
+      expect(after.logicalDeletedAt, before.logicalDeletedAt);
+      expect(after.retryCount, before.retryCount);
+      expect(localClient.latestDiagnostics.lastSyncError, isNotNull);
+    });
+
+    test(
+      'mixed replay with only pending ACK fails without partial state changes',
+      () async {
+        final localStorage = MemoryTelemetryStorage();
+        final localTransport = TestTelemetryTransport();
+        final localClient = buildTestTelemetryClient(
+          storage: localStorage,
+          transport: localTransport,
+          initialPolicy: const TelemetryUploadPolicy(
+            uploadEnabled: true,
+            batchSizeThreshold: 100,
+            timeIntervalSeconds: 60,
+            maxBatchSize: 10,
+            clientMaxLocalRecords: 100,
+            specialTriggers: <String>[],
+            policyVersion: 1,
+          ),
+        );
+        addTearDown(localClient.dispose);
+
+        await localStorage.insertRecord(
+          persistedDiagnosticRecord(
+            eventId: 'evt-pending-missing-ack',
+            message: 'pending missing ack',
+          ),
+        );
+        await localStorage.insertRecord(
+          persistedDiagnosticRecord(
+            eventId: 'evt-synced-missing-ack-mixed',
+            message: 'synced missing ack mixed',
+          ),
+        );
+        await localStorage.applyAckResults([
+          const TelemetryAckResult(
+            eventId: 'evt-synced-missing-ack-mixed',
+            status: 'accepted',
+          ),
+        ]);
+        await localStorage.applyRetryCount(const [
+          'evt-synced-missing-ack-mixed',
+        ], increment: 4);
+        final before = {
+          for (final record in await localStorage.fetchAllForReplay())
+            record.eventId: record,
+        };
+        localTransport.nextAckResults.add(
+          const TelemetryAckResult(
+            eventId: 'evt-pending-missing-ack',
+            status: 'accepted',
+          ),
+        );
+
+        expect(await localClient.replayAllLocalRecords(), 0);
+
+        final after = {
+          for (final record in await localStorage.fetchAllForReplay())
+            record.eventId: record,
+        };
+        expect(
+          after['evt-pending-missing-ack']!.syncState,
+          before['evt-pending-missing-ack']!.syncState,
+        );
+        expect(
+          after['evt-pending-missing-ack']!.retryCount,
+          before['evt-pending-missing-ack']!.retryCount + 1,
+        );
+        expect(
+          after['evt-synced-missing-ack-mixed']!.syncState,
+          before['evt-synced-missing-ack-mixed']!.syncState,
+        );
+        expect(
+          after['evt-synced-missing-ack-mixed']!.logicalDeletedAt,
+          before['evt-synced-missing-ack-mixed']!.logicalDeletedAt,
+        );
+        expect(
+          after['evt-synced-missing-ack-mixed']!.retryCount,
+          before['evt-synced-missing-ack-mixed']!.retryCount,
+        );
+      },
+    );
+
+    test('replay rejects duplicate and unknown ACKs for synced rows', () async {
+      for (final ackResults in [
+        const [
+          TelemetryAckResult(
+            eventId: 'evt-invalid-replay-ack',
+            status: 'already_seen',
+          ),
+          TelemetryAckResult(
+            eventId: 'evt-invalid-replay-ack',
+            status: 'already_seen',
+          ),
+        ],
+        const [
+          TelemetryAckResult(
+            eventId: 'evt-invalid-replay-ack',
+            status: 'already_seen',
+          ),
+          TelemetryAckResult(
+            eventId: 'evt-unknown-replay-ack',
+            status: 'accepted',
+          ),
+        ],
+      ]) {
+        final localStorage = MemoryTelemetryStorage();
+        final localTransport = TestTelemetryTransport();
+        final localClient = buildTestTelemetryClient(
+          storage: localStorage,
+          transport: localTransport,
+          initialPolicy: const TelemetryUploadPolicy(
+            uploadEnabled: true,
+            batchSizeThreshold: 100,
+            timeIntervalSeconds: 60,
+            maxBatchSize: 10,
+            clientMaxLocalRecords: 100,
+            specialTriggers: <String>[],
+            policyVersion: 1,
+          ),
+        );
+
+        await localStorage.insertRecord(
+          persistedDiagnosticRecord(
+            eventId: 'evt-invalid-replay-ack',
+            message: 'invalid replay ack',
+          ),
+        );
+        await localStorage.applyAckResults([
+          const TelemetryAckResult(
+            eventId: 'evt-invalid-replay-ack',
+            status: 'accepted',
+          ),
+        ]);
+        final before = (await localStorage.fetchAllForReplay()).single;
+        localTransport.nextAckResults.addAll(ackResults);
+
+        expect(await localClient.replayAllLocalRecords(), 0);
+
+        final after = (await localStorage.fetchAllForReplay()).single;
+        expect(after.syncState, before.syncState);
+        expect(after.logicalDeletedAt, before.logicalDeletedAt);
+        expect(after.retryCount, before.retryCount);
+        expect(localClient.latestDiagnostics.lastSyncError, isNotNull);
+        await localClient.dispose();
+      }
+    });
 
     test('replayAllLocalRecords excludes rejected records', () async {
       await client.record(
