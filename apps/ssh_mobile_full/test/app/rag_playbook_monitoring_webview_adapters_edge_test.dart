@@ -131,6 +131,45 @@ void main() {
   );
 
   test(
+    'Playbook SSH adapter preserves command results and target bindings',
+    () async {
+      final ssh = _FakePlaybookSshService();
+      final adapter = AppPlaybookSshAdapter(ssh);
+      final binding = ssh_core.SshTargetBinding.fromConfig(
+        ConnectionConfig(
+          id: 'playbook-server',
+          name: 'Playbook server',
+          host: 'Example.TEST',
+          username: 'tester',
+        ),
+      );
+
+      final direct = await adapter.runCommand(
+        connectionId: binding.id,
+        command: 'uname -a',
+        timeout: const Duration(seconds: 3),
+      );
+      final bound = await adapter.runCommandForBinding(
+        binding: binding,
+        command: 'id',
+        timeout: const Duration(seconds: 4),
+      );
+
+      expect(direct.exitCode, 7);
+      expect(direct.stdout, 'stdout');
+      expect(direct.stderr, 'stderr');
+      expect(bound.exitCode, 7);
+      expect(ssh.connectionIds, <String>['playbook-server']);
+      expect(ssh.commands, <String>['uname -a', 'id']);
+      expect(ssh.timeouts, <Duration>[
+        const Duration(seconds: 3),
+        const Duration(seconds: 4),
+      ]);
+      expect(ssh.boundHosts.single, 'example.test');
+    },
+  );
+
+  test(
     'Monitoring and WebView settings adapters forward state and validation',
     () async {
       final storage = TestStorageAdapter();
@@ -265,9 +304,7 @@ final class _FakeMonitoringSshService extends SshService {
         terminalMetadataStore: storage.terminalMetadataStore,
       );
 
-  Future<void> _invokeCallback(
-    SshHostKeyConfirmation? callback,
-  ) async {
+  Future<void> _invokeCallback(SshHostKeyConfirmation? callback) async {
     if (callback == null) return;
     await callback(
       const ssh_core.SshHostKeyPromptRequest(
@@ -302,5 +339,46 @@ final class _FakeMonitoringSshService extends SshService {
   }) async {
     await _invokeCallback(onUnknownHostKey);
     return const RemoteCommandResult(exitCode: 0, stdout: 'ok', stderr: '');
+  }
+}
+
+final class _FakePlaybookSshService extends Fake implements SshService {
+  final List<String> connectionIds = <String>[];
+  final List<String> commands = <String>[];
+  final List<Duration> timeouts = <Duration>[];
+  final List<String> boundHosts = <String>[];
+
+  @override
+  Future<RemoteCommandResult> runOneShotCommand({
+    required String connectionId,
+    required String command,
+    Duration timeout = const Duration(seconds: 15),
+    ssh_core.SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
+    connectionIds.add(connectionId);
+    commands.add(command);
+    timeouts.add(timeout);
+    return const RemoteCommandResult(
+      exitCode: 7,
+      stdout: 'stdout',
+      stderr: 'stderr',
+    );
+  }
+
+  @override
+  Future<RemoteCommandResult> runOneShotCommandForBinding({
+    required ConnectionTargetBinding binding,
+    required String command,
+    Duration timeout = const Duration(seconds: 15),
+    ssh_core.SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
+    boundHosts.add(binding.host);
+    commands.add(command);
+    timeouts.add(timeout);
+    return const RemoteCommandResult(
+      exitCode: 7,
+      stdout: 'stdout',
+      stderr: 'stderr',
+    );
   }
 }
