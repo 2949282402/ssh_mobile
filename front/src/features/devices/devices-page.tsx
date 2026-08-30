@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Check, Filter, Search, Server, ShieldOff, SlidersHorizontal, Wifi, X } from 'lucide-react';
+import { Check, Filter, Globe2, Search, Server, ShieldOff, SlidersHorizontal, Wifi, X } from 'lucide-react';
 import { devicesApi } from '../../api/devices';
 import { ApiRequestError, isAbortError } from '../../api/errors';
 import { queryKeys } from '../../api/query-keys';
@@ -121,7 +121,7 @@ export function DevicesPage() {
       <PageHeader
         eyebrow="Relay / Devices"
         title="设备管理"
-        description="查看设备注册信息和当前 Relay 连接状态。"
+        description="查看设备注册信息、当前公网 IP / 端口和 Relay 连接状态。"
         action={(
           <Button variant="outline" onClick={() => void devicesQuery.refetch()} loading={devicesQuery.isFetching}>
             <Wifi size={15} aria-hidden="true" />
@@ -178,7 +178,7 @@ export function DevicesPage() {
             <p className="eyebrow">Enrolled devices</p>
             <h2>已注册设备</h2>
           </div>
-          <Badge tone="neutral"><SlidersHorizontal size={13} /> Device protocol v1</Badge>
+          <Badge tone="neutral"><SlidersHorizontal size={13} /> Device protocol v2</Badge>
         </div>
         {devicesResponse.items.length === 0 ? (
           <EmptyState title="还没有注册设备" description="使用当前 Enrollment Token 注册第一台设备。" icon={<ServerIcon />} />
@@ -194,6 +194,7 @@ export function DevicesPage() {
                   <th scope="col">协议</th>
                   <th scope="col">注册时间</th>
                   <th scope="col">当前状态</th>
+                  <th scope="col">公网 IP / 端口</th>
                   <th scope="col"><span className="sr-only">操作</span></th>
                 </tr>
               </thead>
@@ -209,7 +210,6 @@ export function DevicesPage() {
                           <span className={`device-cell__icon${knownOnline ? ' device-cell__icon--online' : ''}`}><ServerIcon /></span>
                           <div>
                             <strong className="type-mono">{device.device_id}</strong>
-                            {knownOnline && device.remote_addr ? <span>{device.remote_addr}</span> : null}
                             {device.public_key_fingerprint ? <span className="type-mono device-cell__fingerprint">{device.public_key_fingerprint}</span> : null}
                           </div>
                         </div>
@@ -218,6 +218,13 @@ export function DevicesPage() {
                       <td data-label="协议"><span className="protocol-label"><Check size={14} /> v{device.protocol_version}</span></td>
                       <td data-label="注册时间"><span className="muted-value">{formatDate(device.enrolled_at)}</span></td>
                       <td data-label="当前状态"><ConnectionBadge online={knownOnline} available={presenceAvailable} /></td>
+                      <td data-label="公网 IP / 端口">
+                        <DeviceEndpoint
+                          address={device.remote_addr}
+                          online={knownOnline}
+                          available={presenceAvailable}
+                        />
+                      </td>
                       <td data-label="操作" className="device-table__action">
                         <Button
                           variant="danger"
@@ -248,6 +255,32 @@ export function DevicesPage() {
         />
       ) : null}
     </div>
+  );
+}
+
+function DeviceEndpoint({
+  address,
+  online,
+  available,
+}: {
+  address: string;
+  online: boolean;
+  available: boolean;
+}) {
+  if (!available) {
+    return <span className="device-endpoint device-endpoint--muted">不可用</span>;
+  }
+  if (!online) {
+    return <span className="device-endpoint device-endpoint--muted">未连接</span>;
+  }
+  if (!address) {
+    return <span className="device-endpoint device-endpoint--muted">未上报</span>;
+  }
+  return (
+    <span className="device-endpoint" title={`当前公网地址 ${address}`}>
+      <Globe2 size={14} aria-hidden="true" />
+      <span className="device-endpoint__value">{address}</span>
+    </span>
   );
 }
 

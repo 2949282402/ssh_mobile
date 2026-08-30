@@ -1,4 +1,4 @@
-> Last updated: 2026-08-27
+> Last updated: 2026-08-31
 
 # Backend Current State
 
@@ -60,11 +60,10 @@ Current boundaries:
   buckets converge without a whole-cache scan.
 - The administrator API uses a separate versioned contract and an HttpOnly
   cookie session; memory composition uses the process-local `Cache`, while the
-  MySQL composition uses Redis. Forwarded client-IP headers and
-  `X-Forwarded-Proto` are
-  trusted only when the immediate peer matches `RELAY_TRUSTED_PROXY_CIDRS`;
-  otherwise `RemoteAddr` and direct TLS govern the login limiter, Cookie
-  `Secure`, and admin Origin scheme.
+  MySQL composition uses Redis. Relay accepts `X-Relay-Client-Addr` only from
+  an immediate peer in `RELAY_TRUSTED_PROXY_CIDRS`; Admin's forwarded client-IP
+  and `X-Forwarded-Proto` headers use its own `ADMIN_TRUSTED_PROXY_CIDRS`.
+  Untrusted requests use their direct socket address and TLS state.
 - Administrator online statistics are derived from the `Cache` presence layer.
 - Device-to-device `ResolvePeerRequest` reports READY only when the target's
   presence lease is valid **and** a matching `discovery:{device_id}` snapshot
