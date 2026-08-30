@@ -58,11 +58,11 @@ column, index, and primary-key lines are fully overridden by the generated
 business logic and cannot be exercised by a test. The shared
 `telemetry_database_connection.dart` file is a conditional-export shim, while
 `telemetry_database_constants.dart` contains only a compile-time constant; both
-have no executable lines. The Web connection wrapper is selected only by the
-browser compiler and is owned by the native Web coverage job; the WSL Flutter
-runner cannot load its `dart.library.html` branch. These are precise platform or
-declaration-only exclusions, not waivers for the native connection, DAO, schema,
-or database lifecycle behavior, which remain covered by the App tests.
+have no executable lines. The Web connection wrapper has a direct contract test
+for its public factory; the browser-specific Drift executor remains owned by
+the native Web coverage job. These are precise declaration-only exclusions, not
+waivers for the native connection, DAO, schema, or database lifecycle behavior,
+which remain covered by the App tests.
 
 The same generated-subclass rule applies to the declarative table definitions
 in `apps/ssh_mobile_full/lib/services/app_log_database/tables/app_log_tables.dart`.
