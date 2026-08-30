@@ -1,4 +1,4 @@
-> Last updated: 2026-08-28
+> Last updated: 2026-08-30
 
 # Maintenance Workflow
 
@@ -150,26 +150,28 @@ Git records execution history.
 When changing the canonical Skill, update `.agents` first; there is no Claude
 mirror to regenerate — Claude Code loads Skills directly from `.agents/skills/`.
 
-## 6. Pull request gate
+## 6. Pull request and CI handoff
 
 When the user asks to create, update, submit, or publish a PR, perform this
-gate after implementation and before any commit/push or GitHub write:
+minimum preflight after implementation:
 
-1. Run `bash scripts/bash/ci/full_test.sh` from Linux/WSL, or
-   `& .\scripts\powershell\ci\full_test.ps1` from native Windows PowerShell 7.
-   For a repeat run with unchanged dependencies, use `--no-bootstrap` or
-   `-NoBootstrap`; otherwise allow dependency bootstrap.
-2. Run the focused owner checks required by `validation.md`. A full local CI
-   run does not replace a package-specific or changed-behavior regression test
-   when that check is narrower or stricter.
-3. Inspect the summary and raw logs. Any product `FAIL` or documented
-   WSL/platform `GAP` blocks the PR by default. A `GAP` is not a pass; report it
-   explicitly and require the user's acceptance before proceeding. An
-   unexpected or behavior-relevant gap always blocks submission.
-4. If any source, test, dependency, project-structure, CI-scope, or script
-   change follows, rerun the affected local checks. Do not reuse stale results.
-5. Only after the checks above are complete may the Git Commit/GitHub workflow
-   create the commit, push the branch, or create/update the PR.
+1. Inspect the worktree and complete `git diff --check`, formatting, and the
+   focused owner checks requested by the user or needed for a safe change. A
+   product, security, or contract failure must remain visible.
+2. Run `bash scripts/bash/ci/full_test.sh` from Linux/WSL, or
+   `& .\scripts\powershell\ci\full_test.ps1` from native Windows PowerShell 7,
+   only when the user explicitly mentions or requests local CI. For repeat
+   runs with unchanged dependencies, use `--no-bootstrap` or `-NoBootstrap`.
+3. After the minimum preflight, the user-requested branch may be committed,
+   pushed, and opened as a PR (prefer draft) so GitHub Actions can run its
+   independent parallel jobs. Record any omitted local check, `GAP`, timeout,
+   or failure; none is a pass.
+4. The agent's scope ends at the PR/CI handoff: do not poll, interpret,
+   approve, or merge from GitHub results unless the user explicitly asks. The
+   user supplies the CI outcome and alone decides whether merging is allowed.
+5. After any source, test, dependency, project-structure, or CI-scope change,
+   rerun only the checks the user requests and update the PR/CI handoff as
+   needed. Never claim readiness from an unexecuted or incomplete check.
 
 The repository-wide local CI orchestration rules and synchronization triggers
 for the paired aggregate scripts are recorded in the

@@ -3,7 +3,7 @@ name: ssh-mobile-maintenance
 description: Maintain and debug the SSH Mobile repository, including Flutter, Dart packages, the Rust network SDK, Relay, Admin UI, tests, documentation, and shared Agent guidance. Use for any non-trivial implementation, diagnosis, validation, or documentation change in this repository.
 ---
 
-> Last updated: 2026-08-28
+> Last updated: 2026-08-30
 
 # SSH Mobile Maintenance
 
@@ -38,28 +38,33 @@ protocol carries a version number, use `V1`.
 ## Pull request preflight
 
 Treat a request to create, update, submit, or publish a pull request (创建、更新
-或提交 PR) as a validation-gated write operation. Before committing, pushing,
-or invoking a GitHub PR write action:
+或提交 PR) as a validation-gated workflow. Local CI is opt-in: run the local
+aggregate only when the user explicitly mentions or requests it. Before a
+user-requested branch push or PR write:
 
 1. Inspect the complete worktree and identify every affected owner.
-2. Run the environment-native CI entry point:
+2. Run the format, diff, and focused checks selected by the Validation Matrix
+   that the user has requested or that are needed to establish a safe change.
+   Do not hide a product, security, or contract failure.
+3. If local CI was explicitly requested, use the environment-native entry point:
    [`scripts/bash/ci/full_test.sh`](../../../scripts/bash/ci/full_test.sh) on
    Linux/WSL or
    [`scripts/powershell/ci/full_test.ps1`](../../../scripts/powershell/ci/full_test.ps1)
-   on native Windows. Use `--no-bootstrap` or `-NoBootstrap` only when
-   dependencies are current.
-3. Run the focused and owner-specific checks selected by the Validation Matrix
-   in addition to the local CI entry point when the change requires them.
-4. Do not submit while any check is failing or incomplete. A documented
-   platform or toolchain gap is not a pass: stop, report the exact gap, and
-   require explicit user acceptance before proceeding with a PR write. A new
-   or behavior-relevant gap always blocks the PR write.
-5. After any code, test, dependency, project-structure, or CI-scope change,
-   rerun the affected checks before the PR write action.
+   on native Windows. Otherwise, do not start the aggregate merely as PR
+   preflight.
+4. When the user requests an initial PR, commit/push the branch and open the
+   PR (prefer draft) after the minimum checks, so GitHub Actions can run its
+   independent parallel jobs. Record any local CI GAP, timeout, or omitted
+   check; it is not a pass.
+5. The agent may create/update the PR and trigger CI only. Do not observe,
+   interpret, approve, or merge based on GitHub results unless the user asks;
+   the user supplies the CI outcome and alone decides whether merging is
+   allowed. Never claim readiness from an unexecuted or incomplete check.
 
-The PR write action is the final step: validation evidence must exist before
-`git push`, PR creation, or PR update. The GitHub and Git Commit Skills provide
-the write mechanics; this Skill owns the repository validation gate.
+The initial PR write starts remote validation; it is not merge approval. The
+GitHub and Git Commit Skills provide write mechanics, while this Skill owns the
+minimum local preflight, evidence recording, and no-merge-without-user-decision
+boundary.
 
 ## Scope before implementation
 

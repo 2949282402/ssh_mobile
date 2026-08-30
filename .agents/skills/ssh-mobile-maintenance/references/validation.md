@@ -1,4 +1,4 @@
-> Last updated: 2026-08-28
+> Last updated: 2026-08-30
 
 # Validation Matrix
 
@@ -65,10 +65,12 @@ the documented language-native same-package exceptions.
 
 ## Repository local CI
 
-Run the aggregate only during major cross-module refactorings or when explicitly
-requested by the user. For routine bug fixes and scoped feature work, run focused
-package tests and targeted gates (`--only`/`-Only`), then monitor GitHub Actions CI
-after pushing.
+Run the aggregate only when the user explicitly mentions or requests local CI.
+For routine bug fixes and scoped feature work, run focused package tests and
+targeted gates (`--only`/`-Only`) only when the user requests them or they are
+needed for the requested change. Local CI is opt-in: do not run the aggregate
+as an automatic PR prerequisite. GitHub Actions is the CI authority for a
+user-requested PR; push/open the PR to trigger its independent parallel jobs.
 
 Use the aggregate for the actual host:
 
@@ -86,6 +88,17 @@ generated checks, exclusions, timeouts, or Linux environment assumptions
 change, update both aggregate scripts in the same change and run the affected
 jobs with `--only`/`-Only` before broader validation. Same-relative-path
 `.sh`/`.ps1` pairs must keep behavior and exit semantics aligned.
+
+When the user explicitly requests local CI and it is blocked by a host,
+toolchain, container, permission, or local-resource problem, preserve the
+`GAP`/timeout evidence and do not repeatedly extend the local run. For a
+user-requested PR, complete the minimum preflight, push the branch, and use the
+independent parallel jobs in
+[`.github/workflows/flutter.yml`](../../../../.github/workflows/flutter.yml) as
+the authoritative CI surface. After the PR/CI handoff, do not poll or
+interpret GitHub results unless the user asks; the user reports the outcomes
+and decides whether merging is allowed. Never report an unexecuted or
+incomplete check as `PASS`.
 
 ## Formatting
 

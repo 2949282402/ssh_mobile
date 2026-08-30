@@ -1,4 +1,4 @@
-> Last updated: 2026-08-28
+> Last updated: 2026-08-30
 
 # Project Memory
 
@@ -31,9 +31,13 @@ cleanup, and exit semantics cannot drift between the pair. Platform-only and
 common PowerShell files live in their mirrored categories without fabricated
 Bash implementations.
 
-Before creating or updating a PR, run the environment-native aggregate after
-dependencies are current. A documented platform or toolchain gap stays visible
-and is never reported as a pass.
+Local CI is opt-in and runs only when the user explicitly mentions or requests
+it. For a user-requested PR, complete the minimum format/diff/focused checks,
+then commit, push, and open the PR so GitHub Actions can validate the change in
+parallel. GitHub CI is the authoritative CI result; omitted checks, failures,
+and environment gaps remain visible and are never reported as a pass. The
+agent does not poll or interpret the GitHub run after handoff, and only the
+user decides whether merging is allowed.
 
 Recommended repeat-run parameters from the repository root are:
 
