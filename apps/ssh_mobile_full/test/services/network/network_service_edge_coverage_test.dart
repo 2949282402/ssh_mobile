@@ -114,10 +114,7 @@ void main() {
         (connect as NetworkFailure<void>).error.code,
         NetworkErrorCode.noRoute,
       );
-      expect(
-        connect.error.operation,
-        NetworkOperation.connect,
-      );
+      expect(connect.error.operation, NetworkOperation.connect);
 
       final relay = await service.configureRelay(
         RelayConfig(
@@ -131,10 +128,7 @@ void main() {
         (relay as NetworkFailure<void>).error.code,
         NetworkErrorCode.noRoute,
       );
-      expect(
-        relay.error.operation,
-        NetworkOperation.configureRelay,
-      );
+      expect(relay.error.operation, NetworkOperation.configureRelay);
     },
   );
 
