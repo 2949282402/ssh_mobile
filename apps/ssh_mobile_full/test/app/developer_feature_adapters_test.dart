@@ -661,6 +661,9 @@ final class _FakeTelemetryClient extends Fake
   app_core.TelemetryDiagnosticsSnapshot get latestDiagnostics => diagnostics;
 
   @override
+  bool get recordingEnabled => diagnostics.telemetryEnabled;
+
+  @override
   Future<int> replayAllLocalRecords() async {
     replayCount++;
     return 7;

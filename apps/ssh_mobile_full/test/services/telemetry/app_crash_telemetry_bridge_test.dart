@@ -1,8 +1,8 @@
 // 未捕获异常遥测桥测试。
 //
 // 验证 FlutterError.onError 链式包装会以 app.crash.reported（category=flutter）
-// 写一条诊断遥测；dispose 后恢复原 handler；reportZoneError 与独立顶层函数
-// 也会写同名事件。
+// 写一条诊断遥测；dispose 后恢复原 handler；reportZoneError 也会写同名事件。
+// AppRuntime 场景还验证未完成 Relay enrollment 时不会落库。
 
 import 'package:app_core/app_core.dart';
 import 'package:flutter/foundation.dart';
@@ -79,13 +79,14 @@ void main() {
     });
 
     test(
-      'reportUncaughtErrorToRuntime delegates to the runtime-owned bridge',
+      'reportUncaughtErrorToRuntime respects the Relay enrollment gate',
       () async {
         debugDefaultTargetPlatformOverride = TargetPlatform.windows;
         addTearDown(() => debugDefaultTargetPlatformOverride = null);
         final harness = await newRuntimeHarness(disposeLogger: false);
         try {
           final runtime = await harness.createFuture;
+          expect(runtime.telemetryClient!.recordingEnabled, isFalse);
 
           await reportUncaughtErrorToRuntime(
             runtime,
@@ -99,15 +100,7 @@ void main() {
             (record) =>
                 record.eventName == TelemetryEvents.appErrorCaptured.name,
           );
-          expect(diagnostics, hasLength(1));
-          expect(
-            diagnostics.single.properties,
-            containsPair('category', 'uncaught'),
-          );
-          expect(
-            diagnostics.single.error?.errorCode,
-            TelemetryErrorCodes.appUncaughtError.code,
-          );
+          expect(diagnostics, isEmpty);
           await runtime.dispose();
         } finally {
           await harness.close();
