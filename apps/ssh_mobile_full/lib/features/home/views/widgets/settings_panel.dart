@@ -101,14 +101,11 @@ class _SettingsAppSnapshot {
   }
 
   @override
-  int get hashCode => Object.hash(
-    language,
-    isDarkMode,
-    oledDark,
-    colorPalette,
-    developerMode,
-    developerPanelFloating,
-  );
+  // Keep the value-object hash compact: selectors compare snapshots by value,
+  // while all fields remain part of the stable hash contract.
+  // dart format off
+  int get hashCode => Object.hash(language, isDarkMode, oledDark, colorPalette, developerMode, developerPanelFloating);
+  // dart format on
 }
 
 class _SettingsSecretSnapshot {
@@ -143,12 +140,11 @@ class _SettingsSecretSnapshot {
   }
 
   @override
-  int get hashCode => Object.hash(
-    cacheEnabled,
-    cacheTimeoutMinutes,
-    Object.hashAll(cacheOptions),
-    showServerNamesInNotifications,
-  );
+  // Keep the value-object hash compact: selectors compare snapshots by value,
+  // while all fields remain part of the stable hash contract.
+  // dart format off
+  int get hashCode => Object.hash(cacheEnabled, cacheTimeoutMinutes, Object.hashAll(cacheOptions), showServerNamesInNotifications);
+  // dart format on
 }
 
 class _SettingsPage extends StatelessWidget {
