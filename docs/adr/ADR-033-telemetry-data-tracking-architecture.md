@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-30
+> 最新更新时间：2026-08-31
 
 # ADR-033：全端数据埋点与可观测性架构 (Telemetry & Observability Architecture)
 
@@ -39,6 +39,7 @@ Accepted
      - `logicalDeletedAt`: `null` | `timestamp`
    - 服务端成功 ACK（`accepted` 或 `already_seen`）时原子推进为 `synced + logicalDeletedAt = now`。
    - 本地受控 FIFO 淘汰机制仅允许物理删除 `synced + logicalDeletedAt != null` 的记录；`pending`（待发送）与 `rejected`（格式错误）记录永不自动物理删除，暴露缓存溢出状态（`cacheOverflow`）。
+   - 客户端默认关闭 Telemetry；只有 App Shell 确认当前 Relay origin 存在有效 enrollment 后，才创建并持久化新的事件记录。Relay 未注册期间保留历史行但不新增或更新事件缓存；`uploadEnabled` 仅暂停上传调度。
 
 5. **开发者面板诊断与一键原样重传 (Developer Diagnostics & Exact Replay)**：
    - 在客户端 Developer 调试面板中展示实时存储健康指标与缓存溢出警告。

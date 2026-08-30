@@ -1,4 +1,4 @@
-> Last updated: 2026-08-30
+> Last updated: 2026-08-31
 
 # Client Current State
 
@@ -14,6 +14,9 @@ Feature/Core persistence is split by owner. No shared business DB exists and a
 production DB-open failure never falls back to memory. Telemetry uses isolated
 `DriftTelemetryStorage` at `${supportDirectory}/telemetry.sqlite`; transactional
 FIFO overflow evicts only `synced`, preserving `pending` and `rejected`.
+New recording is gated by valid Relay enrollment; when that gate is closed no
+new event row or record-cache write is issued. `uploadEnabled=false` pauses
+uploads but does not disable local recording.
 Network runtime/public contracts route to the [SDK domain](../sdk/current-state.md)
 even when AppRuntime creates the facade.
 

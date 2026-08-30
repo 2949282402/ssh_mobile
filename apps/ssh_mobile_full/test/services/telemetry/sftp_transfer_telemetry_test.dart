@@ -153,6 +153,7 @@ void main() {
             buildNumber: '1',
             platform: 'linux',
             releaseChannel: 'test',
+            telemetryEnabled: true,
           ),
           storage: storage,
         );

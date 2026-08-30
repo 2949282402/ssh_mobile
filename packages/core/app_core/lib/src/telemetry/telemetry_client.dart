@@ -30,7 +30,9 @@ part 'telemetry_client_lifecycle.dart';
 /// The public facade remains intentionally small. Its implementation is split
 /// into private library parts so recording, authentication, upload/retry, and
 /// lifecycle state each have an explicit owner without changing the package
-/// export or the injected storage/transport contracts.
+/// export or the injected storage/transport contracts. The client starts
+/// disabled by default; App Scope must enable it only after confirming a
+/// valid Relay enrollment.
 class TelemetryClient extends _TelemetryClientBase
     with
         _TelemetryClientRecording,

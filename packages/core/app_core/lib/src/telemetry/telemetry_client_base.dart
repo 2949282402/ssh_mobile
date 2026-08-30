@@ -24,6 +24,7 @@ abstract class _TelemetryClientBase {
        _timerFactory = timerFactory ?? const DartTelemetryTimerFactory(),
        _clock = clock ?? (() => DateTime.now().toUtc()),
        _random = random ?? Random(),
+       _telemetryEnabled = config.telemetryEnabled,
        sessionId = config.sessionId ?? _telemetryUuid.v4() {
     // Keep the credential in memory for this client lifetime. The enrollment
     // provider persists it for restart recovery; refresh reuses this secret.
@@ -39,6 +40,23 @@ abstract class _TelemetryClientBase {
   final DateTime Function() _clock;
   final Random _random;
 
+  bool _telemetryEnabled;
+
+  /// Whether App Scope has confirmed a valid Relay enrollment.
+  bool get telemetryEnabled => !_isDisposed && _telemetryEnabled;
+
+  /// Whether new telemetry records may cross the local durable boundary.
+  bool get recordingEnabled => !_isDisposed && _telemetryEnabled;
+
+  /// Internal gate used by queued operations that were accepted before
+  /// disposal. Those operations are allowed to drain, but never after the
+  /// Relay enrollment gate is disabled.
+  bool get _canPersistRecord => _telemetryEnabled;
+
+  /// Upload/replay and their ACK bookkeeping require both the Relay gate and
+  /// the server-controlled upload policy.
+  bool get _canRecord => _telemetryEnabled && activePolicy.uploadEnabled;
+
   /// App-lifetime session ID.
   final String sessionId;
 
@@ -51,6 +69,7 @@ abstract class _TelemetryClientBase {
   Future<void>? _uploadFuture;
   Future<bool>? _policyRefreshFuture;
   Future<void>? _policyReadyFuture;
+  bool _policyRestoreStarted = false;
 
   // All producers share one durable storage-write queue. This preserves
   // invocation order for fire-and-forget record calls.

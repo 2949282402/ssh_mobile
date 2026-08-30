@@ -401,6 +401,7 @@ void main() {
           buildNumber: '1',
           platform: 'linux',
           releaseChannel: 'test',
+          telemetryEnabled: true,
           deviceEnrollmentSecret: 'default-policy-secret',
           policyFetchIntervalSeconds: 0,
         ),

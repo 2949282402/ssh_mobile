@@ -54,7 +54,9 @@ final class TelemetryLogSink implements LogSink {
 
   @override
   void write(LogRecord record) {
-    if (_closed || record.level != LogLevel.error) return;
+    if (_closed || !client.recordingEnabled || record.level != LogLevel.error) {
+      return;
+    }
 
     final eventName = record.eventName;
     if (eventName == null || !allowlistedEvents.contains(eventName)) return;
@@ -89,6 +91,7 @@ final class TelemetryLogSink implements LogSink {
     final previous = _writeQueue;
     _writeQueue = previous.then<void>((_) async {
       try {
+        if (!client.recordingEnabled) return;
         final accepted = await client.record(
           event: event,
           properties: properties,

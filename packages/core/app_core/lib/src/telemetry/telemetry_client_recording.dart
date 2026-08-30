@@ -14,7 +14,7 @@ mixin _TelemetryClientRecording on _TelemetryClientBase {
     String? sessionId,
     String? traceId,
   }) {
-    if (_isDisposed) return Future<bool>.value(false);
+    if (_isDisposed || !_canPersistRecord) return Future<bool>.value(false);
     final previous = _recordQueue;
     final queuedProperties = Map<String, dynamic>.from(properties);
     late final Future<bool> operation;
@@ -46,7 +46,10 @@ mixin _TelemetryClientRecording on _TelemetryClientBase {
     required String? traceId,
   }) async {
     // The public record gate runs before enqueueing. Accepted queued writes
-    // still drain after dispose marks the client closed.
+    // still drain after dispose marks the client closed, but a Relay disable
+    // that happens while they wait cancels the durable write.
+    await ready;
+    if (!_canPersistRecord) return false;
     final safeDeviceId = redactor.sanitizeIdentifier(config.deviceId);
     final safeAppVersion = _sanitizeConfiguredMetadata(config.appVersion);
     final safeBuildNumber = _sanitizeConfiguredMetadata(config.buildNumber);
@@ -103,6 +106,7 @@ mixin _TelemetryClientRecording on _TelemetryClientBase {
 
     if (!catalog.isValidRecord(record)) return false;
 
+    if (!_canPersistRecord) return false;
     try {
       await storage.insertRecord(record);
     } on Object {
@@ -144,6 +148,7 @@ mixin _TelemetryClientRecording on _TelemetryClientBase {
   static const _capacityMaintenanceInterval = 32;
 
   Future<void> _maintainLocalCapacityIfDue() async {
+    if (!_canPersistRecord) return;
     final firstWrite = !_hasRunCapacityMaintenance;
     if (firstWrite) {
       _hasRunCapacityMaintenance = true;
@@ -155,6 +160,7 @@ mixin _TelemetryClientRecording on _TelemetryClientBase {
     if (!due) return;
 
     try {
+      if (!_canPersistRecord) return;
       await storage.purgeOldSyncedRecords(
         targetCapacity: activePolicy.clientMaxLocalRecords,
       );
@@ -190,7 +196,9 @@ mixin _TelemetryClientRecording on _TelemetryClientBase {
       }
     }
 
-    if (rejected.isNotEmpty) await storage.applyAckResults(rejected);
+    if (rejected.isNotEmpty && _canPersistRecord) {
+      await storage.applyAckResults(rejected);
+    }
     return valid;
   }
 

@@ -7,12 +7,16 @@ mixin _TelemetryClientLifecycle on _TelemetryClientBase {
   /// intentionally non-fatal to telemetry recording, but is visible through
   /// the existing diagnostics channel.
   void _beginPolicyRestore() {
+    if (_policyRestoreStarted || _isDisposed || !_telemetryEnabled) return;
+    _policyRestoreStarted = true;
     final operation = _restoreLastKnownGoodPolicy();
     _policyReadyFuture = operation;
   }
 
   Future<void> _restoreLastKnownGoodPolicy() async {
+    if (_isDisposed || !_telemetryEnabled) return;
     try {
+      if (_isDisposed || !_telemetryEnabled) return;
       final persisted = await storage.loadLastKnownGoodPolicy();
       if (persisted != null && _isValidPolicy(persisted)) {
         // Equal versions are safe to restore; lower versions can never
@@ -24,7 +28,40 @@ mixin _TelemetryClientLifecycle on _TelemetryClientBase {
     } on Object {
       _recordStorageFailure();
     }
-    if (!_isDisposed) _startTimers();
+    if (!_isDisposed && _telemetryEnabled) _startTimers();
+  }
+
+  /// Updates the App Shell's Relay enrollment gate.
+  ///
+  /// Disabling is synchronous from the caller's perspective: subsequent
+  /// records, uploads, replays, and retry bookkeeping are rejected before any
+  /// storage operation. Enabling restores policy/timers and makes the client
+  /// eligible for normal recording again.
+  Future<void> setTelemetryEnabled(bool enabled) async {
+    if (_isDisposed) return;
+    if (_telemetryEnabled == enabled) {
+      if (enabled) await ready;
+      return;
+    }
+
+    _telemetryEnabled = enabled;
+    if (!enabled) {
+      _uploadRequested = false;
+      _cancelRetryTimer();
+      _periodicFlushTimer?.cancel();
+      _periodicFlushTimer = null;
+      _policyRefreshTimer?.cancel();
+      _policyRefreshTimer = null;
+      _clearAuthToken();
+      // A Relay endpoint can change while the process is alive. Do not reuse
+      // a secret attested for the previous enrollment after re-enabling.
+      _telemetrySecret = null;
+      return;
+    }
+
+    _beginPolicyRestore();
+    await ready;
+    if (!_isDisposed && _telemetryEnabled) _startTimers();
   }
 
   /// Restored and remote policies must stay within the client safety envelope.
@@ -59,6 +96,7 @@ mixin _TelemetryClientLifecycle on _TelemetryClientBase {
   }
 
   void _startTimers() {
+    if (_isDisposed || !_telemetryEnabled) return;
     _resetPeriodicFlushTimer();
     _policyRefreshTimer?.cancel();
     _policyRefreshTimer = null;
@@ -75,7 +113,9 @@ mixin _TelemetryClientLifecycle on _TelemetryClientBase {
   void _resetPeriodicFlushTimer() {
     _periodicFlushTimer?.cancel();
     _periodicFlushTimer = null;
-    if (!activePolicy.uploadEnabled || activePolicy.timeIntervalSeconds <= 0) {
+    if (!_telemetryEnabled ||
+        !activePolicy.uploadEnabled ||
+        activePolicy.timeIntervalSeconds <= 0) {
       return;
     }
     _periodicFlushTimer = _timerFactory.schedulePeriodic(
@@ -86,7 +126,7 @@ mixin _TelemetryClientLifecycle on _TelemetryClientBase {
 
   /// Refreshes the remote upload policy with a single-flight guard.
   Future<bool> refreshPolicy() {
-    if (_isDisposed) return Future<bool>.value(false);
+    if (_isDisposed || !_telemetryEnabled) return Future<bool>.value(false);
     final inFlight = _policyRefreshFuture;
     if (inFlight != null) {
       _policyRefreshRequested = true;
@@ -116,7 +156,7 @@ mixin _TelemetryClientLifecycle on _TelemetryClientBase {
     var requestedTokenGeneration = _authTokenGeneration;
     try {
       await ready;
-      if (_isDisposed) return false;
+      if (_isDisposed || !_telemetryEnabled) return false;
       await _ensureAuthenticated();
       if (!_hasValidToken) return false;
 
@@ -127,11 +167,13 @@ mixin _TelemetryClientLifecycle on _TelemetryClientBase {
         authToken: requestedToken!,
       );
       if (policy != null) {
+        if (_isDisposed || !_telemetryEnabled) return false;
         if (!_isValidPolicy(policy) ||
             policy.policyVersion < activePolicy.policyVersion) {
           return false;
         }
         try {
+          if (_isDisposed || !_telemetryEnabled) return false;
           await storage.saveLastKnownGoodPolicy(policy);
         } on Object {
           _recordStorageFailure();
@@ -139,7 +181,7 @@ mixin _TelemetryClientLifecycle on _TelemetryClientBase {
         }
         activePolicy = policy;
         _lastPolicyFetchTime = _now();
-        if (!_isDisposed) _resetPeriodicFlushTimer();
+        if (!_isDisposed && _telemetryEnabled) _resetPeriodicFlushTimer();
         return true;
       }
     } catch (e) {
@@ -157,13 +199,13 @@ mixin _TelemetryClientLifecycle on _TelemetryClientBase {
 
   /// Triggered on App backgrounding.
   void onAppBackground() {
-    if (_isDisposed) return;
+    if (_isDisposed || !_telemetryEnabled) return;
     if (activePolicy.triggerAppBackground) unawaited(_requestUpload());
   }
 
   /// Triggered on App foregrounding with backlog.
   void onAppForeground() {
-    if (_isDisposed) return;
+    if (_isDisposed || !_telemetryEnabled) return;
     if (activePolicy.triggerAppForegroundWithBacklog) {
       unawaited(_requestUpload());
     }
@@ -171,12 +213,15 @@ mixin _TelemetryClientLifecycle on _TelemetryClientBase {
 
   /// Triggered on network recovery.
   void onNetworkRecovered() {
-    if (_isDisposed) return;
+    if (_isDisposed || !_telemetryEnabled) return;
     if (activePolicy.triggerNetworkRecovered) unawaited(_requestUpload());
   }
 
   /// Returns the latest cached diagnostics and storage health snapshot.
   TelemetryDiagnosticsSnapshot get latestDiagnostics {
+    if (!_telemetryEnabled || _isDisposed) {
+      return _diagnosticsFromHealth(_emptyTelemetryHealth);
+    }
     final health =
         storage.cachedHealthStats ??
         const TelemetryStorageHealth(
@@ -192,7 +237,13 @@ mixin _TelemetryClientLifecycle on _TelemetryClientBase {
 
   /// Retrieves fresh diagnostics and storage health.
   Future<TelemetryDiagnosticsSnapshot> getDiagnostics() async {
+    if (!_telemetryEnabled || _isDisposed) {
+      return _diagnosticsFromHealth(_emptyTelemetryHealth);
+    }
     await ready;
+    if (!_telemetryEnabled || _isDisposed) {
+      return _diagnosticsFromHealth(_emptyTelemetryHealth);
+    }
     final health = await storage.getHealthStats(
       targetCapacity: activePolicy.clientMaxLocalRecords,
     );
@@ -208,6 +259,7 @@ mixin _TelemetryClientLifecycle on _TelemetryClientBase {
       localSyncedCount: health.localSyncedCount,
       totalCount: health.totalCount,
       cacheOverflow: health.cacheOverflow,
+      telemetryEnabled: telemetryEnabled,
       uploadEnabled: activePolicy.uploadEnabled,
       policyVersion: activePolicy.policyVersion,
       batchSizeThreshold: activePolicy.batchSizeThreshold,
@@ -220,9 +272,18 @@ mixin _TelemetryClientLifecycle on _TelemetryClientBase {
       lastSyncTime: _lastSyncTime,
       lastSyncError: _lastSyncError,
       lastPolicyFetchTime: _lastPolicyFetchTime,
-      isUploading: _isUploading,
+      isUploading: _isUploading && telemetryEnabled,
     );
   }
+
+  static const _emptyTelemetryHealth = TelemetryStorageHealth(
+    localPendingCount: 0,
+    localRejectedCount: 0,
+    localSyncedCount: 0,
+    totalCount: 0,
+    cacheOverflow: false,
+    overflowCount: 0,
+  );
 
   /// Stops new work, drains in-flight operations, then closes storage once.
   Future<void> dispose() {

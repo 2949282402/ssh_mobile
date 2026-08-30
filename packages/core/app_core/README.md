@@ -1,4 +1,4 @@
-最新更新时间：2026-08-30
+最新更新时间：2026-08-31
 
 # app_core
 
@@ -20,7 +20,9 @@
   在 durable insert 后以有界频率独立维护本地容量；`replayAllLocalRecords()` 只
   重放 pending/synced，`retryRejectedRecords()` 单独处理 rejected 且不会把瞬时
   失败重新放回自动 pending 队列。重复 `eventId` 会显式报告 durable insert 失败。
-  存储健康快照还提供 pending/rejected 最老年龄和 `overflowCount`。
+  存储健康快照还提供 pending/rejected 最老年龄和 `overflowCount`。客户端默认关闭，
+  只有 App Shell 确认有效 Relay enrollment 后才允许新的埋点落库；可通过
+  `setTelemetryEnabled` 响应注册状态变化。
 
 本 Package 不依赖 Flutter UI、SSH、Drift 或任何 Feature。它只定义边界和轻量
 机制，具体平台日志实现由 AppRuntime 或 App 层通过依赖注入提供。

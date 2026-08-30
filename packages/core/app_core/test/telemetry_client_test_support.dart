@@ -262,6 +262,7 @@ TelemetryClient buildTestTelemetryClient({
       buildNumber: '100',
       platform: 'android',
       releaseChannel: 'beta',
+      telemetryEnabled: true,
       sessionId: 'sess-fixed',
       deviceEnrollmentSecret: deviceEnrollmentSecret,
       authTokenTtlSeconds: 2 * 60 * 60,

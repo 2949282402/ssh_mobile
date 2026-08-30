@@ -160,6 +160,7 @@ TelemetryClient _client({
     buildNumber: '1',
     platform: 'linux',
     releaseChannel: 'test',
+    telemetryEnabled: true,
     deviceEnrollmentSecret: deviceEnrollmentSecret,
     deviceEnrollmentProvider: provider,
     policyFetchIntervalSeconds: 0,

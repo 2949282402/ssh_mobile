@@ -20,6 +20,7 @@ TelemetryClient buildRetryTelemetryClient(
           buildNumber: '100',
           platform: 'android',
           releaseChannel: 'test',
+          telemetryEnabled: true,
           deviceEnrollmentSecret: 'test-secret',
           policyFetchIntervalSeconds: policyFetchIntervalSeconds,
         ),

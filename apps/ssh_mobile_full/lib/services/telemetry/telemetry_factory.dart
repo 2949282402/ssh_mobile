@@ -142,6 +142,14 @@ final class RelayTelemetryEnrollmentProvider
     await _secureStorage.write(key: telemetryDeviceSecretKey, value: secret);
   }
 
+  /// Removes the telemetry secret when the Relay enrollment gate closes.
+  ///
+  /// The secret is scoped to the Relay attestation. Retaining it after a user
+  /// clears or loses enrollment could bind a later endpoint to stale identity
+  /// material, so the App Shell explicitly clears it on disable.
+  Future<void> clearPersistedSecret() =>
+      _secureStorage.delete(key: telemetryDeviceSecretKey);
+
   String _newNonce() {
     final random = Random.secure();
     final bytes = Uint8List.fromList(
@@ -171,6 +179,7 @@ Future<TelemetryRuntime> createTelemetryRuntime({
   DriftTelemetryStorage? storage,
   TelemetryUploadPolicy? initialPolicy,
   bool disableBackgroundPolicyFetch = false,
+  bool telemetryEnabled = false,
 }) async {
   final secure =
       secureStorage ??
@@ -178,14 +187,17 @@ Future<TelemetryRuntime> createTelemetryRuntime({
         mOptions: MacOsOptions(usesDataProtectionKeychain: false),
       );
 
-  // 读取设备注册密钥；测试或未配置时允许为空（匿名认证）。
+  // 只读取已通过 App Shell Relay enrollment gate 的设备密钥；未注册时
+  // 客户端保持关闭，不会因为空密钥而走匿名遥测路径。
   String? enrollmentSecret;
   var secureStorageReadFailed = false;
-  try {
-    enrollmentSecret = await secure.read(key: telemetryDeviceSecretKey);
-  } catch (_) {
-    secureStorageReadFailed = true;
-    enrollmentSecret = null;
+  if (telemetryEnabled) {
+    try {
+      enrollmentSecret = await secure.read(key: telemetryDeviceSecretKey);
+    } catch (_) {
+      secureStorageReadFailed = true;
+      enrollmentSecret = null;
+    }
   }
 
   final driftStorage = storage ?? DriftTelemetryStorage();
@@ -198,6 +210,7 @@ Future<TelemetryRuntime> createTelemetryRuntime({
       platform: buildMetadata.platform,
       releaseChannel: buildMetadata.releaseChannel,
       deviceEnrollmentSecret: enrollmentSecret,
+      telemetryEnabled: telemetryEnabled,
       // A secure-storage read failure is an unavailable state, not an empty
       // credential. Never fall back to Relay enrollment/rotation because that
       // would create a new secret while the existing one is inaccessible.

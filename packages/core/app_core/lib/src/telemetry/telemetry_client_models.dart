@@ -48,6 +48,7 @@ class TelemetryClientConfig {
     required this.buildNumber,
     required this.platform,
     required this.releaseChannel,
+    this.telemetryEnabled = false,
     this.sessionId,
     this.deviceEnrollmentSecret,
     this.deviceEnrollmentProvider,
@@ -61,6 +62,12 @@ class TelemetryClientConfig {
   final String buildNumber;
   final String platform;
   final String releaseChannel;
+
+  /// Whether the App Shell has confirmed an active Relay enrollment.
+  ///
+  /// The secure default is disabled. App Scope must set this only after it
+  /// verifies the current Relay origin has a valid stored enrollment.
+  final bool telemetryEnabled;
 
   /// App-lifetime session ID. A UUID v4 is generated when omitted.
   final String? sessionId;
@@ -85,6 +92,7 @@ class TelemetryDiagnosticsSnapshot {
     required this.localSyncedCount,
     required this.totalCount,
     required this.cacheOverflow,
+    this.telemetryEnabled = false,
     required this.uploadEnabled,
     required this.policyVersion,
     required this.batchSizeThreshold,
@@ -105,6 +113,12 @@ class TelemetryDiagnosticsSnapshot {
   final int localSyncedCount;
   final int totalCount;
   final bool cacheOverflow;
+
+  /// Whether the App Shell has confirmed an active Relay enrollment.
+  final bool telemetryEnabled;
+
+  /// Whether new records may be persisted locally.
+  bool get recordingEnabled => telemetryEnabled;
   final bool uploadEnabled;
   final int policyVersion;
   final int batchSizeThreshold;

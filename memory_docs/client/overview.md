@@ -1,4 +1,4 @@
-> Last updated: 2026-08-30
+> Last updated: 2026-08-31
 
 # Client Overview
 
@@ -18,7 +18,9 @@ catalog is validated from `contracts/telemetry/events.yaml` and
 `error_codes.yaml`; `syncState` (pending/synced/rejected) is orthogonal to
 `logicalDeletedAt` and uses non-loss FIFO retention; Developer exposes storage
 health/overflow and exact replay preserving `eventId`, `occurredAt`, `sessionId`,
-and `traceId`.
+and `traceId`. Recording is off until App Scope confirms a valid Relay
+enrollment; a disabled Relay gate prevents new event rows and cache writes,
+while `uploadEnabled=false` only pauses upload scheduling.
 
 Network internals route to the [SDK domain](../sdk/overview.md); Go Relay and
 React administration route to Backend/Front. For package work, read the nearest

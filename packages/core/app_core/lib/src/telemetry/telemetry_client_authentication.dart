@@ -4,6 +4,7 @@ mixin _TelemetryClientAuthentication on _TelemetryClientBase {
   /// Ensures a non-expired bearer token, sharing concurrent authentication.
   @override
   Future<void> _ensureAuthenticated() {
+    if (!_telemetryEnabled) return Future<void>.value();
     if (_hasValidToken) return Future<void>.value();
 
     final inFlight = _authenticationFuture;
@@ -19,12 +20,15 @@ mixin _TelemetryClientAuthentication on _TelemetryClientBase {
   }
 
   Future<void> _authenticate() async {
+    if (!_telemetryEnabled) return;
     // A failed refresh must not leave an expired token usable by callers.
     _clearAuthToken();
     var secret = _telemetrySecret;
     if (secret == null || secret.isEmpty) {
+      if (!_telemetryEnabled) return;
       try {
         secret = await _enrollTelemetrySecret();
+        if (!_telemetryEnabled) return;
         if (secret != null && secret.isNotEmpty) _telemetrySecret = secret;
       } on TelemetryUploadException catch (error) {
         // External enrollment messages may contain credential material. Keep
@@ -45,6 +49,8 @@ mixin _TelemetryClientAuthentication on _TelemetryClientBase {
       return;
     }
 
+    if (!_telemetryEnabled) return;
+
     final expEpoch = _now().millisecondsSinceEpoch ~/ 1000 + 60;
     final result = await transport.authenticateDevice(
       baseUrl: config.baseUrl,
@@ -54,6 +60,7 @@ mixin _TelemetryClientAuthentication on _TelemetryClientBase {
       authSecret: secret,
       expEpoch: expEpoch,
     );
+    if (!_telemetryEnabled) return;
     if (result == null ||
         result.token.isEmpty ||
         result.expiresInSeconds <= 0) {

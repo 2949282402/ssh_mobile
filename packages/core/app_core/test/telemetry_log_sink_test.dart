@@ -19,6 +19,7 @@ void main() {
           buildNumber: '1',
           platform: 'test',
           releaseChannel: 'test',
+          telemetryEnabled: true,
         ),
         storage: storage,
         initialPolicy: const TelemetryUploadPolicy(

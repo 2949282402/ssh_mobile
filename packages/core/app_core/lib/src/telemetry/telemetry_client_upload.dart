@@ -9,7 +9,7 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
 
   @override
   Future<void> _requestUpload() {
-    if (_isDisposed || !activePolicy.uploadEnabled) {
+    if (_isDisposed || !_canRecord) {
       return Future<void>.value();
     }
 
@@ -30,13 +30,13 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
 
   Future<void> _drainUploadRequests() async {
     await ready;
-    if (_isDisposed || !activePolicy.uploadEnabled) {
+    if (_isDisposed || !_canRecord) {
       _uploadRequested = false;
       return;
     }
     while (_uploadRequested) {
       _uploadRequested = false;
-      if (_isDisposed || !activePolicy.uploadEnabled) return;
+      if (_isDisposed || !_canRecord) return;
       await _flushWithToken();
 
       final retryWait = _retryWaitCompleter?.future;
@@ -52,15 +52,13 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
     if (!identical(_uploadFuture, operation)) return;
     _uploadFuture = null;
     _isUploading = false;
-    if (_uploadRequested &&
-        _retryTimer == null &&
-        !_isDisposed &&
-        activePolicy.uploadEnabled) {
+    if (_uploadRequested && _retryTimer == null && !_isDisposed && _canRecord) {
       unawaited(_requestUpload());
     }
   }
 
   Future<void> _flushWithToken() async {
+    if (!_canRecord) return;
     final batchSize = activePolicy.maxBatchSize > 0
         ? activePolicy.maxBatchSize
         : 50;
@@ -80,6 +78,7 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
       _recordStorageFailure();
       return;
     }
+    if (!_canRecord) return;
     if (pending.isEmpty) return;
 
     try {
@@ -101,6 +100,7 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
         deviceId: config.deviceId,
         records: pending,
       );
+      if (!_canRecord) return;
       if (!await _applyUploadResult(result, records: pending)) return;
       _cancelRetryTimer();
       _lastSyncTime = _now();
@@ -127,6 +127,7 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
             deviceId: config.deviceId,
             records: pending,
           );
+          if (!_canRecord) return;
           if (!await _applyUploadResult(retried, records: pending)) return;
           _cancelRetryTimer();
           _lastSyncTime = _now();
@@ -147,6 +148,7 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
             ),
         ];
         try {
+          if (!_canRecord) return;
           await storage.applyAckResults(results);
         } on Object {
           _recordStorageFailure();
@@ -169,6 +171,7 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
     required List<TelemetryEventRecord> records,
     bool purge = true,
   }) async {
+    if (!_canRecord) return false;
     final expectedIds = records.map((record) => record.eventId).toSet();
     final acknowledgedIds = <String>{};
     final validAcks = <TelemetryAckResult>[];
@@ -198,12 +201,15 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
         .where((record) => !acknowledgedIds.contains(record.eventId))
         .toList();
     try {
+      if (!_canRecord) return false;
       if (validAcks.isNotEmpty) await storage.applyAckResults(validAcks);
+      if (!_canRecord) return false;
       if (unacknowledged.isNotEmpty) {
         await _handleUploadFailure(unacknowledged, invalidAckError);
         return false;
       }
       if (purge) {
+        if (!_canRecord) return false;
         await storage.purgeOldSyncedRecords(
           targetCapacity: activePolicy.clientMaxLocalRecords,
         );
@@ -222,7 +228,9 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
   ) async {
     _lastSyncError = _describeError(error);
     if (error.isPermanentClientError) return false;
+    if (!_canRecord) return false;
     try {
+      if (!_canRecord) return false;
       await storage.applyRetryCount(
         records.map((r) => r.eventId).toList(),
         increment: 1,
@@ -277,7 +285,7 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
       );
     }
 
-    if (_isDisposed) return;
+    if (_isDisposed || !_canRecord) return;
     _cancelRetryTimer();
     _retryWaitCompleter = Completer<void>();
     _retryTimer = _timerFactory.schedule(Duration(milliseconds: delayMs), () {
@@ -285,7 +293,7 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
       final retryWait = _retryWaitCompleter;
       _retryWaitCompleter = null;
       if (retryWait != null && !retryWait.isCompleted) retryWait.complete();
-      if (_isDisposed) return Future<void>.value();
+      if (_isDisposed || !_canRecord) return Future<void>.value();
       if (_uploadFuture == null) return _requestUpload();
       return Future<void>.value();
     });
@@ -302,7 +310,9 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
 
   /// Replays every local row with its original event/session/trace identity.
   Future<int> replayAllLocalRecords() {
-    if (_isDisposed || _isUploading) return Future<int>.value(0);
+    if (_isDisposed || _isUploading || !_canRecord) {
+      return Future<int>.value(0);
+    }
     _cancelRetryTimer();
     _isUploading = true;
     final operation = _replayAndDrainFollowUps();
@@ -321,7 +331,7 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
   Future<int> _replayAllLocalRecords() async {
     try {
       await ready;
-      if (_isDisposed || !activePolicy.uploadEnabled) return 0;
+      if (_isDisposed || !_canRecord) return 0;
       final allRecords = await storage.fetchAllForReplay();
       // Rejected rows have an explicit manual-retry operation. Keeping them
       // out of the broad replay prevents a historical replay from silently
@@ -363,6 +373,7 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
         if (prepared != null) records.add(prepared);
       }
       if (records.isEmpty) return 0;
+      if (!_canRecord) return 0;
       final pendingRecords = records
           .where((record) => record.syncState == TelemetrySyncState.pending)
           .toList();
@@ -390,6 +401,7 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
           ? activePolicy.maxBatchSize
           : 50;
       for (var i = 0; i < records.length; i += batchSize) {
+        if (!_canRecord) return 0;
         final end = min(i + batchSize, records.length);
         final batch = records.sublist(i, end);
         final result = await _uploadReplayBatch(batch);
@@ -419,6 +431,7 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
   Future<TelemetryBatchUploadResult?> _uploadReplayBatch(
     List<TelemetryEventRecord> batch,
   ) async {
+    if (!_canRecord) return null;
     final pending = batch
         .where((record) => record.syncState == TelemetrySyncState.pending)
         .toList();
@@ -457,6 +470,7 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
           );
           return null;
         }
+        if (!_canRecord) return null;
         return await transport.uploadBatch(
           baseUrl: config.baseUrl,
           authToken: _authToken!,
@@ -481,6 +495,7 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
     TelemetryBatchUploadResult result, {
     required List<TelemetryEventRecord> records,
   }) async {
+    if (!_canRecord) return false;
     final expectedIds = records.map((record) => record.eventId).toSet();
     final acknowledgedIds = <String>{};
     final validAcks = <TelemetryAckResult>[];
@@ -524,6 +539,7 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
         .where((record) => !acknowledgedIds.contains(record.eventId))
         .toList();
     try {
+      if (!_canRecord) return false;
       if (pendingAcks.isNotEmpty) {
         await storage.applyAckResults(pendingAcks);
       }
@@ -549,6 +565,7 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
     List<TelemetryEventRecord> records,
     TelemetryUploadException error,
   ) async {
+    if (!_canRecord) return;
     final results = [
       for (final record in records)
         TelemetryAckResult(
@@ -560,6 +577,7 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
         ),
     ];
     try {
+      if (!_canRecord) return;
       await storage.applyAckResults(results);
     } on Object {
       _recordStorageFailure();

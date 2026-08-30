@@ -137,6 +137,7 @@ final class DeveloperTelemetrySnapshot {
     this.oldestPendingAge,
     this.oldestRejectedAge,
     this.overflowCount = 0,
+    this.telemetryEnabled = false,
     required this.uploadEnabled,
     required this.policyVersion,
     required this.batchSizeThreshold,
@@ -169,6 +170,9 @@ final class DeveloperTelemetrySnapshot {
 
   /// Number of rows above the configured local target capacity.
   final int overflowCount;
+
+  /// Whether the App Shell has confirmed an active Relay enrollment.
+  final bool telemetryEnabled;
 
   /// 上传是否开启。
   final bool uploadEnabled;

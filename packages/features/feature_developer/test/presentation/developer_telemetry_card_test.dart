@@ -75,6 +75,7 @@ void main() {
             localSyncedCount: 10,
             totalCount: 17,
             cacheOverflow: true,
+            telemetryEnabled: true,
             uploadEnabled: true,
             policyVersion: 3,
             batchSizeThreshold: 20,

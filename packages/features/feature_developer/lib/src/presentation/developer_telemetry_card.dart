@@ -208,6 +208,11 @@ class _DeveloperTelemetryCardState extends State<DeveloperTelemetryCard> {
               ),
               _metricRow(
                 context,
+                'Relay Enrollment',
+                t.telemetryEnabled ? 'Enabled' : 'Disabled',
+              ),
+              _metricRow(
+                context,
                 'Upload Policy',
                 '${t.uploadEnabled ? "Enabled" : "Disabled"} (v${t.policyVersion})',
               ),

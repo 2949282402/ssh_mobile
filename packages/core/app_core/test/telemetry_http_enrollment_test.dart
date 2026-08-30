@@ -28,6 +28,7 @@ void main() {
           buildNumber: '1',
           platform: 'linux',
           releaseChannel: 'test',
+          telemetryEnabled: true,
           deviceEnrollmentProvider: provider,
           policyFetchIntervalSeconds: 0,
         ),

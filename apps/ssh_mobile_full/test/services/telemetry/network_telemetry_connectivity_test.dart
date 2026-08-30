@@ -136,6 +136,7 @@ TelemetryClient _client(_ConnectivityTransport transport) {
       buildNumber: '1',
       platform: 'android',
       releaseChannel: 'test',
+      telemetryEnabled: true,
       deviceEnrollmentSecret: 'test-secret',
       policyFetchIntervalSeconds: 0,
     ),

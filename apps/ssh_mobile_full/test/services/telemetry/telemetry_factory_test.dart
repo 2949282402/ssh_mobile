@@ -228,6 +228,7 @@ void main() {
         secureStorage: secureStorage,
         deviceEnrollmentProvider: provider,
         storage: storage,
+        telemetryEnabled: true,
         disableBackgroundPolicyFetch: true,
       );
       addTearDown(runtime.client.dispose);

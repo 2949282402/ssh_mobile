@@ -12,7 +12,9 @@ mixin _TelemetryClientReplay on _TelemetryClientBase {
   /// a developer action must never put a permanently rejected record back into
   /// the automatic pending queue.
   Future<int> retryRejectedRecords() {
-    if (_isDisposed || _isUploading) return Future<int>.value(0);
+    if (_isDisposed || _isUploading || !_canRecord) {
+      return Future<int>.value(0);
+    }
     _cancelRetryTimer();
     _isUploading = true;
     final operation = _retryRejectedRecords();
@@ -24,7 +26,7 @@ mixin _TelemetryClientReplay on _TelemetryClientBase {
   Future<int> _retryRejectedRecords() async {
     try {
       await ready;
-      if (_isDisposed || !activePolicy.uploadEnabled) return 0;
+      if (_isDisposed || !_canRecord) return 0;
       final persisted = await storage.fetchRejectedForReplay();
       if (persisted.isEmpty) return 0;
       final records = await _preparePersistedRecords(persisted);
@@ -47,6 +49,7 @@ mixin _TelemetryClientReplay on _TelemetryClientBase {
           ? activePolicy.maxBatchSize
           : 50;
       for (var i = 0; i < records.length; i += batchSize) {
+        if (!_canRecord) return 0;
         final end = min(i + batchSize, records.length);
         final batch = records.sublist(i, end);
         TelemetryBatchUploadResult result;
@@ -97,6 +100,7 @@ mixin _TelemetryClientReplay on _TelemetryClientBase {
 
       var purgeFailed = false;
       try {
+        if (!_canRecord) return 0;
         await storage.purgeOldSyncedRecords(
           targetCapacity: activePolicy.clientMaxLocalRecords,
         );
@@ -120,6 +124,7 @@ mixin _TelemetryClientReplay on _TelemetryClientBase {
     TelemetryBatchUploadResult result, {
     required List<TelemetryEventRecord> records,
   }) async {
+    if (!_canRecord) return false;
     final expectedIds = records.map((record) => record.eventId).toSet();
     final acknowledgedIds = <String>{};
     final validAcks = <TelemetryAckResult>[];
@@ -138,6 +143,7 @@ mixin _TelemetryClientReplay on _TelemetryClientBase {
       return false;
     }
     try {
+      if (!_canRecord) return false;
       await storage.applyAckResults(validAcks);
       return true;
     } on Object {

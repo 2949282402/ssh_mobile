@@ -210,7 +210,7 @@ final class AppDeveloperDiagnosticsAdapter extends ChangeNotifier
       developer.DeveloperComponentStatus(
         id: developer.DeveloperComponentId.telemetry,
         state:
-            'v${telemetryClient!.activePolicy.policyVersion} · ${telemetryClient!.activePolicy.uploadEnabled ? "active" : "disabled"}',
+            'v${telemetryClient!.activePolicy.policyVersion} · ${telemetryClient!.recordingEnabled ? "active" : "disabled"}',
       ),
   ];
 
@@ -271,6 +271,7 @@ final class AppDeveloperDiagnosticsAdapter extends ChangeNotifier
                   oldestPendingAge: diag.oldestPendingAge,
                   oldestRejectedAge: diag.oldestRejectedAge,
                   overflowCount: diag.overflowCount,
+                  telemetryEnabled: diag.telemetryEnabled,
                   uploadEnabled: diag.uploadEnabled,
                   policyVersion: diag.policyVersion,
                   batchSizeThreshold: diag.batchSizeThreshold,

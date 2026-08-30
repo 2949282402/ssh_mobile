@@ -640,6 +640,7 @@ final class _FakeTelemetryClient extends Fake
         localSyncedCount: 10,
         totalCount: 15,
         cacheOverflow: false,
+        telemetryEnabled: true,
         uploadEnabled: true,
         policyVersion: 7,
         batchSizeThreshold: 50,

@@ -83,6 +83,7 @@ TelemetryClient _buildClient({
     buildNumber: '1',
     platform: 'linux',
     releaseChannel: 'test',
+    telemetryEnabled: true,
     deviceEnrollmentSecret: 'lifecycle-enrollment-secret',
     policyFetchIntervalSeconds: 0,
   ),

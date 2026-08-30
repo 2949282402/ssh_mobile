@@ -29,15 +29,72 @@ extension _AppRuntimeFactoryTelemetry on _AppRuntimeFactoryContext {
             relayEnrollment: relayEnrollmentService,
             expectedDeviceId: appSettings.lanDeviceId,
           );
+    var telemetryEnabled = await _isRelayTelemetryEnabled(
+      relayEnrollmentService,
+      appSettings.relayEndpoint,
+    );
+    if (!telemetryEnabled) {
+      try {
+        await telemetryEnrollmentProvider?.clearPersistedSecret();
+      } on Object catch (error) {
+        logger.warning(
+          'Telemetry secret cleanup failed',
+          details: 'errorType=${error.runtimeType}',
+        );
+      }
+    }
     final telemetryRuntime = await createTelemetryRuntime(
       deviceId: appSettings.lanDeviceId,
       relayEndpoint: appSettings.relayEndpoint,
       buildMetadata: telemetryBuildMetadata,
       deviceEnrollmentProvider: telemetryEnrollmentProvider,
       storage: telemetryStorage,
+      telemetryEnabled: telemetryEnabled,
     );
     telemetryClient = telemetryRuntime.client;
     cleanup.add(telemetryClient.dispose, priority: _CleanupPriority.module);
+
+    // Relay enrollment is the sole App Shell activation signal. A valid
+    // stored enrollment enables telemetry even while the Relay socket is
+    // disconnected; clearing/expiring it disables recording immediately.
+    final relayCoordinator = lanShareModule.coordinator;
+    var relayGateRevision = 0;
+    void onRelayChanged() {
+      final revision = ++relayGateRevision;
+      unawaited(
+        () async {
+          final enabled = await _isRelayTelemetryEnabled(
+            relayEnrollmentService,
+            appSettings.relayEndpoint,
+          );
+          if (revision != relayGateRevision || enabled == telemetryEnabled) {
+            return;
+          }
+          telemetryEnabled = enabled;
+          if (!enabled) {
+            try {
+              await telemetryEnrollmentProvider?.clearPersistedSecret();
+            } on Object catch (error) {
+              logger.warning(
+                'Telemetry secret cleanup failed',
+                details: 'errorType=${error.runtimeType}',
+              );
+            }
+          }
+          await telemetryClient.setTelemetryEnabled(enabled);
+        }().catchError((Object error, StackTrace stackTrace) {
+          logger.warning(
+            'Telemetry Relay gate sync failed',
+            details: 'errorType=${error.runtimeType}',
+          );
+        }),
+      );
+    }
+
+    relayCoordinator.addListener(onRelayChanged);
+    cleanup.add(() {
+      relayCoordinator.removeListener(onRelayChanged);
+    }, priority: _CleanupPriority.adapter);
     // 业务遥测生产者挂载：SSH / SFTP / 网络路由回退 / 崩溃捕获。
     sshService.telemetryClient = telemetryClient;
     sftpService.telemetryClient = telemetryClient;
@@ -149,5 +206,21 @@ extension _AppRuntimeFactoryTelemetry on _AppRuntimeFactoryContext {
       priority: _CleanupPriority.adapter,
     );
     await telemetryConnectivityMonitor.start();
+  }
+}
+
+Future<bool> _isRelayTelemetryEnabled(
+  feature_lan_share.LanRelayEnrollmentPort? enrollment,
+  String endpointText,
+) async {
+  if (enrollment == null) return false;
+  final endpoint = TelemetryEndpoints.validateOrigin(endpointText);
+  if (endpoint == null) return false;
+  try {
+    return await enrollment.isEnrolled(
+      feature_lan_share.RelaySettings(endpoint: endpoint),
+    );
+  } on Object {
+    return false;
   }
 }
