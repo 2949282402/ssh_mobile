@@ -115,7 +115,7 @@ void main() {
         NetworkErrorCode.noRoute,
       );
       expect(
-        (connect as NetworkFailure<void>).error.operation,
+        connect.error.operation,
         NetworkOperation.connect,
       );
 
@@ -132,7 +132,7 @@ void main() {
         NetworkErrorCode.noRoute,
       );
       expect(
-        (relay as NetworkFailure<void>).error.operation,
+        relay.error.operation,
         NetworkOperation.configureRelay,
       );
     },
@@ -162,7 +162,7 @@ void main() {
         (result as NetworkFailure<void>).error.code,
         NetworkErrorCode.noRoute,
       );
-      expect((result as NetworkFailure<void>).error.peerId, 'peer-no-error');
+      expect(result.error.peerId, 'peer-no-error');
     },
   );
 

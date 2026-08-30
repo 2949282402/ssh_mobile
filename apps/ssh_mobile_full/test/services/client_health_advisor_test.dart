@@ -179,6 +179,7 @@ void main() {
       final advisor = ClientHealthAdvisor(
         clientSystemToolService: _FakeClientSystem(
           networkError: StateError('network unavailable'),
+          batteryError: StateError('battery unavailable'),
           permissionError: StateError('permission unavailable'),
         ),
       );

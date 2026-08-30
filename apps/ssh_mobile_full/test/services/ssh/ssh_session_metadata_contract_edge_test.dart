@@ -3,7 +3,6 @@ import 'package:connection_core/connection_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/terminal_session_metadata_store.dart';
 
 import '../../test_utils/test_storage_adapter.dart';

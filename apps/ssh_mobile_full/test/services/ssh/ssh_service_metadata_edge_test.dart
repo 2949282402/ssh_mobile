@@ -5,7 +5,6 @@ import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/terminal_session_metadata_store.dart';
 
-import '../../test_utils/test_storage_adapter.dart';
 import 'ssh_service_scenario_test_support.dart';
 
 void main() {

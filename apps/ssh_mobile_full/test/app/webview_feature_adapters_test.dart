@@ -77,7 +77,7 @@ void main() {
           ),
         );
         await expectLater(
-          connectionFactory!(
+          connectionFactory(
             Uri.parse('http://public.example.com:$port/status'),
             'proxy.example.com',
             null,
@@ -85,7 +85,7 @@ void main() {
           throwsA(isA<ClientWebViewNetworkException>()),
         );
         await expectLater(
-          connectionFactory!(
+          connectionFactory(
             Uri.parse('http://public.example.com:$port/status'),
             null,
             8080,
@@ -93,7 +93,7 @@ void main() {
           throwsA(isA<ClientWebViewNetworkException>()),
         );
         await expectLater(
-          connectionFactory!(
+          connectionFactory(
             Uri.parse('https://public.example.com:$port/status'),
             null,
             null,
@@ -101,7 +101,7 @@ void main() {
           throwsA(isA<ClientWebViewNetworkException>()),
         );
         await expectLater(
-          connectionFactory!(
+          connectionFactory(
             Uri.parse('http://public.example.com:43124/status'),
             null,
             null,

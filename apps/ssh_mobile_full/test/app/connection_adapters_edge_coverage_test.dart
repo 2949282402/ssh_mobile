@@ -16,7 +16,6 @@ import 'package:ssh_mobile/app/connection_ui_adapters.dart';
 import 'package:ssh_mobile/app/network_sdk_adapters.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 
 import 'support/sftp_service_test_fakes.dart';

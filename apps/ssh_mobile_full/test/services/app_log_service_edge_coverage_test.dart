@@ -1,6 +1,5 @@
 import 'package:app_core/app_core.dart' as app_core;
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:ssh_mobile/services/app_log_service.dart';

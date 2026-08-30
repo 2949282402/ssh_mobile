@@ -1,6 +1,5 @@
 import 'dart:typed_data';
 
-import 'package:connection_core/connection_core.dart';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/app/sftp_backend_adapters.dart' hide SftpService;
