@@ -126,7 +126,10 @@ class _ServerListPaneState extends State<ServerListPane> {
                               maxCrossAxisExtent: 480,
                               crossAxisSpacing: 12,
                               mainAxisSpacing: 12,
-                              mainAxisExtent: 190,
+                              // Keep health details and action buttons visible
+                              // at the 1.3x accessibility text scale used by
+                              // the app shell; 190px clips the card content.
+                              mainAxisExtent: 210,
                             ),
                         itemCount: connections.length,
                         itemBuilder: (context, index) => _buildConnectionCard(
