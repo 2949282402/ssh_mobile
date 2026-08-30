@@ -1,81 +1,63 @@
-最新更新时间：2026-08-25
+最新更新时间：2026-08-30
 
 # ssh_mobile_full 维护约束
 
-## Network V2 composition-root contract
+## App Scope contract
 
-- `AppRuntimeFactory` 是本机 Network V2 identity、`NetworkRuntime`、native command
-  gateway 和共享 `NetworkFacade` 的唯一 App Scope composition root。每个 App process
-  只允许完成一次 `ConfigureRuntime`；LAN、SSH、SFTP、Realtime 和 Relay 只能借用
-  已配置的 runtime/facade。
-- `NetworkIdentityBundle`（Ed25519 private/public 与 X25519 private/public）属于
-  App Scope/infrastructure owner；Feature 不得创建、持久化或替换本机 native
-  identity。LAN adapter 只把它映射到 Feature Port。
-- `AppRuntime.dispose()` 必须先停止 Feature/Module 使用和 facade/realtime 订阅，
-  再停止并销毁 NetworkRuntime/native handle。Feature deactivate/reactivate 不能
-  start/stop/dispose/reconfigure 共享 runtime。
-- LAN Control Protocol V2 与 Native Network Protocol V2 是独立 breaking-only
-  版本域。App Shell 不得恢复旧 LAN pairing/upload fallback，也不得为了 LAN 变更
-  native Network V2 wire version。
+- `AppRuntimeFactory` is the sole composition root for App identity,
+  `NetworkRuntime`, native command gateway, and shared `NetworkFacade`; one
+  App process performs exactly one `ConfigureRuntime`. LAN, SSH, SFTP,
+  Realtime, and Relay borrow these resources.
+- `NetworkIdentityBundle` (Ed25519/X25519 key pairs) belongs to App/infrastructure;
+  Features never create, persist, or replace it. `AppRuntime.dispose()` stops
+  Feature/Module use and facade/realtime subscriptions before stopping/destroying
+  NetworkRuntime/native handle; Feature deactivate/reactivate never reconfigures it.
+- LAN Control V2 and Native Network V2 are separate breaking-only domains. Do
+  not restore old LAN pairing/upload fallback or change native wire V2 for LAN.
 
-## 允许修改范围
+## Scope, dependencies, and API
 
-- App Shell、`AppRuntime`、路由聚合、Port 适配器和迁移兼容桥；
-- `network_sdk` 的 App Shell 请求执行器和 Bootstrap/鉴权客户端组装；
-- App 专属测试、启动配置和平台集成；
-- 发生 Public API 或 Owner 变化时同步本地合同与相关架构文档；只有满足治理门槛的
-  跨包当前知识才更新对应 scoped Memory。
+- Allowed: App Shell/`AppRuntime`, route aggregation, Port adapters, retained
+  compatibility bridges, App `network_sdk`/`SdkRequestExecutor` request,
+  Bootstrap/auth assembly, App tests, startup configuration, and platform
+  integration.
+- Never import a Feature `/src/`, copy Feature/Core/Infrastructure code, add a
+  second global Service/locator or Network/SSH owner, expose control-plane
+  `HttpClient` to Features, merge control HTTP with the native data plane, or
+  store secrets in SharedPreferences/DB/logs.
+- Stable APIs use Feature public exports, App Ports, or route metadata. Changing
+  `AppRuntime` dependencies updates Full/Terminal callers, tests, and dependency
+  checker allowlists.
 
-## 禁止依赖
+## Storage and lifecycle
 
-- 不得导入 Feature Package 的 `/src/`；
-- 不得在 App Shell 复制 Feature、Core 或 Infrastructure 实现；
-- 不得新增 `Service.instance`、全局 locator 或第二个 Network/SSH Owner；
-- `SdkRequestExecutor` 可以使用 App-owned 的短生命周期 `HttpClient`，但不得把
-  控制面 HTTP client 暴露给 Feature 或与 native 数据面合并；
-- 不得把密码、私钥、API Key 或 Token 写入 SharedPreferences、数据库或测试日志。
+App Shell owns only `app_logs`; Feature/Core Modules own business DBs. A DB-open
+failure propagates and never falls back to memory or `AppDatabase`. AppRuntime is
+owner of Network, SSH, Logger, Modules, and adapters and exposes explicit
+`dispose/close/cancel/release`; Route Scope releases only its ViewModel resources.
+Debug assertions verify observable Timer/Subscription/Lease/native-handle release.
 
-## Public API 修改要求
+`BackgroundServiceManager` owns UI-isolate notifications/permissions/power lock/
+platform service. Background entry points create `_BackgroundSshRuntime`, which
+alone owns background session registry, SSH/tmux, keepalive, and subscriptions.
+Foreground `SshService` owns sessions/commands/history; `_SshBackgroundEventBridge`
+owns plugin events and `_SshSessionProjection` owns immutable UI projections.
+Attempt owners use per-session generations; close awaits connect/reconnect,
+background isolate, subscriptions, runtime, history queue, Session Pool, and
+native stream connector. Network V2 codec remains a narrow facade with real wire
+tags and independent command/typed decoders; no pseudo-Realtime tag adapter.
 
-稳定入口通过 Feature 公共出口、App Port 或路由 metadata 暴露。修改 AppRuntime
-构造依赖时必须同步所有 App/Terminal-only 调用方、测试和架构守卫 Allowlist。
+## Validation for code changes
 
-## 数据库约束
-
-App Shell 只维护 `app_logs`；Feature/Core 数据库由各自 Module/Repository 拥有。
-生产数据库打开失败必须向上抛出，禁止回退到内存数据库或重新引入 `AppDatabase`。
-
-## 资源释放规则
-
-`AppRuntime` 是 App Scope Network、SSH、Logger、Module 和适配器的 Owner；必须提供
-`dispose/close/cancel/release`，并在 debug 断言中检查可观测的 Timer、Subscription、
-Lease 和 native handle 已释放。Route Scope 只释放自己的 ViewModel 资源。
-
-`BackgroundServiceManager` 只拥有 UI isolate 的通知、权限、power lock 和平台服务
-启停；后台入口点创建的 `_BackgroundSshRuntime` 独占后台 session registry、SSH/tmux、
-keepalive Timer 和事件订阅。不得把 isolate session 状态放回静态 Manager。
-
-`SshService` 保留 App Scope SSH session/command Owner；后台插件订阅统一归
-`_SshBackgroundEventBridge`，UI 快照统一归 `_SshSessionProjection`。Network V2 公开
-codec 只能组合 command encoder 和实际 wire tag 对应的 typed decoder，不得复制 schema
-或为不存在的 Realtime tag 建立伪适配层。
-
-## 必须运行的测试
+Run package format/analyze/test from the owning contract; local aggregate CI is
+opt-in per the canonical Skill. Network refactors also run:
 
 ```bash
 dart run tool/architecture_check.dart
-dart format --output=none --set-exit-if-changed lib test tool
-flutter analyze
-flutter test
-```
-
-网络重构还必须执行：
-
-```bash
 flutter test test/services/network/network_protocol_v2_codec_test.dart
 ```
 
-并由成对的 Bash/PowerShell `lan-network-v2-targeted` job 选择 App adapter、
-Feature trust/route/runtime ownership 与 SDK contract 测试。AppRuntime owner 变更
-至少应验证 configure/activate/deactivate/reactivate/dispose 的 exactly-once 计数，
-以及 SSH/SFTP/Realtime/Relay 继续共享同一 runtime。
+The paired `lan-network-v2-targeted` CI job covers App adapter, Feature trust/
+route/runtime ownership, and SDK contracts. AppRuntime owner changes verify
+exactly-once configure/activate/deactivate/reactivate/dispose and continued
+sharing by SSH/SFTP/Realtime/Relay.

@@ -2,187 +2,113 @@
 
 # Maintenance Workflow
 
-Use this sequence after the canonical Skill and
-[Memory Map](memory-map.md) have scoped the task.
+Use after the canonical Skill and [Memory Map](memory-map.md) scope the task.
 
-## 1. Establish the baseline
+## 1. Baseline and risk
 
-1. Read the request literally and separate required outcomes from suggestions.
-2. Inspect `git status --short`; note every pre-existing modification and keep it
-   out of the task unless the user explicitly includes it.
-3. Locate affected code, tests, contracts, and callers with `rg` or `rg --files`.
-4. Read the nearest `AGENTS.md`, Workspace Member `README.md`, routed Memory,
-   and only the ADR/Architecture documents selected by the Memory Map.
-5. For a bug, reproduce or trace the failing state before proposing the cause.
-   For a review, gather evidence and do not implement an unsolicited fix.
+1. Read the request literally; separate required outcomes from suggestions.
+2. Inspect `git status --short`; keep pre-existing changes out unless included.
+3. Locate affected code, tests, contracts, and callers with `rg`/`rg --files`.
+4. Read nearest `AGENTS.md`, Workspace Member `README.md`, routed Memory, and
+   only the ADR/Architecture files selected by the map.
+5. For bugs, reproduce/trace the failing state before assigning a cause; for
+   reviews, gather evidence without an unsolicited fix.
 
-## 2. Define ownership and risk
+Before editing, list the changed public contract, implementation/lifecycle/
+storage/validation owners, callers, security-sensitive data, remote effects,
+compatibility bridges, generated artifacts, and platform-specific behavior.
+Follow a changed API to every caller; add a Domain only when its boundary shape,
+semantics, errors, state, lifecycle, or ownership changes. Prefer the existing
+owner; a new service/database/protocol path/dependency/compatibility layer needs
+evidence that the current boundary cannot own it.
 
-- List the public contract, implementation owner, lifecycle owner, storage
-  owner, and validation owner affected by the change.
-- Follow every changed public API to its callers. Add a Domain only when the
-  boundary's shape, semantics, errors, state, lifecycle, or ownership changes.
-- Identify security-sensitive data, remote effects, compatibility bridges,
-  generated artifacts, and platform-specific behavior before editing.
-- Prefer a focused correction within an existing owner. An additional service,
-  database, protocol path, Feature dependency, or compatibility layer needs
-  evidence that the current boundary cannot own the behavior.
+## 2. Implement with test-first evidence
 
-## 3. Implement coherently
-
-### Test-first workflow
-
-This section is the detailed TDD source of truth. It is mandatory for
-observable or automatable behavior changes, including state transitions,
-protocol/API contracts, security invariants, persistence, lifecycle,
-concurrency/ordering, cancellation/timeout/retry paths, and returned errors.
-
-Choose the lowest reasonable evidence layer:
+Observable/automatable behavior—including state, protocol/API, security,
+persistence, lifecycle, concurrency/ordering, cancellation/timeout/retry, and
+errors—uses Red → Green → Refactor at the lowest reasonable layer:
 
 ```text
 pure unit → repository/service/ViewModel → contract → widget → integration → E2E
 ```
 
-Do not stop at a unit test when the contract crosses Dart ↔ Rust FFI, Protobuf or
-wire encoding, Flutter ↔ native runtime, Relay HTTP/WebSocket, Redis/MySQL,
-multi-instance behavior, or App Shell ↔ Feature composition. Add the focused
-cross-boundary gate after the fast test proves the local behavior.
+When a contract crosses Dart↔Rust FFI, Protobuf/wire, Flutter↔native,
+Relay HTTP/WebSocket, Redis/MySQL, multi-instance, or App Shell↔Feature, add
+the focused cross-boundary gate after the fast test proves local behavior.
 
-For an automatable bug:
+For a bug: read implementation/tests, add one stable regression test, run it and
+confirm Red is the target defect, make the smallest production change to Green,
+refactor, then run the focused test, package suite, and affected contract/
+integration/acceptance/race gate. For a feature: state Given/When/Then for each
+observable behavior, add and run its failing test before implementation, then
+Green/refactor before the next behavior. For risky uncovered code, first add a
+characterization test; a deliberate contract change needs a new failing
+expectation. If automation is unrealistic, record why and use the nearest
+contract evidence.
 
-1. Read the implementation and existing tests; select the lowest layer that
-   observes the defect.
-2. Add one stable regression test and run it before production edits. Confirm
-   Red is caused by the target defect, not a fixture, environment, or unrelated
-   failure.
-3. Make the smallest production change that turns it Green, then refactor under
-   the passing test.
-4. Run the focused test, the owning package suite, and any affected contract,
-   integration, acceptance, or race-sensitive gate.
+Assert public results, persisted state, emitted events, returned errors,
+ownership/release effects, protocol compatibility, and security invariants—not
+private fields, incidental collection shape, private call order, or mock calls
+alone unless that interaction is the contract (for example, close once or retry
+at most N times). Never fix Red by weakening/deleting/skipping an assertion,
+accepting the defect, or adding test-only production hooks. Coverage is evidence,
+not a reason to test trivial getters/constructors/branches.
 
-For a new feature, state Given/When/Then for the first externally observable
-behavior, including the relevant boundary, error, lifecycle, cancellation, or
-retry case. Add one failing test, confirm Red, implement only enough for Green,
-refactor, and repeat for the next behavior. Do not batch an entire feature's
-tests before beginning implementation.
+Docs/comments/formatting, generated code/FFI bindings, export-only files,
+behavior-free configuration, and pure visual spacing/color/radius/typography do
+not mechanically require TDD; test UI business state at unit/ViewModel level,
+key widget behavior in widgets, critical flows in integration, and visual
+contracts with goldens only when warranted.
 
-For risky existing code without coverage, first add a characterization test for
-the current observable behavior. A deliberate contract change then needs a new
-failing expectation; a behavior-preserving refactor keeps the characterization
-test Green. If a defect cannot be automated realistically, record why and use
-the nearest contract-level evidence instead of inventing a low-value test.
+High-risk focus: `native/network_core` (peer/session/path/lease, Direct/Relay,
+recovery, Delivery/Stream/Transfer, E2EE, races); `relay` (HTTP/WebSocket,
+enrollment/auth/anti-replay, reservation/rate limits, MySQL/Redis, multi-instance,
+admin sessions); `connection_core` (Drift, credentials/Host Keys/migration);
+`ssh_core` (Pool/Lease/refcount/idle/shutdown); `network_sdk`/native binding
+(JSON/error/refresh, facade/realtime, dispose, Dart↔Rust parity); `feature_ai`
+(tool loop/approval/budget/plan/cancel/provider/trace); `feature_sftp`
+(fingerprint, browse/preview/edit/transfer/delete, fail-closed); other Features
+(ViewModel/reducer/repository/parser/state/service behavior).
 
-Tests should assert public results, persisted state, emitted events, returned
-errors, ownership/release effects, protocol compatibility, and security
-invariants. Avoid private fields, private call order, incidental collection
-shape, or mock interaction alone unless the interaction is itself the contract
-(for example, close exactly once or retry at most N times).
+Keep Views for UI composition, ViewModels for state/actions, Services/Modules for
+orchestration, Repositories for persistence, and injected adapters for platform/
+protocol behavior. Pair create/start/stop/dispose under one owner. Preserve
+cancellation, timeout, ordering, backpressure, bounded allocation, and fail
+closed paths. Change generator sources/manifests/public entry points with their
+generated output/callers. Keep tests deterministic and rewrite corrupted docs as
+UTF-8.
 
-Keep hand-written production files over 500 lines decomposed by functional or
-responsibility boundary; do not create numbered chunks (`part_01`/`file_01`)
-or gratuitously split cohesive code. Repository-owned tests/fixtures use
-dedicated `test/` or `tests/` roots. Required native same-package forms are Go
-`_test.go`, Rust `#[cfg(test)]`/`src/tests`, and TypeScript `.test`/`.spec`.
+## 3. Validate and synchronize
 
-Never repair Red by deleting or weakening an assertion, skipping the new test,
-changing the test to accept the defect, or adding test-only hooks to production
-business modules. Coverage is an evidence gate, not a reason to test trivial
-getters, constructors, or meaningless branches.
+Format touched languages, run focused checks first, then the owning package
+analyze/test commands and only the architecture/workspace/native/backend/front/
+platform gates reached by the change. Agent-doc changes use the documentation
+checks in [Validation](validation.md); every change ends with `git diff --check`
+and complete status/diff review. Never call an unrun check PASS.
 
-Pure visual spacing/color/radius/typography changes, generated code and
-generated FFI bindings, export-only files, documentation/comments/formatting, and
-configuration without important behavior do not mechanically require TDD. Test
-UI business state in unit/ViewModel tests, key widget behavior in widget tests,
-critical flows in integration tests, and visual regressions with golden tests
-only when the visual contract warrants them.
+Update only the Owner whose fact changed: Skill/reference for Agent rules,
+Memory for costly current facts, package README/AGENTS for local contracts, ADR
+for rationale, Architecture for complete design, Git for history. Do not add
+timelines, temporary failures, test results, machine paths, or duplicate formal
+design to Memory. `.agents/` is the canonical Skill source; there is no mirror.
 
-High-risk owner focus:
+## 4. PR and CI handoff
 
-| Owner | Test-first behavior |
-| --- | --- |
-| `native/network_core` | Peer/Session/Path/Lease state, Direct/Relay fallback, recovery, Delivery/Stream/Transfer, E2EE, counters/keys, cancellation, timeout, and races |
-| `relay` | HTTP/WebSocket, enrollment/refresh/revoke, authentication/anti-replay/time, reservation/rate limits, MySQL/Redis, multi-instance, and administrator sessions |
-| `connection_core` | Repository/Drift behavior, credentials/Host Keys, migration, and sensitive persistence boundaries |
-| `ssh_core` | Pool/Lease/reference count, idle timeout, shutdown, reacquire, and lifecycle races |
-| `network_sdk` and native binding | JSON/request/error mapping, refresh, facade/realtime transitions, dispose, and Dart ↔ Rust/wire parity |
-| `feature_ai` | Agent/tool loop, approval, budget, plan mode, cancellation/close, provider errors, trace/ledger/result folding |
-| `feature_sftp` | target fingerprint, browse/preview/edit/transfer/delete, repository/lifecycle behavior, and fail-closed rules |
-| Other Features | ViewModel/controller/reducer, repository, parser, state transition, and domain/service behavior |
+PR creation/update follows the Skill's handoff rule: inspect the full worktree,
+run `git diff --check`, formatting, and requested/necessary focused checks; run
+aggregate local CI only when the user explicitly mentions it
+(`scripts/bash/ci/full_test.sh` on Linux/WSL or the PowerShell counterpart on
+native Windows). A GAP, timeout, failure, omission, or unrun check is not PASS.
+After minimum preflight, a requested branch may be committed, pushed, and
+opened (prefer draft) for GitHub Actions' independent parallel jobs. Record the
+changed contract, its regression/characterization evidence, focused gates, and
+any unrun or unprotected edge before handoff. Do not
+poll, interpret, approve, or merge from GitHub after handoff unless explicitly
+asked; the user supplies results and decides merging.
 
-Before handoff, be able to identify the changed contract, the test added before
-production code, its intended Red failure, the implementation that made it
-Green, whether any existing assertion changed, remaining unprotected edges, the
-package suite run, and any required cross-boundary gate. Report this evidence
-proportionally; do not fabricate a Red step for work that qualified for an
-exception.
+## 5. Report or commit
 
-- Keep UI composition in Views, state/actions in ViewModels, orchestration in
-  Services/Modules, persistence in owning Repositories, and platform/protocol
-  behavior behind injected adapters.
-- Keep create/start/stop/dispose paired under one explicit lifecycle owner.
-- Preserve cancellation, timeout, ordering, backpressure, bounded allocation,
-  and fail-closed security paths when changing asynchronous behavior.
-- Change generator sources, manifests, and public entry points together with
-  their generated output or callers when applicable.
-- Make tests deterministic and independent of real credentials, networks, or
-  user machines.
-- Rewrite corrupted documentation as clean UTF-8; do not patch mojibake byte by byte.
-
-## 4. Validate in layers
-
-1. Format the touched language and run focused unit/widget tests first.
-2. Run the owning package's required analyze/test commands.
-3. Add architecture, workspace, native, backend, frontend, or platform checks
-   only when the change reaches those boundaries.
-4. Run documentation/link/Skill checks when Agent knowledge or shared docs change.
-5. Run `git diff --check` and inspect the complete final diff.
-
-The command matrix and environment-specific notes are in
-[Validation](validation.md).
-
-## 5. Synchronize canonical knowledge
-
-Update a document only when its owned fact changed. Package contracts describe
-local responsibility and required checks; Memory records scoped current
-knowledge; ADRs record reasons; Architecture documents record complete design;
-Git records execution history.
-
-When changing the canonical Skill, update `.agents` first; there is no Claude
-mirror to regenerate — Claude Code loads Skills directly from `.agents/skills/`.
-
-## 6. Pull request and CI handoff
-
-When the user asks to create, update, submit, or publish a PR, perform this
-minimum preflight after implementation:
-
-1. Inspect the worktree and complete `git diff --check`, formatting, and the
-   focused owner checks requested by the user or needed for a safe change. A
-   product, security, or contract failure must remain visible.
-2. Run `bash scripts/bash/ci/full_test.sh` from Linux/WSL, or
-   `& .\scripts\powershell\ci\full_test.ps1` from native Windows PowerShell 7,
-   only when the user explicitly mentions or requests local CI. For repeat
-   runs with unchanged dependencies, use `--no-bootstrap` or `-NoBootstrap`.
-3. After the minimum preflight, the user-requested branch may be committed,
-   pushed, and opened as a PR (prefer draft) so GitHub Actions can run its
-   independent parallel jobs. Record any omitted local check, `GAP`, timeout,
-   or failure; none is a pass.
-4. The agent's scope ends at the PR/CI handoff: do not poll, interpret,
-   approve, or merge from GitHub results unless the user explicitly asks. The
-   user supplies the CI outcome and alone decides whether merging is allowed.
-5. After any source, test, dependency, project-structure, or CI-scope change,
-   rerun only the checks the user requests and update the PR/CI handoff as
-   needed. Never claim readiness from an unexecuted or incomplete check.
-
-The repository-wide local CI orchestration rules and synchronization triggers
-for the paired aggregate scripts are recorded in the
-[Project Memory index](../../../../memory_docs/README.md).
-
-## 7. Handoff or commit
-
-- Report the outcome first, then relevant files, validations run, and any exact
-  gap or residual risk.
-- Do not claim success from a build command that never reached the changed code.
-- If commits are requested, stage explicit paths, review the staged diff, use a
-  scoped imperative subject, and verify the resulting status and commit.
-- Never include unrelated user changes, secrets, temporary output, caches, or
-  machine-specific files in a commit.
+Report outcome first, then files, commands actually run, exact gaps, and residual
+risk. Commit only when requested/approved: stage explicit paths, review staged
+diff, use a scoped imperative subject, verify status/commit, and exclude
+unrelated changes, secrets, caches, temporary output, and machine paths.

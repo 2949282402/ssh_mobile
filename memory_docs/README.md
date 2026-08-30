@@ -2,68 +2,36 @@
 
 # Project Memory
 
-This directory contains concise, current repository knowledge for maintenance
-agents. It is not a changelog, an architecture specification, or a test report.
+`memory_docs/` stores concise, verified, reusable project facts. It is not a
+changelog, full architecture specification, or test report. Load only domains
+selected by the [Memory Map](../.agents/skills/ssh-mobile-maintenance/references/memory-map.md):
 
-Load only the domains selected by the
-[Memory Map](../.agents/skills/ssh-mobile-maintenance/references/memory-map.md):
+- `client/`: Flutter Apps, Core/Feature packages, SSH infrastructure;
+- `sdk/`: Dart contracts, native bindings, Rust runtime, wire protocol;
+- `backend/`: Go control plane and Relay;
+- `front/`: React administration console.
 
-- `client/`: Flutter Apps, Core and Feature packages, and SSH client infrastructure;
-- `sdk/`: Dart network contracts, native bindings, the Rust network runtime, and wire protocol;
-- `backend/`: the Go control plane and Relay;
-- `front/`: the React administration console.
+Formal decisions/designs stay in `docs/adr/`, `docs/architecture/`, and focused
+documents; code/tests define current behavior. Business behavior uses the
+test-first procedure in the [Maintenance Workflow](../.agents/skills/ssh-mobile-maintenance/references/workflow.md).
 
-Detailed decisions remain in [`docs/adr/`](../docs/adr/), complete designs remain
-in [`docs/architecture/`](../docs/architecture/) and focused project documents,
-and current behavior remains authoritative in code and tests.
+## Validation and CI
 
-Changes to observable business behavior use test-first development by default.
-The canonical procedure, exceptions, and high-risk owner guidance live in the
-[Maintenance Workflow](../.agents/skills/ssh-mobile-maintenance/references/workflow.md);
-Memory does not duplicate that Agent work contract.
+`scripts/bash/` and `scripts/powershell/` mirror functional categories. Keep
+same-relative `.sh`/`.ps1` arguments, environment, scope, timeouts, cleanup, and
+exit semantics aligned; use the host-native tree.
 
-## Repository-wide validation
+本地 aggregate CI 仅在用户明确提及时运行。用户要求发起 PR 时完成最小
+format/diff/focused 检查后可提交、推送并发起 PR，由 GitHub Actions 的并行 jobs
+作为 CI 基准。未执行、遗漏、GAP、超时或失败都不是 PASS；发起 PR/CI 后不主动
+观察或解读 GitHub，不批准或合并，合并权由用户决定。
 
-`scripts/bash/` and `scripts/powershell/` are mirrored by functional category.
-Agents run the aggregate matching their host and maintain same-relative-path
-`.sh`/`.ps1` pairs together. CI scope, arguments, environment, timeouts,
-cleanup, and exit semantics cannot drift between the pair. Platform-only and
-common PowerShell files live in their mirrored categories without fabricated
-Bash implementations.
+Full local CI and repeat-run parameters are owned by
+[Validation](../.agents/skills/ssh-mobile-maintenance/references/validation.md), not
+duplicated here. `full_test.sh` does not collect Flutter coverage by default.
 
-Local CI is opt-in and runs only when the user explicitly mentions or requests
-it. For a user-requested PR, complete the minimum format/diff/focused checks,
-then commit, push, and open the PR so GitHub Actions can validate the change in
-parallel. GitHub CI is the authoritative CI result; omitted checks, failures,
-and environment gaps remain visible and are never reported as a pass. The
-agent does not poll or interpret the GitHub run after handoff, and only the
-user decides whether merging is allowed.
-
-Recommended repeat-run parameters from the repository root are:
-
-```bash
-bash scripts/bash/ci/full_test.sh \
-  --jobs 4 \
-  --flutter-concurrency 2 \
-  --melos-concurrency 1 \
-  --melos-test-concurrency 1 \
-  --app-timeout 20m \
-  --no-bootstrap
-```
-
-The native Windows PowerShell 7 equivalent is:
-
-```powershell
-& .\scripts\powershell\ci\full_test.ps1 `
-  -Jobs 4 -FlutterConcurrency 2 -MelosConcurrency 1 `
-  -MelosTestConcurrency 1 -AppTimeout 20m -NoBootstrap
-```
-
-## Periodic coverage review
-
-`full_test.sh` is the daily basic regression gate and does not collect Flutter
-coverage by default. For a large refactor, a new feature, or release review,
-run the independent owner gates from the repository root:
+For large refactors, coverage changes, or release review, use the four independent
+owner gates from the repository root:
 
 ```bash
 bash scripts/bash/coverage/front_coverage.sh
@@ -72,23 +40,12 @@ bash scripts/bash/coverage/client_coverage.sh
 bash scripts/bash/coverage/sdk_coverage.sh
 ```
 
-Native Windows uses the same filenames under
-`scripts\powershell\coverage\`; update and review both sides together.
+Each gate enforces 90% for its documented scope; new hand-written production
+files also need an independent test and 90% file-level coverage. The former
+`coverage_test.sh`/`.ps1` names remain client aliases. Scope, Docker services,
+and the WSL Flutter workaround are in [`docs/COVERAGE_POLICY.md`](../docs/COVERAGE_POLICY.md).
+The native Windows MSI/client workflow remains in
+[`client/current-state.md`](client/current-state.md) and must keep WSL/WiX ICE
+environment gaps visible.
 
-Each gate enforces a 90% threshold on its documented scope. The same 90%
-file-level requirement applies to newly added hand-written production files.
-The former
-`scripts/bash/coverage/coverage_test.sh` name remains a compatibility alias for the client
-gate. Scope, failure interpretation, Docker-backed services, and the WSL
-Flutter runner workaround are maintained in
-[`docs/COVERAGE_POLICY.md`](../docs/COVERAGE_POLICY.md).
-New hand-written production files have the 90% file-level coverage and
-corresponding-test requirement documented there.
-
-The native Windows PowerShell 7 MSI packaging and client validation workflow is
-maintained in [`client/current-state.md`](client/current-state.md). It is
-platform-specific evidence and must keep any WSL or WiX ICE environment gap
-visible.
-
-Maintenance rules are defined by
-[Skill & Memory Maintenance](../docs/agent/skill-memory-maintenance.md).
+Maintenance governance is [Skill & Memory Maintenance](../docs/agent/skill-memory-maintenance.md).

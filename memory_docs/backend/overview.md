@@ -2,35 +2,21 @@
 
 # Backend Overview
 
-`relay/` contains the Go Backend services for SSH Mobile, structured as two independent services:
+`relay/` contains two independent Go services deployed by root Compose:
 
-1. **Relay Backend** (`cmd/relay`, `internal/relay`):
-   - Owns V2 device bootstrap (`/v2/devices/enroll`, `/v2/devices/refresh`).
-   - Owns long-lived V2 control plane (`/v2/control`) and data plane (`/v2/relay/*`).
-   - Owns device lifecycle, credentials, presence, and durable MySQL/Redis state.
-   - Exposes authenticated internal management API (`/internal/v2/*`).
+- Relay (`cmd/relay`, `internal/relay`): V2 enrollment/refresh, `/v2/control`,
+  `/v2/relay/*`, device lifecycle/credentials/presence, durable MySQL/Redis
+  state, and authenticated `/internal/v2/*` management.
+- Admin (`cmd/admin`, `internal/admin`): administrator auth/session/rate limit
+  and `/api/admin/v1/*`; calls Relay through `RelayManagementClient` over
+  `/internal/v2/*` and does not own Relay device/live-state DB or signing keys.
+- Telemetry (`internal/telemetry`) is a logical module inside Admin, not a third
+  service. It owns device auth/ingestion/policy (`/api/v1/telemetry/*`), admin
+  overview/events/diagnostics/settings (`/api/admin/v1/telemetry/*`), isolated
+  Analytics MySQL, optional Redis hot cache, and permanent ingest receipts.
 
-2. **Admin Backend** (`cmd/admin`, `internal/admin`):
-   - Owns administrator authentication, session store, rate limiter, and public REST API (`/api/admin/v1/*`).
-   - Communicates with Relay via `RelayManagementClient` over private HTTP (`/internal/v2/*`).
-   - Does not own Relay's device database, live-state Redis, or signing keys. In the
-     telemetry-enabled composition it hosts the internal telemetry module and connects
-     to isolated Analytics MySQL and an optional Redis hot cache.
-
-3. **Telemetry & Observability Pipeline in Admin Backend** (`internal/telemetry`; not a third deployed service):
-   - Owns public device telemetry ingestion, HMAC verification, device auth, and dynamic policy (`/api/v1/telemetry/*`).
-   - Owns admin telemetry query endpoints (`/api/admin/v1/telemetry/*`: overview, events, diagnostics feed, settings).
-   - Dedicated persistence: isolated Analytics MySQL schema and optional Redis hot cache for recent diagnostic logs.
-   - Permanent idempotency receipts (`telemetry_ingest_receipts`) immune to retention purge.
-   - Decoupled observability architecture following the [Telemetry architecture design](../../docs/数据埋点架构.md) and [ADR-033](../../docs/adr/ADR-033-telemetry-data-tracking-architecture.md).
-
-Canonical operational and API documentation:
-
-- [Relay README](../../relay/README.md)
-- [Root Compose topology](../../compose.yaml)
-- [Root Caddyfile](../../Caddyfile)
-- [Backend current state](current-state.md)
-- [Telemetry architecture design](../../docs/数据埋点架构.md)
-- [Telemetry Architecture ADR](../../docs/adr/ADR-033-telemetry-data-tracking-architecture.md)
-- [Relay Bootstrap Protocol V2 Contract](../../protocol/RELAY_BOOTSTRAP_V2_CONTRACT.md)
-- [Relay Protocol V2 Wire Contract](../../protocol/RELAY_V2_CONTRACT.md)
+Canonical operations/API: [Relay README](../../relay/README.md),
+[Compose](../../compose.yaml), [Caddy](../../Caddyfile), [current state](current-state.md),
+[telemetry design](../../docs/数据埋点架构.md), [ADR-033](../../docs/adr/ADR-033-telemetry-data-tracking-architecture.md),
+[Bootstrap V2 contract](../../protocol/RELAY_BOOTSTRAP_V2_CONTRACT.md), and
+[Relay V2 wire contract](../../protocol/RELAY_V2_CONTRACT.md).

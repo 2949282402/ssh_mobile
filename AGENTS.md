@@ -2,154 +2,95 @@
 
 # Repository Bootstrap
 
-SSH Mobile is a cross-platform Flutter SSH/SFTP client with monitoring,
-LAN sharing, client-side AI tools, a native Rust network SDK, a Go Relay/control
-plane, and a React administration console.
-
-This file is the repository entry point, not a complete architecture guide or
-command catalog.
+SSH Mobile is a Flutter SSH/SFTP client with Client Features, a Rust network
+SDK, Go Relay/control plane, and React administration console. This file is the
+mandatory entry point, not an architecture or command catalogue.
 
 ## Required reading chain
 
-Memory routing always begins here: before loading any scoped Memory (Domain or
-Feature), local `AGENTS.md` contract, ADR, or Architecture document, read this
-bootstrap file first — it is the required entry for memory discovery.
+Before any scoped knowledge, local contract, ADR, or Architecture document:
 
-For every non-trivial task:
+1. read this bootstrap;
+2. read the [canonical maintenance Skill](.agents/skills/ssh-mobile-maintenance/SKILL.md);
+3. use the [Memory Map](.agents/skills/ssh-mobile-maintenance/references/memory-map.md)
+   to load only relevant knowledge;
+4. inspect `git status`, locate real owning paths, then read every nearer
+   `AGENTS.md` and each Workspace Member `README.md`.
 
-1. Read the [canonical maintenance Skill](.agents/skills/ssh-mobile-maintenance/SKILL.md).
-2. Use the [Memory Map](.agents/skills/ssh-mobile-maintenance/references/memory-map.md)
-   to identify only the relevant Domain and Feature Memory.
-3. Discover and read local `AGENTS.md` files from each target path toward the
-   repository root. For a Workspace Member, also read its `README.md`.
-4. Add precise ADRs or Architecture documents only when the Memory Map's
-   escalation conditions apply.
+Code/tests define current behavior; Accepted ADRs define decisions; a nearer
+`AGENTS.md` may tighten but never relax these rules. Ownership and update rules
+are in [Skill & Memory Maintenance](docs/agent/skill-memory-maintenance.md).
 
-Knowledge ownership and update rules are defined by
-[Skill and Memory Maintenance](docs/agent/skill-memory-maintenance.md). The
-[Project Memory root](memory_docs/README.md) indexes scoped current knowledge.
+## Domains and local contracts
 
-Code and tests are authoritative for current behavior. Accepted ADRs are
-authoritative for architectural decisions. A nearer `AGENTS.md` supplements or
-tightens this file and cannot relax repository-wide safety rules.
+- Client: `apps/`, `packages/core/`, `packages/features/`,
+  `packages/infrastructure/ssh_core/`.
+- SDK: `native/network_core/`, `protocol/`, `network_sdk`, `network_transport`,
+  `ssh_mobile_network_native`.
+- Backend: `relay/`; Front: `front/`; `docs/`, `tool/`, `scripts/`, `.github/`,
+  and platform/installer paths follow the owner of the behavior they verify.
 
-## Top-level Domains
+Each App/Package Workspace Member keeps a `README.md` and `AGENTS.md`: README
+owns responsibility, public API, dependencies, storage, lifecycle owner, and
+validation entry points; AGENTS owns edit scope, forbidden dependencies,
+API/storage/release constraints, and required checks. Keep all 21 local
+contracts; Memory is not a replacement.
 
-- `apps/`, `packages/core/`, `packages/features/`, and
-  `packages/infrastructure/ssh_core/` are the Client Domain.
-- `native/network_core/`, `protocol/`, and the `network_sdk`,
-  `network_transport`, and `ssh_mobile_network_native` packages are the SDK Domain.
-- `relay/` is the Backend Domain.
-- `front/` is the Front Domain.
-- `docs/`, `tool/`, `scripts/`, `.github/`, and installer/platform directories
-  are repository-level support areas routed by the behavior they own or verify.
+## Non-negotiable boundaries
 
-Every Workspace Member under `apps/` and `packages/` keeps a concise
-`README.md`, `AGENTS.md`, `pubspec.yaml`, `lib/`, and `test/`. The README owns
-package responsibility, public API, dependencies, database, lifecycle owner,
-and validation entry points. The local AGENTS file owns edit scope, forbidden
-dependencies, API/storage/release constraints, and required tests. Keep all 21
-local contracts; do not replace them with project Memory.
+- Implement in the owning layer and call other packages only through public
+  entry points; never import another package's `/src/` or duplicate its owner.
+- App/Module/Route resources have explicit owners and release paths. Borrowers
+  release only their lease/subscription, not an owner's session, database,
+  native handle, or runtime.
+- Structured data stays in its owning database; App diagnostics stay separate;
+  production database-open failure never silently chooses an in-memory fallback.
+- Secrets and user-private data stay out of source, logs, tests, fixtures,
+  screenshots, traces, exports, Skill, and Memory; use platform secure storage.
+- Remote writes and sensitive reads use immutable target/action approval,
+  redaction, host-key verification, and fail-closed execution. Do not weaken
+  destructive-command, sensitive-path, sandbox, transport-auth, Delivery,
+  Session-routing, or E2EE protections.
+- Test instrumentation belongs in independent test files; do not add test-only
+  fields/hooks/observers to production modules. Edit generator inputs, not only
+  generated output; route diagnostics through the injected logger.
+- Hand-written production files over 500 lines require responsibility-based
+  decomposition, never numbered chunks or gratuitous splitting. Tests/fixtures
+  use `test/` or `tests/`; native exceptions are Go `_test.go`, Rust
+  `#[cfg(test)]`/`src/tests`, and TypeScript `.test`/`.spec`.
+- Preserve unrelated worktree changes and do not broaden diagnosis, review, or
+  docs-only work into implementation.
 
-## Repository-wide boundaries
+## Test-first rule
 
-- Put implementation in its owning App, Core, Feature, Infrastructure, SDK,
-  Backend, or Front layer. Use public package entry points; do not import another
-  package's `/src/` or copy an implementation across owners.
-- App Scope, Module Scope, and Route Scope resources require explicit owners and
-  release paths. A borrower releases its lease/subscription, not the owner's
-  session, database, native handle, or runtime.
-- Feature/Core structured data stays in the owning database. App diagnostics
-  stay separate. A production database-open failure must not silently select an
-  in-memory fallback.
-- Passwords, private keys, API keys, tokens, server credentials, and user-private
-  data stay out of source, logs, tests, fixtures, screenshots, docs, traces,
-  exports, Skill, and Memory. Use platform secure storage for secrets.
-- Remote writes and sensitive reads retain explicit approval, immutable target
-  binding, secret redaction, host-key verification, and fail-closed execution.
-  Do not weaken destructive-command, sensitive-path, sandbox, transport-auth,
-  Delivery, Session-routing, or E2EE protections.
-- Keep test-only instrumentation, fixtures, observers, and event recording in
-  independent test files. Do not add `#[cfg(test)]` fields, hooks, or other
-  test coupling to production/business modules; use existing diagnostic or
-  read-only APIs and test-local wrappers without widening production contracts.
-- Edit generator inputs rather than generated output. Regenerate committed
-  artifacts only when their source changes and review the generated diff.
-- Route diagnostics through the injected logger; do not add ad hoc `print` calls.
-- Hand-written production files over 500 lines require functional/responsibility
-  decomposition; never use numbered chunks (`part_01`/`file_01`) or gratuitous
-  over-splitting.
-- Repository tests/fixtures use `test/` or `tests/`; native Go `_test.go`, Rust
-  `#[cfg(test)]`/`src/tests`, and TypeScript `.test`/`.spec` forms are allowed.
-  `tool/check_file_sizes.dart` reports size bands and rejects misplaced Dart
-  tests or numbered Dart split paths.
-- Preserve unrelated worktree changes. Avoid destructive Git/file operations and
-  do not broaden a diagnosis, review, or docs-only request into implementation.
-
-## Test-first development
-
-- Observable or automatable behavior changes must use test-first Red → Green →
-  Refactor: bugs start with a failing regression, features with an observable
-  failure, and risky untested code with a characterization test.
-- Use the lowest reasonable test layer and assert results or invariants, not
-  private structure. Never weaken or skip a new failure to accept incorrect code.
-- Generated/documentation/formatting changes, behavior-free configuration, and
-  pure visual tweaks do not mechanically require Red. Coverage is a merge signal,
-  not the purpose of TDD.
-
-The complete procedure, exceptions, and high-risk owner guidance are canonical in
+Observable/automatable behavior uses Red → Green → Refactor at the lowest
+reasonable layer; bugs start with a regression test, new behavior with an
+observable failure, and risky uncovered code with a characterization test.
+Assert public results/invariants, never weaken or skip a failure. Pure docs,
+formatting, generated output, behavior-free configuration, and visual-only
+changes are the documented exceptions. Details and owner focus are in
 [Maintenance Workflow](.agents/skills/ssh-mobile-maintenance/references/workflow.md).
 
-## Documentation and validation
+## Documentation, validation, and CI
 
-Every maintained Markdown file places its update marker at the beginning,
-immediately after YAML front matter when present. Use `Last updated: YYYY-MM-DD`
-for English-first documents and `最新更新时间：YYYY-MM-DD` for Chinese-first
-documents, and update it whenever content changes.
+Maintained Markdown begins with `Last updated: YYYY-MM-DD` (English) or
+`最新更新时间：YYYY-MM-DD` (Chinese), updated with content. Select checks from
+[Validation](.agents/skills/ssh-mobile-maintenance/references/validation.md);
+always run `git diff --check`, inspect status/final diff, and report only checks
+actually run with exact gaps.
 
-Use the canonical Skill's
-`.agents/skills/ssh-mobile-maintenance/references/validation.md` to choose checks
-proportional to the touched owner and risk. Package-local commands remain in the
-owning README/AGENTS. Always run `git diff --check`, inspect the final status and
-diff, report checks actually run, and state exact environmental or scope gaps.
+本地 CI 仅在用户明确提及时运行；常规改动按受影响 Owner 做 format/diff/focused
+检查。用户要求发起 PR 时，完成最小门禁后可提交、推送并发起 PR，由 GitHub
+Actions 的并行 jobs 作为 CI 基准。遗漏、GAP、超时或失败都不是 PASS；发起
+PR/CI 后不主动观察或解读 GitHub 结果，不批准或合并，合并权只属于用户。
+四大领域 coverage 门禁及新手写生产文件的独立测试/90% 文件覆盖率要求仍适用；
+coverage 旧别名保持兼容。Bash/PowerShell 同相对路径脚本须同步参数、环境、
+步骤、超时、清理、退出语义和范围，且按实际主机使用 Linux/WSL Bash 或原生
+Windows PowerShell 7。
 
-本地 CI 仅在用户明确提及时运行；常规改动可先完成受影响模块的 format/diff/focused 检查，然后按用户要求提交、推送并发起 PR，由 GitHub Actions 的并行 jobs 作为 CI 基准。省略的本地检查、GAP、超时或失败必须如实记录，GitHub jobs 未完成前不得宣称 CI 通过。发起 PR/CI 后不主动观察或解读 GitHub 结果，是否允许合并只能由用户决定。全量本地脚本是用户明确要求时的本地门禁，默认不收集 Flutter coverage。对于涉及覆盖率变更、大型重构或发布验收，运行 `scripts/bash/coverage/` 下的四大领域门禁或 native Windows 对应门禁。每个领域门禁对其负责范围执行 90% 的行覆盖率/指标阈值，并在失败时打印未覆盖位置。
-`coverage_test.sh`/`coverage_test.ps1` remain compatibility aliases for the
-client gate.
-A new-source rule also applies: every newly added hand-written
-production source file must have corresponding independent tests and at least
-90% file-level line coverage. Generated output, documentation, configuration,
-test-only files, and platform boilerplate without coverable business logic are
-excluded only when the owning validation report records the reason.
-A failing or incomplete check must remain visible and is not a pass. It does
-not prevent a user-requested PR/CI handoff; only the user decides whether a
-merge is allowed after reviewing GitHub CI. When tests, package membership,
-project structure, CI scope, or test-selection rules change, update both
-aggregate scripts in the same change. The `scripts/bash/` and
-`scripts/powershell/` trees keep identical functional subdirectory structures.
-Same-relative-path `.sh`/`.ps1` pairs are maintained together, including
-arguments, environment, steps, timeouts, cleanup, exit semantics, and scope.
-Agents choose from the actual host: Linux/WSL runs Bash and native Windows runs
-PowerShell 7; never cross-call the other host toolchain.
+`CLAUDE.md` 只是指向本文件的薄入口；canonical Skill 只维护在 `.agents/`。
+仅在用户要求或批准计划需要时提交；显式 stage，绝不带入无关工作。
 
-`CLAUDE.md` is the Claude-specific thin bootstrap entry. It delegates repository
-entry and memory routing to this `AGENTS.md` and the canonical `.agents` Skill,
-and is not a second source of truth: do not hand-edit repository bootstrap
-content into `CLAUDE.md` — keep canonical entry-point content in this file.
-
-Stage and commit only when requested or explicitly required by an approved plan.
-Stage explicit paths, keep commits coherent, and never include unrelated user work.
-
-
-
-For long-running asynchronous work:
-- Empty `write_stdin` polls MUST use `yield_time_ms >= 180000`;
-prefer `300000` when intermediate output is not needed.
-- `functions.wait` MUST use `yield_time_ms >= 180000`.
-- `functions.exec` MUST set its outer `@exec yield_time_ms` at least
-30000 ms longer than the longest nested tool wait, so the outer
-code cell does not yield first.
-- Do not apply the long wait to non-empty `write_stdin` calls that
-send interactive input.
-- These tools return early when the process or cell completes.
-Do not wake the model merely to report that work is still running.
+异步工具：空 `write_stdin`/`functions.wait` 使用至少 180 秒（无中间输出时优先
+300 秒），外层 `functions.exec` 比最长嵌套等待多 30 秒；交互式写入例外，完成
+前不为“仍在运行”唤醒模型。

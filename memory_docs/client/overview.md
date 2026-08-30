@@ -2,26 +2,26 @@
 
 # Client Overview
 
-The Client domain contains the Flutter applications and their application,
-Core, Feature, and SSH infrastructure:
+Client contains the Flutter Apps, Core/Feature packages, and App-scoped SSH
+infrastructure:
 
-- `apps/ssh_mobile_full/`: the complete product application and composition root;
-- `apps/ssh_mobile_terminal/`: the restricted Terminal-only runtime slice;
-- `packages/core/`: shared contracts, UI, telemetry runtime (`app_core/lib/src/telemetry/`), and Connection ownership;
-- `packages/features/`: maintained Feature implementations (including `feature_developer` telemetry diagnostics);
-- `packages/infrastructure/ssh_core/`: App-scoped SSH contracts and runtime boundary.
+- `apps/ssh_mobile_full/`: complete product and composition root;
+- `apps/ssh_mobile_terminal/`: restricted Terminal-only slice;
+- `packages/core/`: shared contracts/UI, Telemetry runtime
+  (`app_core/lib/src/telemetry/`), and Connection ownership;
+- `packages/features/`: Feature implementations, including Developer telemetry;
+- `packages/infrastructure/ssh_core/`: SSH contracts/runtime boundary.
 
-Client Telemetry follows the [Telemetry architecture design](../../docs/数据埋点架构.md)
-and [ADR-033](../../docs/adr/ADR-033-telemetry-data-tracking-architecture.md):
-- Single source of truth catalog validation against `contracts/telemetry/events.yaml` and `error_codes.yaml`.
-- Orthogonal dual state machine (`syncState`: pending | synced | rejected; `logicalDeletedAt`: null | timestamp) with non-loss FIFO retention.
-- Developer panel exposes storage health metrics, cache overflow alerts, and exact replay (`eventId`, `occurredAt`, `sessionId`, `traceId` preserved).
+Client Telemetry follows [telemetry design](../../docs/数据埋点架构.md) and
+[ADR-033](../../docs/adr/ADR-033-telemetry-data-tracking-architecture.md): the
+catalog is validated from `contracts/telemetry/events.yaml` and
+`error_codes.yaml`; `syncState` (pending/synced/rejected) is orthogonal to
+`logicalDeletedAt` and uses non-loss FIFO retention; Developer exposes storage
+health/overflow and exact replay preserving `eventId`, `occurredAt`, `sessionId`,
+and `traceId`.
 
-Network SDK internals belong to the [SDK domain](../sdk/overview.md). The Go
-Relay and React administration console belong to the Backend and Front domains.
-
-For package-scoped work, read the nearest `AGENTS.md` and the Workspace Member
-`README.md`. Those files are the local edit and public-package contracts; this
-Memory supplies only cross-package knowledge that is expensive to rediscover.
-The root [README](../../README.md) remains the user-facing source for setup,
-configuration, and product behavior.
+Network internals route to the [SDK domain](../sdk/overview.md); Go Relay and
+React administration route to Backend/Front. For package work, read the nearest
+`AGENTS.md` and `README.md`; they are local contracts, while this Memory keeps
+only costly cross-package facts. The root README owns setup/configuration and
+user-facing behavior.

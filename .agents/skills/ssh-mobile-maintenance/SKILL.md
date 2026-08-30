@@ -1,208 +1,108 @@
 ---
 name: ssh-mobile-maintenance
-description: Maintain and debug the SSH Mobile repository, including Flutter, Dart packages, the Rust network SDK, Relay, Admin UI, tests, documentation, and shared Agent guidance. Use for any non-trivial implementation, diagnosis, validation, or documentation change in this repository.
+description: Maintain and debug SSH Mobile (Flutter/Dart, Rust SDK, Relay/Admin, React, tests, docs, and Agent guidance).
 ---
 
 > Last updated: 2026-08-30
 
 # SSH Mobile Maintenance
 
-## Canonical entry points
+## Entry and ownership
 
-For every non-trivial task:
+For every non-trivial task: inspect `git status`, preserve unrelated work, read
+the [Memory Map](references/memory-map.md), locate real owning paths, then read
+each nearer `AGENTS.md` and Workspace Member `README.md`. Load only the Domain,
+Feature, ADR, and Architecture documents selected by the map. Code/tests are
+current-behavior truth; Accepted ADRs are decision truth; package contracts are
+local edit/ownership truth. Governance is in
+[`docs/agent/skill-memory-maintenance.md`](../../../docs/agent/skill-memory-maintenance.md).
 
-1. Inspect `git status` and preserve unrelated user work.
-2. Read `.agents/skills/ssh-mobile-maintenance/references/memory-map.md` and
-   load only the Domain, Feature, package contract, ADR, and Architecture files
-   selected by that map.
-3. Locate real owning paths with read-only search when the request names only a
-   behavior. Do not route from a guessed feature name.
-4. Read every `AGENTS.md` between each target path and the repository root. For
-   a Workspace Member, also read its `README.md`.
-5. Treat code and tests as current-behavior truth, Accepted ADRs as decision
-   truth, and package contracts as local ownership/edit truth.
+The repository is in active development: migrate callers when changing a
+contract, preserve compatibility bridges until their inventory permits removal,
+and do not invent a protocol/version rule absent an owning ADR or contract.
 
-The longer execution sequence is in
-`.agents/skills/ssh-mobile-maintenance/references/workflow.md`. Validation
-selection is in `.agents/skills/ssh-mobile-maintenance/references/validation.md`.
-Skill and Memory ownership is governed by
-`docs/agent/skill-memory-maintenance.md`.
+## Scope and safety
 
-## Development phase
+- Classify the request (explain/review, diagnose, implement, monitor). A review
+  or diagnosis does not receive an unsolicited implementation.
+- Identify every touched Domain/owner and public caller before editing. An
+  unchanged API call does not load or modify the provider Domain; changes to its
+  shape, semantics, errors, state, lifecycle, or ownership do.
+- Keep the smallest correction inside existing owners. Do not add an abstraction,
+  database, protocol path, singleton, dependency, or compatibility layer
+  without evidence the current boundary cannot own it.
+- App/Module/Route resources have explicit owners and release paths. Features
+  use injected Ports/Capabilities and release only their leases/subscriptions;
+  they never close App-owned sessions, databases, native handles, or runtimes.
+- Feature packages use public package entry points, never another package's
+  `/src/` or copied implementations. `ssh_core` is Client infrastructure; the
+  network facade/FFI/Rust/wire path is SDK. Terminal-only remains a restricted
+  composition slice with no AI/RAG/MCP/WebView/LAN/SFTP business implementation.
+- Structured data stays in its owning Feature/Core database, App diagnostics
+  stay separate, and production database-open failures never fall back silently
+  to memory. Secrets and user-private data stay in secure storage and never in
+  source, logs, tests, fixtures, screenshots, traces, exports, Skill, or Memory.
+- Remote writes/uploads/renames/deletes/downloads and sensitive reads require
+  existing approval bound to immutable target/action snapshots; stale snapshots,
+  hidden tools, MCP review failures, destructive commands, secret paths, and
+  unsafe WebView targets fail closed. Keep redaction, host-key, bounded SFTP,
+  receive-sandbox, transport-auth, Delivery, Session-routing, and E2EE rules.
 
-The repository is in active development. Adding or refactoring code does not
-need to preserve compatibility with older versions: destructive refactoring is
-allowed, with callers migrated as part of the change. Where a contract or
-protocol carries a version number, use `V1`.
+## Test-first and editing
 
-## Pull request preflight
+Observable or automatable behavior uses Red → Green → Refactor at the lowest
+reasonable layer. Bugs start with a failing regression, new behavior with an
+observable failure, and risky uncovered code with a characterization test; do
+not weaken/skip failures or add test-only production hooks. Pure documentation,
+formatting, generated output, behavior-free configuration, and visual-only
+changes are the documented exceptions. Detailed TDD and owner focus are in
+[Maintenance Workflow](references/workflow.md); command selection is in
+[Validation](references/validation.md).
 
-Treat a request to create, update, submit, or publish a pull request (创建、更新
-或提交 PR) as a validation-gated workflow. Local CI is opt-in: run the local
-aggregate only when the user explicitly mentions or requests it. Before a
-user-requested branch push or PR write:
+Use `rg`/`rg --files`; inspect implementations, callers, and focused tests before
+ownership/API edits. Edit generator inputs, not only generated output, and review
+regenerated diffs. Keep diagnostics behind the injected logger and user text in
+the localization contract. Hand-written production files over 500 lines need a
+responsibility-based split, never numbered chunks or gratuitous over-splitting.
+Tests/fixtures use `test/` or `tests/` (Go `_test.go`, Rust `#[cfg(test)]` or
+`src/tests`, TypeScript `.test`/`.spec` are native exceptions). Use deterministic
+fixtures without real credentials, networks, or user machines; preserve
+cancellation, timeout, ordering, backpressure, bounded allocation, and
+fail-closed paths.
 
-1. Inspect the complete worktree and identify every affected owner.
-2. Run the format, diff, and focused checks selected by the Validation Matrix
-   that the user has requested or that are needed to establish a safe change.
-   Do not hide a product, security, or contract failure.
-3. If local CI was explicitly requested, use the environment-native entry point:
-   [`scripts/bash/ci/full_test.sh`](../../../scripts/bash/ci/full_test.sh) on
-   Linux/WSL or
-   [`scripts/powershell/ci/full_test.ps1`](../../../scripts/powershell/ci/full_test.ps1)
-   on native Windows. Otherwise, do not start the aggregate merely as PR
-   preflight.
-4. When the user requests an initial PR, commit/push the branch and open the
-   PR (prefer draft) after the minimum checks, so GitHub Actions can run its
-   independent parallel jobs. Record any local CI GAP, timeout, or omitted
-   check; it is not a pass.
-5. The agent may create/update the PR and trigger CI only. Do not observe,
-   interpret, approve, or merge based on GitHub results unless the user asks;
-   the user supplies the CI outcome and alone decides whether merging is
-   allowed. Never claim readiness from an unexecuted or incomplete check.
+## Documentation and validation
 
-The initial PR write starts remote validation; it is not merge approval. The
-GitHub and Git Commit Skills provide write mechanics, while this Skill owns the
-minimum local preflight, evidence recording, and no-merge-without-user-decision
-boundary.
+Update only the canonical owner: Skill/routing for Agent rules, `memory_docs/`
+for costly current facts, package `README.md`/`AGENTS.md` for local contracts,
+ADR for rationale, Architecture for complete design, and Git for history. Do
+not append timelines, temporary failures, test results, machine paths, or full
+ADR/Architecture copies to Memory. Every maintained Markdown change updates its
+leading date marker. `.agents/skills/` is the only Skill source; do not create a
+Claude mirror.
 
-## Scope before implementation
+Run checks selected for the touched owner/risk, never claim an unrun check, and
+always run `git diff --check` plus final status/diff review. The commit Skill
+formats changed files but does not rerun implementation tests. Keep paired Bash/
+PowerShell scripts behaviorally aligned and use the actual host toolchain.
 
-- Classify the request as explanation/review, diagnosis, implementation, or
-  monitoring. Do not mutate code for a diagnosis-only request.
-- Identify all touched Domains and owners before editing. Calling an unchanged
-  public API does not automatically expand the task into the provider Domain;
-  changing its shape, semantics, lifecycle, errors, state, or owner does.
-- Keep the smallest change that fully resolves the request. Reuse current
-  contracts and owners before adding another abstraction, database, protocol
-  path, singleton, or compatibility layer.
-- Preserve active compatibility surfaces until their callers are migrated and
-  the compatibility inventory permits removal.
-- Do not broaden a docs-only or checker task into Flutter, Rust, Go, frontend,
-  protocol, FFI, or database behavior changes.
+## PR/CI handoff
 
-## Test-first contract
+When the user asks to create, update, submit, or publish a PR:
 
-Observable or automatable behavior changes must use test-first development.
-Before production edits, identify the contract and lowest reasonable test
-layer, then work in small Red → Green → Refactor increments. Bugs first receive
-a failing regression test; risky untested code first receives a characterization
-test.
-The documented visual/generated/docs exceptions do not fabricate a Red step.
-Never weaken or skip a failure or add test-only production coupling.
+1. Inspect the full worktree; run `git diff --check`, required formatting, and
+   focused owner checks requested or needed for a safe handoff.
+2. Run aggregate local CI only when the user explicitly mentions/requests it:
+   `scripts/bash/ci/full_test.sh` on Linux/WSL or
+   `scripts/powershell/ci/full_test.ps1` in native PowerShell 7. A GAP, timeout,
+   failure, omission, or unrun check is never PASS.
+3. After minimum preflight, the requested branch may be committed, pushed, and
+   opened (prefer draft) so GitHub Actions runs its independent parallel jobs.
+4. Handoff ends agent validation: do not poll, interpret, approve, or merge from
+   GitHub results unless explicitly asked. The user supplies CI results and alone
+   decides whether merging is allowed.
 
-The canonical detailed procedure, high-risk owner matrix, exceptions, and
-self-check are in [Maintenance Workflow](references/workflow.md). Existing test
-commands and cross-boundary gates remain owned by
-[Validation](references/validation.md) and local package contracts.
-
-## Repository boundaries
-
-- App Scope resources are constructed by the App composition root. Features
-  consume injected Ports/Capabilities and release only resources they own.
-- Route ViewModels, controllers, listeners, timers, streams, subscriptions,
-  isolates, sessions, native handles, and databases require an explicit owner
-  and release path.
-- Feature packages do not import App Shell code, another Feature implementation,
-  or another package's `/src/` files. Cross-package calls use public entry points.
-- `ssh_core` is Client infrastructure. Network contracts, runtime facade, FFI,
-  Rust core, and wire protocol route through the SDK Domain.
-- The Terminal-only App remains a restricted composition slice and must not gain
-  AI, RAG, MCP, WebView, LAN Share, SFTP, or Full App business implementations.
-- Growing structured data belongs to the owning Feature/Core database. App logs
-  remain separate. Production database-open failures never silently select an
-  in-memory fallback.
-- Passwords, private keys, API keys, tokens, and credentials stay in platform
-  secure storage. Do not put secrets or user-private data in code, logs, docs,
-  tests, fixtures, screenshots, traces, exports, or Agent knowledge.
-
-## Security invariants
-
-- Remote writes, uploads, renames, deletions, downloads, and sensitive reads
-  require the existing explicit approval path. Approval binds to immutable
-  target/action snapshots and stale snapshots fail closed.
-- Hidden or unexposed tools never reach approval, execution, cache, loop guard,
-  or budget paths. MCP review mode and all secondary authorization remain
-  fail-closed.
-- Keep destructive shell deletion blocked. Restrict environment dumps, cloud
-  metadata, secret-bearing paths, and sensitive WebView targets/forms.
-- Apply existing secret redaction to tool arguments/results, logs, traces,
-  approval records, and persisted activity.
-- Host-key verification, SSH lease ownership, bounded SFTP reads, receive
-  sandboxes, transport authentication, Session routing, Delivery ordering, and
-  E2EE rules must not be weakened to make a test or migration pass.
-- Never invent credentials, contact real systems, or run device/network actions
-  unless the user placed them in scope.
-
-## Editing discipline
-
-- Search with `rg`/`rg --files`. Inspect current implementations, callers, and
-  focused tests before changing ownership or public behavior.
-- Preserve existing worktree changes. Avoid destructive Git/file operations,
-  broad rewrites, and edits outside the requested scope.
-- Edit generator inputs rather than generated output. Regenerate committed
-  artifacts only when their source changes, then verify the generated diff.
-- Hand-written files over 500 lines require functional/responsibility
-  decomposition; never use numbered chunks (`part_01`/`file_01`) or gratuitous
-  over-splitting.
-- Repository-owned tests/fixtures use dedicated `test/` or `tests/` roots.
-  Required native same-package forms are Go `_test.go`, Rust
-  `#[cfg(test)]`/`src/tests`, and TypeScript `.test`/`.spec`. Architecture CI
-  runs this placement and numbered-path audit with a regression test.
-- Keep diagnostics behind the injected logger; do not add ad hoc `print` calls.
-- Keep user-visible text in the owning localization/string contract.
-- Add focused tests for changed behavior and regressions. Use fakes and bounded
-  fixtures; tests must not require real SSH credentials or API keys.
-- Follow local format and naming conventions. Do not split cohesive code merely
-  to satisfy a line-count report. The format gate runs at commit time via the
-  `git-commit` Skill.
-- Select scripts by the actual host: Linux/WSL runs `scripts/bash/**/*.sh`;
-  native Windows runs `scripts/powershell/**/*.ps1` in PowerShell 7. Never
-  cross-call Windows tools from WSL or require Bash from Windows.
-
-## Documentation ownership
-
-Update only the canonical owner whose fact changed:
-
-- Agent work rules → this Skill or its references;
-- task-to-knowledge routing → `memory-map.md`;
-- current, non-obvious, costly project knowledge → the relevant `memory_docs/` file;
-- package responsibility, API, storage, lifecycle, or required checks → local
-  `README.md`/`AGENTS.md`;
-- architectural rationale → a precise ADR;
-- complete design/resource/dependency model → Architecture documentation;
-- historical execution record → Git or an explicit historical report.
-
-Do not append completion timelines, temporary failures, test pass rates,
-machine paths, or duplicated ADR/Architecture text to Memory. Follow
-`docs/agent/skill-memory-maintenance.md` when changing any Agent knowledge file.
-Every maintained Markdown change updates its leading date marker.
-
-`.agents/skills/*/SKILL.md` is canonical — there is no Claude mirror. Claude
-Code loads Skills directly from `.agents/skills/`; do not create a second
-`.claude` copy of any Skill.
-
-## Validation and completion
-
-- Select checks from
-  `.agents/skills/ssh-mobile-maintenance/references/validation.md` according to
-  the actual touched owners and risk. Do not claim checks that were not run.
-- Tests, analyze, and vet run during implementation, per the checks below. The
-  `git-commit` Skill does not re-run them at commit time — it enforces only the
-  format gate on the changed files. Implementation validation gaps are reported
-  explicitly rather than deferred to the commit step.
-- Run `git diff --check` for every change. Review the final diff for unrelated
-  files, generated noise, secrets, stale paths, and unintended API/ownership changes.
-- The `scripts/bash/` and `scripts/powershell/` trees have identical functional
-  subdirectory structures. Same-relative-path `.sh`/`.ps1` files are one
-  maintenance unit; synchronize arguments, environment, steps, timeouts,
-  cleanup, exit semantics, and scope in the same change. Keep both aggregate
-  CI scripts aligned when CI behavior changes.
-- If a required check cannot run, report the exact command and environmental or
-  scope reason; distinguish that from a product failure.
-- A task is complete only when requested behavior/documentation is implemented,
-  focused regression coverage is present where appropriate, required owners and
-  references are synchronized, and remaining validation gaps are explicit.
-- Commit only when requested or when an approved plan explicitly requires
-  commits. Stage explicit paths, keep each commit coherent, and never include
-  unrelated user changes.
+The initial PR write starts remote validation; it is not merge approval. After
+source/test/dependency/structure/CI-scope changes, rerun only checks the user
+requests and update the handoff. Report outcome first, then files, commands,
+gaps, and residual risk. Commit only when requested/approved; stage explicit
+paths and never include unrelated work, secrets, caches, or temporary output.

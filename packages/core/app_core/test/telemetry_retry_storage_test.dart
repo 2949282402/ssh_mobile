@@ -320,12 +320,18 @@ void main() {
       final transport = ScriptedTelemetryTransport(
         uploadOutcomes: [
           const TelemetryUploadException('unauthorized', statusCode: 401),
+          const TelemetryUploadException(
+            'reauthenticated token rejected',
+            statusCode: 401,
+          ),
         ],
       );
       final client = buildRetryTelemetryClient(timers, transport);
 
       await client.record(event: TelemetryEvents.sshSessionStarted);
       expect(await client.replayAllLocalRecords(), 0);
+      expect(transport.authCalls, 2);
+      expect(transport.uploadCalls, 2);
       expect(await client.storage.fetchPendingBatch(10), hasLength(1));
       await client.dispose();
     });

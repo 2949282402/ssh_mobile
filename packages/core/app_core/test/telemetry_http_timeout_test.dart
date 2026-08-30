@@ -183,8 +183,10 @@ void main() {
       startedRequests.add(started);
       releasedResponses.add(release);
       final operation = invoke(origin);
-      await started.future;
-      await expectLater(
+      // Attach the error matcher before waiting for the server. On a busy CI
+      // runner the short request timeout can fire before the request callback
+      // completes, which would otherwise report an unhandled async error.
+      final operationExpectation = expectLater(
         operation,
         throwsA(
           isA<TelemetryUploadException>().having(
@@ -194,6 +196,8 @@ void main() {
           ),
         ),
       );
+      await started.future;
+      await operationExpectation;
       release.complete();
       if (activeHandlers.isNotEmpty) {
         await Future.wait(List<Future<void>>.of(activeHandlers));

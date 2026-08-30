@@ -2,229 +2,153 @@
 
 # Backend Current State
 
-The maintained backend is split into two independent Go services deployed via root
-Docker Compose:
+Root Compose deploys independent Relay (`cmd/relay`, `internal/relay`) and Admin
+(`cmd/admin`, `internal/admin`) services. Relay exposes V2 enrollment/refresh,
+protobuf `/v2/control`, reservation-scoped opaque `/v2/relay/{reservation_id}`,
+and `RELAY_INTERNAL_TOKEN`-protected `/internal/v2/*`; legacy `/v1/*` bootstrap
+is retired (404).
+Admin exposes `/api/admin/v1/*` for login, sessions, overview, devices, revoke,
+enrollment-token rotation, and telemetry; its memory session store is
+single-replica, and Analytics MySQL-backed telemetry queries use isolated
+`telemetry.Store` with Redis only as a best-effort diagnostics cache.
 
-1. **Relay Backend** (`cmd/relay`, `internal/relay`):
-   - Exposes V2 Bootstrap HTTP for device enrollment (`POST /v2/devices/enroll`)
-     and credential refresh (`POST /v2/devices/refresh`), and a v2-only transport plane.
-   - The transport routes are the long-lived protobuf `/v2/control` WebSocket and the
-     reservation-scoped opaque `/v2/relay/{reservation_id}` WebSocket.
-   - Exposes private authenticated management endpoints (`/internal/v2/*`) protected by
-     `RELAY_INTERNAL_TOKEN`.
-   - The legacy `/v1/*` bootstrap routes are retired (return 404).
+Device durable state is behind `Storage`: `memory` is process-local and clears on
+restart; `mysql` persists enrollment/revocation and requires `RedisURL` for
+shared presence, discovery, replay nonces, reservations, and events. Phase-one
+topology is one Relay Control + one Relay Data instance; Redis is shared live
+state, not global routing/data-node selection. Control peers live in Hub; data
+endpoints live in an independent one-shot Relay Data registry.
 
-2. **Admin Backend** (`cmd/admin`, `internal/admin`):
-   - Exposes public REST API (`/api/admin/v1/*`) for administrator login, session management,
-     overview, device listing, revocation, enrollment token rotation, and telemetry administrative management (`/api/admin/v1/telemetry/*`).
-   - Communicates with Relay via `RelayManagementClient` calling `/internal/v2/*`.
-   - Maintains memory-local session store with single-replica constraint.
-   - When an Analytics MySQL DSN is configured, telemetry administrative queries are
-     served by the isolated Analytics `telemetry.Store`; Redis is only a best-effort
-     recent-diagnostics cache.
+## Enrollment, authentication, and admin
 
-Device-plane durable state (enrollment, revocation) is behind a `Storage`
-interface: the default `memory` mode is process-local and restart clears it;
-`mysql` mode persists it and requires `RedisURL` for the shared live-state
-layer (presence, discovery, replay-protection nonce, reservations, and events).
-The first-phase topology remains one Relay Control instance and one Relay Data instance;
-Redis is external shared live state, not Global Control Routing or Relay Data Node Selection.
-Control peers live in the Hub while data endpoints live in an independent one-shot Relay Data registry.
+- Enrollment binds a signed HMAC credential to device identity; `Storage` keeps
+  device ID, public key, and `protocol_version=2`. Re-enrollment with the same
+  key advances generation and upgrades legacy rows. MySQL revocation is one
+  device-row-locked transaction (tombstone + removal), serializing revoke and
+  re-enroll.
+- One `authenticatedRequest` gates device WebSockets: credential signature/
+  expiry, Ed25519 proof, anti-replay nonce, enrollment-key match, revocation, and
+  `ProtocolVersion == 2` all pass before Hub admission. Control and RelayData
+  require positive Unix-seconds `X-Relay-Timestamp` and exact
+  `GET\n<path>\n<timestamp>\n<nonce>` (no trailing newline), ±300s inclusive;
+  nonce expiry is timestamp+301s. Bad/stale proof, protocol mismatch, or cache
+  consume failure returns 401 without upgrading the socket.
+- Refresh requires signed Unix-seconds timestamp and exact
+  `POST\n/v2/devices/refresh\n<timestamp>\n<nonce>`; same ±300s window and
+  timestamp+301s nonce retention. Replay-cache consume failure returns 503 and no
+  credential. Expiry buckets drain at most eight unrelated expired buckets per
+  consume; active proof windows survive enroll/revoke and empty historical
+  buckets converge without a whole-cache scan ([ADR-031](../../docs/adr/ADR-031-relay-refresh-proof-freshness.md)).
+- Admin uses a separate versioned API and HttpOnly cookie session. Memory uses
+  process-local Cache; MySQL composition uses Redis. Forwarded IP and
+  `X-Forwarded-Proto` are trusted only from an immediate peer in
+  `RELAY_TRUSTED_PROXY_CIDRS`; otherwise
+  RemoteAddr/direct TLS govern login limiting, Cookie `Secure`, and Origin scheme.
+  Online statistics come from Cache presence.
 
-Current boundaries:
+## Presence, discovery, and Relay data
 
-- Device enrollment binds a signed (HMAC) credential to a device identity;
-  the durable enrollment record (device ID + public key + `protocol_version=2`) lives in `Storage`.
-- Device revocation is one atomic store transaction (MySQL: device-row lock +
-  tombstone + removal), so a revoke and a concurrent re-enroll serialize on the
-  device row instead of tearing into a "removed but not revoked" state.
-- Device WebSocket connections are authenticated before hub admission through a
-  single `authenticatedRequest` path: credential signature/expiry, Ed25519
-  proof, anti-replay nonce, enrollment key match, revocation check, and
-  **`enrollment.ProtocolVersion == 2` admission invariant**. Both
-  Control and RelayData require a canonical positive Unix-seconds
-  `X-Relay-Timestamp`; the exact transcript is
-  `GET\n<path>\n<timestamp>\n<nonce>` without a trailing newline. The inclusive
-  ±300-second window and timestamp-plus-301-second nonce expiry match refresh;
-  malformed/stale proofs, protocol mismatch, and Cache consumption failure return 401 and do not
-  upgrade the socket ([ADR-031](../../docs/adr/ADR-031-relay-refresh-proof-freshness.md)).
-- Device credential refresh is a V2 freshness contract: requests carry a
-  required signed Unix-seconds `timestamp`, and the exact Ed25519 transcript is
-  `POST\n/v2/devices/refresh\n<timestamp>\n<nonce>` without a trailing newline.
-  Relay accepts the inclusive ±300-second window, retains the nonce until the
-  signed timestamp plus 301 seconds, and returns 503 without issuing a
-  credential when the replay-protection cache cannot consume the nonce
-  ([ADR-031](../../docs/adr/ADR-031-relay-refresh-proof-freshness.md)). Re-enrollment
-  on `/v2/devices/enroll` with the same key advances generation and upgrades
-  legacy rows to version 2.
-  bucket, and drains at most eight unrelated expired buckets per consume; active
-  proof windows survive enrollment/revocation while historical empty device
-  buckets converge without a whole-cache scan.
-- The administrator API uses a separate versioned contract and an HttpOnly
-  cookie session; memory composition uses the process-local `Cache`, while the
-  MySQL composition uses Redis. Forwarded client-IP headers and
-  `X-Forwarded-Proto` are
-  trusted only when the immediate peer matches `RELAY_TRUSTED_PROXY_CIDRS`;
-  otherwise `RemoteAddr` and direct TLS govern the login limiter, Cookie
-  `Secure`, and admin Origin scheme.
-- Administrator online statistics are derived from the `Cache` presence layer.
-- Device-to-device `ResolvePeerRequest` reports READY only when the target's
-  presence lease is valid **and** a matching `discovery:{device_id}` snapshot
-  exists; a peer with only one of the two is not treated as connectable.
-- The server stores a bounded discovery snapshot per online device
-  (`discovery:{device_id}` = device_id + generation + opaque candidates +
-  capabilities), filled from the device's own candidate reporting. The snapshot
-  is removed when the connection is replaced or goes offline, with TTL /
-  sweeper as a backstop.
-- The v2 server sends `PresenceHintSnapshot`, `PeerAvailableHint`, and
-  `PeerUnavailableHint` over the authenticated control connection. Hints are
-  advisory and light; authoritative candidates come from a
-  `ResolvePeerRequest`, which returns READY only when matching presence and
-  discovery state are both valid and the snapshot has a non-zero runtime epoch.
-- A presence sweeper marks a device offline when its presence lease expires
-  (TTL 60s, renewed by the 20s heartbeat), cleaning its discovery snapshot and
-  feeding `PeerUnavailableHint` and the admin presence view.
-- Relay payloads and Session crypto-handshake stages are forwarded opaquely.
-  The backend does not own Application Root material or plaintext; discovery
-  storage keeps opaque candidates without parsing their endpoint semantics
-  (ADR-017 revision boundary).
-- The V2 Relay Data registry treats PairReady as one-shot per completed pair.
-  A same-role retry replaces an unpaired endpoint; a retry against an active
-  pair closes both old roles, starts a fresh pending pair, and requires the
-  counterpart to reconnect before a new `Connect → PairReady` completes. A
-  remaining old endpoint never receives a second PairReady.
-- V2 client requests require a non-zero `request_id`; asynchronous connectivity
-  and reservation requests also require an `attempt_id`. Resolve maps backend
-  uncertainty to `UNKNOWN`/`CONTROL_UNAVAILABLE`, never to fail-open `OFFLINE` or
-  `READY`, and a discovery snapshot with a zero `runtime_epoch` is not ready. A
-  reservation request consumes a bounded, one-shot fallback gate established by
-  the same authenticated Control connection's successful Resolve → Offer and
-  must match that attempt and target. Attempts and gates maintain exact removable
-  expiry indexes: an ordinary Offer performs no global expiry scan, full global
-  capacity releases at most one expired heap root, and a full connection bucket
-  examines only its fixed 64-entry reverse index. The authoritative Offer is
-  encoded and allocated before entering the Hub mutex; the critical section
-  rebinds both exact connection owners, commits the indexes, and performs only a
-  non-blocking enqueue, with complete rollback on failure.
-- V2 Relay Data admission binds the authenticated device to its reservation role
-  and role-specific token. Device revocation closes pending endpoints, active
-  pairs, and their counterparts. Forwarding encodes and allocates the opaque
-  frame before entering the registry mutex; under that mutex it only rechecks
-  pair state, reserves the flow budget, and performs a non-blocking queue handoff.
-  Revocation marks both roles terminal and detaches retry ownership at the same
-  linearization point; the writer discards queued business frames and waits out
-  a write that already began before the lifecycle call returns. Server shutdown
-  closes all registered data endpoints.
-- Expired credentials are rejected at new RelayControl and RelayData admission,
-  while natural credential expiry does not terminate an already paired Ready
-  data path. Explicit revoke remains an authorization termination event and
-  closes pending/active participants plus the active counterpart; persistent
-  revoke-store failure is fail-closed.
-- After a RelayData pair is Ready, the reservation is consumed for new
-  admission while active sockets keep their in-memory authorization. PairReady
-  is the WebSocket Ping
-  `ssh-mobile-relay-paired-v1:<reservation_id>`: both queues must accept the
-  marker before pair commit, and each endpoint cannot forward until its own
-  marker has actually been written. The 30s/15s Ping/Pong liveness path shares
-  the single outbound writer but uses the distinct
-  `ssh-mobile-relay-keepalive-v1` marker. Active RelayData is not closed by
-  reservation TTL or natural credential expiry.
-- Relay Data storage, HTTP admission, one-shot pair registry, flow budget, and
-  connection pump are independent owners. The pump borrows only reservation
-  delete/renew and endpoint admit/release capabilities, so it cannot reach
-  enrollment, presence, administrator state, registry revocation internals, or
-  mutate flow counters directly.
-- `RELAY_PUBLIC_URL` is normalized from the public HTTP edge origin to the data
-  WebSocket origin: HTTPS becomes WSS, explicit WSS is preserved, and loopback
-  HTTP becomes WS. A root path `/` is normalized away; non-root paths, queries,
-  fragments, embedded credentials, and non-loopback cleartext origins are
-  rejected.
-- Redis command and pool safety is process-owned after URL parsing: context
-  cancellation is enabled, automatic retries are disabled, dial/read/write and
-  pool waits are capped at two seconds, and pool/active connections are capped
-  at 64. URL query parameters cannot weaken these bounds.
-- MySQL and Redis startup share one 15-second deadline. Shutdown performs at
-  most 15 seconds of HTTP graceful shutdown followed by one 10-second Relay
-  runtime budget; RelayData, Hub, and event reconciliation converge
-  concurrently, then Cache and Storage close concurrently inside the remaining
-  total budget, with forced socket close after bounded drain. A dependency that
-  ignores cancellation cannot make `Server.Close` unbounded.
-- Both `NewServer` memory mode and MySQL/Redis composition discard any supplied
-  database URL, Redis URL, and Redis password after construction. The Hub keeps
-  only the scalar routing/capacity/lifecycle capabilities it owns; long-lived
-  runtime state cannot expose startup endpoints or credentials.
-- Process restart clears device, administrator-session, and Relay-session state
-  **in memory mode**; `mysql` mode keeps enrollment and revocation durable and
-  devices keep working across a restart.
-- Docker Compose with Caddy is the supported production topology; a `storage`
-  compose profile adds MySQL and Redis for the durable/Redis shared-state stack
-  (single Relay Control instance + single Relay Data instance).
-- Telemetry & Observability Pipeline (`internal/telemetry`) runs inside `admin-api`,
-  remains a separate logical boundary, and is decoupled from Relay core:
-  - Ingestion (`POST /api/v1/telemetry/ingest`), authentication (`POST /api/v1/telemetry/auth`),
-    and dynamic policy (`GET /api/v1/telemetry/policy`) run on dedicated HTTP endpoints.
-  - Device authentication uses HMAC-SHA256 proofs (`telemetry:auth:<deviceId>:<expEpoch>` signed with `sha256Hex(secret)` derived key) within ±120s clock skew window and issues 2-hour scoped bearer tokens `<exp>.<hmac(tokenKey, "telemetry:auth:<deviceId>:<exp>")>`. Device ID is validated against `^[A-Za-z0-9._-]{1,128}$` to prevent delimiter-collision forgery, matching the Relay bootstrap identity bound and the telemetry MySQL VARCHAR(128) columns.
-  - Ingestion enforces device binding via `X-Device-Id` and token HMAC verification.
-  - Fail-closed guarantees: public device authentication/ingest returns 503 when
-    `TELEMETRY_AUTH_SECRET` is missing or shorter than 16 characters, and telemetry
-    persistence failures never silently switch to an in-memory store; client-side
-    pending records remain available for retry.
-  - Accepted records are written atomically to `telemetry_events` (diagnostics use
-    `record_type=diagnostic`) together with permanent `telemetry_ingest_receipts`
-    (`event_id`, `device_id`, `received_at`). Duplicate `event_id`s return
-    `already_seen` without mutating raw rows.
-  - Public ingest is bounded before persistence: request bodies are capped at 1 MiB, batches at
-    100 records, database writers use a non-blocking 4-slot semaphore (configurable only within
-    4–8), and authenticated device token buckets use bounded cardinality plus TTL cleanup. Writer
-    saturation and per-device bursts return 429 with bounded `Retry-After`; body and batch limits
-    return 413. MySQL ingests valid records with one batched receipt lookup and one transaction
-    containing multi-row event and receipt inserts, with a unique raw-event `event_id` index and
-    bounded retry for concurrent receipt races. Memory and MySQL stores preserve partial rejected,
-    duplicate, and accepted ACKs with the same event-id receipt semantics.
-  - Scheduled retention background worker purges data based on trusted server `received_at`
-    (time window and row count bounds) while preserving all idempotency receipts permanently.
-  - A bounded Redis hot cache provides best-effort retrieval of recent diagnostic logs
-    for the admin feed; filtered or unavailable-cache queries fall back to MySQL. The
-    cache is not an ingest queue or an authoritative metrics source.
-  - Admin endpoints (`/api/admin/v1/telemetry/*`) provide aggregated overview metrics, filterable
-    event explorer, diagnostic log feed, and dynamic policy/retention settings management.
+- `ResolvePeerRequest` is READY only when a valid presence lease and matching
+  `discovery:{device_id}` snapshot both exist, with non-zero runtime epoch.
+  Snapshots contain device ID, generation, opaque candidates, and capabilities;
+  they are filled by the device, removed on connection replacement/offline, and
+  TTL/sweeper is a backstop. Control sends advisory
+  `PresenceHintSnapshot`/`PeerAvailableHint`/`PeerUnavailableHint`; Resolve is
+  authoritative. Presence TTL is 60s, renewed every 20s; expiry clears discovery
+  and updates hints/admin presence.
+- Relay payloads and Session crypto stages are opaque; backend never owns
+  plaintext/Application Root and never parses candidate endpoint semantics
+  (ADR-017 boundary).
+- Relay Data `PairReady` is one-shot per completed pair. Same-role retry replaces
+  an unpaired endpoint; retry against an active pair closes both roles, starts a
+  fresh pending pair, and requires the counterpart to reconnect. A surviving old
+  endpoint never receives a second marker.
+- Client requests require non-zero `request_id`; async connectivity/reservation
+  also require `attempt_id`. Resolve uncertainty maps to `UNKNOWN`/
+  `CONTROL_UNAVAILABLE`, never fail-open OFFLINE/READY; zero runtime epoch is not
+  ready. Reservation consumes a bounded one-shot fallback gate from the same
+  authenticated Control Resolve→Offer and must match attempt/target. Exact expiry
+  indexes avoid global scans: ordinary Offer scans none, global capacity releases
+  one heap root, and a full connection bucket checks only its fixed 64-entry
+  reverse index. Offer is encoded/allocated before Hub mutex; the critical
+  section rebinds exact owners, commits indexes, non-blocking-enqueues, and rolls
+  back completely on failure.
+- RelayData admission binds authenticated device, role, and token. Revocation
+  closes pending/active pairs and counterparts. Forwarding allocates/encodes
+  before the registry mutex, then only rechecks state, reserves flow budget, and
+  non-blocking-enqueues. Revocation marks both roles terminal/detaches retry at
+  one linearization point; writer drops queued business frames and waits for an
+  already-started write. Shutdown closes all data endpoints.
+- New Control/Data admission rejects expired credentials; natural expiry does not
+  close an already Ready pair. Explicit revoke is authorization termination,
+  closes all participants/counterpart, and fails closed on persistent store error.
+  After Ready, reservation is consumed for new admission but active sockets keep
+  in-memory authorization. PairReady is WebSocket Ping
+  `ssh-mobile-relay-paired-v1:<reservation_id>`: both queues accept before commit
+  and each endpoint forwards only after its marker is written. Keepalive uses the
+  same writer with `ssh-mobile-relay-keepalive-v1` and 30s/15s Ping/Pong; active
+  data is unaffected by reservation TTL/natural credential expiry.
+- Relay Data storage, HTTP admission, pair registry, flow budget, and pump are
+  separate owners. The pump borrows only reservation delete/renew and endpoint
+  admit/release; it cannot access enrollment, presence, Admin, registry revoke
+  internals, or mutate counters directly.
 
-Endpoint definitions, environment variables, deployment instructions, and the
-operational contract remain owned by the [Relay README](../../relay/README.md).
+## Deployment and runtime bounds
 
-For route and cryptographic semantics, read:
+- `RELAY_PUBLIC_URL` derives the data WebSocket origin: HTTPS→WSS, WSS preserved,
+  loopback HTTP→WS. Root `/` is removed; non-root paths, query/fragment,
+  credentials, and non-loopback cleartext are rejected.
+- Redis enables cancellation, disables automatic retries, caps dial/read/write
+  and pool waits at 2s, caps pool/active connections at 64, and ignores URL
+  attempts to weaken bounds. MySQL/Redis startup shares a 15s deadline. Shutdown
+  allows at most 15s HTTP graceful + 10s Relay runtime: RelayData, Hub, and event
+  reconciliation converge concurrently, then Cache/Storage close concurrently;
+  forced socket close follows bounded drain and cancellation cannot make Close
+  unbounded.
+- Constructors discard supplied DB/Redis URLs/passwords after setup. Hub retains
+  only owned scalar routing/capacity/lifecycle capabilities, never startup
+  endpoints/credentials. Memory mode restart clears device/Admin/Relay session
+  state; MySQL keeps enrollment/revocation and devices continue working.
+- Supported production topology is Docker Compose + Caddy; `storage` profile adds
+  MySQL/Redis for the durable shared-state stack (one Control + one Data).
 
-- [Relay control-plane architecture](../../docs/architecture/RELAY_CONTROL_PLANE.md)
-- [SDK transport routing](../sdk/features/transport-routing.md)
-- [Relay direct upgrade ADR](../../docs/adr/ADR-018-relay-direct-upgrade.md)
-- [Candidate exchange ADR](../../docs/adr/ADR-017-candidate-exchange.md)
-- [Direct First ADR](../../docs/adr/ADR-008-direct-relay-race.md)
-- [Forward-secret Session E2EE ADR](../../docs/adr/ADR-028-forward-secret-session-e2ee.md)
+## Telemetry & Observability (`internal/telemetry`)
 
-## Validation gates
+Telemetry is a separate logical boundary inside Admin, decoupled from Relay:
 
-Run the Go backend checks from the Relay directory:
+- Public endpoints are `POST /api/v1/telemetry/auth`,
+  `POST /api/v1/telemetry/ingest`, and `GET /api/v1/telemetry/policy`; Admin
+  endpoints are `/api/admin/v1/telemetry/*` for overview, event explorer,
+  diagnostics feed, and policy/retention settings.
+- Device auth signs `telemetry:auth:<deviceId>:<expEpoch>` with the
+  `sha256Hex(secret)`-derived HMAC-SHA256 key, allows ±120s skew, and issues a
+  two-hour token `<exp>.<hmac(tokenKey, "telemetry:auth:<deviceId>:<exp>")>`.
+  Device IDs match `^[A-Za-z0-9._-]{1,128}$` (Relay identity and MySQL VARCHAR
+  bound); ingest binds `X-Device-Id` to token HMAC.
+- Missing/short (`<16`) `TELEMETRY_AUTH_SECRET` makes public auth/ingest return
+  503. Persistence failure never switches to memory; client pending records stay
+  retryable. Accepted records atomically insert `telemetry_events` (diagnostics
+  use `record_type=diagnostic`) and permanent `telemetry_ingest_receipts`;
+  duplicate `event_id` returns `already_seen` without changing raw rows.
+- Before persistence: body ≤1 MiB, batch ≤100, writer semaphore non-blocking
+  4 slots (configurable only 4–8), and bounded per-device token buckets with TTL
+  cleanup. Saturation/bursts return 429 with bounded `Retry-After`; body/batch
+  limits return 413. MySQL uses one batched receipt lookup + one transaction for
+  multi-row event/receipt inserts, unique raw-event ID index, and bounded race
+  retry. Memory/MySQL preserve partial rejected/duplicate/accepted ACKs alike.
+- Scheduled retention purges by trusted server `received_at` with time/row bounds
+  while preserving receipts. Redis is a bounded best-effort recent-diagnostics cache;
+  filtered/unavailable queries fall back to MySQL. It is not an ingest queue or
+  authoritative metrics source.
 
-```bash
-cd relay
-go test ./...
-go test -race ./...
-go vet ./...
-```
+Endpoint/environment/deployment details remain in the [Relay README](../../relay/README.md).
+Route/crypto references: [Relay control-plane architecture](../../docs/architecture/RELAY_CONTROL_PLANE.md),
+[SDK transport routing](../sdk/features/transport-routing.md),
+[ADR-018](../../docs/adr/ADR-018-relay-direct-upgrade.md),
+[ADR-017](../../docs/adr/ADR-017-candidate-exchange.md),
+[ADR-008](../../docs/adr/ADR-008-direct-relay-race.md), and
+[ADR-028](../../docs/adr/ADR-028-forward-secret-session-e2ee.md).
 
-The periodic backend coverage gate is run from the repository root:
-
-```bash
-bash scripts/bash/coverage/backend_coverage.sh
-```
-
-The gate requires at least 90% line coverage for hand-written Relay/Admin
-code and for the separate hand-written telemetry scope.
-
-When test DSNs are not supplied, the script provisions temporary
-`mysql:8.4` and `redis:7-alpine` containers and removes them on exit. The
-cross-owner Network V2 contract gate is:
-
-```bash
-bash scripts/bash/contracts/network_v2_acceptance.sh strict
-```
+Backend validation commands and 90% coverage/contract gates are owned by
+[Validation](../../.agents/skills/ssh-mobile-maintenance/references/validation.md)
+and the Relay contract.

@@ -57,8 +57,8 @@ func TestMySQLStoreClosedConnectionFailsClosed(t *testing.T) {
 		t.Fatalf("close MySQL test connection: %v", err)
 	}
 	ctx := context.Background()
-	if _, err := store.IngestBatch(ctx, []TelemetryEnvelope{testEnvelope("evt-mysql-closed", "dev-mysql-closed")}); err == nil || !strings.Contains(err.Error(), "begin ingest tx") {
-		t.Fatalf("closed MySQL ingest error = %v, want begin transaction error", err)
+	if _, err := store.IngestBatch(ctx, []TelemetryEnvelope{testEnvelope("evt-mysql-closed", "dev-mysql-closed")}); err == nil || !strings.Contains(err.Error(), "query receipts before validation") {
+		t.Fatalf("closed MySQL ingest error = %v, want receipt lookup error", err)
 	}
 	if _, _, err := store.QueryEvents(ctx, QueryFilter{}); err == nil || !strings.Contains(err.Error(), "count events query") {
 		t.Fatalf("closed MySQL events error = %v, want count query error", err)

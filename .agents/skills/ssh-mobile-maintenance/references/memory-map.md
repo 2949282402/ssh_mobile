@@ -2,191 +2,116 @@
 
 # Memory Map
 
-Use this map after identifying the files and behavior affected by the task.
-Never load every Domain or Feature Memory by default.
+Route by real owning paths; never load every Domain or Feature Memory.
 
-## Required loading algorithm
+## Loading algorithm
 
-1. Read the canonical maintenance Skill, then this map.
-2. Collect every path explicitly named by the task. If the task names only
-   behavior, use read-only search to locate the actual owning paths before routing.
-3. For each path, walk from its directory toward the repository root and read
-   every `AGENTS.md` encountered. A nearer contract supplements or tightens an
-   outer contract; it cannot relax it. For a Workspace Member, also read its
-   `README.md` for responsibility, public API, dependencies, database, lifecycle,
-   and validation ownership.
-4. Route every path to the Domains below. Read that Domain's overview and, when
-   present, current state.
-5. Add Domain architecture only for structure, dependency, ownership,
-   lifecycle, storage, compatibility, or public-API changes.
-6. Add Domain lessons only for a matching diagnostic, regression, or performance task.
-7. Add Feature Memory only for the listed complex Features. It never replaces
-   the package README/AGENTS contract.
-8. Add precise ADRs and Architecture documents only when an escalation rule below applies.
+1. Read the canonical Skill, then this map.
+2. Collect paths named by the task; if only behavior is named, locate owners with
+   read-only search.
+3. From each target to the root, read every `AGENTS.md`; for a Workspace Member
+   also read its `README.md` (responsibility, API, dependencies, storage,
+   lifecycle, validation).
+4. Load the matched Domain `overview.md` and `current-state.md`.
+5. Add `architecture.md` only for structure/dependency/ownership/lifecycle/
+   storage/compatibility/public-API changes; add `lessons.md` only for a matching
+   diagnostic, regression, or performance task.
+6. Add a listed Feature Memory, ADR, or Architecture document only when its
+   route/escalation below applies; Feature Memory never replaces local contracts.
 
-A docs-only spelling, formatting, or link fix that changes no fact may stop
-after the Skill, this map, and nearest `AGENTS.md`. Governance work also reads
-the [Memory README](../../../../memory_docs/README.md) and
-[maintenance rules](../../../../docs/agent/skill-memory-maintenance.md).
+Docs-only spelling/format/link fixes that change no fact may stop at Skill, map,
+and nearest contract. Governance work additionally reads the [Memory README](../../../../memory_docs/README.md)
+and [maintenance rules](../../../../docs/agent/skill-memory-maintenance.md).
 
-## Client routing
+## Client
 
-Default Client chain:
+Default: [overview](../../../../memory_docs/client/overview.md) +
+[current state](../../../../memory_docs/client/current-state.md). Add
+[architecture](../../../../memory_docs/client/architecture.md) for shared
+ownership/public-boundary, dependency, scope, database, storage, or compatibility
+changes; add [lessons](../../../../memory_docs/client/lessons.md) only for matching
+regression/performance work.
 
-- [Client overview](../../../../memory_docs/client/overview.md)
-- [Client current state](../../../../memory_docs/client/current-state.md)
-
-Add [Client architecture](../../../../memory_docs/client/architecture.md) for
-cross-package API/dependency, App/Module/Route scope, resource owner, database,
-storage, or compatibility-bridge changes. Add
-[Client lessons](../../../../memory_docs/client/lessons.md) only for a matching
-regression or performance issue.
-
-| Path or task | Additional scoped knowledge |
+| Target or behavior | Add |
 | --- | --- |
-| `apps/ssh_mobile_full/**`, `apps/ssh_mobile_terminal/**` | Client default chain and nearest App/Feature contracts |
-| `packages/core/**`, `packages/features/**` | Client default chain and the Workspace Member README/AGENTS |
-| `packages/infrastructure/ssh_core/**` | Client default chain plus Client architecture for Manager/Pool/Lease/public-contract work |
-| App Shell, startup, navigation, settings, logging, backup, platform runner | Client chain; add [startup design](../../../../docs/STARTUP_INITIALIZATION.md) when startup behavior changes |
-| AI chat, Agent, Skills, LLM, tools, or AI App adapters | [AI Feature Memory](../../../../memory_docs/client/features/ai.md) and AI package contracts |
-| SFTP UI, service, preview, cache, path history, or App SFTP adapters | [SFTP Feature Memory](../../../../memory_docs/client/features/sftp.md) and SFTP package contracts |
-| LAN discovery, pairing, share, Receiver, Web Share, or App LAN adapters | [LAN Share Memory](../../../../memory_docs/client/features/lan-share.md) and LAN package contracts |
-| MCP server, policy, approval queue, console, activity, or App MCP adapters | [MCP Feature Memory](../../../../memory_docs/client/features/mcp.md) and MCP package contracts |
-| Client Telemetry, event tracking, storage, upload, or Developer card | [Client overview](../../../../memory_docs/client/overview.md), [architecture](../../../../docs/数据埋点架构.md), [Telemetry ADR](../../../../docs/adr/ADR-033-telemetry-data-tracking-architecture.md) |
+| `apps/ssh_mobile_full/**`, `apps/ssh_mobile_terminal/**`, `packages/core/**`, `packages/features/**` | Client default + nearest App/Feature contract |
+| `packages/infrastructure/ssh_core/**` | Client default; architecture for Manager/Pool/Lease/public-contract changes |
+| App Shell/startup/navigation/settings/logging/backup/platform | Client; [startup design](../../../../docs/STARTUP_INITIALIZATION.md) when startup changes |
+| AI/Agent/Skills/LLM/tools/App AI adapters | [AI Memory](../../../../memory_docs/client/features/ai.md) + AI contract |
+| SFTP UI/service/preview/cache/history/App adapters | [SFTP Memory](../../../../memory_docs/client/features/sftp.md) + SFTP contract |
+| LAN discovery/pairing/share/Receiver/Web Share/App adapters | [LAN Share Memory](../../../../memory_docs/client/features/lan-share.md) + LAN contract |
+| MCP server/policy/approval/console/activity/App adapters | [MCP Memory](../../../../memory_docs/client/features/mcp.md) + MCP contract |
+| Telemetry/event tracking/storage/upload/Developer card | Client overview + [telemetry design](../../../../docs/数据埋点架构.md) + [ADR-033](../../../../docs/adr/ADR-033-telemetry-data-tracking-architecture.md) |
 
-Conditional Client documents:
+Conditional Client references: AI trace/metrics → [Agent Trace](../../../../docs/AGENT_RUN_TRACE.md);
+host keys/credentials/tools/secret paths/preview security → [security regression](../../../../docs/security_manual_regression.md);
+large SFTP/monitoring data → [performance acceptance](../../../../docs/PERFORMANCE_ACCEPTANCE.md);
+Monitoring/System Admin integration → [integration design](../../../../docs/SYSTEM_ADMIN_MONITOR_INTEGRATION.md);
+accessibility/responsive/large text → [mobile UI QA](../../../../docs/MOBILE_UI_QA.md).
 
-- AI trace/metrics persistence: [Agent Trace design](../../../../docs/AGENT_RUN_TRACE.md).
-- Host key, credentials, tool execution, secret paths, or preview security:
-  [security regression](../../../../docs/security_manual_regression.md).
-- SFTP/monitoring large-data performance:
-  [performance acceptance](../../../../docs/PERFORMANCE_ACCEPTANCE.md).
-- Monitoring/System Administration integration:
-  [integration design](../../../../docs/SYSTEM_ADMIN_MONITOR_INTEGRATION.md).
-- UI accessibility, responsive behavior, or large-text regression:
-  [mobile UI QA](../../../../docs/MOBILE_UI_QA.md).
+Connection, Terminal, Monitoring, System Administration, Playbook, RAG, WebView,
+Developer, and shared UI have no initial Feature Memory; use Client basics,
+nearest contract, and conditional documents. `ssh_core` remains Client; add SDK
+only when a real public interface to `network_transport`/native changes.
 
-Connection, Terminal, Monitoring/System Administration, Playbook, RAG, WebView,
-Developer, and shared UI do not have initial Feature Memory. Use Client basics,
-their nearest package contracts, and the focused documents above.
+## SDK
 
-`ssh_core` remains Client infrastructure. Do not load SDK Memory merely because
-the package is under `packages/infrastructure/`. Add SDK only if a real public
-interface to `network_transport` or the native network runtime changes.
+Default: [overview](../../../../memory_docs/sdk/overview.md) +
+[current state](../../../../memory_docs/sdk/current-state.md). Paths are
+`native/network_core/**`, `packages/infrastructure/network_sdk/**`,
+`packages/infrastructure/network_transport/**`,
+`packages/infrastructure/ssh_mobile_network_native/**`, and `protocol/**`.
+Add [architecture](../../../../memory_docs/sdk/architecture.md) for public
+contract, App/native ownership, FFI, lifecycle, dependency, or wire changes;
+add [lessons](../../../../memory_docs/sdk/lessons.md) for matching recovery,
+ordering, routing, or crypto regressions. Transport/candidate/path/Connection/
+Session/Route/Relay/direct/reconnect/resume/Delivery/Transfer/E2EE/Realtime/
+WebRTC/native command-event work also reads [Transport and Routing](../../../../memory_docs/sdk/features/transport-routing.md).
+Each Dart SDK package still requires its nearest README/AGENTS; Rust currently
+has no nested contract, so use root rules, SDK Memory, code/tests, and exact ADR.
 
-## SDK routing
+## Backend and Front
 
-Default SDK chain:
+- `relay/**` → [Backend overview](../../../../memory_docs/backend/overview.md),
+  [current state](../../../../memory_docs/backend/current-state.md), and
+  [Relay README](../../../../relay/README.md). Enrollment/auth/admin/hub/
+  WebSocket lifecycle/Compose/Caddy are Backend. Wire/proofs/opaque data,
+  Session route, or Client enrollment also add SDK; an admin response consumed by
+  React also adds Front.
+- `front/**` → [Front overview](../../../../memory_docs/front/overview.md) and
+  [Front README](../../../../front/README.md). Pure presentation does not add
+  Client; API/auth/session changes add Backend.
 
-- [SDK overview](../../../../memory_docs/sdk/overview.md)
-- [SDK current state](../../../../memory_docs/sdk/current-state.md)
+## Cross-domain and escalation
 
-Paths:
+An unchanged public-API call does not load the provider Domain; changing shape,
+semantics, errors, state, lifecycle, or ownership does. Union all real touched
+Domains. `network_transport`/native handles are SDK; AppRuntime composition or
+App Shell result correlation is SDK + Client. Relay API/deployment is Backend;
+wire/session/opaque handshake/E2EE is Backend + SDK + exact ADR. Admin DTO/API is
+Front + Backend. `protocol/**` is SDK + Backend, plus Client when Feature-facing.
+Tests/docs follow the behavior's Domain, not their physical directory.
 
-- `native/network_core/**`
-- `packages/infrastructure/network_sdk/**`
-- `packages/infrastructure/network_transport/**`
-- `packages/infrastructure/ssh_mobile_network_native/**`
-- `protocol/**`
+Read [Module Dependency](../../../../docs/architecture/MODULE_DEPENDENCY.md) for
+dependency boundaries, [Resource Ownership](../../../../docs/architecture/RESOURCE_OWNERSHIP.md)
+for owner/create/dispose changes, and [Compatibility Inventory](../../../../docs/architecture/COMPATIBILITY_MIGRATION_INVENTORY.md)
+for bridge changes. The broad [Modular Refactor Plan](../../../../docs/architecture/MODULAR_REFACTOR_PLAN.md)
+is conditional, not a default input.
 
-Add [SDK architecture](../../../../memory_docs/sdk/architecture.md) for public
-contract, App/native ownership, FFI, lifecycle, dependency, or wire-boundary
-changes. Add [SDK lessons](../../../../memory_docs/sdk/lessons.md) for matching
-recovery, ordering, routing, or crypto regressions.
+For wire/API, Session/Connection/Route lifetime, path selection, recovery,
+Delivery ordering, crypto, Relay/direct, WebRTC, or native task ownership, read
+only the precise ADR. Use complete names for [ADR-030 file resume](../../../../docs/adr/ADR-030-file-resume.md),
+[ADR-011 transfer-session route dispatch](../../../../docs/adr/ADR-011-transfer-session-route-dispatch.md),
+and [ADR-033 telemetry](../../../../docs/adr/ADR-033-telemetry-data-tracking-architecture.md).
 
-Transport, candidate exchange, path selection, Connection/Session/Route,
-Relay/direct migration, reconnect/resume, Delivery, transfer, E2EE, Realtime,
-WebRTC, or native command/event work also reads
-[Transport and Routing](../../../../memory_docs/sdk/features/transport-routing.md).
+## Quick routes
 
-Every Dart SDK package path still requires its nearest README/AGENTS. The Rust
-workspace currently has no nested AGENTS contract, so use the root rules, SDK
-Memory, implementation, tests, and the precise ADR.
+- Flutter UI → Client default + local contract; add Client architecture only for shared ownership/API.
+- Rust/transport → SDK default + Transport and Routing + exact ADR; add Client only for public FFI/Dart changes.
+- Backend API → Backend default + Relay README; add Front for admin consumers, SDK for wire/device changes.
+- Front Admin → Front overview/README; add Backend for API/auth/session changes.
+- Client↔SDK → both defaults + architecture, both contracts, dependency/resource docs, exact ADRs.
+- Relay architecture → Backend + SDK architecture/current + Transport and Routing + Relay README + exact ADRs; add Front only for dashboard/API.
+- Telemetry → ADR-033 + [telemetry design](../../../../docs/数据埋点架构.md) + Client/Backend/Front overviews + `contracts/telemetry/`; add owning contracts for UI/storage.
 
-## Backend routing
-
-`relay/**` loads:
-
-- [Backend overview](../../../../memory_docs/backend/overview.md)
-- [Backend current state](../../../../memory_docs/backend/current-state.md)
-- the [Relay README](../../../../relay/README.md)
-
-Enrollment, service authentication, administrator API, hub state, WebSocket
-server lifecycle, Compose, and Caddy are Backend concerns. A wire frame, device
-proof, opaque data-plane forwarding, Session route, or Client enrollment
-contract change also loads SDK Memory. An administrator response consumed by
-React also loads Front Memory.
-
-## Front routing
-
-`front/**` loads:
-
-- [Front overview](../../../../memory_docs/front/overview.md)
-- the [Front README](../../../../front/README.md)
-
-Pure React presentation does not load Flutter Client Memory. Administrator API
-schema, authentication, or session semantics also load Backend Memory.
-
-## Cross-domain escalation
-
-- Calling an unchanged public API does not load the provider's entire Domain.
-  Changing API shape, semantics, errors, state, lifecycle, or ownership does.
-- `network_transport` contracts and native-handle/gateway behavior are SDK.
-  AppRuntime construction/disposal or App Shell result correlation is SDK + Client.
-- Relay API/authentication/hub/deployment is Backend. Relay wire, Session route,
-  opaque handshake, or E2EE is Backend + SDK + the exact ADR.
-- Administrator DTO/API changes are Front + Backend.
-- `protocol/**` changes are SDK + Backend; add Client when the change reaches a
-  Feature-facing Dart contract.
-- Multiple real touched paths load the union of their Domains. Do not let a
-  primary directory hide a secondary Domain.
-- Tests and documentation follow the Domain of the behavior they verify; their
-  physical `test/` or `docs/` location is not a separate Domain.
-
-## Architecture and ADR escalation
-
-Read [Module Dependency](../../../../docs/architecture/MODULE_DEPENDENCY.md)
-when package/workspace dependency boundaries change.
-
-Read [Resource Ownership](../../../../docs/architecture/RESOURCE_OWNERSHIP.md)
-when a database, session, native handle, timer, stream, controller, subscription,
-or isolate owner/create/dispose rule changes.
-
-Read the
-[Compatibility Migration Inventory](../../../../docs/architecture/COMPATIBILITY_MIGRATION_INVENTORY.md)
-when removing or changing a compatibility bridge. The broad
-[Modular Refactor Plan](../../../../docs/architecture/MODULAR_REFACTOR_PLAN.md)
-is a conditional architecture reference, not a default Feature-task input.
-
-Read a precise ADR when changing wire/API semantics, Session/Connection/Route
-lifetime, transport/path selection, reconnect/resume/recovery, Delivery ordering,
-crypto/key lifecycle, Relay/direct selection, WebRTC media/data plane, or native
-task ownership. Do not scan the whole ADR directory. ADR-011 was duplicated
-between two Accepted files; it was disambiguated on 2026-08-15 by renumbering
-file resume to ADR-030. Always cite the complete filename:
-
-- [File resume ADR](../../../../docs/adr/ADR-030-file-resume.md)
-- [Transfer Session route dispatch ADR](../../../../docs/adr/ADR-011-transfer-session-route-dispatch.md)
-- [Telemetry & Observability ADR](../../../../docs/adr/ADR-033-telemetry-data-tracking-architecture.md)
-
-## Common task simulations
-
-1. **Flutter UI:** Client overview/current state + owning package contracts;
-   add Client architecture only for shared ownership/public-boundary work.
-2. **Rust QUIC:** SDK overview/current state + Transport and Routing + the
-   precise QUIC/NAT/routing ADRs; add Client only for public FFI/Dart API changes.
-3. **Backend API:** Backend overview/current state + Relay README; add Front for
-   administrator-consumer changes or SDK for device/wire changes.
-4. **Front Admin:** Front overview + Front README; add Backend only when the API,
-   authentication, or session contract changes.
-5. **Client↔SDK API:** Client and SDK overview/current state/architecture,
-   both package contracts, ownership/dependency documents, and precise ADRs.
-6. **Relay architecture:** Backend + SDK architecture/current state + Transport
-   and Routing + Relay README + precise Relay/Session/E2EE ADRs; add Front only
-   if the dashboard or administrator API changes.
-7. **Telemetry & Observability:** ADR-033 + [architecture](../../../../docs/数据埋点架构.md) + Client/Backend/Front overviews +
-   `contracts/telemetry/` catalog; add owning package contracts for UI or Storage
-   work.
-
-Code and tests remain authoritative for current behavior. Accepted ADRs remain
-authoritative for architectural decisions.
+Code/tests remain current-behavior truth; Accepted ADRs remain decision truth.

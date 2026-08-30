@@ -196,6 +196,9 @@ func TestMySQLQueryEventsSupportsAllFilters(t *testing.T) {
 	record.Severity = SeverityError
 	record.Properties = map[string]any{"stage": "query"}
 	record.Error = &TelemetryError{ErrorCode: "SSH_AUTH_FAILED", Category: "ssh", TerminalFailure: true}
+	// Direct Store callers use the zero-value compatibility path; the Service
+	// stamps an authoritative server receive time before calling the Store.
+	record.ReceivedAt = time.Time{}
 	start := time.Now().UTC().Add(-time.Second)
 	if acks, err := store.IngestBatch(context.Background(), []TelemetryEnvelope{record}); err != nil {
 		t.Fatalf("seed filter record: %v", err)

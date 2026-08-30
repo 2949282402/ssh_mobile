@@ -2,132 +2,116 @@
 
 # Validation Matrix
 
-Choose the smallest set that exercises the changed owner and its public
-consumers. Run broader gates when ownership, dependency, lifecycle, protocol,
-generated artifacts, or shared behavior changes.
+Choose the smallest gate covering the changed owner and public consumers; widen
+only for a changed dependency, lifecycle, protocol, generated artifact, or
+shared boundary. Run only commands actually available on the host.
 
-## Environment
+## Host and always-on checks
 
-Select validation from the actual host. Linux and WSL run
-`scripts/bash/**/*.sh`; native Windows runs `scripts/powershell/**/*.ps1` in
-PowerShell 7. Never cross-launch Windows tools from WSL or require Bash from
-native Windows. Keep platform caches and temporary directories isolated.
+- Linux/WSL uses `scripts/bash/**/*.sh`; native Windows uses the matching
+  `scripts/powershell/**/*.ps1` in PowerShell 7. Never cross-launch toolchains.
+- Keep OS-specific PATH, `PUB_CACHE`, `.dart_tool`, Cargo/Rustup caches, build
+  artifacts, and temporary directories separate. Windows coverage clears WSL
+  `TMPDIR` and uses native TEMP/TMP. Windows pins are Flutter 3.47.0/Dart 3.13.0
+  and Rust 1.97.1 MSVC; configure with
+  [`configure_windows_toolchain.ps1`](../../../../scripts/powershell/platform/configure_windows_toolchain.ps1)
+  and an explicit `-FlutterRoot` (only `-PersistUserPath` changes user PATH).
+- `INSTALL_FAILED_USER_RESTRICTED` after a successful Android build means device
+  policy blocked installation, not a Gradle compile failure. Release builds keep
+  cleartext traffic disabled; debug/profile exceptions are local test settings.
+- Always run `git diff --check` and `git status --short`, then inspect the final
+  diff for unrelated work, secrets, generated noise, stale docs/paths, and
+  accidental API/dependency changes.
 
-Windows-native validation is a separate, explicit environment rather than a
-WSL escape hatch:
+## Source, tests, and coverage rules
 
-- Keep WSL as the source of truth for Linux CI and ordinary
-  format/analyze/test/build checks. Do not invoke `powershell.exe`, `cmd.exe`,
-  Windows `.bat`/`.cmd` launchers, or Windows `dart`/`flutter`/`cargo`/`go`/`node`
-  binaries from those WSL checks.
-- Use a native Windows PowerShell 7 (`pwsh.exe`) session or a `windows-latest` CI job only
-  for checks that genuinely need Windows, such as the App client coverage run
-  when the WSL Flutter VM Service is unavailable. Report that result as a
-  Windows check; it does not turn a skipped WSL check into a Linux pass.
-- Keep the Windows toolchain aligned with the repository pins (currently
-  Flutter 3.47.0/Dart 3.13.0 and Rust 1.97.1 MSVC). Run
-  [`scripts/powershell/platform/configure_windows_toolchain.ps1`](../../../../scripts/powershell/platform/configure_windows_toolchain.ps1)
-  from native PowerShell 7 with an explicit `-FlutterRoot`; its default is
-  process-scoped and `-PersistUserPath` is the only option that changes the
-  user PATH.
-- Keep OS-specific `PATH`, `PUB_CACHE`, `.dart_tool`, Cargo/Rustup caches, and
-  temporary directories isolated. Native Windows coverage must use a native
-  `TEMP`/`TMP` path and clear an inherited WSL `TMPDIR`; never share Linux
-  build artifacts or package caches with Windows tooling.
+Every new hand-written production file needs an independent test in the owning
+test directory and at least 90% file-level line coverage. Generated output,
+documentation, configuration, test-only files, and coverageless platform
+boilerplate may be excluded only with an owner-report reason. Production files
+over 500 lines require a responsibility-based split, never numbered chunks or
+mechanical over-splitting. Tests/fixtures use `test/`/`tests/` with Go `_test.go`,
+Rust `#[cfg(test)]`/`src/tests`, and TypeScript `.test`/`.spec` exceptions.
 
-## Always
+Observable behavior follows the test-first procedure in
+[Maintenance Workflow](workflow.md). Documentation-only workflow changes use
+documentation checks, not fabricated Red/Green evidence.
 
-```bash
-git diff --check
-git status --short
-```
+## Repository CI and PR handoff
 
-Review the final diff for unrelated work, secrets, generated noise, stale
-documentation, and accidental public API/dependency changes.
-
-## New production source files
-
-Every newly added hand-written production source file requires corresponding
-independent tests in the owning test directory and at least 90% file-level
-line coverage. This file-level rule applies alongside the aggregate owner
-thresholds in the coverage scripts. Generated output, documentation, configuration,
-test-only files, and platform boilerplate without coverable business logic may
-be excluded only when the owner report records the reason; otherwise the
-change is incomplete.
-
-Hand-written production files over 500 lines require a reviewable split by
-functional or responsibility boundary. The split must not be a mechanically
-numbered sequence such as `part_01`/`file_01`, and cohesive code must not be
-over-split merely to reduce the line count. Repository-owned test suites and
-fixtures use dedicated `test/` or `tests/` roots; Go `_test.go`, Rust
-`#[cfg(test)]`/`src/tests`, and colocated TypeScript `.test`/`.spec` files are
-the documented language-native same-package exceptions.
-
-## Repository local CI
-
-Run the aggregate only when the user explicitly mentions or requests local CI.
-For routine bug fixes and scoped feature work, run focused package tests and
-targeted gates (`--only`/`-Only`) only when the user requests them or they are
-needed for the requested change. Local CI is opt-in: do not run the aggregate
-as an automatic PR prerequisite. GitHub Actions is the CI authority for a
-user-requested PR; push/open the PR to trigger its independent parallel jobs.
-
-Use the aggregate for the actual host:
+Local aggregate CI is opt-in: run it only when the user explicitly mentions or
+requests local CI. Otherwise use the owning package's focused format/analyze/
+test gates only when requested or needed for the change. GitHub Actions is the
+authoritative CI for a user-requested PR; its jobs are independent and parallel.
 
 ```bash
 bash scripts/bash/ci/full_test.sh
-# Native Windows PowerShell 7:
+# native Windows PowerShell 7:
 # & .\scripts\powershell\ci\full_test.ps1
 ```
 
-For repeat runs with unchanged dependencies, `--no-bootstrap` avoids redundant
-dependency installation. The script's default WSL profile keeps known
-platform/toolchain gaps explicit; a `GAP` is incomplete validation, not a
-passing check. When tests, package membership, project structure, CI jobs,
-generated checks, exclusions, timeouts, or Linux environment assumptions
-change, update both aggregate scripts in the same change and run the affected
-jobs with `--only`/`-Only` before broader validation. Same-relative-path
-`.sh`/`.ps1` pairs must keep behavior and exit semantics aligned.
+Use `--no-bootstrap`/`-NoBootstrap` for repeat runs. If an explicit local run
+hits host/toolchain/container/permission/resource limits, retain the `GAP` or
+timeout and stop; it is not PASS. After the minimum preflight, push/open the
+requested PR; do not poll or interpret GitHub results unless the user asks, and
+do not approve/merge. The user reports CI results and decides merging. Changes
+to tests, package membership, structure, CI jobs, generated checks, exclusions,
+timeouts, or environment assumptions require synchronized same-relative `.sh`/
+`.ps1` updates and affected `--only`/`-Only` checks.
 
-When the user explicitly requests local CI and it is blocked by a host,
-toolchain, container, permission, or local-resource problem, preserve the
-`GAP`/timeout evidence and do not repeatedly extend the local run. For a
-user-requested PR, complete the minimum preflight, push the branch, and use the
-independent parallel jobs in
-[`.github/workflows/flutter.yml`](../../../../.github/workflows/flutter.yml) as
-the authoritative CI surface. After the PR/CI handoff, do not poll or
-interpret GitHub results unless the user asks; the user reports the outcomes
-and decides whether merging is allowed. Never report an unexecuted or
-incomplete check as `PASS`.
+## Language and owner gates
 
-## Formatting
-
-All changed code must be formatted before completion; the CI pipeline enforces
-the same gates, so submitting unformatted code fails the build. Run the owning
-package's format gate (its README/AGENTS lists the exact command) and the
-CI-mirrored checks below:
+Formatting commands:
 
 ```bash
-# Dart/Flutter workspace — format the changed lib/test/tool dirs (CI mirrors
-# this in apps/ssh_mobile_full and via melos on the SDK packages):
 dart format --output=none --set-exit-if-changed <changed dirs>
-dart run melos run format   # repo-wide Dart workspace formatting
-# Rust:
-cargo fmt --all -- --check
-# Go:
-gofmt -l <changed dirs>   # fix any listed files with gofmt -w
-# Front (TypeScript/React):
-npm run lint   # plus the package's prettier/format command if present
+dart run melos run format                 # workspace when broadly affected
+cargo fmt --all -- --check                # Rust
+gofmt -l <changed dirs>                   # Go; fix with gofmt -w
+npm run lint                              # Front, plus manifest formatter
 ```
 
-If a changed file is not formatted, fix it with the formatter (`dart format`,
-`cargo fmt`, `gofmt -w`, the front prettier command) and re-run the gate until
-clean. Do not commit unformatted code, and never bypass the gate with a
-no-op/`--set-exit-if-changed` false pass.
+Use the owning README/AGENTS for the package analyze/test command. Typical Dart
+package gates are `dart analyze` or `flutter analyze`, plus `dart test` or
+`flutter test`; run focused tests
+before the package suite. Cross-workspace changes may use `dart pub get` and the
+Melos format/analyze/test commands. Native Flutter/Android/Windows/macOS/iOS or
+device gates run only when that boundary or the user requires them.
 
-## Agent knowledge and documentation
+Architecture/ownership/dependency/compatibility changes may require:
 
-After the Agent documentation checker exists, run:
+```bash
+dart run tool/architecture_check.dart
+dart run tool/check_file_sizes.dart
+dart run tool/check_module_dependencies.dart
+dart run tool/check_resource_owners.dart
+dart run tool/compatibility_check.dart
+```
+
+For Drift/model changes run the owning `build_runner` and review committed
+generated output. For icon-source changes run `dart run tool/generate_app_icons.dart`
+and review generated platform assets. Edit generator inputs, never only output.
+
+## Domain commands
+
+Rust (`native/network_core/`):
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+```
+
+Protocol, FFI, Session, Delivery, crypto, route, Relay, or WebRTC changes also
+run affected Dart checks and exact contract/ADR review. Relay (`relay/`) uses
+`gofmt`, `go test ./...`, `go vet ./...`; Front (`front/`) uses only manifest-
+provided `npm ci`, `npm run typecheck`, `npm run lint`, `npm run test:run`, and
+`npm run build` as applicable. API/schema changes validate both producer and
+consumer.
+
+## Agent documentation and coverage gates
+
+When Agent knowledge changes, run the documentation checker suite:
 
 ```bash
 dart format --output=none --set-exit-if-changed tool test/tool
@@ -137,127 +121,27 @@ dart run tool/check_agent_docs.dart
 dart run test/tool/ci_workflow_test.dart
 ```
 
-Docs-only facts also require the owning package or Domain source to be checked;
-a Markdown link check cannot establish semantic correctness.
-
-## Test-first evidence
-
-For observable or automatable behavior changes, run the new focused test before
-production edits and keep the failure output long enough to verify that Red
-corresponds to the intended contract. After Green, rerun that test and the
-owning package suite. Add the existing contract, integration, acceptance, race,
-storage, or platform gate
-when the behavior crosses an owner boundary; a mocked unit test does not replace
-that evidence. The procedure and exceptions are canonical in
-[Maintenance Workflow](workflow.md).
-
-Documentation-only workflow changes do not fabricate Red/Green evidence. They
-use the Agent knowledge checks above plus the always-required final diff checks.
-
-## Flutter/Dart Workspace Member
-
-From the owning package or App, use its README/AGENTS commands. The usual gate is:
+For large refactors, coverage changes, or release review, use independent owner
+gates from the repository root:
 
 ```bash
-dart format --output=none --set-exit-if-changed lib test
-flutter analyze --no-pub
-flutter test --no-pub
+bash scripts/bash/coverage/front_coverage.sh
+bash scripts/bash/coverage/backend_coverage.sh
+bash scripts/bash/coverage/client_coverage.sh
+bash scripts/bash/coverage/sdk_coverage.sh
 ```
 
-Use `dart analyze`/`dart test` for pure Dart packages. Run a focused test first,
-then the package suite. For cross-workspace changes:
+Native Windows uses matching `scripts\powershell\coverage\` files. Each gate
+enforces 90% for its documented scope; `coverage_test.sh`/`.ps1` remain client
+aliases. Scope, Docker services, and the WSL Flutter workaround are in
+[`docs/COVERAGE_POLICY.md`](../../../../docs/COVERAGE_POLICY.md). The Windows
+MSI/client coverage procedure is summarized in
+[`client/current-state.md`](../../../../memory_docs/client/current-state.md): use
+native PowerShell 7/paths, pinned SDKs, native TEMP/TMP, and keep any WiX ICE
+gap explicit; `-SuppressIceValidation` is an explicit host-gap escape hatch.
 
-```bash
-dart pub get
-dart run melos run format
-dart run melos run analyze
-dart run melos run test
-```
+## Reporting gaps
 
-## Architecture and ownership
-
-Run the relevant repository checks for Feature dependencies, `/src/` imports,
-service locators, resource ownership, or compatibility changes:
-
-```bash
-dart run tool/architecture_check.dart
-dart run tool/check_file_sizes.dart
-dart run tool/check_module_dependencies.dart
-dart run tool/check_resource_owners.dart
-```
-
-The file-size command is a review report, not a mechanical split gate.
-
-## Generated Dart and assets
-
-After a Drift/model change, run the owning package's `build_runner` command and
-verify the committed generated file. From the Full App:
-
-```bash
-dart run build_runner build
-git diff --exit-code -- lib/services/app_log_database.g.dart
-```
-
-After icon-source changes:
-
-```bash
-dart run tool/generate_app_icons.dart
-git diff --exit-code -- assets android ios macos web windows/runner/resources/app_icon.ico
-```
-
-Edit generator inputs, never only generated output.
-
-## Rust network SDK
-
-From `native/network_core/`, select focused crate tests first, then as needed:
-
-```bash
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
-```
-
-Protocol, FFI, Session, Delivery, crypto, route, Relay, or WebRTC changes also
-require the affected Dart package checks and the precise fault/ADR review.
-
-## Relay and Front
-
-From `relay/` for Go changes:
-
-```bash
-gofmt -w ./cmd ./internal
-go test ./...
-go vet ./...
-```
-
-From `front/` for React/TypeScript changes:
-
-```bash
-npm ci
-npm run typecheck
-npm run lint
-npm run test:run
-npm run build
-```
-
-Only run commands actually provided by the current package manifest. API/schema
-changes validate both producer and consumer.
-
-## Platform and product gates
-
-Use Full App `flutter analyze`/`flutter test` for shared Flutter behavior.
-Validate the Terminal-only dependency crop from `apps/ssh_mobile_terminal/`
-when its manifest, composition, or lifecycle changes. Run Android, Windows,
-macOS, iOS, installer, or device checks only when the changed platform or user
-request requires them.
-
-`INSTALL_FAILED_USER_RESTRICTED` after a successful Android build means the
-device blocked installation; it is not a Gradle compile failure. Release builds
-keep cleartext traffic disabled; debug/profile exceptions are local testing
-configuration, not a production-policy change.
-
-## Reporting a blocked check
-
-Record the exact command, where it was run, the first actionable failure, and
-whether the problem is product code, test code, toolchain/environment, or an
-out-of-scope device/service. Never translate “not run” into “passed.”
+For every blocked or omitted check record the exact command, host/path, first
+actionable failure, and whether it is product, test, toolchain/environment, or
+out-of-scope service. Never translate “not run” into “passed”.
