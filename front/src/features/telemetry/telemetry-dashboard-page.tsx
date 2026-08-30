@@ -93,9 +93,9 @@ function latencyDetailLabel(samples: number | undefined): string {
 }
 
 function redisStatusDetail(status: string): string {
-  if (status === 'active') return '最近诊断日志实时缓存正常';
-  if (status === 'fallback_mysql') return 'Redis 探活失败，诊断流已降级至 MySQL 存储';
-  return 'Redis 未启用，诊断流直接查询 MySQL 持久层';
+  if (status === 'active') return '最近诊断日志热缓存正常';
+  if (status === 'fallback_mysql') return 'Redis 探活失败，诊断数据已降级至 MySQL 存储';
+  return 'Redis 未启用，诊断数据直接查询 MySQL 持久层';
 }
 
 function latencyAccent(value: number | undefined): 'teal' | 'amber' | 'coral' {
@@ -232,7 +232,7 @@ export function TelemetryDashboardPage() {
             mono
           />
           <MetricTile
-            label="Redis 诊断流状态"
+            label="Redis 诊断热缓存状态"
             value={health.redisCacheStatus}
             detail={redisStatusDetail(health.redisCacheStatus)}
             accent={health.redisCacheStatus === 'active' ? 'teal' : 'amber'}

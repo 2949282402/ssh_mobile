@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-27
+> 最新更新时间：2026-08-30
 
 # ADR-033：全端数据埋点与可观测性架构 (Telemetry & Observability Architecture)
 
@@ -44,10 +44,11 @@ Accepted
    - 在客户端 Developer 调试面板中展示实时存储健康指标与缓存溢出警告。
    - 提供“一键重传”能力，保持原始 `eventId`、`occurredAt`、`sessionId`、`traceId` 重新上报，由服务端幂等收据保证去重。
 
-6. **服务端动态策略、数据保留与诊断流缓存 (Dynamic Policy, Retention & Redis Stream Cache)**：
+6. **服务端动态策略、数据保留与诊断热缓存 (Dynamic Policy, Retention & Redis Hot Cache)**：
    - 服务端下发版本化动态策略控制上报阈值、时间间隔与特殊触发场景（`highPriorityError`、`appBackground`、`networkRecovered`、`appForegroundWithBacklog`）。
    - 数据保留（Retention）以服务端可信时间戳 `receivedAt` 为准，支持按时间与总行数双维度小批量清洗。
-   - Analytics Redis 仅作为最新诊断日志流的有界热缓存，当 Redis 故障或未配置时自动降级查询 MySQL，不影响数据入库和聚合指标。
+   - Analytics Redis 仅作为最新诊断日志的有界热缓存；当前适配器使用 Redis list，
+     当 Redis 故障或未配置时自动降级查询 MySQL，不影响数据入库和聚合指标。
 
 7. **管理后台可视化套件 (Admin Telemetry Suite)**：
    - 建设概览仪表盘（Dashboard）、事件浏览器（Event Explorer）、诊断日志流（Diagnostic Stream）及策略与数据保留配置页（Settings）。

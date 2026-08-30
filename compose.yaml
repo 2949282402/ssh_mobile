@@ -77,7 +77,7 @@ services:
       ADMIN_TRUSTED_PROXY_CIDRS: ${ADMIN_TRUSTED_PROXY_CIDRS:-}
       ADMIN_RELAY_URL: "http://relay:${RELAY_INTERNAL_PORT:-8080}"
       ADMIN_RELAY_INTERNAL_TOKEN: ${ADMIN_RELAY_INTERNAL_TOKEN:-${RELAY_INTERNAL_TOKEN:?set internal token}}
-      # Analytics/telemetry backend: MySQL (durable events) and Redis (buffer).
+      # Analytics/telemetry backend: MySQL (durable events) and Redis (diagnostic hot cache).
       # Analytics credentials and endpoints are deployment inputs. Requiring
       # them here prevents a production container from silently selecting a
       # predictable password or an unavailable in-memory telemetry path.
@@ -125,7 +125,7 @@ services:
     networks:
       - analytics_state
 
-  # Analytics Redis buffer for the telemetry ingest (admin-api backend).
+  # Analytics Redis hot cache for recent telemetry diagnostics (admin-api backend).
   # Resource-capped (64mb, noeviction) and isolated on analytics_state.
   analytics-redis:
     image: redis:7-alpine

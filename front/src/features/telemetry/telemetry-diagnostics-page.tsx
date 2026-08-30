@@ -100,7 +100,7 @@ export function TelemetryDiagnosticsPage() {
         <PageHeader
           eyebrow="Telemetry / Diagnostics"
           title="诊断日志"
-          description="查看全端异常捕获、故障追踪与实时调试诊断日志。"
+          description="查看全端异常捕获、故障追踪与近实时调试诊断日志。"
         />
         <ErrorState description={errorMsg} onRetry={() => void diagQuery.refetch()} />
       </div>
@@ -119,7 +119,7 @@ export function TelemetryDiagnosticsPage() {
       <PageHeader
         eyebrow="Telemetry / Diagnostics"
         title="诊断日志"
-        description="全端异常报错堆栈、链路诊断日志实时流与故障分析。"
+        description="全端异常报错堆栈、链路诊断日志与故障分析（每 5 秒轮询更新）。"
         action={(
           <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
             <Badge tone={source === 'redis_cache' ? 'online' : 'warning'} dot>
@@ -141,7 +141,7 @@ export function TelemetryDiagnosticsPage() {
         <Badge tone="neutral">每 5 秒自动轮询更新</Badge>
         <span>
           {source === 'redis_cache'
-            ? '从 Redis Stream 诊断流缓存高速读取最新 1000 条诊断记录'
+            ? '从 Redis 诊断热缓存读取最近诊断记录'
             : 'Redis 暂未启用或降级，直接查询 MySQL 持久层'}
         </span>
       </div>
@@ -227,7 +227,7 @@ export function TelemetryDiagnosticsPage() {
         <div className="section-heading">
           <div>
             <p className="eyebrow">Diagnostic Stream</p>
-            <h2>日志流条目</h2>
+            <h2>诊断日志条目</h2>
           </div>
           <span style={{ color: 'var(--muted)', fontSize: '0.9rem' }}>
             第 {page} 页 / 共 {totalPages} 页 (共 {total} 条)
@@ -439,7 +439,7 @@ function DiagnosticsSkeleton() {
       <PageHeader
         eyebrow="Telemetry / Diagnostics"
         title="诊断日志"
-        description="正在读取全端诊断日志流..."
+        description="正在读取全端诊断日志..."
       />
       <section className="panel">
         <Skeleton className="skeleton-heading" />

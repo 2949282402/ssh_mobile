@@ -1,4 +1,4 @@
-> Last updated: 2026-08-27
+> Last updated: 2026-08-30
 
 # Client Overview
 
@@ -11,7 +11,8 @@ Core, Feature, and SSH infrastructure:
 - `packages/features/`: maintained Feature implementations (including `feature_developer` telemetry diagnostics);
 - `packages/infrastructure/ssh_core/`: App-scoped SSH contracts and runtime boundary.
 
-Client Telemetry architecture adheres to [ADR-033](../../docs/adr/ADR-033-telemetry-data-tracking-architecture.md):
+Client Telemetry follows the [Telemetry architecture design](../../docs/数据埋点架构.md)
+and [ADR-033](../../docs/adr/ADR-033-telemetry-data-tracking-architecture.md):
 - Single source of truth catalog validation against `contracts/telemetry/events.yaml` and `error_codes.yaml`.
 - Orthogonal dual state machine (`syncState`: pending | synced | rejected; `logicalDeletedAt`: null | timestamp) with non-loss FIFO retention.
 - Developer panel exposes storage health metrics, cache overflow alerts, and exact replay (`eventId`, `occurredAt`, `sessionId`, `traceId` preserved).

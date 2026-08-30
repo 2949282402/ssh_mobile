@@ -1,4 +1,4 @@
-> Last updated: 2026-08-28
+> Last updated: 2026-08-30
 
 <p align="center">
   <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile icon" width="112" />
@@ -53,7 +53,7 @@ ICE, SDP, sockets, and Relay signaling remain native/App Shell owned.
 - **Server monitoring** for performance, ports, applications, services, users, and active sessions.
 - **AI chat and agent execution** with streaming output, Plan Mode, approval-controlled tools, persistent history, message branching, context compression, RAG, skills, and execution traces.
 - **Local MCP server** support on desktop platforms, including generated configuration for Codex, Claude Code, and Gemini CLI; it supports `reviewConfiguredTools` (default) and `trustedAgent` modes while always enforcing its loopback-only and hard security boundaries.
-- **Telemetry & Data Tracking** with decoupled observability architecture ([ADR-033](docs/adr/ADR-033-telemetry-data-tracking-architecture.md)), contract-driven catalog validation (`contracts/telemetry/`), client dual state machine (`pending`/`synced`/`rejected` + `logicalDeletedAt`) non-loss storage, permanent idempotency receipts (`telemetry_ingest_receipts`), dynamic upload policies, Redis Stream diagnostic hot caching, and React admin observability suite.
+- **Telemetry & Data Tracking** with decoupled observability architecture ([design](docs/数据埋点架构.md), [ADR-033](docs/adr/ADR-033-telemetry-data-tracking-architecture.md)), contract-driven catalog validation (`contracts/telemetry/`), client dual state machine (`pending`/`synced`/`rejected` + `logicalDeletedAt`) non-loss storage, permanent idempotency receipts (`telemetry_ingest_receipts`), dynamic upload policies, Redis diagnostic hot caching, and React admin observability suite.
 - **Developer panel** with opt-in runtime, memory, FPS, frame-jank, build-mode, platform, Dart-version, and known lifecycle-resource diagnostics; its floating entry can be configured independently.
 - **Secure storage** using platform secure storage, encrypted Drift fields, encrypted preview caches, secret redaction, and immutable approval targets.
 - **Adaptive layouts** for phones, tablets, and desktop environments, including dedicated 1.5K and 2K Android QA profiles.

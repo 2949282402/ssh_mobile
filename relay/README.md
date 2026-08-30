@@ -1,4 +1,4 @@
-> Last updated: 2026-08-28
+> Last updated: 2026-08-30
 
 # SSH Mobile Control, Relay, and Admin Backend Services
 
@@ -18,7 +18,10 @@ This module contains two standalone Go services for SSH Mobile:
    - Handles administrator authentication, memory session storage, and rate limiting.
    - Serves the public Admin REST API (`/api/admin/v1/*`) consumed by the React console in `front/`.
    - Communicates with Relay via `RelayManagementClient` over private HTTP (`/internal/v2/*`).
-   - Holds no database, Redis, or device credential keys.
+   - Holds no Relay device database, live-state Redis, or device credential keys.
+      When telemetry is enabled, this process uses the isolated Analytics MySQL
+      store and optional Redis hot cache through `internal/telemetry`; those are
+      not Relay state.
 
 The React + Vite + TypeScript administration console is in `../front/` and is served as static assets by the `front` Compose service behind Caddy.
 
@@ -56,7 +59,7 @@ There is no `/v1/connect` route; only the V2 control and relay data routes are s
   `eventsTrend` is Analytics-only and uses UTC hourly buckets for `1d`/`24h`, daily buckets for
   `7d`/`30d`. A zero metric denominator means no data, not a 0% or 100% result.
 - `GET /api/admin/v1/telemetry/events` — Filterable telemetry event explorer.
-- `GET /api/admin/v1/telemetry/diagnostics` — Real-time diagnostic stream from Redis/MySQL.
+- `GET /api/admin/v1/telemetry/diagnostics` — Near-real-time diagnostic feed from a Redis hot cache with MySQL fallback.
 - `GET /api/admin/v1/telemetry/settings` — Read dynamic policy and retention settings.
 - `PUT /api/admin/v1/telemetry/settings` — Update dynamic policy and retention settings.
 

@@ -143,7 +143,7 @@ describe('Telemetry admin boundary states', () => {
 
     expect(screen.getByText('UNHEALTHY')).toBeInTheDocument();
     expect(screen.getByText('fallback_mysql')).toBeInTheDocument();
-    expect(screen.getByText('Redis 探活失败，诊断流已降级至 MySQL 存储')).toBeInTheDocument();
+    expect(screen.getByText('Redis 探活失败，诊断数据已降级至 MySQL 存储')).toBeInTheDocument();
     expect(screen.getAllByText('1.00s')).toHaveLength(2);
     expect(screen.getAllByText('1.50s')).toHaveLength(2);
     expect(screen.getAllByText('2.00s')).toHaveLength(2);
@@ -232,7 +232,7 @@ describe('Telemetry admin boundary states', () => {
 
     expect(screen.getByText('DEGRADED')).toBeInTheDocument();
     expect(screen.getByText('disabled')).toBeInTheDocument();
-    expect(screen.getByText('Redis 未启用，诊断流直接查询 MySQL 持久层')).toBeInTheDocument();
+    expect(screen.getByText('Redis 未启用，诊断数据直接查询 MySQL 持久层')).toBeInTheDocument();
     expect(screen.getAllByText('No data').length).toBeGreaterThanOrEqual(8);
     expect(screen.getAllByText('No operations recorded in this time range')).toHaveLength(1);
 

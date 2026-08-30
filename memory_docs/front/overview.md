@@ -1,4 +1,4 @@
-> Last updated: 2026-08-28
+> Last updated: 2026-08-30
 
 # Front Overview
 
@@ -14,9 +14,9 @@ Maintained feature surfaces:
 - Dashboard: active devices, relay connections, bandwidth, and presence.
 - Devices: registered device catalog, online status, and revocation.
 - Telemetry Suite:
-  - Overview: ingest totals, error rates, device counts, and hourly trends.
+  - Overview: ingest totals, error rates, device counts, and UTC hourly/daily trends selected by time range.
   - Event Explorer: filterable audit log by event name, severity, feature, and device.
-  - Diagnostics Stream: near-realtime diagnostic log feed backed by Redis Stream hot cache / MySQL.
+  - Diagnostics Stream: periodically refreshed diagnostic log feed backed by a Redis hot cache with MySQL fallback.
   - Policy & Retention Settings: dynamic upload policy editor and data retention controls.
 
 Start with:
@@ -24,6 +24,7 @@ Start with:
 - the [Front README](../../front/README.md);
 - the [Front package manifest](../../front/package.json);
 - the [Backend overview](../backend/overview.md) when an API or authentication contract changes;
+- the [Telemetry architecture design](../../docs/数据埋点架构.md) for cross-layer boundaries;
 - the [Telemetry ADR](../../docs/adr/ADR-033-telemetry-data-tracking-architecture.md) for telemetry contracts and schema.
 
 Administrator credentials, enrollment tokens, and sessions must not be stored

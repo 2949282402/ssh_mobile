@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-28
+> 最新更新时间：2026-08-30
 
 # SSH Mobile 控制、Relay 与 Admin 后端服务
 
@@ -18,7 +18,9 @@
    - 处理管理员登录认证、内存 Session 会话存储以及登录防爆破限流。
    - 对外提供 `front/` 控制台消费的公开 Admin REST API（`/api/admin/v1/*`）。
    - 通过 `RelayManagementClient` 在私有网络中调用 Relay 的内部管理接口（`/internal/v2/*`）。
-   - 不持有数据库、Redis 或设备签名凭据密钥。
+   - 不持有 Relay 设备数据库、在线状态 Redis 或设备签名凭据密钥。
+      启用 Telemetry 时，Admin 进程通过 `internal/telemetry` 使用隔离的
+      Analytics MySQL 与可选 Redis 热缓存；这些不是 Relay 业务状态。
 
 React + Vite + TypeScript 前端控制台位于 `../front/`，在 Caddy 背后由 `front` 容器提供静态资源。
 
@@ -50,7 +52,7 @@ React + Vite + TypeScript 前端控制台位于 `../front/`，在 Caddy 背后�
 - `POST /api/admin/v1/access/enrollment-token/rotate` — 轮换注册 Token。
 - `GET /api/admin/v1/telemetry/overview` — 埋点监控大盘指标与错误分类分布。
 - `GET /api/admin/v1/telemetry/events` — 多维过滤埋点事件浏览器。
-- `GET /api/admin/v1/telemetry/diagnostics` — 基于 Redis/MySQL 的近实时诊断日志流。
+- `GET /api/admin/v1/telemetry/diagnostics` — 基于 Redis 热缓存、失败时回退 MySQL 的近实时诊断数据流。
 - `GET /api/admin/v1/telemetry/settings` — 获取当前动态策略与保留策略。
 - `PUT /api/admin/v1/telemetry/settings` — 更新动态上报策略与数据保留配置。
 

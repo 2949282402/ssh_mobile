@@ -1,4 +1,4 @@
-> Last updated: 2026-08-29
+> Last updated: 2026-08-30
 
 # Backend Current State
 
@@ -19,7 +19,9 @@ Docker Compose:
      overview, device listing, revocation, enrollment token rotation, and telemetry administrative management (`/api/admin/v1/telemetry/*`).
    - Communicates with Relay via `RelayManagementClient` calling `/internal/v2/*`.
    - Maintains memory-local session store with single-replica constraint.
-   - In MySQL storage mode, telemetry administrative queries are served directly from the shared MySQL `telemetry.Store` and Redis cache.
+   - When an Analytics MySQL DSN is configured, telemetry administrative queries are
+     served by the isolated Analytics `telemetry.Store`; Redis is only a best-effort
+     recent-diagnostics cache.
 
 Device-plane durable state (enrollment, revocation) is behind a `Storage`
 interface: the default `memory` mode is process-local and restart clears it;
@@ -157,16 +159,20 @@ Current boundaries:
 - Docker Compose with Caddy is the supported production topology; a `storage`
   compose profile adds MySQL and Redis for the durable/Redis shared-state stack
   (single Relay Control instance + single Relay Data instance).
-- Telemetry & Observability Pipeline (`internal/telemetry`) is decoupled from Relay core:
+- Telemetry & Observability Pipeline (`internal/telemetry`) runs inside `admin-api`,
+  remains a separate logical boundary, and is decoupled from Relay core:
   - Ingestion (`POST /api/v1/telemetry/ingest`), authentication (`POST /api/v1/telemetry/auth`),
     and dynamic policy (`GET /api/v1/telemetry/policy`) run on dedicated HTTP endpoints.
   - Device authentication uses HMAC-SHA256 proofs (`telemetry:auth:<deviceId>:<expEpoch>` signed with `sha256Hex(secret)` derived key) within ±120s clock skew window and issues 2-hour scoped bearer tokens `<exp>.<hmac(tokenKey, "telemetry:auth:<deviceId>:<exp>")>`. Device ID is validated against `^[A-Za-z0-9._-]{1,128}$` to prevent delimiter-collision forgery, matching the Relay bootstrap identity bound and the telemetry MySQL VARCHAR(128) columns.
   - Ingestion enforces device binding via `X-Device-Id` and token HMAC verification.
-  - Fail-closed guarantees: missing/short `TELEMETRY_AUTH_SECRET` (<16 chars) or MySQL store failure returns 503 Service Unavailable, preserving client-side pending telemetry records.
-  - Ingestion processes batch records atomically: each record writes to `telemetry_events` (or
-    `telemetry_diagnostics`) and inserts permanent `telemetry_ingest_receipts` (with
-    `event_id`, `received_at`, `status`). Duplicate `event_id`s return `already_seen` without
-    mutating data rows.
+  - Fail-closed guarantees: public device authentication/ingest returns 503 when
+    `TELEMETRY_AUTH_SECRET` is missing or shorter than 16 characters, and telemetry
+    persistence failures never silently switch to an in-memory store; client-side
+    pending records remain available for retry.
+  - Accepted records are written atomically to `telemetry_events` (diagnostics use
+    `record_type=diagnostic`) together with permanent `telemetry_ingest_receipts`
+    (`event_id`, `device_id`, `received_at`). Duplicate `event_id`s return
+    `already_seen` without mutating raw rows.
   - Public ingest is bounded before persistence: request bodies are capped at 1 MiB, batches at
     100 records, database writers use a non-blocking 4-slot semaphore (configurable only within
     4–8), and authenticated device token buckets use bounded cardinality plus TTL cleanup. Writer
@@ -177,10 +183,11 @@ Current boundaries:
     duplicate, and accepted ACKs with the same event-id receipt semantics.
   - Scheduled retention background worker purges data based on trusted server `received_at`
     (time window and row count bounds) while preserving all idempotency receipts permanently.
-  - Redis Stream hot cache provides sub-millisecond retrieval of recent diagnostic logs for
-    admin streaming, automatically falling back to MySQL when Redis is offline or unconfigured.
+  - A bounded Redis hot cache provides best-effort retrieval of recent diagnostic logs
+    for the admin feed; filtered or unavailable-cache queries fall back to MySQL. The
+    cache is not an ingest queue or an authoritative metrics source.
   - Admin endpoints (`/api/admin/v1/telemetry/*`) provide aggregated overview metrics, filterable
-    event explorer, diagnostic log stream, and dynamic policy/retention settings management.
+    event explorer, diagnostic log feed, and dynamic policy/retention settings management.
 
 Endpoint definitions, environment variables, deployment instructions, and the
 operational contract remain owned by the [Relay README](../../relay/README.md).

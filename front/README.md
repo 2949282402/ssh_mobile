@@ -1,11 +1,12 @@
-> Last updated: 2026-08-28
+> Last updated: 2026-08-30
 
 # SSH Mobile Relay Admin & Observability Console
 
 This directory contains the standalone React + Vite + TypeScript administration
 console for SSH Mobile Relay and the Telemetry & Observability suite. It owns the browser UI only; the Go service in
-`../relay/` owns authentication, device enrollment, optional MySQL/Redis state,
-Relay sessions, telemetry storage, and the v2 control/data WebSocket protocol.
+`../relay/` owns authentication, device enrollment, optional Relay MySQL/Redis
+state, Relay sessions, isolated Analytics telemetry storage, and the v2
+control/data WebSocket protocol.
 
 ## Development
 
@@ -27,7 +28,7 @@ while the device list refreshes every fifteen seconds. The Telemetry Suite provi
   receivedAt trends (UTC hourly for `1d`/`24h`, UTC daily for `7d`/`30d`). Business and
   error-free-session rates use explicit denominators; a zero denominator renders `No data`.
 - Event Explorer (`/api/admin/v1/telemetry/events`): filterable event log with property viewer.
-- Diagnostic Stream (`/api/admin/v1/telemetry/diagnostics`): live diagnostic log stream backed by Redis Stream / MySQL.
+- Diagnostic Stream (`/api/admin/v1/telemetry/diagnostics`): periodically refreshed diagnostic log feed backed by a Redis hot cache / MySQL fallback.
 - Policy & Retention Settings (`/api/admin/v1/telemetry/settings`): dynamic policy configuration and retention policies.
 
 The legacy `/api/*` dashboard routes are intentionally not supported.

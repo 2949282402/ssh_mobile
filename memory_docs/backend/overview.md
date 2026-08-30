@@ -1,4 +1,4 @@
-> Last updated: 2026-08-27
+> Last updated: 2026-08-30
 
 # Backend Overview
 
@@ -13,14 +13,16 @@
 2. **Admin Backend** (`cmd/admin`, `internal/admin`):
    - Owns administrator authentication, session store, rate limiter, and public REST API (`/api/admin/v1/*`).
    - Communicates with Relay via `RelayManagementClient` over private HTTP (`/internal/v2/*`).
-   - Holds no database, Redis, or signing keys.
+   - Does not own Relay's device database, live-state Redis, or signing keys. In the
+     telemetry-enabled composition it hosts the internal telemetry module and connects
+     to isolated Analytics MySQL and an optional Redis hot cache.
 
-3. **Telemetry & Observability Pipeline** (`internal/telemetry`):
+3. **Telemetry & Observability Pipeline in Admin Backend** (`internal/telemetry`; not a third deployed service):
    - Owns public device telemetry ingestion, HMAC verification, device auth, and dynamic policy (`/api/v1/telemetry/*`).
-   - Owns admin telemetry query endpoints (`/api/admin/v1/telemetry/*`: overview, events, diagnostics stream, settings).
-   - Dedicated persistence: isolated Analytics MySQL schema and optional Redis Stream cache for live diagnostic logs.
+   - Owns admin telemetry query endpoints (`/api/admin/v1/telemetry/*`: overview, events, diagnostics feed, settings).
+   - Dedicated persistence: isolated Analytics MySQL schema and optional Redis hot cache for recent diagnostic logs.
    - Permanent idempotency receipts (`telemetry_ingest_receipts`) immune to retention purge.
-   - Decoupled observability architecture adhering to [ADR-033](../../docs/adr/ADR-033-telemetry-data-tracking-architecture.md).
+   - Decoupled observability architecture following the [Telemetry architecture design](../../docs/数据埋点架构.md) and [ADR-033](../../docs/adr/ADR-033-telemetry-data-tracking-architecture.md).
 
 Canonical operational and API documentation:
 
@@ -28,6 +30,7 @@ Canonical operational and API documentation:
 - [Root Compose topology](../../compose.yaml)
 - [Root Caddyfile](../../Caddyfile)
 - [Backend current state](current-state.md)
+- [Telemetry architecture design](../../docs/数据埋点架构.md)
 - [Telemetry Architecture ADR](../../docs/adr/ADR-033-telemetry-data-tracking-architecture.md)
 - [Relay Bootstrap Protocol V2 Contract](../../protocol/RELAY_BOOTSTRAP_V2_CONTRACT.md)
 - [Relay Protocol V2 Wire Contract](../../protocol/RELAY_V2_CONTRACT.md)

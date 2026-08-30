@@ -331,7 +331,7 @@ export function TelemetrySettingsPage() {
                     checked={form.redisCacheEnabled}
                     onChange={(e) => setForm({ ...form, redisCacheEnabled: e.target.checked })}
                   />
-                  <span style={{ fontSize: '0.85rem', color: 'var(--ink-soft)' }}>Redis 诊断流最大缓存 (条)</span>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--ink-soft)' }}>Redis 诊断热缓存最大条数</span>
                 </label>
                 <input
                   type="number"
