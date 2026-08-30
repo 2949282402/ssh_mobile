@@ -7,6 +7,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/app/sftp_backend_adapters.dart' hide SftpService;
 import 'package:ssh_mobile/app/sftp_io_backend_adapters.dart';
+import 'package:ssh_mobile/services/app_log_service.dart';
 
 import 'telemetry/telemetry_test_utils.dart';
 import 'sftp_transfer_test_support.dart';
@@ -18,6 +19,11 @@ void main() {
   late Directory tempDir;
 
   setUp(() async {
+    // The path-provider mock below also serves AppLogService's application
+    // support directory. Drain and detach the previous test's log file before
+    // switching to a new temporary directory.
+    await AppLogService.instance.pendingWrites;
+    AppLogService.instance.resetLogFileForTesting();
     tempDir = await Directory.systemTemp.createTemp(
       'ssh-mobile-sftp-telemetry-',
     );
@@ -32,6 +38,8 @@ void main() {
 
   tearDown(() async {
     await SftpFileCache.clearAll();
+    await AppLogService.instance.pendingWrites;
+    AppLogService.instance.resetLogFileForTesting();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(pathProviderChannel, null);
     if (await tempDir.exists()) await tempDir.delete(recursive: true);
