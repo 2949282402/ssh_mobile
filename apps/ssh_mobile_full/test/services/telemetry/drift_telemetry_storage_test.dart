@@ -38,10 +38,19 @@ void main() {
   group('DriftTelemetryStorage', () {
     late DriftTelemetryStorage storage;
     late TelemetryDatabase database;
+    late DateTime durableClock;
 
     setUp(() {
       database = TelemetryDatabase(executor: NativeDatabase.memory());
-      storage = DriftTelemetryStorage(database: database);
+      durableClock = DateTime.utc(2026, 8, 31, 12);
+      storage = DriftTelemetryStorage(
+        database: database,
+        clock: () {
+          final value = durableClock;
+          durableClock = durableClock.add(const Duration(microseconds: 1));
+          return value;
+        },
+      );
     });
 
     tearDown(() async {
@@ -305,6 +314,40 @@ void main() {
       expect(stats.cacheOverflow, isTrue);
       expect(stats.overflowCount, 2);
     });
+
+    test(
+      'FIFO purge follows durable insertion order, not occurredAt order',
+      () async {
+        durableClock = DateTime.utc(2026, 8, 30, 12);
+        // The business timestamps arrive out of order, while local durable
+        // insertion is A, then B, then C. Purging one row must remove A.
+        await storage.insertRecord(
+          record('fifo-a', occurredAt: DateTime.utc(2026, 8, 30, 12)),
+        );
+        await storage.insertRecord(
+          record('fifo-b', occurredAt: DateTime.utc(2026, 8, 30, 10)),
+        );
+        await storage.insertRecord(
+          record('fifo-c', occurredAt: DateTime.utc(2026, 8, 30, 11)),
+        );
+        await storage.applyAckResults([
+          const TelemetryAckResult(eventId: 'fifo-a', status: 'accepted'),
+          const TelemetryAckResult(eventId: 'fifo-b', status: 'accepted'),
+          const TelemetryAckResult(eventId: 'fifo-c', status: 'accepted'),
+        ]);
+
+        expect(await storage.purgeOldSyncedRecords(targetCapacity: 2), 1);
+        final remaining = await storage.fetchAllForReplay();
+        expect(
+          remaining.map((item) => item.eventId),
+          containsAllInOrder(<String>['fifo-b', 'fifo-c']),
+        );
+        expect(
+          remaining.map((item) => item.eventId),
+          isNot(contains('fifo-a')),
+        );
+      },
+    );
 
     test(
       'purge with no purgeable synced deletes 0 and reports overflow',

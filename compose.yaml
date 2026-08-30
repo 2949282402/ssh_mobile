@@ -54,9 +54,6 @@ services:
       analytics-mysql:
         condition: service_healthy
         required: true
-      analytics-redis:
-        condition: service_healthy
-        required: true
     expose:
       - "${ADMIN_INTERNAL_PORT:-8081}"
     environment:

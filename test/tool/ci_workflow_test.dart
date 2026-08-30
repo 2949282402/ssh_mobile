@@ -186,8 +186,9 @@ void main() {
   final appUnitTests = _jobSection(workflow, 'app-unit-tests');
   _expect(
     appUnitTests.contains('--coverage') &&
-        appUnitTests.contains('--reporter expanded'),
-    'app-unit-tests 必须保留 coverage 与 expanded reporter 参数',
+        appUnitTests.contains('--reporter compact') &&
+        appUnitTests.contains('--concurrency 1'),
+    'app-unit-tests 必须保留 coverage、compact reporter 与串行测试参数',
   );
   _expect(
     !appUnitTests.contains('Test native Dart package'),
@@ -200,15 +201,16 @@ void main() {
     'app-coverage 必须运行覆盖率门禁',
   );
   _expect(
-    appCoverage.contains('--minimum=90') &&
+    appCoverage.contains('--all-sources') &&
+        appCoverage.contains('--source-root=lib') &&
         !appCoverage.contains('--minimum=35'),
-    'app-coverage 必须执行仓库统一的 90% 覆盖率阈值',
+    'app-coverage 必须执行每个手写生产源文件的 90% 覆盖率阈值',
   );
   _expect(
-    appCoverage.contains('fetch-depth: 0') &&
-        appCoverage.contains('--base-ref="\${{ github.event.before }}"') &&
-        appCoverage.contains('--source-root=lib'),
-    'app-coverage 必须从 CI base 发现新增手写生产源并传入覆盖率门禁',
+    appCoverage.contains('pattern: flutter-coverage-*') &&
+        appCoverage.contains('Expected 4 shard coverage files') &&
+        appCoverage.contains('Expected 2 isolated coverage files'),
+    'app-coverage 必须合并四个测试分片和两个隔离覆盖率产物',
   );
 
   for (final jobName in _buildOnlyJobNames) {
@@ -253,6 +255,7 @@ void _expect(bool condition, String message) {
 }
 
 const _requiredWorkflowMarkers = <String>[
+  'change_scope:',
   'architecture-check:',
   'admin-api-contract:',
   'telemetry-contract:',
@@ -266,6 +269,7 @@ const _requiredWorkflowMarkers = <String>[
   'workspace-features-quality:',
   'app-static-quality:',
   'app-unit-tests:',
+  'app-isolated-tests:',
   'app-coverage:',
   'terminal-smoke-build:',
   'android-build:',
@@ -273,7 +277,8 @@ const _requiredWorkflowMarkers = <String>[
   'macos-build:',
   'ios-build:',
   'flutter analyze --no-fatal-infos',
-  'flutter test --coverage --reporter expanded',
+  'flutter test --no-pub --no-test-assets',
+  '--reporter compact',
   'dart run tool/architecture_check.dart',
   'dart run tool/check_agent_docs.dart',
   'dart run test/tool/agent_docs_check_test.dart',

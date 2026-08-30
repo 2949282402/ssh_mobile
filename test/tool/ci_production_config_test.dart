@@ -102,7 +102,7 @@ void main() {
   for (final service in const ['analytics-mysql', 'analytics-redis']) {
     _expect(
       compose.contains('$service:') && compose.contains('service_healthy'),
-      'Admin Compose startup must wait for healthy $service.',
+      'Analytics service $service must expose a healthy readiness condition.',
     );
     _expect(
       compose.contains('$service:') && compose.contains('healthcheck:'),
@@ -110,9 +110,27 @@ void main() {
     );
   }
   _expect(
-    compose.contains('profiles: ["storage"]') &&
-        compose.contains('required: true'),
-    'Analytics storage must remain an explicit, required production profile dependency.',
+    compose.contains(
+      'analytics-mysql:\n        condition: service_healthy\n        required: true',
+    ),
+    'Admin Compose startup must require healthy Analytics MySQL.',
+  );
+  final adminDependsOn = compose.substring(
+    compose.indexOf('  admin-api:'),
+    compose.indexOf('    expose:', compose.indexOf('  admin-api:')),
+  );
+  _expect(
+    !adminDependsOn.contains('analytics-redis:'),
+    'Analytics Redis must not block admin-api startup when unavailable.',
+  );
+  _expect(
+    compose.contains('analytics_state:') &&
+        compose.contains('analytics_mysql_data:') &&
+        compose.contains('analytics_redis_data:') &&
+        compose.contains('--maxmemory 64mb') &&
+        compose.contains('--maxmemory-policy noeviction') &&
+        compose.contains('--requirepass'),
+    'Analytics Redis must retain its health, resource, persistence, and auth boundaries.',
   );
 
   for (final example in [
@@ -262,8 +280,10 @@ void main() {
     'PowerShell coverage_test.ps1 must remain the client-gate compatibility alias.',
   );
   _expect(
-    workflow.contains('--minimum=90') && !workflow.contains('--minimum=35'),
-    'CI Full App coverage must enforce the repository 90% threshold.',
+    workflow.contains('--all-sources') &&
+        workflow.contains('--source-root=lib') &&
+        !workflow.contains('--minimum=35'),
+    'CI Full App coverage must enforce 90% per hand-written source file.',
   );
   final bashAppCoverage = File(
     '${root.path}/scripts/bash/ci/full_test_app.sh',
@@ -272,16 +292,17 @@ void main() {
     '${root.path}/scripts/powershell/ci/full_test_app.ps1',
   ).readAsStringSync();
   _expect(
-    bashAppCoverage.contains('tool/check_coverage.dart --minimum=90') &&
+    bashAppCoverage.contains('tool/check_coverage.dart') &&
+        bashAppCoverage.contains('--all-sources') &&
         powerShellAppCoverage.contains(
-          "'tool/check_coverage.dart','--minimum=90'",
+          "'tool/check_coverage.dart','--all-sources'",
         ) &&
         powerShellAppCoverage.contains(
-          'Enforce Full App shard coverage (90% minimum)',
+          'Enforce Full App per-file coverage (90% minimum)',
         ) &&
         !bashAppCoverage.contains('--minimum=35') &&
         !powerShellAppCoverage.contains('--minimum=35'),
-    'Bash and PowerShell Full App coverage helpers must enforce 90%.',
+    'Bash and PowerShell Full App coverage helpers must enforce per-file 90%.',
   );
   _expect(
     bashAppCoverage.contains('--source-root=lib') &&

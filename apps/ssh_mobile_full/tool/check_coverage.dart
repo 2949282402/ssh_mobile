@@ -4,7 +4,7 @@ import 'coverage_sources.dart';
 
 export 'coverage_sources.dart';
 
-const _newSourceMinimum = 90.0;
+const _requiredSourceMinimum = 90.0;
 
 void main(List<String> arguments) {
   var minimum = 0.0;
@@ -13,6 +13,7 @@ void main(List<String> arguments) {
   final sourceManifestPaths = <String>[];
   final sourceRoots = <String>[];
   String? baseRef;
+  var allSources = false;
   var showDetails = false;
 
   for (final argument in arguments) {
@@ -28,6 +29,8 @@ void main(List<String> arguments) {
       sourceRoots.add(argument.substring('--source-root='.length));
     } else if (argument.startsWith('--base-ref=')) {
       baseRef = argument.substring('--base-ref='.length);
+    } else if (argument == '--all-sources') {
+      allSources = true;
     } else if (argument == '--details') {
       showDetails = true;
     } else {
@@ -35,6 +38,12 @@ void main(List<String> arguments) {
       exitCode = 64;
       return;
     }
+  }
+
+  if (allSources && sourceRoots.isEmpty) {
+    stderr.writeln('--all-sources requires at least one --source-root.');
+    exitCode = 64;
+    return;
   }
 
   final requiredSources = <String>{};
@@ -49,7 +58,9 @@ void main(List<String> arguments) {
       );
     }
     if (sourceRoots.isNotEmpty) {
-      final resolvedBaseRef = resolveCoverageBaseRef(explicitBaseRef: baseRef);
+      final resolvedBaseRef = allSources
+          ? null
+          : resolveCoverageBaseRef(explicitBaseRef: baseRef);
       requiredSources.addAll(
         discoverProductionSources(
           sourceRoots: sourceRoots,
@@ -94,7 +105,7 @@ void main(List<String> arguments) {
 
   if (summary.requiredSourceCoverage.isNotEmpty) {
     stdout.writeln(
-      'Required new hand-written production sources checked: '
+      'Required hand-written production sources checked: '
       '${summary.requiredSourceCoverage.length}',
     );
   }
@@ -112,20 +123,20 @@ void main(List<String> arguments) {
     final source = entry.key;
     final coverage = entry.value;
     if (coverage.linesFound == 0) {
-      stderr.writeln('Required new source is missing from LCOV: $source');
+      stderr.writeln('Required source is missing from LCOV: $source');
       failed = true;
       requiredSourceFailed = true;
-    } else if (coverage.percentage + 0.000001 < _newSourceMinimum) {
+    } else if (coverage.percentage + 0.000001 < _requiredSourceMinimum) {
       stderr.writeln(
-        'Coverage for required new source $source is below the required '
-        '${_newSourceMinimum.toStringAsFixed(1)}% '
+        'Coverage for required source $source is below the required '
+        '${_requiredSourceMinimum.toStringAsFixed(1)}% '
         '(${coverage.linesHit}/${coverage.linesFound}).',
       );
       failed = true;
       requiredSourceFailed = true;
     } else if (showDetails) {
       stdout.writeln(
-        'Required new source $source: '
+        'Required source $source: '
         '${coverage.percentage.toStringAsFixed(1)}% '
         '(${coverage.linesHit}/${coverage.linesFound})',
       );
@@ -139,7 +150,7 @@ void main(List<String> arguments) {
       );
     }
     if (requiredSourceFailed) {
-      stderr.writeln('Required new source coverage check failed.');
+      stderr.writeln('Required source coverage check failed.');
     }
     exitCode = 1;
   }

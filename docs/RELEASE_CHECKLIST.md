@@ -1,4 +1,4 @@
-> Last updated: 2026-08-28
+> Last updated: 2026-08-31
 
 # Release and Portfolio Checklist
 
@@ -85,7 +85,7 @@ flutter pub get
 dart format --output=none --set-exit-if-changed lib test tool
 flutter analyze
 flutter test --coverage
-dart run tool/check_coverage.dart --minimum=90
+dart run tool/check_coverage.dart --all-sources --source-root=lib
 flutter build apk --debug --no-pub
 ```
 

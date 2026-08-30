@@ -21,6 +21,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  change_scope:
+    runs-on: ubuntu-latest
+    outputs:
+      app: ${{ steps.filter.outputs.app }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Detect changed scopes
+        id: filter
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$BEFORE_SHA" == 0000000000000000000000000000000000000000 ]] || \
+            ! git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
+            changed_files="$(git diff-tree --root --no-commit-id --name-only -r "$CURRENT_SHA")"
+          else
+            changed_files="$(git diff --name-only "$BEFORE_SHA" "$CURRENT_SHA")"
+          fi
+          app=false
+          app_path_pattern='^(apps/ssh_mobile_full/|packages/(core|features|infrastructure)/|native/|protocol/|pubspec(\.yaml|\.lock)$|melos\.yaml$|analysis_options\.yaml$|dart_test\.yaml$|build\.yaml$|tool/|scripts/(bash|powershell)/(ci|coverage)/|\.github/workflows/flutter\.yml$)'
+          if printf '%s\n' "$changed_files" | grep -Eq "$app_path_pattern"; then app=true; fi
+          echo "app=$app" >> "$GITHUB_OUTPUT"
+          echo "Full App scope changed: $app"
+
   front-quality:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -542,6 +569,8 @@ jobs:
         run: flutter build windows --debug --no-pub
 
   app-static-quality:
+    needs: change_scope
+    if: needs.change_scope.outputs.app == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -584,13 +613,15 @@ jobs:
         run: flutter analyze --no-fatal-infos
 
   app-unit-tests:
+    needs: change_scope
+    if: needs.change_scope.outputs.app == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
-        shard_index: [0, 1]
-        total_shards: [2]
+        shard_index: [0, 1, 2, 3]
     defaults:
       run:
         working-directory: apps/ssh_mobile_full
@@ -612,99 +643,245 @@ jobs:
         run: flutter pub get
       - name: Install Full App dependencies
         run: flutter pub get
+      - name: Configure isolated Flutter build directory
+        run: flutter config --build-dir "build/ci-test-shard-${{ matrix.shard_index }}"
       - name: Run Sharded Unit Tests
         run: |
-          isolated_coverage_test_files=(
-            test/features/startup/views/startup_screen_test.dart
-            test/screens/system_admin/system_admin_snapshot_tabs_test.dart
-          )
-          non_coverage_test_files=(
-            test/services/network/transfer_transport_test.dart
-          )
-          coverage_test_files=()
+          set -euo pipefail
+
+          module_key_for_test() {
+            local test_file="$1"
+            local name first
+            case "$test_file" in
+              test/app/*) printf '%s\n' app ;;
+              test/core/*) printf '%s\n' core ;;
+              test/features/*/*)
+                first="${test_file#test/features/}"
+                printf 'feature/%s\n' "${first%%/*}"
+                ;;
+              test/features/*) printf '%s\n' feature/root ;;
+              test/screens/*/*)
+                first="${test_file#test/screens/}"
+                printf 'screen/%s\n' "${first%%/*}"
+                ;;
+              test/screens/*)
+                name="${test_file##*/}"
+                printf 'screen/root/%s\n' "${name%%_*}"
+                ;;
+              test/services/*/*)
+                first="${test_file#test/services/}"
+                printf 'service/%s\n' "${first%%/*}"
+                ;;
+              test/services/*)
+                name="${test_file##*/}"
+                printf 'service/root/%s\n' "${name%%_*}"
+                ;;
+              test/utils/*) printf '%s\n' utils ;;
+              test/tool/*) printf '%s\n' tool ;;
+              test/*) printf '%s\n' root ;;
+              *) printf '%s\n' other ;;
+            esac
+          }
+
+          declare -A module_files=()
+          declare -A module_sizes=()
           mapfile -d '' all_test_files < <(
             find test -type f -name '*_test.dart' -print0 | sort -z
           )
           for test_file in "${all_test_files[@]}"; do
             case "$test_file" in
-              test/features/startup/views/startup_screen_test.dart|test/screens/system_admin/system_admin_snapshot_tabs_test.dart|test/services/network/transfer_transport_test.dart|test/integration/client_backend/*)
-                ;;
-              *)
-                coverage_test_files+=("$test_file")
+              test/features/startup/views/startup_screen_test.dart|\
+              test/screens/system_admin/system_admin_snapshot_tabs_test.dart|\
+              test/services/network/transfer_transport_test.dart|\
+              test/integration/client_backend/*)
+                continue
                 ;;
             esac
+            module="$(module_key_for_test "$test_file")"
+            module_files["$module"]+="$test_file"$'\n'
+            module_sizes["$module"]=$((
+              ${module_sizes["$module"]:-0} + $(wc -c < "$test_file")
+            ))
           done
 
-          if [ "${#coverage_test_files[@]}" -eq 0 ]; then
+          if [ "${#module_sizes[@]}" -eq 0 ]; then
             echo "No coverage test files were discovered."
             exit 1
           fi
 
-          for attempt in 1 2; do
-            echo "Running Flutter test shard ${{ matrix.shard_index }} (attempt $attempt)."
-            rm -f coverage/lcov.info
-            if timeout --signal=TERM --kill-after=30s 8m \
-              flutter test --coverage --reporter expanded \
-              --fail-fast \
-              --timeout 60s \
-              --total-shards "${{ matrix.total_shards }}" \
-              --shard-index "${{ matrix.shard_index }}" \
-              "${coverage_test_files[@]}"; then
-              break
-            else
-              status=$?
-            fi
-
-            if [ "$attempt" -eq 2 ]; then
-              exit "$status"
-            fi
-            echo "Flutter test shard failed or timed out; retrying once."
+          mapfile -t sorted_modules < <(
+            for module in "${!module_sizes[@]}"; do
+              printf '%s\t%s\n' "${module_sizes[$module]}" "$module"
+            done | LC_ALL=C sort -nr -k1,1 -k2,2 | cut -f2-
+          )
+          shard_sizes=(0 0 0 0)
+          declare -A module_shards=()
+          for module in "${sorted_modules[@]}"; do
+            target=0
+            for candidate in 1 2 3; do
+              if ((shard_sizes[candidate] < shard_sizes[target])); then
+                target="$candidate"
+              fi
+            done
+            module_shards["$module"]="$target"
+            shard_sizes[target]=$((shard_sizes[target] + module_sizes[$module]))
           done
 
-          echo "Running isolated Flutter tests with supplemental coverage."
-          rm -f coverage/isolated-startup-lcov.info
-          timeout --signal=TERM --kill-after=30s 8m \
-            flutter test \
-            --coverage \
-            --coverage-path coverage/isolated-startup-lcov.info \
-            --fail-fast \
-            --reporter expanded \
-            --timeout 60s \
-            --total-shards "${{ matrix.total_shards }}" \
-            --shard-index "${{ matrix.shard_index }}" \
-            "${isolated_coverage_test_files[0]}"
+          mapfile -t shard_files < <(
+            for module in "${sorted_modules[@]}"; do
+              if [[ "${module_shards[$module]}" == "${{ matrix.shard_index }}" ]]; then
+                printf '%s' "${module_files[$module]}"
+              fi
+            done | sed '/^$/d' | LC_ALL=C sort
+          )
+          echo "Shard ${{ matrix.shard_index }}: ${#shard_files[@]} test files"
+          if [ "${#shard_files[@]}" -eq 0 ]; then
+            echo "No tests assigned to shard ${{ matrix.shard_index }}."
+            exit 1
+          fi
 
-          rm -f coverage/isolated-system-admin-lcov.info
-          timeout --signal=TERM --kill-after=30s 8m \
-            flutter test \
-            --coverage \
-            --coverage-path coverage/isolated-system-admin-lcov.info \
-            --fail-fast \
-            --reporter expanded \
-            --timeout 60s \
-            --total-shards "${{ matrix.total_shards }}" \
-            --shard-index "${{ matrix.shard_index }}" \
-            "${isolated_coverage_test_files[1]}"
+          run_batch_with_retry() {
+            local batch_number="$1"
+            local coverage_path="$2"
+            shift 2
+            local attempt status
+            for attempt in 1 2; do
+              rm -f "$coverage_path"
+              echo "Running shard ${{ matrix.shard_index }} batch $batch_number (attempt $attempt)."
+              if timeout --signal=TERM --kill-after=30s 8m \
+                flutter test --no-pub --no-test-assets \
+                --coverage --coverage-path "$coverage_path" \
+                --reporter compact --fail-fast --timeout 60s \
+                --concurrency 1 "$@"; then
+                return 0
+              else
+                status=$?
+              fi
+              if [ "$attempt" -eq 2 ]; then
+                return "$status"
+              fi
+              echo "Flutter test batch failed or timed out; retrying once."
+            done
+          }
 
-          echo "Running native Flutter tests without coverage."
-          timeout --signal=TERM --kill-after=30s 8m \
-            flutter test \
-            --fail-fast \
-            --reporter expanded \
-            --timeout 60s \
-            --total-shards "${{ matrix.total_shards }}" \
-            --shard-index "${{ matrix.shard_index }}" \
-            "${non_coverage_test_files[@]}"
+          mkdir -p coverage
+          rm -f coverage/lcov.info coverage/lcov-batch-*.info
+          batch_size=16
+          batch=0
+          for ((offset = 0; offset < ${#shard_files[@]}; offset += batch_size)); do
+            batch_files=("${shard_files[@]:offset:batch_size}")
+            run_batch_with_retry "$batch" "coverage/lcov-batch-${{ matrix.shard_index }}-$batch.info" "${batch_files[@]}"
+            batch=$((batch + 1))
+          done
+
+          : > coverage/lcov.info
+          for batch_file in coverage/lcov-batch-${{ matrix.shard_index }}-*.info; do
+            [[ -f "$batch_file" ]] || continue
+            if [[ ! -s coverage/lcov.info ]]; then
+              cp "$batch_file" coverage/lcov.info
+            else
+              sed '/^TN:/d' "$batch_file" >> coverage/lcov.info
+            fi
+          done
+          if [[ ! -s coverage/lcov.info ]]; then
+            echo "No LCOV output was generated for shard ${{ matrix.shard_index }}."
+            exit 1
+          fi
       - name: Upload shard coverage
         uses: actions/upload-artifact@v4
         with:
           name: flutter-coverage-${{ matrix.shard_index }}
-          path: apps/ssh_mobile_full/coverage/*.info
+          path: apps/ssh_mobile_full/coverage/lcov.info
+          if-no-files-found: error
+
+  app-isolated-tests:
+    needs: change_scope
+    if: needs.change_scope.outputs.app == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/ssh_mobile_full
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: aarch64-linux-android, x86_64-linux-android, armv7-linux-androideabi
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - name: Install dependencies
+        working-directory: .
+        run: dart pub get
+      - name: Install native Dart package dependencies
+        working-directory: packages/infrastructure/ssh_mobile_network_native
+        run: flutter pub get
+      - name: Install Full App dependencies
+        run: flutter pub get
+      - name: Configure isolated Flutter build directory
+        run: flutter config --build-dir build/ci-test-isolated
+      - name: Run isolated startup coverage test
+        run: |
+          set -euo pipefail
+          for attempt in 1 2; do
+            rm -f coverage/isolated-startup-lcov.info
+            if timeout --signal=TERM --kill-after=30s 8m \
+              flutter test --no-pub --no-test-assets \
+              --coverage --coverage-path coverage/isolated-startup-lcov.info \
+              --reporter compact --fail-fast --timeout 60s --concurrency 1 \
+              test/features/startup/views/startup_screen_test.dart; then
+              break
+            else
+              status=$?
+            fi
+            if [ "$attempt" -eq 2 ]; then exit "$status"; fi
+            echo "Startup coverage test failed or timed out; retrying once."
+          done
+      - name: Run isolated system-admin coverage test
+        run: |
+          set -euo pipefail
+          for attempt in 1 2; do
+            rm -f coverage/isolated-system-admin-lcov.info
+            if timeout --signal=TERM --kill-after=30s 8m \
+              flutter test --no-pub --no-test-assets \
+              --coverage --coverage-path coverage/isolated-system-admin-lcov.info \
+              --reporter compact --fail-fast --timeout 60s --concurrency 1 \
+              test/screens/system_admin/system_admin_snapshot_tabs_test.dart; then
+              break
+            else
+              status=$?
+            fi
+            if [ "$attempt" -eq 2 ]; then exit "$status"; fi
+            echo "System-admin coverage test failed or timed out; retrying once."
+          done
+      - name: Run isolated transfer test
+        run: |
+          set -euo pipefail
+          for attempt in 1 2; do
+            if timeout --signal=TERM --kill-after=30s 8m \
+              flutter test --no-pub --no-test-assets \
+              --reporter compact --fail-fast --timeout 60s --concurrency 1 \
+              test/services/network/transfer_transport_test.dart; then
+              break
+            else
+              status=$?
+            fi
+            if [ "$attempt" -eq 2 ]; then exit "$status"; fi
+            echo "Transfer test failed or timed out; retrying once."
+          done
+      - name: Upload isolated coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-coverage-isolated
+          path: apps/ssh_mobile_full/coverage/isolated-*.info
           if-no-files-found: error
 
   app-coverage:
+    needs: [change_scope, app-unit-tests, app-isolated-tests]
+    if: needs.change_scope.outputs.app == 'true'
     runs-on: ubuntu-latest
-    needs: app-unit-tests
     timeout-minutes: 10
     defaults:
       run:
@@ -727,14 +904,14 @@ jobs:
       - name: Enforce shard coverage
         run: |
           mapfile -d '' shard_files < <(find "$GITHUB_WORKSPACE/coverage-shards" -type f -name lcov.info -print0 | sort -z)
-          if [ "${#shard_files[@]}" -ne 2 ]; then
-            echo "Expected 2 shard coverage files, found ${#shard_files[@]}."
+          if [ "${#shard_files[@]}" -ne 4 ]; then
+            echo "Expected 4 shard coverage files, found ${#shard_files[@]}."
             exit 1
           fi
 
           mapfile -d '' isolated_files < <(find "$GITHUB_WORKSPACE/coverage-shards" -type f -name 'isolated-*.info' -print0 | sort -z)
-          if [ "${#isolated_files[@]}" -ne 4 ]; then
-            echo "Expected 4 isolated coverage files, found ${#isolated_files[@]}."
+          if [ "${#isolated_files[@]}" -ne 2 ]; then
+            echo "Expected 2 isolated coverage files, found ${#isolated_files[@]}."
             exit 1
           fi
 
@@ -747,12 +924,13 @@ jobs:
           done
 
           dart run tool/check_coverage.dart \
-            --minimum=90 \
-            --base-ref="${{ github.event.before }}" \
+            --all-sources \
             --source-root=lib \
             "${coverage_args[@]}"
 
   android-build:
+    needs: change_scope
+    if: needs.change_scope.outputs.app == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -785,6 +963,8 @@ jobs:
         run: flutter build apk --debug --no-pub
 
   windows-build:
+    needs: change_scope
+    if: needs.change_scope.outputs.app == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
     defaults:
@@ -815,6 +995,8 @@ jobs:
           -NoBootstrap -NoCoverage -Only windows-build
 
   macos-build:
+    needs: change_scope
+    if: needs.change_scope.outputs.app == 'true'
     runs-on: macos-latest
     timeout-minutes: 30
     defaults:
@@ -847,6 +1029,8 @@ jobs:
         run: flutter build macos
 
   ios-build:
+    needs: change_scope
+    if: needs.change_scope.outputs.app == 'true'
     runs-on: macos-latest
     timeout-minutes: 30
     defaults:

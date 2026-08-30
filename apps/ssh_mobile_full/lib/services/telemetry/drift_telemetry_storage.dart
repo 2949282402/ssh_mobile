@@ -17,10 +17,14 @@ class DriftTelemetryStorage
         TelemetryStorage,
         TelemetryPolicyStorage,
         TelemetryRejectedReplayStorage {
-  DriftTelemetryStorage({TelemetryDatabase? database})
-    : _database = database ?? TelemetryDatabase();
+  DriftTelemetryStorage({
+    TelemetryDatabase? database,
+    DateTime Function()? clock,
+  }) : _database = database ?? TelemetryDatabase(),
+       _clock = clock ?? (() => DateTime.now().toUtc());
 
   final TelemetryDatabase _database;
+  final DateTime Function() _clock;
   bool _closed = false;
 
   @override
@@ -28,7 +32,11 @@ class DriftTelemetryStorage
     if (_closed) {
       throw StateError('Telemetry storage already closed');
     }
-    final recordRow = _toCompanion(record);
+    // Capture the durable insertion time once, immediately before the DAO
+    // write.  [occurredAt] is the event's client-reported business time and
+    // may be older, newer, or reordered relative to local persistence.
+    final createdAt = _clock().toUtc();
+    final recordRow = _toCompanion(record, createdAt: createdAt);
     try {
       await _database.telemetryRecordsDao.insertRecord(recordRow);
     } on TelemetryStorageDuplicateException {
@@ -329,7 +337,10 @@ class DriftTelemetryStorage
     return chunks;
   }
 
-  TelemetryRecordsCompanion _toCompanion(TelemetryEventRecord record) {
+  TelemetryRecordsCompanion _toCompanion(
+    TelemetryEventRecord record, {
+    required DateTime createdAt,
+  }) {
     return TelemetryRecordsCompanion(
       eventId: Value(record.eventId),
       recordType: Value(record.recordType.wireValue),
@@ -354,7 +365,7 @@ class DriftTelemetryStorage
         record.logicalDeletedAt?.toUtc().toIso8601String(),
       ),
       retryCount: Value(record.retryCount),
-      createdAt: Value(record.occurredAt.toUtc()),
+      createdAt: Value(createdAt.toUtc()),
     );
   }
 
