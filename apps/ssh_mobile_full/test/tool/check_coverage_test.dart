@@ -207,6 +207,7 @@ void main() {
         'lib/services/telemetry/telemetry_database/tables/telemetry_records.dart',
         'lib/services/telemetry/telemetry_database/telemetry_database_connection.dart',
         'lib/services/telemetry/telemetry_database/telemetry_database_constants.dart',
+        'lib/main.dart',
         'lib/services/telemetry/telemetry_database/telemetry_database_connection_web.dart',
         'lib/services/telemetry/telemetry_policy_controller.dart',
       ]),

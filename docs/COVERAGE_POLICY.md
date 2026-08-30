@@ -64,6 +64,13 @@ the native Web coverage job. These are precise declaration-only exclusions, not
 waivers for the native connection, DAO, schema, or database lifecycle behavior,
 which remain covered by the App tests.
 
+`apps/ssh_mobile_full/lib/main.dart` is also a documented boilerplate boundary:
+its two lines only delegate to the `AppBootstrap` startup contract, which is
+covered independently by `app_bootstrap_privacy_test.dart`. It has no
+independent business logic or platform branch; the delegation lines are marked
+with `coverage:ignore-start/end` so the per-file report does not treat a
+non-coverable entrypoint as an untested feature.
+
 The same generated-subclass rule applies to the declarative table definitions
 in `apps/ssh_mobile_full/lib/services/app_log_database/tables/app_log_tables.dart`.
 Their column and annotation lines are marked with `coverage:ignore-start/end`;

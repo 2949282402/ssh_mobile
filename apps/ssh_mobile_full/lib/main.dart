@@ -4,6 +4,8 @@ import 'app/app_bootstrap.dart';
 export 'app/ssh_mobile_app.dart' show SshMobileApp;
 
 /// Flutter 应用入口只负责委托给 App Shell 的启动边界。
+// coverage:ignore-start
 Future<void> main() async {
   await AppBootstrap.run();
 }
+// coverage:ignore-end

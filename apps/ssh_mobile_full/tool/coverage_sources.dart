@@ -85,16 +85,16 @@ String? resolveCoverageBaseRef({
 /// required new-source set; each entry must document why the owner validation
 /// report treats the file as lacking coverable business logic.
 ///
-/// `lib/services/telemetry/telemetry_database/tables/telemetry_policy_states.dart`
-/// is a hand-written Drift table whose declarative column/primary-key lines
-/// are fully overridden by the generated `telemetry_database.g.dart` subclass
-/// at runtime, so no test can execute them (see the New-file requirement in
-/// docs/COVERAGE_POLICY.md).
+/// The set contains only paths whose reasons are recorded in
+/// docs/COVERAGE_POLICY.md: declarative Drift schema input, conditional
+/// exports/constants, and the two-line App entrypoint that delegates to the
+/// independently tested bootstrap contract.
 const _documentedCoverageExclusions = <String>{
   'lib/services/telemetry/telemetry_database/tables/telemetry_policy_states.dart',
   'lib/services/telemetry/telemetry_database/tables/telemetry_records.dart',
   'lib/services/telemetry/telemetry_database/telemetry_database_connection.dart',
   'lib/services/telemetry/telemetry_database/telemetry_database_constants.dart',
+  'lib/main.dart',
 };
 
 /// Filters a source inventory to hand-written production files. The explicit
