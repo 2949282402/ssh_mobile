@@ -4,7 +4,6 @@ param([ValidateSet('smoke','strict')][string]$Mode='smoke',[string]$TempRoot=$en
 Assert-NativeWindowsPowerShell
 $root=Get-RepositoryRoot
 $temp=Initialize-NativeEnvironment $TempRoot
-Assert-Commands @('docker','curl.exe','cargo','flutter') 125
 $run=Join-Path $temp ("client-backend-e2e-{0}"-f[Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory $run|Out-Null
 $project="ssh-mobile-client-backend-$PID"
@@ -14,6 +13,12 @@ $token=$env:RELAY_ENROLLMENT_TOKEN
 $storage=if($env:CLIENT_BACKEND_E2E_STORAGE){$env:CLIENT_BACKEND_E2E_STORAGE}else{'memory'}
 $adminUser=$env:CLIENT_BACKEND_E2E_ADMIN_USER
 $adminPassword=$env:CLIENT_BACKEND_E2E_ADMIN_PASSWORD
+$devicePrefix=$env:CLIENT_BACKEND_E2E_DEVICE_PREFIX
+if($null-eq$devicePrefix){$devicePrefix=''}
+$revocationDeviceId=if($env:CLIENT_BACKEND_E2E_REVOCATION_DEVICE_ID){$env:CLIENT_BACKEND_E2E_REVOCATION_DEVICE_ID}else{$devicePrefix+'e2e-rust-revoke-a'}
+$requiredCommands=@('curl.exe','cargo','flutter')
+if(-not($base-or$token)){$requiredCommands+='docker'}
+Assert-Commands $requiredCommands 125
 $started=$false
 $rustProcess=$null
 if($storage-notin@('memory','mysql')){[Console]::Error.WriteLine("CLIENT_BACKEND_E2E_STORAGE must be memory or mysql: $storage");exit 64}
@@ -67,8 +72,10 @@ function AdminRevoke{
   @{username=$adminUser;password=$adminPassword}|ConvertTo-Json -Compress|Set-Content $body -Encoding utf8NoBOM
   $status=CurlStatus ((TlsArgs)+@('-sS','--max-time','10','-H','Content-Type: application/json','-c',$cookie,'--data-binary',"@$body",'-o','NUL','-w','%{http_code}',"$base/api/admin/v1/auth/login"))
   if($status-ne'200'){throw "Admin login failed: $status"}
-  $status=CurlStatus ((TlsArgs)+@('-sS','--max-time','10','-b',$cookie,'-X','POST','-o','NUL','-w','%{http_code}',"$base/api/admin/v1/devices/e2e-rust-revoke-a/revoke"))
+  $status=CurlStatus ((TlsArgs)+@('-sS','--max-time','10','-b',$cookie,'-X','POST','-o','NUL','-w','%{http_code}',"$base/api/admin/v1/devices/$revocationDeviceId/revoke"))
   if($status-ne'204'){throw "Admin revoke failed: $status"}
+  $status=CurlStatus ((TlsArgs)+@('-sS','--max-time','10','-b',$cookie,'-X','POST','-o','NUL','-w','%{http_code}',"$base/api/admin/v1/auth/logout"))
+  if($status-ne'204'){throw "Admin logout failed: $status"}
 }
 function AssertStorageAfterRestart{
   if(-not$adminUser-or-not$adminPassword){return};$cookie=Join-Path $run 'restart-admin-cookie';$body=Join-Path $run 'restart-admin-login.json';$devices=Join-Path $run 'devices-after-restart.json'
@@ -76,8 +83,8 @@ function AssertStorageAfterRestart{
   $status=CurlStatus ((TlsArgs)+@('-sS','--max-time','10','-H','Content-Type: application/json','-c',$cookie,'--data-binary',"@$body",'-o','NUL','-w','%{http_code}',"$base/api/admin/v1/auth/login"));if($status-ne'200'){throw "Strict post-restart admin login failed: $status"}
   $status=CurlStatus ((TlsArgs)+@('-sS','--max-time','10','-b',$cookie,'-o',$devices,'-w','%{http_code}',"$base/api/admin/v1/devices"));if($status-ne'200'){throw "Strict post-restart device snapshot failed: $status"}
   $bodyText=Get-Content $devices -Raw
-  if($storage-eq'mysql'){if($bodyText-notmatch'e2e-rust-a'){throw'MySQL storage profile lost an enrolled device after Relay restart.'};if($bodyText-match'e2e-rust-revoke-a'){throw'MySQL storage profile retained a revoked device after Relay restart.'}}
-  elseif($bodyText-match'e2e-rust-(a|b)'){throw'Memory storage profile retained an enrollment after Relay restart.'}
+  if($storage-eq'mysql'){if($bodyText-notmatch([regex]::Escape($devicePrefix+'e2e-rust-a'))){throw'MySQL storage profile lost an enrolled device after Relay restart.'};if($bodyText-match([regex]::Escape($devicePrefix+'e2e-rust-revoke-a'))){throw'MySQL storage profile retained a revoked device after Relay restart.'}}
+  elseif($bodyText-match([regex]::Escape($devicePrefix+'e2e-rust-a')+'|'+[regex]::Escape($devicePrefix+'e2e-rust-b'))){throw'Memory storage profile retained an enrollment after Relay restart.'}
 }
 function RunRevocation{
   $native=Join-Path $root 'native\network_core'

@@ -1,4 +1,4 @@
-最新更新时间：2026-08-30
+最新更新时间：2026-08-31
 
 # Skill、Memory 与 Agent 文档审计摘要
 
@@ -50,7 +50,8 @@ migrate/replace/retire/record-only）及 verification source。进入 Memory 必
 3. 旧知识把 `ssh_core` 归入 SDK、把 LAN Control V2 与 Native Network V2 混为一体，
    或保留旧 pairing/upload fallback；当前路由和局部合同已明确纠正。
 4. CI 规则曾鼓励自动本地全量运行；当前本地 aggregate 仅用户明确要求，GitHub
-   Actions 是用户要求 PR 的并行 CI 基准，交接后不轮询/解读/合并，合并由用户决定。
+   Actions 是用户要求 PR 的并行 CI 基准，推送后由 commit/run 绑定的后台 watcher
+   监控并触发失败修复循环；不自动批准/合并，合并由用户决定。
 
 ## 验收方式
 

@@ -30,6 +30,8 @@ STORAGE_MODE="${CLIENT_BACKEND_E2E_STORAGE:-memory}"
 COMPOSE_PROFILE_ARGS=()
 ADMIN_USER="${CLIENT_BACKEND_E2E_ADMIN_USER:-}"
 ADMIN_PASSWORD="${CLIENT_BACKEND_E2E_ADMIN_PASSWORD:-}"
+DEVICE_PREFIX="${CLIENT_BACKEND_E2E_DEVICE_PREFIX:-}"
+REVOCATION_DEVICE_ID="${CLIENT_BACKEND_E2E_REVOCATION_DEVICE_ID:-${DEVICE_PREFIX}e2e-rust-revoke-a}"
 RUST_E2E_PID=""
 CURL_TLS_ARGS=()
 if [[ -n "${CLIENT_BACKEND_E2E_CA_FILE:-}" ]]; then
@@ -335,8 +337,24 @@ run_admin_revoke() {
     return 2
   }
   # Keep credentials in a mode-600 temporary file and never in argv or logs.
-  printf '{"username":"%s","password":"%s"}\n' \
-    "$ADMIN_USER" "$ADMIN_PASSWORD" > "$login_body"
+  # JSON-encode through Python so quotes, backslashes, and control characters
+  # in a deployment-managed password cannot corrupt the request body.
+  ONLINE_E2E_ADMIN_USER="$ADMIN_USER" ONLINE_E2E_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+    python3 - "$login_body" <<'PY'
+import json
+import os
+import sys
+
+with open(sys.argv[1], "w", encoding="utf-8") as target:
+    json.dump(
+        {
+            "username": os.environ["ONLINE_E2E_ADMIN_USER"],
+            "password": os.environ["ONLINE_E2E_ADMIN_PASSWORD"],
+        },
+        target,
+    )
+    target.write("\n")
+PY
   status="$(curl "${CURL_TLS_ARGS[@]}" --silent --show-error --max-time 10 \
     --header 'Content-Type: application/json' \
     --cookie-jar "$cookie_file" --data-binary "@$login_body" \
@@ -349,9 +367,16 @@ run_admin_revoke() {
   status="$(curl "${CURL_TLS_ARGS[@]}" --silent --show-error --max-time 10 \
     --cookie "$cookie_file" --request POST --output /dev/null \
     --write-out '%{http_code}' \
-    "$BASE_URL/api/admin/v1/devices/e2e-rust-revoke-a/revoke" || true)"
+    "$BASE_URL/api/admin/v1/devices/$REVOCATION_DEVICE_ID/revoke" || true)"
   if [[ "$status" != 204 ]]; then
     echo "Strict admin revoke failed with HTTP $status" >&2
+    return 1
+  fi
+  status="$(curl "${CURL_TLS_ARGS[@]}" --silent --show-error --max-time 10 \
+    --cookie "$cookie_file" --request POST --output /dev/null \
+    --write-out '%{http_code}' "$BASE_URL/api/admin/v1/auth/logout" || true)"
+  if [[ "$status" != 204 ]]; then
+    echo "Strict admin logout failed with HTTP $status" >&2
     return 1
   fi
 }
@@ -381,16 +406,16 @@ assert_storage_after_restart() {
     return 1
   }
   if [[ "$STORAGE_MODE" == mysql ]]; then
-    grep -Fq 'e2e-rust-a' "$devices_body" || {
+    grep -Fq "${DEVICE_PREFIX}e2e-rust-a" "$devices_body" || {
       echo "MySQL storage profile lost an enrolled device after Relay restart" >&2
       return 1
     }
-    if grep -Fq 'e2e-rust-revoke-a' "$devices_body"; then
+    if grep -Fq "${DEVICE_PREFIX}e2e-rust-revoke-a" "$devices_body"; then
       echo "MySQL storage profile retained a revoked device after Relay restart" >&2
       return 1
     fi
   else
-    if grep -Eq 'e2e-rust-(a|b)' "$devices_body"; then
+    if grep -Eq "${DEVICE_PREFIX}e2e-rust-(a|b)" "$devices_body"; then
       echo "Memory storage profile retained an enrollment after Relay restart" >&2
       return 1
     fi
@@ -499,7 +524,7 @@ if [[ -n "$BASE_URL" || -n "$ENROLLMENT_TOKEN" ]]; then
     echo "CLIENT_BACKEND_E2E_BASE_URL and RELAY_ENROLLMENT_TOKEN must be provided together" >&2
     exit 64
   fi
-  need_command curl
+  need_command curl python3
   TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/client-backend-e2e.XXXXXX")"
   chmod 700 "$TMP_ROOT"
 else

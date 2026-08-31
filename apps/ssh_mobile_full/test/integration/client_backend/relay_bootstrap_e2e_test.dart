@@ -44,9 +44,12 @@ void main() {
     expect(probeMetadata.protocolVersion, 2);
 
     final algorithm = Ed25519();
-    final deviceA = await _newDevice(algorithm, 'e2e-dart-a');
-    final deviceB = await _newDevice(algorithm, 'e2e-dart-b');
-    final invalidTokenDevice = await _newDevice(algorithm, 'e2e-dart-invalid');
+    final deviceA = await _newDevice(algorithm, _e2eDeviceId('e2e-dart-a'));
+    final deviceB = await _newDevice(algorithm, _e2eDeviceId('e2e-dart-b'));
+    final invalidTokenDevice = await _newDevice(
+      algorithm,
+      _e2eDeviceId('e2e-dart-invalid'),
+    );
 
     final enrollmentA = await bootstrap.enroll(
       endpoint,
@@ -128,7 +131,10 @@ void main() {
     final staleProofFailure = _failure(staleProof, 'stale refresh proof');
     expect(staleProofFailure.code, NetworkErrorCode.authenticationFailed);
 
-    final unknownDevice = await _newDevice(algorithm, 'e2e-dart-unknown');
+    final unknownDevice = await _newDevice(
+      algorithm,
+      _e2eDeviceId('e2e-dart-unknown'),
+    );
     final missingEnrollment = await bootstrap.refresh(
       endpoint,
       await _refreshRequest(algorithm, unknownDevice),
@@ -142,7 +148,7 @@ void main() {
     final unsupportedVersion = await bootstrap.enroll(
       endpoint,
       EnrollmentRequest(
-        deviceId: 'e2e-dart-unsupported-version',
+        deviceId: _e2eDeviceId('e2e-dart-unsupported-version'),
         identityPublicKey: invalidTokenDevice.publicKey,
         enrollmentToken: enrollmentToken,
         protocolVersion: 99,
@@ -207,6 +213,10 @@ String _nonce() {
   return base64UrlEncode(
     List<int>.generate(32, (_) => random.nextInt(256)),
   ).replaceAll('=', '');
+}
+
+String _e2eDeviceId(String suffix) {
+  return '${Platform.environment['CLIENT_BACKEND_E2E_DEVICE_PREFIX'] ?? ''}$suffix';
 }
 
 T _success<T>(SdkResult<T> result, String operation) {

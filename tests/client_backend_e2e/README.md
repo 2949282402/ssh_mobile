@@ -1,4 +1,4 @@
-最新更新时间：2026-08-28
+最新更新时间：2026-08-31
 
 # 客户端—Relay 后端 E2E
 
@@ -47,3 +47,7 @@ WSL/Linux 的系统信任库。否则脚本会失败，而不会跳过 TLS 验�
 
 Rust E2E target 在普通 `cargo test --workspace` 中保持 ignored，避免没有临时
 Compose 环境时误运行；统一入口会显式使用 `--ignored` 启动它。
+
+部署后的线上联合测试不使用本目录的本地 Compose 生命周期；请使用独立的
+[`online-e2e`](../online_e2e/README.md) 模块。该模块要求显式目标、管理员凭据和
+确认标记，运行后只吊销带本次 run 前缀的测试设备。

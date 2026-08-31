@@ -1,0 +1,62 @@
+name: Online E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Deployed Caddy origin, for example https://relay.example.com"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: '3.47.0'
+  GO_VERSION: '1.27.0'
+  RUST_TOOLCHAIN: '1.97.1'
+
+concurrency:
+  group: online-e2e-${{ inputs.base_url }}
+  cancel-in-progress: false
+
+jobs:
+  deployed-backend:
+    name: Deployed backend business branches
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: relay/go.sum
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "native/network_core -> target"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - name: Install workspace dependencies
+        run: dart pub get
+      - name: Install native Dart package dependencies
+        working-directory: packages/infrastructure/ssh_mobile_network_native
+        run: flutter pub get
+      - name: Install Full App dependencies
+        working-directory: apps/ssh_mobile_full
+        run: flutter pub get
+      - name: Run explicit online-e2e module
+        env:
+          ONLINE_E2E_CONFIRM: RUN
+          ONLINE_E2E_BASE_URL: ${{ inputs.base_url }}
+          RELAY_ENROLLMENT_TOKEN: ${{ secrets.ONLINE_E2E_RELAY_ENROLLMENT_TOKEN }}
+          ONLINE_E2E_ADMIN_USER: ${{ secrets.ONLINE_E2E_ADMIN_USER }}
+          ONLINE_E2E_ADMIN_PASSWORD: ${{ secrets.ONLINE_E2E_ADMIN_PASSWORD }}
+        run: bash scripts/bash/e2e/online_e2e.sh full

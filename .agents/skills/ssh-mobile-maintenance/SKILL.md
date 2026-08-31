@@ -3,7 +3,7 @@ name: ssh-mobile-maintenance
 description: Maintain and debug SSH Mobile (Flutter/Dart, Rust SDK, Relay/Admin, React, tests, docs, and Agent guidance).
 ---
 
-> Last updated: 2026-08-30
+> Last updated: 2026-08-31
 
 # SSH Mobile Maintenance
 
@@ -97,9 +97,17 @@ When the user asks to create, update, submit, or publish a PR:
    failure, omission, or unrun check is never PASS.
 3. After minimum preflight, the requested branch may be committed, pushed, and
    opened (prefer draft) so GitHub Actions runs its independent parallel jobs.
-4. Handoff ends agent validation: do not poll, interpret, approve, or merge from
-   GitHub results unless explicitly asked. The user supplies CI results and alone
-   decides whether merging is allowed.
+4. Immediately after every PR push/open, bind a background watcher to the exact
+   commit/run (for example, `gh run watch <run-id> --exit-status > <temp-log>
+   2>&1 &`; discover a not-yet-created run with `gh run list --commit <sha>`).
+   Keep its PID/log temporary and never commit them.
+5. If the watcher reports failure, read only the failed jobs with `gh run view
+   <run-id> --log-failed`, diagnose the first actionable cause, apply the
+   smallest in-scope fix, run permitted focused/static checks, commit/push, and
+   restart the watcher for the new SHA. Repeat until required checks pass or a
+   concrete blocker needs user input; do not hide, skip, or weaken a failure.
+6. Never auto-approve or merge. The user alone decides whether merging is
+   allowed; report the final watcher state and any blocker.
 
 The initial PR write starts remote validation; it is not merge approval. After
 source/test/dependency/structure/CI-scope changes, rerun only checks the user

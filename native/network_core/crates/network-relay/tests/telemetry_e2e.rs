@@ -60,7 +60,11 @@ async fn device_identity_enrolls_telemetry_and_refreshes_after_expired_token() {
         .await
         .expect("telemetry service should become ready before enrollment");
 
-    let device_id = format!("e2e-telemetry-{}", unique_suffix());
+    let device_id = format!(
+        "{}e2e-telemetry-{}",
+        std::env::var("CLIENT_BACKEND_E2E_DEVICE_PREFIX").unwrap_or_default(),
+        unique_suffix()
+    );
     let mut identity = Identity::new(device_id.clone());
     identity.relay_credential = enroll_relay(&base_url, &enrollment_token, &identity)
         .await
@@ -95,7 +99,7 @@ async fn device_identity_enrolls_telemetry_and_refreshes_after_expired_token() {
     let mut token = authenticate_telemetry(&base_url, &identity.device_id, &telemetry_secret)
         .await
         .expect("telemetry HMAC authentication should issue a token");
-    let event_id = format!("e2e-telemetry-event-{}", unique_suffix());
+    let event_id = e2e_telemetry_event_id();
     let ingest_body = telemetry_event(&identity.device_id, &event_id);
 
     assert_eq!(
@@ -249,8 +253,14 @@ fn telemetry_event(device_id: &str, event_id: &str) -> String {
             "eventName": "ssh.session.started",
             "eventVersion": 1,
             "deviceId": device_id,
-            "sessionId": "e2e-telemetry-session",
-            "traceId": "e2e-telemetry-trace",
+            "sessionId": format!(
+                "{}e2e-telemetry-session",
+                std::env::var("CLIENT_BACKEND_E2E_DEVICE_PREFIX").unwrap_or_default()
+            ),
+            "traceId": format!(
+                "{}e2e-telemetry-trace",
+                std::env::var("CLIENT_BACKEND_E2E_DEVICE_PREFIX").unwrap_or_default()
+            ),
             "occurredAt": rfc3339_now(),
             "feature": "ssh",
             "severity": "info",
@@ -264,6 +274,18 @@ fn telemetry_event(device_id: &str, event_id: &str) -> String {
         }]
     })
     .to_string()
+}
+
+fn e2e_telemetry_event_id() -> String {
+    let suffix = unique_suffix();
+    let prefix = std::env::var("CLIENT_BACKEND_E2E_DEVICE_PREFIX").unwrap_or_default();
+    if prefix.is_empty() {
+        return format!("e2e-telemetry-event-{suffix}");
+    }
+    // Keep the prefixed online identifier within the shared 64-byte event_id
+    // contract while retaining the complete run prefix for cleanup/audit
+    // filtering. Sixteen hex characters provide ample per-run uniqueness.
+    format!("{prefix}telemetry-{}", &suffix[..16])
 }
 
 async fn ingest(base_url: &str, device_id: &str, token: &str, body: &str) -> u16 {

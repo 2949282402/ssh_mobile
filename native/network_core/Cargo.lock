@@ -1381,6 +1381,7 @@ dependencies = [
  "network-protocol",
  "prost",
  "rand 0.8.7",
+ "rustls",
  "serde_json",
  "sha2",
  "thiserror 1.0.69",
@@ -1418,6 +1419,7 @@ name = "network-transport"
 version = "0.1.0"
 dependencies = [
  "futures-util",
+ "rustls",
  "thiserror 1.0.69",
  "tokio",
  "tokio-tungstenite",

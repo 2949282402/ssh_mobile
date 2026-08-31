@@ -8,6 +8,7 @@ futures-util = "0.3"
 thiserror = "1.0"
 tokio = { version = "1.38", features = ["full"] }
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 url = "2.5"
 
 # Deterministic write-pressure test seam used only by `network-core` tests and

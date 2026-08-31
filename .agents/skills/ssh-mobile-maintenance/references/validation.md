@@ -1,4 +1,4 @@
-> Last updated: 2026-08-30
+> Last updated: 2026-08-31
 
 # Validation Matrix
 
@@ -53,8 +53,11 @@ bash scripts/bash/ci/full_test.sh
 Use `--no-bootstrap`/`-NoBootstrap` for repeat runs. If an explicit local run
 hits host/toolchain/container/permission/resource limits, retain the `GAP` or
 timeout and stop; it is not PASS. After the minimum preflight, push/open the
-requested PR; do not poll or interpret GitHub results unless the user asks, and
-do not approve/merge. The user reports CI results and decides merging. Changes
+requested PR and start a temporary, exact-commit background watcher (for
+example, `gh run watch <run-id> --exit-status > <temp-log> 2>&1 &`). On failure,
+read `gh run view <run-id> --log-failed`, fix the first actionable cause, run
+permitted focused/static checks, commit/push, and restart the watcher for the new
+SHA. Do not approve or merge automatically; the user decides merging. Changes
 to tests, package membership, structure, CI jobs, generated checks, exclusions,
 timeouts, or environment assumptions require synchronized same-relative `.sh`/
 `.ps1` updates and affected `--only`/`-Only` checks.

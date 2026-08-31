@@ -1,4 +1,4 @@
-> Last updated: 2026-08-30
+> Last updated: 2026-08-31
 
 # Project Memory
 
@@ -23,8 +23,9 @@ exit semantics aligned; use the host-native tree.
 
 本地 aggregate CI 仅在用户明确提及时运行。用户要求发起 PR 时完成最小
 format/diff/focused 检查后可提交、推送并发起 PR，由 GitHub Actions 的并行 jobs
-作为 CI 基准。未执行、遗漏、GAP、超时或失败都不是 PASS；发起 PR/CI 后不主动
-观察或解读 GitHub，不批准或合并，合并权由用户决定。
+作为 CI 基准。推送/发起 PR 后，为精确 commit/run 启动临时后台 watcher；失败时
+读取失败 job 日志，自动修复首个可操作原因，重新推送并重启 watcher，直到通过或
+明确阻塞。未执行、遗漏、GAP、超时或失败都不是 PASS；不批准或合并，合并权由用户决定。
 
 Full local CI and repeat-run parameters are owned by
 [Validation](../.agents/skills/ssh-mobile-maintenance/references/validation.md), not
