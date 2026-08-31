@@ -169,24 +169,23 @@ Form inputs must never borrow button styles. Form controls use dedicated CSS cla
 
 ## 7. Responsive architecture
 
-Front adapts across three primary layout viewports (`1100px`, `900px`, `760px`):
+Front adapts layout and typography across distinct CSS media query breakpoints:
 
 ```text
-┌────────────────────────┬────────────────────────┬────────────────────────┐
-│  Desktop (≥ 1100px)    │   Medium (900–1100px)  │   Mobile (≤ 760px)     │
-├────────────────────────┼────────────────────────┼────────────────────────┤
-│ - Sticky 250px sidebar │ - Sticky 250px sidebar │ - Off-canvas drawer    │
-│ - 4-column metric grid │ - 2-column metric grid │ - 2-col tight metrics  │
-│ - Auto-fit form grids  │ - Auto-fit form grids  │ - 1-col form grids     │
-│ - Table layout         │ - Table scroll wrapper │ - Stacked card summary │
-└────────────────────────┴────────────────────────┴────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Breakpoint Rules & Responsive Behavior                                  │
+├─────────────────────────────────────────────────────────────────────────┤
+│ • Default / > 1100px: 4-column metric grid, persistent 250px sidebar    │
+│ • ≤ 1100px:           2-column metric grid, persistent sidebar retained │
+│ • ≤ 900px:            multi-column form grids & overview collapse to 1-col│
+│ • ≤ 760px:            off-canvas drawer sidebar + tight 2-col metrics   │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Desktop (≥ 1100px)**: Persistent 250px sidebar, 4-column metric grid (`.metric-grid`), full-width tables with horizontal scroll wrapper.
-- **Medium (900px–1100px)**: Persistent sidebar maintained, `.metric-grid` collapses to 2 columns, standard form layouts preserved.
-- **Mobile (≤ 900px / ≤ 760px)**:
-  - At ≤ 900px: Explicit multi-column form grids (`.form-grid--2col`, `.form-grid--3col`) and two-column overview layout collapse to 1 column.
-  - At ≤ 760px: Sidebar becomes an off-canvas drawer toggled via the header brand trigger; `.metric-grid` remains 2 columns with tightened padding and gaps (`9px` gap, `10px` margin); record card summaries stack vertically with full-width action aside.
+- **Default / > 1100px**: Persistent 250px sidebar, 4-column metric grid (`.metric-grid`), auto-fit form grids, full-width data tables with horizontal scroll containment.
+- **≤ 1100px**: Persistent sidebar maintained; `.metric-grid` collapses to 2 columns (`grid-template-columns: repeat(2, minmax(0, 1fr))`).
+- **≤ 900px**: Explicit multi-column form grids (`.form-grid--2col`, `.form-grid--3col`) and two-column overview layout collapse to 1 column.
+- **≤ 760px**: Sidebar transitions into an off-canvas drawer toggled by the topbar navigation/menu button; `.metric-grid` remains 2 columns with tightened padding and gaps (`9px` gap, `10px` margin); record card summaries stack vertically with full-width action aside.
 - **Data Overflow Containment**: Monospace strings (Trace IDs, Session IDs, URLs, JSON payloads, and stack traces) use `overflow-x: auto` or word-wrapping to prevent viewport expansion on narrow devices.
 
 ---

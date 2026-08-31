@@ -132,7 +132,7 @@ describe('TelemetrySettingsPage boundary behavior', () => {
     });
 
     await user.click(screen.getByRole('button', { name: '恢复默认推荐配置' }));
-    expect(screen.getByText(/ACTIVE \(v10\)/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/ACTIVE \(v10\)/)).toBeInTheDocument());
     expect(screen.getByDisplayValue('50')).toBeInTheDocument();
     expect(screen.getByDisplayValue('30')).toBeInTheDocument();
 
