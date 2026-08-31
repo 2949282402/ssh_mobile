@@ -1124,7 +1124,7 @@ code {
 
 .device-table {
   width: 100%;
-  min-width: 760px;
+  min-width: 890px;
   border-collapse: collapse;
 }
 
@@ -1216,6 +1216,27 @@ code {
 .muted-value {
   color: var(--muted);
   white-space: nowrap;
+}
+
+.device-endpoint {
+  display: inline-flex;
+  max-width: 220px;
+  align-items: center;
+  gap: 6px;
+  color: var(--teal-deep);
+  white-space: nowrap;
+}
+
+.device-endpoint--muted {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.device-endpoint__value {
+  overflow: hidden;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px;
+  text-overflow: ellipsis;
 }
 
 .device-table__action {

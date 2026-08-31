@@ -26,6 +26,15 @@ const devices = {
   presence_available: true,
 };
 
+const onlineDevices = {
+  ...devices,
+  items: [{
+    ...devices.items[0],
+    online: true,
+    remote_addr: '198.51.100.24:43120',
+  }],
+};
+
 function renderDevices() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -38,6 +47,16 @@ function renderDevices() {
 }
 
 describe('DevicesPage', () => {
+  it('shows the current public IP and port in a dedicated column', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(onlineDevices));
+    vi.stubGlobal('fetch', fetchMock);
+    renderDevices();
+
+    await waitFor(() => expect(screen.getByText('198.51.100.24:43120')).toBeInTheDocument());
+    expect(screen.getByRole('columnheader', { name: '公网 IP / 端口' })).toBeInTheDocument();
+    expect(screen.getByTitle('当前公网地址 198.51.100.24:43120')).toBeInTheDocument();
+  });
+
   it('revokes a device after confirmation and refreshes the list', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(devices))
@@ -72,6 +91,7 @@ describe('DevicesPage', () => {
     await waitFor(() => expect(screen.getByText('presence 服务异常，设备的在线状态暂不可用。')).toBeInTheDocument());
     // 设备状态显示"未知"；"离线"只应出现在被禁用的筛选按钮上（1 处），而不是设备 badge。
     expect(screen.getByText('未知')).toBeInTheDocument();
+    expect(screen.getByText('不可用')).toBeInTheDocument();
     expect(screen.getAllByText('离线')).toHaveLength(1);
     // 在线/离线筛选按钮禁用。
     expect(screen.getByRole('button', { name: '在线' })).toBeDisabled();

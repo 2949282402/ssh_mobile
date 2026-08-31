@@ -101,6 +101,7 @@ func (s *Server) connectControlV2(w http.ResponseWriter, r *http.Request) {
 		maxPendingBytes:      s.config.MaxPendingBytesPerDevice,
 		maxFramesPerSecond:   s.config.MaxFramesPerSecondPerDevice,
 		maxBytesPerSecond:    s.config.MaxBytesPerSecondPerDevice,
+		remoteAddr:           clientRemoteAddr(r, s.config.TrustedProxyCIDRs),
 		relayHost:            r.Host,
 	}
 	presenceTTLSeconds := uint32(s.config.PresenceTTL / time.Second)
