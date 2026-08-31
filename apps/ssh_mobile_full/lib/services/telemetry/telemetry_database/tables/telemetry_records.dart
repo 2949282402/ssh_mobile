@@ -18,7 +18,7 @@ part of '../../telemetry_database.dart';
 )
 class TelemetryRecords extends Table {
   /// 服务端幂等事件 ID。
-  TextColumn get eventId => text().unique()();
+  TextColumn get eventId => text()();
 
   /// 记录类型（analytics | diagnostic）。
   TextColumn get recordType => text()();

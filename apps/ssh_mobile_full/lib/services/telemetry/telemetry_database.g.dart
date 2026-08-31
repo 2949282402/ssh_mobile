@@ -19,7 +19,6 @@ class $TelemetryRecordsTable extends TelemetryRecords
     false,
     type: DriftSqlType.string,
     requiredDuringInsert: true,
-    defaultConstraints: GeneratedColumn.constraintIsAlways('UNIQUE'),
   );
   static const VerificationMeta _recordTypeMeta = const VerificationMeta(
     'recordType',

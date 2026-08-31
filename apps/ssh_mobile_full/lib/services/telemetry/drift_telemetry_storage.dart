@@ -46,8 +46,9 @@ class DriftTelemetryStorage
       // exception types. Classify the unique event-id constraint by its stable
       // message while preserving every other storage failure as-is.
       final message = error.toString().toLowerCase();
-      if (message.contains('unique constraint') ||
-          message.contains('duplicate') && message.contains('event_id')) {
+      if ((message.contains('unique constraint') ||
+              message.contains('duplicate')) &&
+          message.contains('event_id')) {
         throw TelemetryStorageDuplicateException(record.eventId);
       }
       rethrow;
