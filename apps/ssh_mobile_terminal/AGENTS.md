@@ -1,24 +1,23 @@
-最新更新时间：2026-08-24
+最新更新时间：2026-08-30
 
 # Terminal-only App Guidelines
 
-- 本 App 只验证最小 Terminal 编译图，不复制 Full App 的业务 Service。
-- App Scope 资源由 `lib/app/terminal_app_runtime.dart` 统一创建和释放。
-- 根 Stateful Widget 必须提供可等待、幂等的退出屏障；先移除 Route/Feature borrower，
-  再按 Module → SSH → Network → Database → UI owners → Logger 释放。单项失败不能
-  跳过后续 Owner。
-- Terminal 页面只能通过 `feature_terminal` 的公共入口和 Port 使用能力，
-  禁止导入其他 Package 的 `lib/src/`。
-- 不得添加 AI、RAG、MCP、WebView、LAN Share 或 SFTP 依赖；需要扩展完整
-  产品能力时应修改 Full App 或对应 Feature，而不是扩大这个验证切片。
-- 新增资源必须在同一 Owner 或明确的上级 Owner 中提供 `dispose`、`close`、
-  `cancel` 或 `release`。
+- This App is the minimal Terminal dependency-crop validator; do not copy Full
+  App business Services. `lib/app/terminal_app_runtime.dart` owns App resources.
+- The root Stateful Widget is an awaitable/idempotent exit owner: remove Route/
+  Feature borrowers, then release Module → SSH → Network → Database → UI owners
+  → Logger. Continue after individual failures; resources must provide
+  `dispose/close/cancel/release`.
+- Terminal uses only `feature_terminal` public API/Ports and never another
+  package's `/src/`. Do not add AI, RAG, MCP, WebView, LAN Share, SFTP, or Full
+  App business implementations. Expansion belongs in Full App/Feature packages.
+- Contract changes update `TerminalFeatureScope`, Runtime injectors, tests, and
+  dependency-crop docs. `TerminalModule` alone owns `terminal.db`; Runtime owns
+  App Scope, Module owns DB, Route Scope owns page resources.
 
-## Step29 标准字段
+## Validation for code changes
 
-- 允许修改范围：最小 App Shell、Runtime、Terminal 测试和裁剪验证文档。
-- 禁止依赖：AI、RAG、MCP、WebView、LAN Share、SFTP 或 Full App `/src/`。
-- Public API 修改要求：同步 `TerminalFeatureScope`、Runtime 注入方、测试和依赖裁剪说明。
-- 数据库约束：只允许 `TerminalModule` 拥有 `terminal.db`，不得创建未选择 Feature 数据库。
-- 资源释放规则：Runtime 释放 App Scope；Module 释放数据库；Route Scope 释放页面资源。
-- 必须运行的测试：`flutter pub deps`、`flutter analyze`、`flutter test`。
+`flutter pub deps`, `flutter analyze`, and `flutter test` (package-local; local
+aggregate CI remains user-opt-in). Dependency output must not contain
+`feature_ai`, `feature_rag`, `feature_mcp`, `feature_webview`,
+`feature_lan_share`, or `feature_sftp`.

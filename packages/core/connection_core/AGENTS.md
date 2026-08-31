@@ -1,27 +1,21 @@
-最新更新时间：2026-08-26
+最新更新时间：2026-08-30
 
 # connection_core 维护约束
 
-- 这里只放 Connection 领域模型、Repository/Capability 契约、Connection Drift
-  数据库和 Secure Storage 凭据实现，不放 Screen、ViewModel 或 SSH 会话实现。
-- Drift 表只能保存非敏感连接结构；密码、私钥和 Token 必须经过
-  `CredentialRepository` 进入平台 Secure Storage。
-- `ConnectionDatabase` 的创建和关闭 Owner 是 AppRuntime；Repository 不得自行创建
-  全局数据库，也不能通过静态单例隐藏资源。
-- 数据库当前按 Plan 使用全新 `connection.sqlite`，不添加旧统一业务数据库或旧
-  SharedPreferences 的迁移适配器。
-- 新增或修改代码需要补充中文职责/约束注释，并为 CRUD、并发顺序、凭据隔离和
-  生命周期补充测试。
-- Repository、Drift 持久化/迁移、Credential/Host Key 合同或敏感数据边界变化
-  必须先用失败测试定义可观察结果；修改无覆盖旧实现前先补 characterization test。
-- Full App 迁移已关闭旧 Connection 导入门禁；不得恢复旧
-  `apps/ssh_mobile_full/lib/features/connection/` 业务入口或模型转导出。
+- 只放 Connection 领域模型、Repository/Capability、Connection Drift DB 和
+  Secure Storage 凭据实现；不放 Screen/ViewModel/SSH 会话。Drift 只保存非敏感
+  结构；密码、私钥、Token 经 `CredentialRepository` 进入平台 Secure Storage。
+- `ConnectionDatabase`（固定 `connection.sqlite`）由 AppRuntime 创建/关闭；
+  Repository 不创建全局 DB、不静态隐藏 Owner。禁止旧统一业务 DB 或
+  SharedPreferences 迁移适配器。生产打开失败不得回退内存。
+- Full App 旧 Connection 入口/模型导出（`apps/ssh_mobile_full/lib/features/connection/`）
+  已关闭；调用方只能使用公开契约。
+- CRUD、并发顺序、凭据隔离、Host Key/迁移和生命周期变化先以失败/characterization
+  测试定义结果；新增/修改代码补充中文职责/约束注释。
+- Contract：允许模型、Repository、Host Key/凭据契约、DB 输入/生成代码和测试；
+  API 变更同步 `connection_core.dart`、AppRuntime adapter、迁移文档和生成物。
 
-## Step29 标准字段
+## 验证（代码变更）
 
-- 允许修改范围：Connection 模型、Repository、Host Key/凭据契约、数据库输入、生成代码和测试。
-- 禁止依赖：Feature、SSH 会话、UI、App Shell 业务实现或统一旧数据库。
-- Public API 修改要求：同步 `connection_core.dart`、AppRuntime 适配器、迁移文档和生成代码。
-- 数据库约束：只保存非敏感结构，数据库名固定为 `connection.sqlite`；秘密只能进 Secure Storage。
-- 资源释放规则：AppRuntime 创建并关闭 `ConnectionDatabase`；Repository 不隐藏全局 Owner。
-- 必须运行的测试：`dart run build_runner build`、`flutter analyze`、`flutter test`。
+`dart run build_runner build`、`flutter analyze`、`flutter test`；local aggregate
+CI 仅按用户明确要求运行。

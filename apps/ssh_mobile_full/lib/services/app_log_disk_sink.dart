@@ -80,7 +80,7 @@ extension AppLogServiceDiskSink on AppLogService {
   }
 
   /// 对日志正文进行统一脱敏。
-  String _redact(String value) => _secretPolicy.redactText(value);
+  String _redact(String value) => _redactor.sanitizeText(value);
 
   /// 从错误堆栈或当前调用堆栈提取可读来源位置。
   String? _sourceLocation(StackTrace? errorStackTrace) {

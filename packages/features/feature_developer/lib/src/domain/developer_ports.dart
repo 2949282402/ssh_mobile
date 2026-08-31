@@ -187,6 +187,9 @@ enum DeveloperComponentId {
 
   /// 日志缓冲区。
   logBuffer,
+
+  /// Telemetry 数据埋点。
+  telemetry,
 }
 
 /// 将组件标识转换为稳定的开发者页面标签。
@@ -198,6 +201,7 @@ extension DeveloperComponentPresentation on DeveloperComponentId {
     DeveloperComponentId.mcpServer => 'MCP Server',
     DeveloperComponentId.performanceMonitor => 'Perf Monitor',
     DeveloperComponentId.logBuffer => 'Log Buffer',
+    DeveloperComponentId.telemetry => 'Telemetry',
   };
 }
 
@@ -223,4 +227,16 @@ abstract interface class DeveloperDiagnosticsPort implements Listenable {
 
   /// 读取操作系统级内存分类；不支持的平台返回 null。
   Future<DeveloperNativeMemorySnapshot?> readNativeMemory();
+
+  /// 一键重传本地所有 Telemetry 数据。
+  Future<int> replayTelemetry() async => 0;
+
+  /// 显式重试本地 rejected Telemetry 数据；不会影响 pending/synced rows。
+  Future<int> retryRejectedTelemetry() async => 0;
+
+  /// 立即触发一次 Telemetry 批次上传。
+  Future<void> flushTelemetry() async {}
+
+  /// 刷新远端 Telemetry 上传策略。
+  Future<bool> refreshTelemetryPolicy() async => false;
 }

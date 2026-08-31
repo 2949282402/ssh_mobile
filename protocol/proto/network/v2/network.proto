@@ -99,6 +99,17 @@ enum RouteTransport {
   ROUTE_TRANSPORT_WEBSOCKET = 4;
 }
 
+// Causal phases for one native direct/Relay route attempt. These events are
+// peer-scoped observations, not lifecycle terminals: PeerStateChanged remains
+// the sole connect() completion signal.
+enum RouteAttemptPhase {
+  ROUTE_ATTEMPT_PHASE_UNSPECIFIED = 0;
+  ROUTE_ATTEMPT_PHASE_DIRECT_FAILED = 1;
+  ROUTE_ATTEMPT_PHASE_RELAY_FALLBACK_STARTED = 2;
+  ROUTE_ATTEMPT_PHASE_RELAY_CONNECTED = 3;
+  ROUTE_ATTEMPT_PHASE_RELAY_FAILED = 4;
+}
+
 enum RelayConnectionState {
   RELAY_CONNECTION_STATE_UNSPECIFIED = 0;
   RELAY_CONNECTION_STATE_CONNECTING = 1;
@@ -450,6 +461,15 @@ message RouteChangedEvent {
   RouteTransport transport = 7;
 }
 
+message RouteAttemptChangedEvent {
+  string peer_id = 1;
+  string attempt_id = 2;
+  RouteAttemptPhase phase = 3;
+  RouteType route_type = 4;
+  NetworkError error = 5;
+  string command_id = 6;
+}
+
 message RelayStateChangedEvent {
   RelayConnectionState state = 1;
   NetworkError error = 2;
@@ -545,5 +565,6 @@ message NetworkEvent {
     PeerDiagnostics peer_diagnostics = 30;
     NetworkEnvironmentChangedEvent network_environment_changed = 31;
     PeerTransferProgressEvent peer_transfer_progress = 32;
+    RouteAttemptChangedEvent route_attempt_changed = 33;
   }
 }

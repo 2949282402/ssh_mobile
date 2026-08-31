@@ -29,6 +29,10 @@ workspace:
 
 dev_dependencies:
   melos: ^8.2.2
+  # Used by tool/gen_telemetry_contract.dart and
+  # tool/check_telemetry_contract_generated.dart to read the YAML contract
+  # source of truth (dev-only, tool-level; not a runtime dependency).
+  yaml: ^3.1.3
 
 melos:
   scripts:

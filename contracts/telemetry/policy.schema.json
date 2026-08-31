@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TelemetryUploadPolicy",
+  "description": "Upload policy schema controlling client-side telemetry triggers, batching, and target limits.",
+  "type": "object",
+  "required": [
+    "uploadEnabled",
+    "batchSizeThreshold",
+    "timeIntervalSeconds",
+    "maxBatchSize",
+    "clientMaxLocalRecords",
+    "specialTriggers",
+    "policyVersion"
+  ],
+  "properties": {
+    "uploadEnabled": {
+      "type": "boolean",
+      "description": "Controls whether automatic and trigger-based telemetry upload is enabled."
+    },
+    "batchSizeThreshold": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000,
+      "default": 50,
+      "description": "Number of pending records required to trigger an automatic batch upload."
+    },
+    "timeIntervalSeconds": {
+      "type": "integer",
+      "minimum": 5,
+      "maximum": 3600,
+      "default": 60,
+      "description": "Periodic interval in seconds to trigger a batch upload if pending records exist."
+    },
+    "maxBatchSize": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "default": 100,
+      "description": "Maximum number of records to include in a single HTTPS upload request body; aligned with the relay hard limit."
+    },
+    "clientMaxLocalRecords": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 1000000,
+      "default": 10000,
+      "description": "Target soft capacity for local storage. When exceeded, only synced records are FIFO deleted."
+    },
+    "specialTriggers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "highPriorityError",
+          "appBackground",
+          "networkRecovered",
+          "appForegroundWithBacklog"
+        ]
+      },
+      "default": [
+        "highPriorityError",
+        "appBackground",
+        "networkRecovered",
+        "appForegroundWithBacklog"
+      ],
+      "description": "Lifecycle or error conditions that trigger an immediate upload attempt."
+    },
+    "policyVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647,
+      "default": 1,
+      "description": "Monotonically increasing version number for the policy configuration."
+    }
+  },
+  "additionalProperties": false
+}

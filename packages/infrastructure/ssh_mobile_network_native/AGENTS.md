@@ -1,89 +1,67 @@
-最新更新时间：2026-08-26
+最新更新时间：2026-08-30
 
 # ssh_mobile_network_native 维护约束
 
-## 允许修改范围
+## Scope and public boundary
 
-允许修改 Dart FFI facade、native asset hook、平台构建配置、Rust 协议绑定和对应
-测试；协议字节、状态枚举和构建目标变化必须同步 Network Transport 合约。Realtime
-command/event 的类型化 API 必须继续隐藏 Rust handle、Socket 和 WebRTC 内部对象。
+- Allowed: Dart FFI facade, native asset hooks/platform build, Rust bindings,
+  protocol bytes/state enums, and tests. Changes sync `network_transport`, build
+  docs, and Dart/Rust tests. Public API is
+  `package:ssh_mobile_network_native/ssh_mobile_network_native.dart` and hides
+  Rust handles, sockets, WebRTC objects, and internal tags.
+- `NativeNetworkProtocol` remains a static facade; encoding, event-envelope
+  dispatch, Peer/Delivery/Transfer/Realtime/Stream mapping, and bounded FFI
+  validation are separate stateless collaborators. New wire families go to their
+  decoder, not back into the facade. No Feature/App/UI/global Service or copied
+  LAN/SSH/SFTP implementation.
 
-`NativeNetworkProtocol` 是稳定的静态 facade：command encoding、event envelope、
-Peer/Delivery/Transfer/Realtime/Stream typed mapping 和 FFI 边界值校验由各自内部
-collaborator 拥有。新增 wire family 必须进入其所属 decoder，不得把实现重新堆回 facade。
+## Delivery, Session, and crypto
 
-## 禁止依赖
+- Delivery application ACK binds current ConnectionSession Session ID, Channel,
+  and Message ID. Recovery Epoch stays Rust Delivery state and never becomes
+  Dart identity or echoed field. InFlight and Processed messages differ; only
+  Processed may ACK. `SessionBoundOrdered` keeps expected sequence, one in-flight
+  message, and bounded reorder buffer in native Delivery; Dart event order cannot
+  compensate. Pending Delivery stores logical plaintext only, never route
+  ciphertext; Delivery/Transfer managers resume business state on a new session.
+- Every transport Connection creates a fresh SessionId/Noise root; loss destroys
+  its ConnectionSession. One session's QUIC/Relay/file chunks share one
+  CryptoContext; a new connection re-encrypts with a new root. `SendMessage`/
+  `DataMessage` have no per-message crypto mode; native ConnectionSession always
+  applies E2EE. Relay forwards opaque bytes and never reads plaintext, content
+  keys, or nonce.
 
-不得依赖 Feature、App Shell、Flutter UI 或 Dart 全局 Service；Dart 只通过受控
-FFI handle 调用 Rust，不得在这里复制业务层 LAN/SSH/SFTP 实现。
+## Native tasks and network ownership
 
-## Public API 修改要求
+- All Rust background work is registered with `RuntimeTaskSupervisor`; no unowned
+  `tokio::spawn`. A bounded local `JoinSet` is allowed only when its surrounding
+  owner registers and joins it. ConnectionSession carrier/channel/file receivers use its child
+  group; Delivery retry and Transfer resume workers remain business-manager-owned
+  across loss. There is no ConnectionSession-owned reconnect/direct-upgrade task.
+  Runtime stop cancels root, closes Relay/WebRTC/QUIC owners, awaits all tasks,
+  then releases runtime.
+- NAT candidate exchange is native-owned: one shared UDP socket passes through
+  STUN gathering to Quinn; authenticated QUIC is the bounded production check.
+  Do not add raw UDP probe protocol or competing `recv_from` loop. Offer/Answer
+  preserves generation, attempt ID, connect window, stale-answer rejection, and
+  Relay fallback.
+- WebRTC data plane is native-only. `network-webrtc::RealtimeIoDriver` owns UDP,
+  sans-I/O `WebRtcPeer`, and polling under `RuntimeTaskSupervisor`; Dart/Feature
+  never opens another socket or calls `poll_write`, `poll_read`, or
+  `handle_timeout`. Host candidates precede SDP; trickled STUN/TURN candidates
+  use authenticated signaling; `relay_only` is reserved for TURN fallback/
+  privacy validation. Local E2E and coturn relay-only tests remain network-quality
+  gates.
+- No database or persisted secret; upper secure storage/Feature Module owns
+  pairing credentials, Tokens, and history. `NativeNetworkRuntime` enforces
+  `Running → Stopping → Stopped → Destroyed`, idempotent stop, and rejects
+  commands after stopping begins.
 
-公共入口为 `package:ssh_mobile_network_native/ssh_mobile_network_native.dart`。
-修改 FFI 状态、命令、事件或 hook 行为时，必须同步 `network_transport`、平台
-构建文档和 Dart/Rust 测试。
+## Validation（代码变更）
 
-Delivery 的应用 ACK 绑定当前 ConnectionSession 的 Session ID、Channel 和
-Message ID；跨连接的业务状态由 Delivery/Transfer manager 持有。Recovery Epoch
-属于 Rust Delivery transport 状态，不得成为 Dart/Flutter 业务身份或由客户端
-回传的字段。重复消息必须区分 InFlight 与 Processed，前者禁止 ACK。
-`SessionBoundOrdered` 必须由 native Delivery owner 维护 expected sequence、
-单个 in-flight 消息和有界 reorder buffer；不得在 Dart 侧用事件到达顺序补偿。
-
-Application E2EE 必须由 native ConnectionSession owner 维护。每个 transport
-Connection 创建新的 SessionId 与 Noise root；transport loss 销毁
-ConnectionSession，不继承旧 crypto context。Network Protocol V2 的
-`SendMessage` / `DataMessage` 不携带 per-message crypto mode，始终使用
-ConnectionSession E2EE。Pending Delivery 状态只能保存逻辑明文，不能缓存任何 Route ciphertext；
-Delivery/Transfer 的业务状态留在 manager，并在新 ConnectionSession 上恢复。
-同一 ConnectionSession 内的 QUIC、Relay 以及 Relay 文件分块使用同一
-CryptoContext；新连接按新的 root 重新加密，禁止跨 Transport 继承旧 context。
-Relay 控制面可以转发 opaque bytes，但不得读取业务明文、内容密钥或 nonce。
-
-Rust native background work must be registered with `RuntimeTaskSupervisor`.
-Production code must not create an unowned `tokio::spawn`; bounded local
-`JoinSet` attempts are allowed only when the surrounding ConnectionSession/runtime task
-owns and joins the set. ConnectionSession-scoped carrier handshake, channel
-receiver, and file receiver work must use the ConnectionSession task group;
-Delivery retry and Transfer resume workers remain business-manager-owned across
-transport loss. There is no ConnectionSession-owned reconnect or direct-upgrade task.
-Runtime stop must cancel the root, close Relay/WebRTC/QUIC owners, await all
-supervisor tasks, and only then release the native runtime.
-
-NAT candidate exchange is also native-owned. The shared UDP socket is handed to
-Quinn after local and multi-server STUN gathering; the production connectivity
-check is the bounded, identity-authenticated QUIC attempt itself. Do not add a
-second raw UDP probe protocol or let an independent `recv_from` loop compete
-with Quinn. Candidate Offer/Answer changes must preserve generation, attempt
-ID, connect-window bounds, stale-answer rejection, and Relay fallback.
-
-WebRTC data-plane ownership is native-only. `network-webrtc::RealtimeIoDriver`
-owns the UDP socket together with the sans-I/O `WebRtcPeer` and must be started
-and cancelled through `network-core::RuntimeTaskSupervisor`; no Feature or Dart
-code may open a second WebRTC socket or drive `poll_write`, `poll_read`, or
-`handle_timeout` directly. Local host candidates are registered before SDP is
-created, trickled STUN/TURN candidates are forwarded through the existing
-authenticated signaling control plane, and `relay_only` is reserved for TURN
-fallback/privacy validation. The local E2E and coturn-backed relay-only tests
-are part of the native network quality gate.
-
-## 数据库约束
-
-本 Package 不拥有数据库；配对凭据、Token 和业务历史由上层安全存储或 Feature
-Module 管理，native runtime 不得持久化秘密。
-
-## 资源释放规则
-
-`NativeNetworkRuntime` 的 Owner 必须负责 isolate 停止、Rust handle destroy 和
-重复释放保护；生命周期顺序保持 `Running -> Stopping -> Stopped -> Destroyed`，
-停止后拒绝新命令。
-
-## 必须运行的测试
-
-Peer/Session/Path/Lease、Direct/Relay fallback、recovery、Delivery/Transfer/Stream、
-E2EE、nonce/counter/key lifecycle、cancellation/timeout/race 或 FFI mapping 变化
-必须先由最低合理层级的失败测试锁定；跨 Dart/Rust/wire 边界还必须补 contract 或
-acceptance evidence，不能只保留单侧 unit test。
+Peer/Session/Path/Lease, Direct/Relay, recovery, Delivery/Transfer/Stream, E2EE,
+nonce/counter/key lifecycle, cancellation/timeout/race, FFI mapping, or wire
+changes start with failure-first tests plus Dart↔Rust/contract acceptance.
 
 ```bash
 dart analyze
@@ -91,6 +69,9 @@ dart test
 cargo fmt --all -- --check
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
-# With coturn listening on 127.0.0.1:3478:
+# with coturn on 127.0.0.1:3478:
 cargo test -p network-webrtc --locked -- --ignored relay_only_drivers_exchange_data_channel_payloads
 ```
+
+Local aggregate CI is user-opt-in; package/native focused checks remain required
+when the code boundary changes.

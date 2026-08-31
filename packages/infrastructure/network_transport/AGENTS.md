@@ -1,69 +1,41 @@
-最新更新时间：2026-08-25
+最新更新时间：2026-08-30
 
-# network_transport Package Guidelines
+# network_transport 维护约束
 
-## 职责
+- Scope: App Scope network runtime, lazy Capabilities, transport endpoint/
+  connection contracts, and native adapter. Do not implement TCP/UDP/QUIC/
+  WebRTC protocols, Feature UI, SSH sessions, or LAN business rules.
+- Production depends only on `app_core` and `ssh_mobile_network_native`. Features
+  use `network_transport.dart`; never `/src/`. Only AppRuntime/Composition Root
+  creates `NetworkRuntimeImpl`/`NativeNetworkAdapter`; no static cross-App
+  singleton. Runtime owns native handle and `diagnostics` may report only its
+  own handle/registered capabilities/
+  connections; `boundLocalPort` is read-only projection, not ownership transfer.
+- `openCommandGateway()`/`openRealtimeGateway()` return gateways that borrow the
+  Runtime handle; they copy/close neither it nor business protocol. Realtime only
+  maps typed native commands/events; `start/stop` return `NativeCommandTicket`,
+  separating queue
+  acceptance from `NativeCommandResultEvent`; App adapter owns result correlation,
+  timeout, pending map, and subscriptions.
 
-本 Package 只提供 App Scope 网络运行时、Capability Lazy Init、传输端点/连接
-合约和原生网络 adapter。它不实现具体 TCP、UDP、QUIC、WebRTC 协议，也不放置
-Feature UI、SSH 会话或 LAN 业务规则。
+## Lifecycle and Wave 1
 
-## 依赖与边界
+- Capability first use lazily creates a handle; concurrent calls share one Future,
+  failure clears in-flight state for retry. `NetworkCapability.runtime` means
+  command-worker handle only, independent of QUIC/WSS/Realtime capabilities.
+- Wave 1 still uses `ConfigureRuntime`, which always initializes direct QUIC/TCP;
+  QUIC-free WSS-only data plane is deferred to Wave 2 and does not exist. Opening
+  command gateway ensures only runtime, not QUIC.
+- Dispose waits for pending creation, performs `create → start → stop → destroy`,
+  then rejects new capability requests; Finalizer never replaces explicit close.
+  AppRuntime/native owner releases the handle; borrowers cancel their own
+  subscriptions. Realtime stops before Runtime dispose.
+- Contract: allowed Runtime/Facade/Capability/native adapter/transport contracts
+  and tests; no DB, pairing credentials, business history, second protocol, or
+  Feature owner. API/Owner changes sync `network_transport.dart`, AppRuntime,
+  Feature adapters, tests, and Architecture.
 
-- 生产代码只依赖 `app_core` 和 `ssh_mobile_network_native`；
-- Feature 不得直接引用本 Package 的 `/src/`，只使用 `network_transport.dart`；
-- `NetworkRuntimeImpl` 只能由 AppRuntime/Composition Root 创建，Feature 不得自行
-  `new` 全局网络实现；
-- `NativeNetworkAdapter` 不拥有跨 App 的静态单例，handle 的释放由创建它的
-  `NetworkRuntimeImpl` 负责。
-- `NetworkRuntime.diagnostics` 是只读生命周期观察契约；它只能报告
-  `NetworkRuntimeImpl` 直接拥有的 native handle 和已登记的连接/Capability，
-  不得为了填充诊断数字而接管 Feature 协议连接。`boundLocalPort` 只投影 native
-  绑定结果，供 App Shell 适配端点，不转移 Runtime/native handle 所有权。
-- `NetworkCommandGateway` 只是 Runtime-owned Network Protocol V2 handle 的借用型命令/事件
-  入口；它不得拥有、复制或关闭 handle，也不得在其中加入业务协议规则。
-- `NetworkRealtimeGateway` 同样是 Runtime-owned handle 的借用型入口；它只能
-  编解码 native typed Realtime command/event，不能把 PeerConnection、ICE、SDP、
-  socket 或 signaling policy 放进 Feature 或 gateway。Realtime start/stop 必须返回
-  `NativeCommandTicket`，把 queue acceptance 与 `NativeCommandResultEvent` 的操作完成
-  分开；结果关联、超时和 pending map 由 App Shell adapter 负责。
+## 验证（代码变更）
 
-## 生命周期
-
-- Capability 首次使用时才创建 native handle；相同 Capability 的并发初始化共享同一
-  Future；失败会清除 in-flight 状态并允许重试；
-- `NetworkCapability.runtime` 只表示 native command-worker handle 存在；它与 QUIC、
-  WSS Relay、Realtime 等具体 transport capability 独立配置和观察；
-- Wave 1 中唯一的数据面配置仍走现有 `ConfigureRuntime`，该入口会无条件初始化直接
-  QUIC/TCP 基础设施；QUIC-free WSS-only 数据面路径推迟到后续协议能力切换（Wave 2），
-  当前并不存在；
-- Runtime dispose 会等待未完成的 handle 创建，然后显式 close；dispose 后所有新的
-  Capability 请求必须失败；
-- `openCommandGateway()` 只 ensure `runtime`，不得隐式要求或启用 QUIC；返回的 gateway
-  由 Runtime 绑定，调用方只负责取消自己的
-  事件订阅；AppRuntime/NetworkRuntime 仍是 native handle 的唯一释放 Owner；
-- `openRealtimeGateway()` 返回的 gateway 不拥有 native handle；App Shell adapter
-  负责事件订阅和 SDK session 映射，必须在 Runtime dispose 前取消订阅。
-- handle 的底层顺序必须保持 `create -> start -> stop -> destroy`，Finalizer 不替代
-  显式 close。
-
-## 必须验证
-
-```bash
-flutter analyze --no-pub
-flutter test --no-pub
-```
-
-修改公共 API 或 AppRuntime Owner 时，必须同步 package/root contracts 与相关
-Architecture；只有满足治理门槛的跨包当前知识才更新 Client/SDK scoped Memory。
-
-## Package contract fields
-
-- 允许修改范围：Network Runtime/Facade、Capability、native adapter、传输契约和测试。
-- 禁止依赖：Feature、App Shell 业务实现或其他 Package 的 `/src/`；不得新增第二套协议实现。
-- Public API 修改要求：同步 `network_transport.dart`、AppRuntime、Feature adapters、测试和架构文档。
-  `NetworkCommandGateway` 或 `NetworkRealtimeGateway` 的新增或修改必须明确借用关系、
-  ticket/result 语义和释放责任。
-- 数据库约束：不拥有数据库，不保存配对凭据或业务历史。
-- 资源释放规则：AppRuntime 拥有 Runtime；adapter 按 `create/start/stop/destroy` 管理 native handle。
-- 必须运行的测试：`flutter analyze --no-pub`、`flutter test --no-pub`，native hook 变更还要运行 Rust 检查。
+`flutter analyze --no-pub`、`flutter test --no-pub`；native hook changes also run
+Rust checks. Local aggregate CI 仅按用户明确要求运行。

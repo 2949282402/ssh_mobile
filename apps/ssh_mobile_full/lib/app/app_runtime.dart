@@ -30,6 +30,10 @@ import '../services/sftp_service.dart';
 import '../services/shortcut_command_service.dart';
 import '../services/ssh_service.dart';
 import '../services/terminal_session_metadata_store.dart';
+import '../services/telemetry/network_telemetry_bridge.dart';
+import '../services/telemetry/network_telemetry_connectivity.dart';
+import '../services/telemetry/app_crash_telemetry_bridge.dart';
+import '../services/telemetry/telemetry_span.dart';
 
 /// 应用生命周期运行时，持有 App Scope 的基础设施和长期服务。
 ///
@@ -84,6 +88,12 @@ final class AppRuntime implements Disposable {
     required this.aiServerCatalogAdapter,
     required this.aiServerDiagnosticsAdapter,
     required this.aiChatRuntimeFactory,
+    this.telemetryClient,
+    this.telemetryConnectivityMonitor,
+    this.networkTelemetryBridge,
+    this.crashTelemetryBridge,
+    this.telemetryLogSink,
+    this.telemetryTraceRegistry,
     Future<void> Function()? awaitPendingInitialization,
     this.lifecycleObserver,
     this.disposeLogger = true,
@@ -216,6 +226,28 @@ final class AppRuntime implements Disposable {
   feature_developer.DeveloperDiagnosticsPort get developerDiagnosticsPort =>
       developerDiagnosticsAdapter;
 
+  /// Telemetry 客户端运行时（若已启用）。
+  final TelemetryClient? telemetryClient;
+
+  /// App Scope owner of the connectivity subscription that triggers recovery.
+  final TelemetryConnectivityMonitor? telemetryConnectivityMonitor;
+
+  /// App Scope network telemetry borrower; disposed before its telemetry client.
+  final NetworkTelemetryBridge? networkTelemetryBridge;
+
+  /// App Scope owner of the process-global Flutter/platform crash wrappers.
+  /// It is disposed before [telemetryClient] so queued reports can finish
+  /// their durable SQLite write and asynchronous flush.
+  final AppCrashTelemetryBridge? crashTelemetryBridge;
+
+  /// Structured error sink attached to [appLogService] by the composition
+  /// root. The sink is independent from the local app-log database and is
+  /// closed before the TelemetryClient it borrows.
+  final TelemetryLogSink? telemetryLogSink;
+
+  /// App Scope owner for SSH↔network operation trace contexts.
+  final TelemetryTraceRegistry? telemetryTraceRegistry;
+
   /// AI Module 的唯一 App Scope Owner；ai.db 只在首次 AI 使用时打开。
   final feature_ai.AiModule aiModule;
 
@@ -325,7 +357,31 @@ final class AppRuntime implements Disposable {
       playbookConnectionCatalogAdapter.dispose,
     );
 
+    await attempt(
+      'telemetry-connectivity-monitor.dispose',
+      () => telemetryConnectivityMonitor?.dispose() ?? Future<void>.value(),
+    );
+    await attempt(
+      'network-telemetry-bridge.dispose',
+      () => networkTelemetryBridge?.dispose() ?? Future<void>.value(),
+    );
+
+    await attempt(
+      'crash-telemetry-bridge.dispose',
+      () => crashTelemetryBridge?.dispose() ?? Future<void>.value(),
+    );
+    await attempt('telemetry-log-sink.dispose', () async {
+      final sink = telemetryLogSink;
+      if (sink == null) return;
+      appLogService.removeSink(sink);
+      await sink.close();
+    });
+
     // App Scope Module 先停止对外提供服务，避免释放基础设施时仍有新请求进入。
+    if (telemetryClient != null) {
+      await attempt('telemetry.flush', telemetryClient!.flush);
+      await attempt('telemetry.dispose', telemetryClient!.dispose);
+    }
     await attempt('mcp-module.dispose', mcpModule.dispose);
     await attempt(
       'mcp-module.assert-disposed',
@@ -381,6 +437,10 @@ final class AppRuntime implements Disposable {
         return true;
       }());
     });
+    await attempt(
+      'telemetry-trace-registry.dispose',
+      () => telemetryTraceRegistry?.dispose(),
+    );
 
     await attempt(
       'terminal-metadata.dispose',

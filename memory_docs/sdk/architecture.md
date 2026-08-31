@@ -1,96 +1,69 @@
-> Last updated: 2026-08-25
+> Last updated: 2026-08-30
 
 # SDK Architecture
 
-The maintained Client-to-native flow is:
+Maintained flow:
 
 ```text
-Feature
-  → network_sdk contract
-  → App Shell adapter
-  → network_transport App-scoped runtime
-  → ssh_mobile_network_native
-  → Rust network_core
+Feature → network_sdk contract → App Shell adapter → network_transport
+       → ssh_mobile_network_native → Rust network_core
 ```
 
-Ownership rules:
+Ownership and boundaries:
 
-- `network_sdk` exposes business-facing typed contracts and owns no socket,
-  native handle, HTTP client, database, isolate, or App lifecycle.
-- LAN Control Protocol V2 is a separate control/pairing version domain from
-  Native Network Protocol V2. LAN Control owns discovery, pairing, capabilities
-  and authenticated text/clipboard HTTPS; Native Network V2 owns peer registry,
-  sessions, route selection, E2EE, binary transfer and Realtime. The LAN
-  breaking refactor must not turn the native wire contract into V3.
-- The App composition root owns one `NetworkIdentityBundle`, one configured
-  `NetworkRuntime`, and one shared `NetworkFacade` per App process. Features
-  borrow typed contracts and release subscriptions/leases only. Peer
-  registration is separate from connect; `removePeer` is an explicit trust
-  revoke/unpair operation, not a response to discovery or route loss.
-- App Shell adapters correlate public operations with native results and map
-  native events without exposing SDP, ICE, sockets, or FFI handles to Features.
-- `network_transport` owns the single App-scoped native-runtime facade and
-  lends bounded gateways; borrowers release subscriptions, not the native handle.
-  Its diagnostics may project the native listener's confirmed bound port to an
-  App Shell adapter, but that read-only value does not expose or transfer the
-  native handle, listener, or socket.
-- `ssh_mobile_network_native` owns the helper isolate and explicit native
-  `start → stop → destroy` binding lifecycle. Its stable protocol facade
-  delegates command encoding, event-envelope dispatch, typed domain mapping,
-  and bounded FFI value validation to separate stateless collaborators.
-- Rust `network-core` owns the `PeerSupervisor` lifecycle owner,
-  `PeerPathManager` Direct/Relay physical carriers, transport-scoped
-  ConnectionSession security state, Delivery/Transfer managers, full-epoch
-  ConnectivityAttempt snapshots, candidate races, StreamHandle-aware
-  ReliableStream events, cryptographic context, transfer state, Realtime state,
-  and supervised tasks. Business code borrows a `PathLease`; the
-  `ConnectionSessionStore` does not own route or Peer lifecycle.
-- Connectivity attempt execution owns only the bounded Stage A→B→C state
-  machine and route/session effects. Candidate snapshot/cache/ranking policy is
-  independent from authoritative Resolve and Relay fallback eligibility, so a
-  configured endpoint cannot bypass Relay status, E2EE, capability, or budget.
-- ReliableStream wire frames, QUIC preambles, and Relay tokens are stateless
-  codec concerns. The stream manager owns registry, sequence, bounded buffers,
-  tombstones, and one retained `PathLease`; the SSH gateway adapter alone maps
-  FFI commands and pumps bytes to local sshd under the runtime supervisor.
-- Generic outbound candidate races, inbound listener/admission, and connection
-  receiver supervision are separate Peer collaborators. Runtime-scope accept
-  and handshake tasks never own Session receivers; session-scope receivers own
-  precise route-loss detection and schedule root-scope cleanup only after the
-  final physical path disappears.
-- Runtime event lanes independently own Result/Control/Data classification,
-  count and byte admission, per-event limits, and weighted fairness. Terminal
-  command results use async backpressure; Control/Data retain best-effort
-  overflow policy. The non-owning runtime path
-  projection store independently owns Session bindings, topology replacement,
-  and exact stale-handle cleanup; `PeerPathManager` remains the sole carrier
-  owner and `ConnectionSessionStore` remains the admission/security owner.
-- Each transport Connection owns exactly one `ConnectionSession`; a new
-  connection gets a new `SessionId` and Noise root, and transport loss destroys
-  that session. Delivery and Transfer managers own the business state that may
-  resume across fresh ConnectionSessions.
-- `relay/` is an external authenticated carrier and opaque forwarder, not a
-  ConnectionSession or crypto owner.
-- New transport connections always create a fresh SessionId and application
-  root. Required E2EE is the normal business path; Disabled is Direct
-  identity-only and cannot fall through to Relay.
-- Route eligibility is authorization-filtered before path selection: Direct
-  requires peer `localDirect`, Relay requires peer `relay` plus local/remote
-  enrollment and capability checks. Relay enrollment/disconnection never
-  mutates peer trust or silently grants Relay authorization.
-- `PeerPathManager` may hold one Direct and one Relay ready path concurrently;
-  `PathHandle`/projection entries are weak, while a `PathLease` is the only
-  business lifetime reservation. Delivery releases a per-send lease before ACK
-  wait, Transfer retains its lease for one attempt, and ReliableStream retains
-  one lease through open/close without path migration.
-- Passive inbound admission is Online-only and does not enable maintenance.
-  Network-environment changes preserve healthy Relay/Realtime and schedule
-  maintained-peer Direct recovery only after Relay readiness. Native/FFI/Dart
-  event ingress is bounded at Result `256/4 MiB`, Control `256/4 MiB`, Data
-  `128/8 MiB`, and `1 MiB` per event. Native dequeue uses an
-  `8 Result → 8 Control → 1 Data` weighted cycle; Result saturation applies
-  backpressure to the command worker instead of dropping terminal completion.
+- `network_sdk` exposes typed business contracts and owns no socket, native
+  handle, HTTP client, DB, isolate, or App lifecycle. App adapters correlate
+  public operations/events and hide SDP, ICE, sockets, and FFI handles.
+- LAN Control V2 is a separate breaking-only version domain for discovery,
+  pairing, capabilities, and authenticated text/clipboard HTTPS. Native Network
+  V2 owns peer registry, sessions, Direct/Relay, E2EE, binary transfer, and
+  Realtime; LAN changes must not turn native wire V2 into V3.
+- App root owns one Ed25519/X25519 `NetworkIdentityBundle`, one configured
+  `NetworkRuntime`, and one shared `NetworkFacade` per process. Features borrow
+  contracts and release subscriptions/leases; `registerPeer` is separate from
+  connect and `removePeer` means explicit trust revoke/unpair, not route loss.
+- `network_transport` owns the App-scoped native facade and lends bounded
+  gateways. Diagnostics may project a confirmed bound port but never transfer a
+  handle/listener/socket. The native package owns helper-isolate and explicit
+  `start → stop → destroy`; its static facade delegates encoding, envelope/event
+  mapping, typed domain mapping, and bounded FFI validation to stateless owners.
+- Rust owns `PeerSupervisor`, `PeerPathManager` Direct/Relay carriers,
+  transport-scoped ConnectionSession security, Delivery/Transfer, full-epoch
+  connectivity attempts/candidate races, streams, crypto, transfer, Realtime,
+  and supervised tasks. Relay is an authenticated opaque forwarder, not a
+  ConnectionSession or crypto owner. Business code borrows `PathLease`; the
+  `ConnectionSessionStore` is admission/security only.
+- Connectivity execution owns bounded Stage A→B→C effects; candidate cache/
+  ranking is separate from authoritative Resolve/Relay eligibility, so a
+  configured endpoint cannot bypass status, E2EE, capability, or budget.
+- ReliableStream codec/preamble/token is stateless; its manager owns registry,
+  sequence, bounded buffers, tombstones, and one lease. SSH gateway/FFI only
+  maps commands and pumps opaque bytes to local sshd. Runtime accept/handshake
+  tasks never own Session receivers; Session receivers detect precise route loss
+  and schedule root cleanup only after the final physical path disappears.
+- Result/Control/Data event lanes independently own classification, count/byte
+  admission, per-event limits, and weighted fairness. Result backpressures the
+  command worker; Control/Data retain best-effort overflow. A separate weak path
+  projection store owns Session bindings/topology replacement/stale cleanup;
+  `PeerPathManager` remains carrier owner and `ConnectionSessionStore` remains
+  admission owner.
+- Each transport Connection owns exactly one ConnectionSession. A new connection
+  gets a new `SessionId` and Noise/application root; loss destroys it. Delivery
+  and Transfer own business state that can resume on a fresh session. Required
+  E2EE is normal; Disabled is Direct identity-only and rejected for Relay.
+- Route eligibility is authorization-filtered: Direct requires peer
+  `localDirect`; Relay requires peer `relay` plus local/remote enrollment and
+  capability. Relay enrollment/disconnect never changes trust. One Direct and
+  one Relay ready path may coexist; `PathHandle`/projection is weak and
+  `PathLease` is the only business lifetime reservation. Delivery releases its
+  per-send lease before ACK wait; Transfer retains one per attempt; streams keep
+  one through open/close without migration.
+- Passive inbound is Online-only and does not enable maintenance. Environment
+  changes preserve healthy Relay/Realtime and schedule maintained-peer Direct
+  recovery only after Relay readiness. Native/FFI/Dart ingress is bounded at
+  Result `256/4 MiB`, Control `256/4 MiB`, Data `128/8 MiB`, `1 MiB` per event;
+  dequeue fairness is `8 Result → 8 Control → 1 Data` and Result saturation
+  backpressures command completion instead of dropping it.
 
-The complete rationale remains in the
-[network design](../../docs/网络传输SDK架构设计_最终版.md) and
-[ADRs](../../docs/adr/).
+Full rationale: [Network design](../../docs/网络传输SDK架构设计_最终版.md) and
+the precise [ADRs](../../docs/adr/).

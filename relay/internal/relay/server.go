@@ -287,6 +287,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(RouteInternalRevokeDeviceV2, internalAuth(s.internalRevokeDeviceHandler))
 	mux.HandleFunc(RouteInternalTokenV2, internalAuth(s.internalTokenHandler))
 	mux.HandleFunc(RouteInternalRotateTokenV2, internalAuth(s.internalRotateTokenHandler))
+	mux.HandleFunc(RouteInternalTelemetryAttest, internalAuth(s.internalTelemetryAttestationHandler))
 
 	// Device credential endpoints (V2 only).
 	mux.HandleFunc(RouteEnrollV2, s.enroll)

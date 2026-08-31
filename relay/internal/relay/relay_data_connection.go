@@ -586,9 +586,16 @@ func (rc *relayDataConn) waitForActivation() bool {
 	}
 	select {
 	case <-rc.activation:
-		return rc.admissionActive.Load()
+		// Activation may have been invalidated immediately after the HTTP
+		// upgrade.  The writer still needs to run so a queued terminal
+		// RelayDataClose can be flushed; writeOutbound discards every other
+		// frame once the endpoint is terminal.
+		return true
 	case <-rc.done:
-		return false
+		// A failed admission or lifecycle revocation can close the endpoint
+		// before activateEndpoint releases the barrier.  Let the writer drain
+		// the terminal frame instead of dropping it behind the barrier.
+		return true
 	}
 }
 

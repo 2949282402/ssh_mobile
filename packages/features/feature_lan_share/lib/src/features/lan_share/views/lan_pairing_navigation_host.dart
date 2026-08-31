@@ -118,7 +118,11 @@ class _LanPairingNavigationHostState extends State<LanPairingNavigationHost> {
     _initialized = true;
 
     final coordinator = _findCoordinator(context);
-    _subscription = coordinator?.pairingRequestStream.listen(_handleRequest);
+    if (coordinator is LanReceiverCoordinator) {
+      _subscription = coordinator.pairingRequestStream.listen(_handleRequest);
+    } else if (coordinator is LanShareViewModel) {
+      _subscription = coordinator.pairingRequestStream.listen(_handleRequest);
+    }
     if (coordinator != null) {
       unawaited(
         _ensureCoordinatorInitialized(coordinator).catchError((
@@ -133,7 +137,7 @@ class _LanPairingNavigationHostState extends State<LanPairingNavigationHost> {
     }
   }
 
-  static dynamic _findCoordinator(BuildContext context) {
+  static Object? _findCoordinator(BuildContext context) {
     try {
       return context.read<LanReceiverCoordinator>();
     } catch (_) {
@@ -145,7 +149,7 @@ class _LanPairingNavigationHostState extends State<LanPairingNavigationHost> {
     }
   }
 
-  static Future<void> _ensureCoordinatorInitialized(dynamic coordinator) async {
+  static Future<void> _ensureCoordinatorInitialized(Object? coordinator) async {
     if (coordinator is LanReceiverCoordinator) {
       await coordinator.ensureInitialized();
     } else if (coordinator is LanShareViewModel) {

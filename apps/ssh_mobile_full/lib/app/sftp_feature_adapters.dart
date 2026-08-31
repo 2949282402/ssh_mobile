@@ -580,13 +580,39 @@ final class AppSftpBackendAdapter implements feature_sftp.SftpBackend {
   }
 }
 
+/// Test-only dependency bundle for the SFTP module scope.
+///
+/// Production routes continue to resolve these values from [AppRuntime] and
+/// inherited providers.  The record keeps scope tests focused on lifecycle and
+/// provider behavior without constructing every App Scope database.
+typedef AppSftpModuleScopeDependencies = ({
+  ssh_core.SshSessionManager sshSessionManager,
+  legacy_sftp.SftpService sftpService,
+  AppSettings settings,
+  AppLogService logger,
+  feature_connection.ConnectionViewModel? connectionViewModel,
+});
+
 /// SFTP Route 的 Module Scope，页面销毁时释放 feature-owned 数据库和监听。
 final class AppSftpModuleScope extends StatefulWidget {
   /// 创建包级 SFTP 路由边界。
-  const AppSftpModuleScope({super.key, required this.child});
+  const AppSftpModuleScope({
+    super.key,
+    required this.child,
+    @visibleForTesting this.moduleFactory,
+    @visibleForTesting this.dependencies,
+  });
 
   /// Module 激活完成后显示的页面。
   final Widget child;
+
+  /// 可选的测试 Module 构造器；生产路由仍使用默认数据库实现。
+  @visibleForTesting
+  final feature_sftp.SftpModule Function()? moduleFactory;
+
+  /// Optional test dependencies that bypass the AppRuntime composition root.
+  @visibleForTesting
+  final AppSftpModuleScopeDependencies? dependencies;
 
   @override
   State<AppSftpModuleScope> createState() => _AppSftpModuleScopeState();
@@ -603,22 +629,35 @@ final class _AppSftpModuleScopeState extends State<AppSftpModuleScope> {
   @override
   void initState() {
     super.initState();
-    final runtime = context.read<AppRuntime>();
-    _module = feature_sftp.SftpModule();
-    _settings = AppSftpSettingsAdapter(context.read<AppSettings>());
+    final dependencies = widget.dependencies;
+    final runtime = dependencies == null ? context.read<AppRuntime>() : null;
+    _module = widget.moduleFactory?.call() ?? feature_sftp.SftpModule();
+    _settings = AppSftpSettingsAdapter(
+      dependencies?.settings ?? runtime!.appSettings,
+    );
     _catalog = AppSftpConnectionCatalogAdapter(
-      context.read<feature_connection.ConnectionViewModel?>(),
+      dependencies == null
+          ? context.read<feature_connection.ConnectionViewModel?>()
+          : dependencies.connectionViewModel,
     );
     _hostKey = AppSftpHostKeyConfirmationAdapter(() => context);
-    _logger = AppSftpLoggerAdapter(context.read<AppLogService>());
-    _activation = _activate(runtime);
+    _logger = AppSftpLoggerAdapter(
+      dependencies?.logger ?? runtime!.appLogService,
+    );
+    _activation = _activate(
+      dependencies?.sshSessionManager ?? runtime!.sshSessionManager,
+      dependencies?.sftpService ?? runtime!.sftpService,
+    );
   }
 
-  Future<void> _activate(AppRuntime runtime) async {
-    final backend = AppSftpBackendAdapter(runtime.sftpService);
+  Future<void> _activate(
+    ssh_core.SshSessionManager sshSessionManager,
+    legacy_sftp.SftpService sftpService,
+  ) async {
+    final backend = AppSftpBackendAdapter(sftpService);
     await _module.register(
       ModuleContext.fromMap({
-        ssh_core.SshSessionManager: runtime.sshSessionManager,
+        ssh_core.SshSessionManager: sshSessionManager,
         feature_sftp.SftpBackend: backend,
       }),
     );

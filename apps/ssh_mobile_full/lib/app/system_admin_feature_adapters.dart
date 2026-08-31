@@ -15,6 +15,7 @@ import 'package:ssh_core/ssh_core.dart' as ssh_core;
 
 import '../core/services/ssh_host_key_policy.dart' as legacy_ssh;
 import '../services/app_log_service.dart';
+import '../services/app_settings.dart';
 import '../services/sftp_service.dart';
 import '../widgets/ssh_host_key_trust_dialog.dart';
 import 'app_runtime.dart';
@@ -320,12 +321,36 @@ legacy_ssh.SshHostKeyPromptRequest _toLegacyPrompt(
   fingerprint: request.fingerprint,
 );
 
+/// Test-only dependency bundle for the System Admin module scope.
+///
+/// Production routes still resolve the same ports from [AppRuntime].  Tests
+/// can inject lightweight fakes so scope lifecycle assertions do not need to
+/// initialize unrelated App Scope databases.
+typedef AppSystemAdminModuleScopeDependencies = ({
+  connection_core.ConnectionRepository connectionRepository,
+  connection_core.CredentialRepository credentialRepository,
+  connection_core.HostKeyRepository hostKeyRepository,
+  AppLogService logger,
+  AppSettings settings,
+  SftpService sftpService,
+  monitoring.MonitoringService monitoringService,
+  ssh_core.SshNativeStreamConnector? nativeStreamConnector,
+});
+
 /// Stateful Route Scope；Module 是本 Scope 的唯一管理服务 Owner。
 final class AppSystemAdminModuleScope extends StatefulWidget {
   /// 创建 System Admin 页面 Scope。
-  const AppSystemAdminModuleScope({super.key, required this.child});
+  const AppSystemAdminModuleScope({
+    super.key,
+    required this.child,
+    @visibleForTesting this.dependencies,
+  });
 
   final Widget child;
+
+  /// Optional test dependencies that bypass the AppRuntime composition root.
+  @visibleForTesting
+  final AppSystemAdminModuleScopeDependencies? dependencies;
 
   @override
   State<AppSystemAdminModuleScope> createState() =>
@@ -347,34 +372,50 @@ final class _AppSystemAdminModuleScopeState
     super.didChangeDependencies();
     if (_module != null) return;
 
-    final runtime = context.read<AppRuntime>();
+    final dependencies = widget.dependencies;
+    final runtime = dependencies == null ? context.read<AppRuntime>() : null;
     _catalog = AppSystemAdminConnectionCatalogAdapter(
-      runtime.connectionRepository,
+      dependencies?.connectionRepository ?? runtime!.connectionRepository,
     );
-    _settings = AppSystemAdminSettingsAdapter(runtime.appSettings);
-    _monitoring = AppSystemAdminMonitoringAdapter(runtime.monitoringService);
-    _fileBrowser = AppSystemAdminFileBrowserAdapter(runtime.sftpService);
+    _settings = AppSystemAdminSettingsAdapter(
+      dependencies?.settings ?? runtime!.appSettings,
+    );
+    _monitoring = AppSystemAdminMonitoringAdapter(
+      dependencies?.monitoringService ?? runtime!.monitoringService,
+    );
+    _fileBrowser = AppSystemAdminFileBrowserAdapter(
+      dependencies?.sftpService ?? runtime!.sftpService,
+    );
     final module = admin.SystemAdminModule();
     _module = module;
-    _readyFuture = _initializeModule(module, runtime);
+    _readyFuture = _initializeModule(module, runtime, dependencies);
   }
 
   Future<void> _initializeModule(
     admin.SystemAdminModule module,
-    AppRuntime runtime,
+    AppRuntime? runtime,
+    AppSystemAdminModuleScopeDependencies? dependencies,
   ) async {
+    final connectionRepository =
+        dependencies?.connectionRepository ?? runtime!.connectionRepository;
+    final credentialRepository =
+        dependencies?.credentialRepository ?? runtime!.credentialRepository;
+    final hostKeyRepository =
+        dependencies?.hostKeyRepository ?? runtime!.hostKeyRepository;
+    final logger = dependencies?.logger ?? runtime!.appLogService;
+    final nativeStreamConnector = dependencies == null
+        ? runtime!.sshNativeStreamConnector
+        : dependencies.nativeStreamConnector;
     await module.register(
       ModuleContext.fromMap({
         admin.SystemAdminSshPort: AppSystemAdminSshAdapter(
-          runtime.connectionRepository,
-          credentialRepository: runtime.credentialRepository,
-          hostKeyRepository: runtime.hostKeyRepository,
-          logger: runtime.appLogService,
-          nativeStreamConnector: runtime.sshNativeStreamConnector,
+          connectionRepository,
+          credentialRepository: credentialRepository,
+          hostKeyRepository: hostKeyRepository,
+          logger: logger,
+          nativeStreamConnector: nativeStreamConnector,
         ),
-        admin.SystemAdminLoggerPort: AppSystemAdminLoggerAdapter(
-          runtime.appLogService,
-        ),
+        admin.SystemAdminLoggerPort: AppSystemAdminLoggerAdapter(logger),
       }),
     );
     await module.activate();

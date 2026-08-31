@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/ssh-mobile/relay/internal/telemetry"
 )
 
 var (
@@ -20,6 +22,7 @@ var (
 	ErrDeviceNotFound   = errors.New("device not found")
 	ErrResourceLimit    = errors.New("resource limit reached")
 	ErrConflict         = errors.New("conflict")
+	ErrRelayAttestation = errors.New("relay device attestation failed")
 )
 
 type RelayStatus struct {
@@ -210,6 +213,64 @@ func (c *httpRelayManagementClient) RotateEnrollmentToken(ctx context.Context) (
 		return EnrollmentTokenInfo{}, fmt.Errorf("%w: %v", ErrRelayUnavailable, err)
 	}
 	return info, nil
+}
+
+// ValidateDeviceCredential asks Relay to attest the existing device identity.
+// The credential and proof are request-only and are never logged or retained
+// by the Admin service.
+func (c *httpRelayManagementClient) ValidateDeviceCredential(ctx context.Context, request telemetry.DeviceAttestationRequest) (telemetry.DeviceAttestation, error) {
+	payload := struct {
+		DeviceID        string `json:"device_id"`
+		RelayCredential string `json:"relay_credential"`
+		PublicKey       string `json:"public_key"`
+		Timestamp       int64  `json:"timestamp"`
+		Nonce           string `json:"nonce"`
+		Signature       string `json:"signature"`
+		TranscriptPath  string `json:"transcript_path,omitempty"`
+	}{
+		DeviceID:        request.DeviceID,
+		RelayCredential: request.RelayCredential,
+		PublicKey:       request.PublicKey,
+		Timestamp:       request.Timestamp,
+		Nonce:           request.Nonce,
+		Signature:       request.Signature,
+		TranscriptPath:  request.TranscriptPath,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return telemetry.DeviceAttestation{}, fmt.Errorf("%w: request encoding", telemetry.ErrDeviceAttestorUnavailable)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+RelayInternalPathTelemetryAttest, strings.NewReader(string(body)))
+	if err != nil {
+		return telemetry.DeviceAttestation{}, fmt.Errorf("%w: request creation", telemetry.ErrDeviceAttestorUnavailable)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.internalToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return telemetry.DeviceAttestation{}, fmt.Errorf("%w: %w", telemetry.ErrDeviceAttestorUnavailable, ErrRelayUnavailable)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		if resp.StatusCode >= http.StatusInternalServerError {
+			return telemetry.DeviceAttestation{}, fmt.Errorf("%w: %w (status %d)", telemetry.ErrDeviceAttestorUnavailable, ErrRelayUnavailable, resp.StatusCode)
+		}
+		return telemetry.DeviceAttestation{}, fmt.Errorf("%w: relay rejected proof", ErrRelayAttestation)
+	}
+	var result struct {
+		DeviceID             string `json:"device_id"`
+		EnrollmentGeneration int64  `json:"enrollment_generation"`
+		ProtocolVersion      uint32 `json:"protocol_version"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&result); err != nil {
+		return telemetry.DeviceAttestation{}, fmt.Errorf("%w: %w", telemetry.ErrDeviceAttestorUnavailable, ErrRelayUnavailable)
+	}
+	return telemetry.DeviceAttestation{
+		DeviceID:             result.DeviceID,
+		EnrollmentGeneration: result.EnrollmentGeneration,
+		ProtocolVersion:      result.ProtocolVersion,
+	}, nil
 }
 
 func mapHTTPStatusToError(statusCode int) error {

@@ -16,6 +16,10 @@ final class _NativeRuntimeCommandGateway implements NetworkCommandGateway {
         NativeOperationStatus.invalidArgument =>
           TransportOperationStatus.invalidArgument,
         NativeOperationStatus.stopped => TransportOperationStatus.stopped,
+        // coverage:ignore-start
+        // Native FFI failure codes are exercised by the native Windows/CI
+        // smoke gate; the Flutter runner cannot inject a failing ABI handle.
         NativeOperationStatus.failure => TransportOperationStatus.failure,
+        // coverage:ignore-end
       };
 }

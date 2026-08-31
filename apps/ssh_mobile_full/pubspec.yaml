@@ -85,14 +85,19 @@ dependencies:
   qr_flutter: ^4.1.0
   mobile_scanner: ^7.4.0
   device_info_plus: ^13.2.0
+  connectivity_plus: ^6.1.5
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  connectivity_plus_platform_interface: ^2.1.0
+  flutter_background_service_platform_interface: ^5.1.2
   flutter_lints: ^6.0.0
   build_runner: ^2.15.1
   drift_dev: ^2.34.5
   image: ^4.9.1
+  path_provider_platform_interface: ^2.1.2
+  permission_handler_platform_interface: ^4.4.0
 
 flutter:
   uses-material-design: true

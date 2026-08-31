@@ -105,6 +105,83 @@ void main() {
       expect(viewModel.shouldShowPowerGuide, isTrue);
     });
 
+    test('seen power guide is skipped on Android', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      await appSettings.markPowerGuideSeen();
+      final viewModel = createViewModel();
+
+      await viewModel.checkPowerGuideStatus();
+
+      expect(viewModel.powerStatusChecked, isTrue);
+      expect(viewModel.checkingPowerStatus, isFalse);
+      expect(viewModel.shouldShowPowerGuide, isFalse);
+    });
+
+    test(
+      'refresh handles a platform error without leaving exemption true',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(powerChannel, (call) async {
+              throw PlatformException(code: 'unavailable');
+            });
+        final viewModel = createViewModel();
+
+        await viewModel.refreshBatteryExemptionStatus();
+
+        expect(viewModel.isExempt, isFalse);
+      },
+    );
+
+    test('requesting exemption refreshes the platform status', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      final calls = <String>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(powerChannel, (call) async {
+            calls.add(call.method);
+            if (call.method == 'isIgnoringBatteryOptimizations') return true;
+            return null;
+          });
+      final viewModel = createViewModel();
+
+      await viewModel.requestBatteryExemption();
+
+      expect(calls, [
+        'requestBatteryOptimizationExemption',
+        'isIgnoringBatteryOptimizations',
+      ]);
+      expect(viewModel.isExempt, isTrue);
+    });
+
+    test('open app settings delegates to the Android power channel', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      final calls = <String>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(powerChannel, (call) async {
+            calls.add(call.method);
+            return null;
+          });
+      final viewModel = createViewModel();
+
+      viewModel.openAppSettings();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(calls, contains('openAppSettings'));
+    });
+
+    test(
+      'marking the power guide seen persists and dismisses this launch',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+        final viewModel = createViewModel();
+
+        await viewModel.markPowerGuideSeen();
+
+        expect(appSettings.powerGuideSeen, isTrue);
+        expect(viewModel.shouldShowPowerGuide, isFalse);
+      },
+    );
+
     testWidgets('duplicate power guide schedules coalesce in one frame', (
       tester,
     ) async {

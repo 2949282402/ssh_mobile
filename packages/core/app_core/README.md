@@ -1,4 +1,4 @@
-最新更新时间：2026-08-09
+最新更新时间：2026-08-31
 
 # app_core
 
@@ -9,6 +9,20 @@
 - 日志：`AppLogger`、`ScopedLogger`、`AppLoggerImpl`、`LogRecord`、`LogLevel`、
   有界 `LogBuffer` 和可释放的 `LogSink`；
 - Capability：按类型注册和读取的 `CapabilityRegistry`。
+- Telemetry：由 `contracts/telemetry/*.yaml` 生成的 `TelemetryEvents`、
+  `TelemetryErrorCodes` 和类型化 `TelemetryClient.record(event: ...)` 公共合约；
+  `TelemetryTransport.authenticateDevice` 使用服务端返回的 `expiresIn`，缺少本地
+  遥测密钥时通过 App 注入的既有 Relay 身份 Provider 完成一次性 enrollment。
+  `TelemetryLogSink` 只转发显式 allowlist 中的结构化 error/critical 记录，
+  `TelemetryRedactor` 在本地落库前执行 schema allowlist 与 fail-closed 脱敏。
+  `TelemetryClient` 独立拥有周期 flush、retry 和策略刷新定时器，并支持注入
+  `TelemetryTimerFactory`、clock 和 random 以进行无真实等待的确定性测试。客户端
+  在 durable insert 后以有界频率独立维护本地容量；`replayAllLocalRecords()` 只
+  重放 pending/synced，`retryRejectedRecords()` 单独处理 rejected 且不会把瞬时
+  失败重新放回自动 pending 队列。重复 `eventId` 会显式报告 durable insert 失败。
+  存储健康快照还提供 pending/rejected 最老年龄和 `overflowCount`。客户端默认关闭，
+  只有 App Shell 确认有效 Relay enrollment 后才允许新的埋点落库；可通过
+  `setTelemetryEnabled` 响应注册状态变化。
 
 本 Package 不依赖 Flutter UI、SSH、Drift 或任何 Feature。它只定义边界和轻量
 机制，具体平台日志实现由 AppRuntime 或 App 层通过依赖注入提供。

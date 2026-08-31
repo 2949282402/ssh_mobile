@@ -8,6 +8,8 @@ import '../../tool/check_file_sizes.dart';
 /// 因此不需要为治理脚本额外引入测试框架或依赖。
 void main() {
   _testGeneratedFilesAreExcludedAndPathsAreSorted();
+  _testDartTestsRequireDedicatedRoots();
+  _testNumberedSplitFilesAreRejected();
   _testCurrentWorkspaceCanBeScanned();
   stdout.writeln('File size report tests passed.');
 }
@@ -42,6 +44,29 @@ void _testGeneratedFilesAreExcludedAndPathsAreSorted() {
   }
 }
 
+void _testDartTestsRequireDedicatedRoots() {
+  final root = Directory.systemTemp.createTempSync('ssh_mobile_test_roots_');
+  try {
+    _writeLines(root, 'apps/demo/lib/colocated_test.dart', 2);
+    _writeLines(root, 'apps/demo/test/owned_test.dart', 2);
+    _writeLines(root, 'packages/demo/tests/contract_test.dart', 2);
+    _writeLines(root, 'packages/demo/lib/generated_test.g.dart', 1000);
+
+    final report = collectDartFileSizeReport(repositoryRoot: root);
+    _expectContains(
+      report.testRootViolations,
+      'apps/demo/lib/colocated_test.dart',
+      'Dart tests beside business source must be reported',
+    );
+    _expect(
+      report.testRootViolations.length == 1,
+      'Dedicated Dart test roots and generated output must not be reported',
+    );
+  } finally {
+    root.deleteSync(recursive: true);
+  }
+}
+
 void _testCurrentWorkspaceCanBeScanned() {
   final report = collectDartFileSizeReport(repositoryRoot: Directory.current);
   _expect(report.files.isNotEmpty, '当前 workspace 应至少包含一个 Dart 文件');
@@ -55,6 +80,30 @@ void _testCurrentWorkspaceCanBeScanned() {
   );
 }
 
+void _testNumberedSplitFilesAreRejected() {
+  final root = Directory.systemTemp.createTempSync(
+    'ssh_mobile_numbered_splits_',
+  );
+  try {
+    _writeLines(root, 'packages/demo/lib/part_01.dart', 2);
+    _writeLines(root, 'packages/demo/lib/file_02_test.dart', 2);
+
+    final report = collectDartFileSizeReport(repositoryRoot: root);
+    _expectContains(
+      report.numberedSplitViolations,
+      'packages/demo/lib/file_02_test.dart',
+      'numbered file chunks must be reported',
+    );
+    _expectContains(
+      report.numberedSplitViolations,
+      'packages/demo/lib/part_01.dart',
+      'numbered part chunks must be reported',
+    );
+  } finally {
+    root.deleteSync(recursive: true);
+  }
+}
+
 void _writeLines(Directory root, String relativePath, int lineCount) {
   final file = File(
     '${root.path}${Platform.pathSeparator}${relativePath.replaceAll('/', Platform.pathSeparator)}',
@@ -63,6 +112,10 @@ void _writeLines(Directory root, String relativePath, int lineCount) {
   file.writeAsStringSync(
     List<String>.filled(lineCount, 'void main() {}').join('\n'),
   );
+}
+
+void _expectContains(Iterable<String> values, String expected, String message) {
+  if (!values.contains(expected)) throw StateError(message);
 }
 
 void _expect(bool condition, String message) {

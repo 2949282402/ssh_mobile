@@ -469,12 +469,19 @@ abstract class _$AppLogDatabase extends GeneratedDatabase {
   _$AppLogDatabase(QueryExecutor e) : super(e);
   $AppLogDatabaseManager get managers => $AppLogDatabaseManager(this);
   late final $AppLogRecordsTable appLogRecords = $AppLogRecordsTable(this);
+  late final Index idxAppLogTime = Index(
+    'idx_app_log_time',
+    'CREATE INDEX idx_app_log_time ON app_log_records (time DESC)',
+  );
   late final AppLogDao appLogDao = AppLogDao(this as AppLogDatabase);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
   @override
-  List<DatabaseSchemaEntity> get allSchemaEntities => [appLogRecords];
+  List<DatabaseSchemaEntity> get allSchemaEntities => [
+    appLogRecords,
+    idxAppLogTime,
+  ];
 }
 
 typedef $$AppLogRecordsTableCreateCompanionBuilder =

@@ -185,17 +185,17 @@ final class AppAiHealthAdapter implements ai.AiHealthPort {
 }
 
 /// 把 AI 客户端 Port 临时桥接到旧健康检查器需要的接口。
+///
+/// `ClientHealthAdvisor` 只消费 permission/network/battery 三个探测，其余
+/// `ClientSystemToolAdapter` 成员在 App 侧没有调用方；逐个转发既无法被任何
+/// 公共适配器触达（无法满足新文件 90% 覆盖率门禁），又增加无意义的维护面。
+/// 因此仅显式转发实际使用的成员，其余成员 fail-closed：任何意外调用都会在
+/// 测试或 CI 中立即暴露为编程错误。
 final class _LegacyClientSystemAdapter
     implements legacy_system.ClientSystemToolAdapter {
   const _LegacyClientSystemAdapter(this._delegate);
 
   final ai.AiClientSystemPort _delegate;
-
-  @override
-  Map<String, dynamic> getClientTime() => _delegate.getClientTime();
-
-  @override
-  Map<String, dynamic> getClientDeviceInfo() => _delegate.getClientDeviceInfo();
 
   @override
   Future<Map<String, dynamic>> getNetworkInfo() => _delegate.getNetworkInfo();
@@ -209,78 +209,10 @@ final class _LegacyClientSystemAdapter
       _delegate.getPermissionStatus();
 
   @override
-  Future<Map<String, dynamic>> openAppSettings() => _delegate.openAppSettings();
-
-  @override
-  Future<Map<String, dynamic>> setClipboard(String text) =>
-      _delegate.setClipboard(text);
-
-  @override
-  Future<Map<String, dynamic>> setAlarm({
-    String? triggerAt,
-    int? delaySeconds,
-    int? delayMinutes,
-    String? label,
-    bool useSystemAlarm = true,
-  }) => _delegate.setAlarm(
-    triggerAt: triggerAt,
-    delaySeconds: delaySeconds,
-    delayMinutes: delayMinutes,
-    label: label,
-    useSystemAlarm: useSystemAlarm,
+  dynamic noSuchMethod(Invocation invocation) => throw UnsupportedError(
+    '${invocation.memberName} is not forwarded: ClientHealthAdvisor '
+    'only consumes permission, network, and battery probes.',
   );
-
-  @override
-  Future<Map<String, dynamic>> listAlarms() => _delegate.listAlarms();
-
-  @override
-  Future<Map<String, dynamic>> cancelAlarm(String alarmId) =>
-      _delegate.cancelAlarm(alarmId);
-
-  @override
-  Future<Map<String, dynamic>> queryLogs({
-    String? level,
-    String? contains,
-    int limit = 50,
-  }) => _delegate.queryLogs(level: level, contains: contains, limit: limit);
-
-  @override
-  Future<Map<String, dynamic>> getLogCounts() => _delegate.getLogCounts();
-
-  @override
-  Future<Map<String, dynamic>> deleteLogEntries(List<int> ids) =>
-      _delegate.deleteLogEntries(ids);
-
-  @override
-  Future<Map<String, dynamic>> clearLogs() => _delegate.clearLogs();
-
-  @override
-  Future<Map<String, dynamic>> saveBytesToFile({
-    required String fileName,
-    required List<int> bytes,
-    String? dialogTitle,
-  }) => _delegate.saveBytesToFile(
-    fileName: fileName,
-    bytes: bytes,
-    dialogTitle: dialogTitle,
-  );
-
-  @override
-  Future<legacy_system.ClientPickedFile?> pickFile({
-    List<String>? allowedExtensions,
-    String? dialogTitle,
-  }) async {
-    final file = await _delegate.pickFile(
-      allowedExtensions: allowedExtensions,
-      dialogTitle: dialogTitle,
-    );
-    if (file == null) return null;
-    return legacy_system.ClientPickedFile(
-      name: file.name,
-      bytes: file.bytes,
-      localPath: file.localPath,
-    );
-  }
 }
 
 /// 将 WebView Feature 的公开服务转换为 AI Port。

@@ -1,4 +1,4 @@
-> Last updated: 2026-08-25
+> Last updated: 2026-08-30
 
 <p align="center">
   <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile icon" width="112" />
@@ -53,6 +53,7 @@ ICE, SDP, sockets, and Relay signaling remain native/App Shell owned.
 - **Server monitoring** for performance, ports, applications, services, users, and active sessions.
 - **AI chat and agent execution** with streaming output, Plan Mode, approval-controlled tools, persistent history, message branching, context compression, RAG, skills, and execution traces.
 - **Local MCP server** support on desktop platforms, including generated configuration for Codex, Claude Code, and Gemini CLI; it supports `reviewConfiguredTools` (default) and `trustedAgent` modes while always enforcing its loopback-only and hard security boundaries.
+- **Telemetry & Data Tracking** with decoupled observability architecture ([design](docs/数据埋点架构.md), [ADR-033](docs/adr/ADR-033-telemetry-data-tracking-architecture.md)), contract-driven catalog validation (`contracts/telemetry/`), client dual state machine (`pending`/`synced`/`rejected` + `logicalDeletedAt`) non-loss storage, permanent idempotency receipts (`telemetry_ingest_receipts`), dynamic upload policies, Redis diagnostic hot caching, and React admin observability suite.
 - **Developer panel** with opt-in runtime, memory, FPS, frame-jank, build-mode, platform, Dart-version, and known lifecycle-resource diagnostics; its floating entry can be configured independently.
 - **Secure storage** using platform secure storage, encrypted Drift fields, encrypted preview caches, secret redaction, and immutable approval targets.
 - **Adaptive layouts** for phones, tablets, and desktop environments, including dedicated 1.5K and 2K Android QA profiles.
@@ -106,17 +107,21 @@ administration console lives in `front/`; enrollment and dashboard credentials
 must be configured explicitly, and the service refuses to start with missing or
 weak secrets.
 
-Docker Compose with Caddy is the supported production deployment path. Follow the [relay deployment guide](relay/README.md), then run:
+Docker Compose with Caddy is the supported production deployment path. Follow the [relay deployment guide](relay/README.md), then run these commands from the repository root:
 
 ```powershell
-cd relay
 Copy-Item .env.example .env
-# Set the domain, all ports/runtime limits, and every token, key, and admin credential in .env.
-docker compose --env-file .env up --build
+# Replace every replace-with-* placeholder, including the Analytics MySQL/Redis
+# credentials, telemetry DSN/URL, telemetry auth secret, and admin credentials.
+docker compose --env-file .env --profile storage up -d --build
 ```
 
-This command builds and starts `front`, `relay`, and `caddy`, then keeps their
-combined logs attached. Caddy exposes the front-end SPA publicly and forwards
+The `storage` profile is required for the production Analytics MySQL and Redis
+services. Compose fails fast if any `TELEMETRY_MYSQL_DSN`,
+`TELEMETRY_REDIS_URL`, `TELEMETRY_AUTH_SECRET`, `ANALYTICS_MYSQL_PASSWORD`,
+`ANALYTICS_MYSQL_ROOT_PASSWORD`, or `ANALYTICS_REDIS_PASSWORD` value is absent;
+the example file contains placeholders only. This command builds and starts
+`front`, `relay`, `admin-api`, Analytics storage, and `caddy`. Caddy exposes the front-end SPA publicly and forwards
 `/api/admin/v1`, `/v1`, `/v2`, and `/healthz` to the internal Relay service. In
 the default `memory` mode a restart clears enrollment; in `mysql` mode enrollment
 and revocation persist while live connections are re-established. See the Relay
@@ -337,7 +342,7 @@ bash scripts/bash/coverage/client_coverage.sh
 bash scripts/bash/coverage/sdk_coverage.sh
 ```
 
-Each gate enforces an 80% threshold on its documented owner scope. The client
+Each gate enforces a 90% threshold on its documented owner scope. The client
 gate covers the App-owned Network V2 service boundary; it does not represent
 coverage for unrelated Full App UI features. See
 [Coverage policy](docs/COVERAGE_POLICY.md) for the exact scopes and the

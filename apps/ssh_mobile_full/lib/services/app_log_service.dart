@@ -10,7 +10,6 @@ import 'package:path_provider/path_provider.dart';
 
 import 'app_log_database.dart' as db;
 import 'app_settings.dart';
-import 'tool_secret_policy.dart';
 
 part 'app_log_models.dart';
 part 'app_log_store.dart';
@@ -51,6 +50,12 @@ class AppLogService extends ChangeNotifier implements app_core.AppLogger {
   Map<AppLogLevel, List<AppLogEntry>>? _cachedEntriesByLevel;
   Set<int>? _cachedEntryIds;
   DebugPrintCallback? _previousDebugPrint;
+  FlutterExceptionHandler? _previousFlutterError;
+  bool Function(Object, StackTrace)? _previousPlatformError;
+  DebugPrintCallback? _installedDebugPrint;
+  FlutterExceptionHandler? _installedFlutterError;
+  bool Function(Object, StackTrace)? _installedPlatformError;
+  final List<app_core.LogSink> _sinks = <app_core.LogSink>[];
   bool _installed = false;
   bool _notifyScheduled = false;
   Timer? _notifyTimer;
@@ -71,7 +76,11 @@ class AppLogService extends ChangeNotifier implements app_core.AppLogger {
   /// Release 模式是否允许写入磁盘日志。
   bool writeDiskLogsInRelease = false;
 
-  final ToolSecretPolicy _secretPolicy = const ToolSecretPolicy();
+  /// App diagnostics share Core's public redaction boundary. Keeping this
+  /// dependency in App Scope avoids importing a Feature security policy into
+  /// the app log/database owner.
+  final app_core.TelemetryRedactor _redactor =
+      const app_core.TelemetryRedactor();
 
   /// 返回磁盘写入队列排空的 Future。
   @visibleForTesting
@@ -173,15 +182,19 @@ class AppLogService extends ChangeNotifier implements app_core.AppLogger {
     if (_installed) return;
     _installed = true;
     _previousDebugPrint ??= debugPrint;
-    debugPrint = (String? message, {int? wrapWidth}) {
+    // ignore: prefer_function_declarations_over_variables
+    final debugPrintHandler = (String? message, {int? wrapWidth}) {
       if (message != null && message.isNotEmpty) {
         add('debug', message, captureSource: false);
       }
       _previousDebugPrint?.call(message, wrapWidth: wrapWidth);
     };
+    _installedDebugPrint = debugPrintHandler;
+    debugPrint = debugPrintHandler;
 
-    final previousFlutterError = FlutterError.onError;
-    FlutterError.onError = (details) {
+    _previousFlutterError = FlutterError.onError;
+    // ignore: prefer_function_declarations_over_variables
+    final flutterErrorHandler = (FlutterErrorDetails details) {
       // 保留完整诊断树，避免 RenderFlex 等错误只显示简短摘要。
       add(
         'flutter',
@@ -189,15 +202,38 @@ class AppLogService extends ChangeNotifier implements app_core.AppLogger {
         stackTrace: details.stack,
         details: details.toString(),
       );
-      previousFlutterError?.call(details);
+      _previousFlutterError?.call(details);
     };
+    _installedFlutterError = flutterErrorHandler;
+    FlutterError.onError = flutterErrorHandler;
 
-    PlatformDispatcher.instance.onError = (error, stack) {
+    _previousPlatformError = PlatformDispatcher.instance.onError;
+    // ignore: prefer_function_declarations_over_variables
+    final platformErrorHandler = (Object error, StackTrace stack) {
       add('platform', error.toString(), stackTrace: stack);
-      return false;
+      return _previousPlatformError?.call(error, stack) ?? false;
     };
+    _installedPlatformError = platformErrorHandler;
+    PlatformDispatcher.instance.onError = platformErrorHandler;
 
     add('app', 'Log service started');
+  }
+
+  /// Adds an independently-owned structured output sink.
+  ///
+  /// Sinks receive only Core [app_core.LogRecord] calls. Legacy [add] calls
+  /// remain local, so attaching a telemetry sink can never turn all app logs
+  /// into upload candidates.
+  void addSink(app_core.LogSink sink) {
+    if (_sinks.contains(sink)) return;
+    _sinks.add(sink);
+  }
+
+  /// Removes a previously attached sink without closing it.
+  ///
+  /// The caller that created the sink remains its lifecycle owner.
+  void removeSink(app_core.LogSink sink) {
+    _sinks.remove(sink);
   }
 
   /// 写入普通信息日志。
@@ -228,6 +264,13 @@ class AppLogService extends ChangeNotifier implements app_core.AppLogger {
   /// 将 Core 日志记录适配到现有 AppLogEntry 存储模型。
   @override
   void log(app_core.LogRecord record) {
+    for (final sink in List<app_core.LogSink>.of(_sinks)) {
+      try {
+        sink.write(record);
+      } catch (_) {
+        // A diagnostic sink must not affect the business logger or operation.
+      }
+    }
     final source = record.source;
     final hasSource = source?.isNotEmpty == true;
     add(
@@ -285,6 +328,27 @@ class AppLogService extends ChangeNotifier implements app_core.AppLogger {
   /// 取消 UI 通知 Timer；数据库和磁盘资源由其各自队列完成释放。
   @override
   void dispose() {
+    if (_installed) {
+      if (identical(debugPrint, _installedDebugPrint)) {
+        debugPrint = _previousDebugPrint ?? debugPrint;
+      }
+      if (identical(FlutterError.onError, _installedFlutterError)) {
+        FlutterError.onError = _previousFlutterError;
+      }
+      if (identical(
+        PlatformDispatcher.instance.onError,
+        _installedPlatformError,
+      )) {
+        PlatformDispatcher.instance.onError = _previousPlatformError;
+      }
+      _installed = false;
+      _installedDebugPrint = null;
+      _installedFlutterError = null;
+      _installedPlatformError = null;
+      _previousDebugPrint = null;
+      _previousFlutterError = null;
+      _previousPlatformError = null;
+    }
     _notifyTimer?.cancel();
     _notifyTimer = null;
     _notifyScheduled = false;

@@ -1,155 +1,114 @@
-> Last updated: 2026-08-27
+> Last updated: 2026-08-30
 
 # SDK Current State
 
-The native transport runtime and Relay control/data path implement
-transport-network v2. Relay device bootstrap implements Relay Bootstrap V2
+Native transport/Relay implements Network Protocol V2; Relay bootstrap is V2
 (`POST /v2/devices/enroll`, `POST /v2/devices/refresh`, `protocol_version=2`).
+LAN Control V2 is a separate breaking-only domain: pairing/discovery/capabilities
+and authenticated text/clipboard HTTPS stay in LAN Share; peer registration,
+sessions, route authorization, E2EE, and binary transfer stay in Native Network
+V2. App Scope owns one Ed25519/X25519 identity bundle, one configured runtime,
+and one Facade; Feature lifecycle cannot reconfigure them.
 
-LAN Control Protocol V2 is a separate breaking-only version domain. It does not
-version or replace Native Network Protocol V2: LAN Control handles pairing,
-discovery, capabilities and authenticated text/clipboard HTTPS, while Native
-Network V2 handles peer registration, sessions, route authorization, E2EE and
-binary transfer. The App Scope owns the local Ed25519/X25519 identity bundle,
-the single configured runtime and the shared Facade; Feature lifecycle cannot
-start/stop/reconfigure that runtime.
+## Current contracts and runtime
 
-- `network_sdk` provides typed bootstrap, authenticated API, Session, event,
-  and Feature-safe Realtime contracts.
-- The bootstrap `RefreshRequest` requires an integer Unix-seconds timestamp.
-  LAN Share and the real Dart/Rust E2E callers sign
-  `POST\n/v2/devices/refresh\n<timestamp>\n<nonce>` exactly; the retired
-  V1 transcript has no SDK or Relay compatibility fallback
-  ([ADR-031](../../docs/adr/ADR-031-relay-refresh-proof-freshness.md)).
-- The Rust `network-relay` shared WebSocket request builder gives every Control
-  and RelayData upgrade an independent positive Unix-seconds
-  `X-Relay-Timestamp`, 32-byte nonce, and Ed25519 signature over
-  `GET\n<path>\n<timestamp>\n<nonce>` with no trailing newline. Both physical
-  paths use the hard-cut contract; no timestamp-less builder remains.
-- `network_transport` provides the single App-scoped native runtime and
-  borrowed command/Realtime gateways.
-- `ssh_mobile_network_native` runs native event polling on a helper isolate and
-  exposes typed Protobuf commands and events through a narrow facade; command
-  encoding, envelope dispatch, Peer/Delivery/Transfer/Realtime/Stream mapping,
-  and FFI boundary validation are separate stateless owners.
-- Rust owns authenticated QUIC, generic TCP/WebSocket carriers, UDP datagrams,
-  WSS Relay integration, native WebRTC, `PeerSupervisor` lifecycle,
-  `PeerPathManager` Direct/Relay physical carriers, Delivery/Recovery,
-  application E2EE, and resumable file-transfer state. `ConnectionSessionStore`
-  is security/admission-only; business operations select a carrier through a
-  `PathLease`.
-- A `ConnectionSession` is 1:1 with its transport Connection. Every new
-  connection gets a new `SessionId` and Noise root; transport loss destroys the
-  session, while Delivery and Transfer business state resumes by business ID.
-- Discovery attempts preserve the full 128-bit `RuntimeEpoch`; revisions are ordered only within the same epoch, and late Answer candidates can still join the live Direct race.
-- ReliableStream commands and events use `StreamHandle(opener_device_id, stream_id)` end-to-end, so reverse-direction streams with the same numeric ID remain distinct.
-- ReliableStream framing/preamble/token codec, logical stream manager, and SSH
-  gateway/FFI adapter are independent owners. The manager alone retains the
-  path lease and bounded buffer; the gateway only pumps opaque bytes to local
-  sshd and does not interpret SSH protocol.
-- Queue acceptance, native command completion, transport acknowledgement, and
-  application acknowledgement remain distinct.
-- Native command results use a dedicated bounded Result lane with async
-  backpressure before the Control/Data lanes; the runtime retains only a
-  rolling window of completed command IDs instead of imposing a lifetime
-  command limit. Dart exactly-once guards still drop duplicate or unknown
-  terminal results, and peer connect intents coalesce concurrent requests while
-  stale generations cannot complete a newer intent. Native path handles are
-  borrowed through explicit leases and revoked handles cannot be reacquired.
-- The typed `network_v2` contract keeps PeerState, E2EE policy, command terminal
-  results, diagnostics, environment changes, and peer-scoped business IDs
-  separate from the legacy wire adapter. Native Runtime event ingress is count+
-  byte bounded; FFI and transport EventMux apply control/data fairness and
-  overflow policy before events reach feature adapters.
-- Passive authenticated inbound admits a peer as Online without enabling
+- `network_sdk` exposes typed bootstrap/API/Session/event/Feature-safe Realtime
+  contracts; the typed `network_v2` contract keeps PeerState, E2EE policy,
+  terminal results, diagnostics, environment changes, and peer business IDs
+  separate from the legacy wire adapter. `RefreshRequest` requires integer Unix
+  seconds and the exact signed
+  `POST\n/v2/devices/refresh\n<timestamp>\n<nonce>` transcript; V1 has no fallback
+  ([ADR-031](../../docs/adr/ADR-031-relay-refresh-proof-freshness.md)). Rust
+  Relay Control/Data upgrades likewise each use a positive timestamp, 32-byte
+  nonce, and `X-Relay-Timestamp` plus exact
+  `GET\n<path>\n<timestamp>\n<nonce>` signature with no trailing
+  newline; timestamp-less builders are retired.
+- `network_transport` provides one App runtime and borrowed command/Realtime
+  gateways. `ssh_mobile_network_native` polls events on a helper isolate and
+  maps typed Protobuf commands/events through separate stateless encoders,
+  envelope/domain mappers, and FFI validation.
+- Rust owns authenticated QUIC, generic TCP/WebSocket, UDP datagrams, WSS Relay,
+  WebRTC, `PeerSupervisor`, `PeerPathManager`, Delivery/Recovery, E2EE, and
+  resumable transfer. `ConnectionSessionStore` is admission/security-only;
+  operations select carriers through `PathLease`.
+- One ConnectionSession belongs to one transport Connection. New connection →
+  new SessionId + Noise root; loss destroys it. Delivery/Transfer resume only
+  business state by ID. Discovery keeps full 128-bit `runtime_epoch`; revisions
+  order only within that epoch and late Answer candidates may join a live race.
+- ReliableStream uses `StreamHandle(opener_device_id, stream_id)` end-to-end;
+  framing/preamble/token codec, stream manager (registry/sequence/bounded buffer/
+  tombstones/one lease), and SSH gateway/FFI byte pump are separate owners. The
+  gateway does not interpret SSH protocol. Queue acceptance, native completion,
+  transport ACK, and application ACK are distinct.
+- Native results use a bounded Result lane with async worker backpressure ahead
+  of Control/Data; only a rolling completed-command window is retained. Dart
+  drops duplicate/unknown terminal results, coalesces peer connect intents, and
+  rejects stale generations. Handles are leased and revoked handles cannot be
+  reacquired. Event ingress is count+byte bounded with Result/Control/Data
+  fairness and overflow policy before Feature adapters.
+
+## Routing, recovery, and security
+
+- Passive authenticated inbound makes a peer Online but does not enable
   maintenance. Environment changes refresh discovery while preserving healthy
-  Relay/Realtime; only maintained peers schedule bounded Direct recovery after
-  Relay is ready, using `1/2/4/8/15/30s` backoff plus jitter. Unleased idle paths
-  are ephemeral and retire after 60 seconds.
-- Direct and Relay physical paths may coexist. Direct selection wins when
-  compatible, business `ensure` does not opt into maintenance, and hard path
-  revocation closes streams bound to the revoked lease; normal retirement drains
-  those leases instead of transparently migrating them.
-- CandidatePayloadV2 validates candidate transport capabilities before direct
-  probing. Relay candidates never enter a DirectProbe; resolved candidate cache
-  freshness uses a monotonic clock, server-confirmed TTL, and
-  `runtime_epoch`/same-epoch `revision` ordering with fingerprint consistency.
-- E2EE policy is enforced end-to-end: Required installs a fresh application
-  root after authenticated Noise/path admission, while Disabled is Direct
-  identity-only and Relay Disabled is rejected before application crypto.
-- Peer route authorization is an explicit input to route eligibility: Direct
-  candidates require local-direct authorization and Relay candidates require
-  peer Relay authorization plus local/remote enrollment and capabilities. Relay
-  enrollment/disconnect never changes the persisted peer trust record. The Dart
-  `removePeer` chain is reserved for explicit trust revoke/unpair.
-- Connectivity stages are authoritative and ordered: Stage A uses only fresh
-  configured/cache Direct candidates and can reuse any already healthy,
-  capability-compatible path before control; Stage B requires one Resolve→Offer
-  transaction and a fixed four-second Direct window; Stage C can reserve Relay
-  only when Resolve is READY, Direct failed, capabilities match, Required E2EE
-  is active, and budget remains.
-- Candidate snapshot decoding, cache projection, and deterministic Direct
-  ranking are owned separately from the coordinator. Stage B authoritative
-  status and Stage C Relay eligibility are pure closed-gate decisions; the
-  coordinator retains bounded execution, Session cleanup, and route attachment.
-- `RuntimeState` owns the per-peer resolved candidate cache. A healthy existing
-  path is reused by its physical path owner without opening a target-less Offer;
-  when a new/replacement transport is needed, Stage B starts the authoritative
-  Resolve→Offer gate. Session teardown leaves bounded ReliableStream identity
-  tombstones so an old `(peer_id, opener_device_id, stream_id)` handle cannot
-  transparently write to a new Session.
-- Generic reliable carriers carry Delivery frames; Delivery business state resumes
-  across connections. File and stream operations acquire fresh path leases after
-  loss, and SSH/Realtime explicitly close rather than transparently migrating a
-  stale connection.
-- Outbound generic connection races, inbound QUIC/TCP acceptance, and receiver
-  supervision have independent lifecycle owners. Accept/handshake tasks remain
-  runtime-scoped; bidi/channel/generic readers remain Session-scoped and retire
-  only the exact lost route before deciding whether the Session is finished.
-- Native event classification/backpressure/fairness is owned by bounded
-  Result/Control/Data event lanes rather than `RuntimeState`; terminal command
-  results backpressure their worker and are never admitted through a
-  drop-on-full send. Session-scoped weak path projections are
-  owned by a dedicated store that applies topology replacement and exact stale
-  cleanup; it never extends carrier lifetime or replaces admission storage.
-- Feature-facing Realtime does not expose native signaling or media resources;
-  decoded media availability remains defined by the public package contract.
+  Relay/Realtime; maintained peers schedule Direct recovery only after Relay is
+  ready, with `1/2/4/8/15/30s` backoff+jitter. Unleased idle paths retire after
+  60s. Direct and Relay may coexist; compatible Direct wins, `ensure` does not
+  enable maintenance, and hard revocation closes streams bound to the lease;
+  normal retirement drains leases rather than migrating them.
+- `CandidatePayloadV2` validates transport capabilities; Relay candidates never
+  enter DirectProbe. Cache freshness uses a monotonic clock, server TTL,
+  `runtime_epoch`/same-epoch revision ordering, and fingerprint consistency.
+  `RuntimeState` owns the per-peer resolved cache. Reuse a healthy path without a
+  target-less Offer; new/replacement paths use authoritative Resolve→Offer.
+  Session teardown leaves bounded StreamHandle tombstones so old handles cannot
+  write into a new session.
+- Required E2EE creates a fresh application root after authenticated
+  Noise/path admission; Disabled is Direct identity-only and Relay rejects it.
+  Direct eligibility requires peer local-direct authorization; Relay requires
+  peer relay authorization plus local/remote enrollment and capability. Relay
+  enrollment/disconnect never mutates trust; Dart `removePeer` is explicit
+  trust revoke/unpair only.
+- Connectivity is ordered: Stage A uses fresh configured/cache Direct candidates
+  and may reuse a healthy compatible path; Stage B performs one Resolve→Offer
+  with a fixed four-second Direct window; Stage C reserves Relay only when
+  Resolve READY, Direct failed, capabilities match, Required E2EE is active, and
+  budget remains. Snapshot decoding/cache projection/ranking are separate from
+  coordinator execution. Accept/handshake tasks are runtime-scoped; readers are
+  Session-scoped and retire only the lost route before finishing a Session.
+- Result/Control/Data lanes are owned independently of RuntimeState. Result
+  backpressures command workers and is never drop-on-full; weak path projections
+  separately own Session bindings/topology replacement/stale cleanup without
+  extending carriers or replacing admission storage. Feature Realtime exposes
+  no native signaling/media resources; public package contract defines decoded
+  media availability. Generic reliable carriers carry Delivery frames; SSH and
+  Realtime close explicitly rather than transparently migrating stale sessions.
 
-## Validation gates
+## Validation ownership
 
-Run the package-local checks required by each SDK contract:
-
-```bash
-(cd packages/infrastructure/network_sdk && flutter analyze --no-pub && flutter test --no-pub)
-(cd packages/infrastructure/network_transport && flutter analyze --no-pub && flutter test --no-pub)
-(cd packages/infrastructure/ssh_mobile_network_native && dart analyze && dart test)
-(cd native/network_core && cargo fmt --all -- --check && cargo test --workspace --locked && cargo clippy --workspace --all-targets --locked -- -D warnings)
-```
-
-The public SDK coverage gate is independent from the daily regression gate:
+Run package-local checks from each SDK `README.md`/`AGENTS.md`. The public SDK
+coverage gate is independent:
 
 ```bash
 bash scripts/bash/coverage/sdk_coverage.sh
 ```
 
-It measures the public Dart facades and public Rust SDK crates; internal
-`network-core` and Relay implementation coverage remains part of the ordinary
-Rust workspace checks. Cross-owner protocol and ABI acceptance is checked with:
+Public Dart packages and the public Rust SDK aggregate require 90% line
+coverage; internal `network-core`/Relay coverage remains in ordinary workspace
+checks. Cross-owner parity uses:
 
 ```bash
 bash scripts/bash/contracts/network_v2_acceptance.sh strict
 ```
 
-Do not copy test-run results here. Automated and device-dependent coverage is
-tracked in the [network fault matrix](../../docs/NETWORK_FAULT_MATRIX.md).
+Do not copy test-run results here; device-dependent evidence belongs in the
+[network fault matrix](../../docs/NETWORK_FAULT_MATRIX.md).
 
-LAN V2 implementation audit (2026-08-25): the typed `removePeer` chain,
-`allowDirect/allowRelay` fields, App identity wiring, V2 atomic pairing,
-discovery-only presentation models, peer registry, regular-file Network V2
-transfer coordinator, and Coordinator-owned explicit unpair path are present in
-the working tree. V1 pairing/trust helpers and the legacy aggregate model are
-removed. The HTTP binary route is removed and metadata rejects binary. App
-Runtime exactly-once and dual-runtime/device-restart acceptance are covered by
-the current App/Feature/SDK/native tests. `NetworkFacade.sendMessage` remains the
-stable unavailable boundary for this refactor; the accepted text/clipboard path
-is authenticated HTTPS + application E2E.
+LAN V2 implementation currently has typed `removePeer`, `allowDirect/allowRelay`,
+App identity wiring, atomic V2 pairing, discovery-only presentation models,
+peer registry, regular-file transfer coordinator, and explicit unpair. V1
+pairing/trust helpers, the legacy aggregate model, and HTTP binary route are
+removed; metadata rejects binary. AppRuntime exactly-once and dual-runtime/
+device-restart acceptance are covered by current App/Feature/SDK/native tests.
+`NetworkFacade.sendMessage` remains the stable unavailable boundary; text/
+clipboard use authenticated HTTPS + application E2E.

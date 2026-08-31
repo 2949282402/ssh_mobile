@@ -4,10 +4,11 @@ param([string]$Minimum=$env:SDK_COVERAGE_MINIMUM,[string]$DartTimeout=$env:SDK_D
 Assert-NativeWindowsPowerShell
 $root=Get-RepositoryRoot
 $temp=Initialize-NativeEnvironment $TempRoot
-if(-not $Minimum){$Minimum='80'}
+if(-not $Minimum){$Minimum='90'}
 if(-not $DartTimeout){$DartTimeout='10m'}
 if($env:SDK_KEEP_COVERAGE_ARTIFACTS -eq '1'){$KeepArtifacts=$true}
 if($Minimum -notmatch '^[0-9]+(?:\.[0-9]+)?$'){[Console]::Error.WriteLine("SDK_COVERAGE_MINIMUM must be numeric: $Minimum");exit 64}
+Write-Host "SDK coverage threshold: $Minimum%"
 Assert-Commands @('dart','cargo','cargo-llvm-cov')
 ConvertTo-TimeoutSeconds $DartTimeout|Out-Null
 $run=Join-Path $temp ("sdk-coverage-{0}" -f [Guid]::NewGuid().ToString('N'))
@@ -15,7 +16,7 @@ New-Item -ItemType Directory $run|Out-Null
 $packages=@(
  @{Name='network_sdk';Dir='packages\infrastructure\network_sdk';Tests=@('test/network_sdk_contract_test.dart','test/network_v2_contract_test.dart','test/network_v2_facade_test.dart','test/network_models_boundaries_test.dart','test/realtime_test.dart')},
  @{Name='network_transport';Dir='packages\infrastructure\network_transport';Tests=@('test/event_mux_test.dart','test/network_boundary_test.dart','test/network_runtime_test.dart','test/transport_contract_test.dart')},
- @{Name='ssh_mobile_network_native';Dir='packages\infrastructure\ssh_mobile_network_native';Tests=@('test/ssh_mobile_network_native_test.dart','test/protocol_event_matrix_test.dart')}
+ @{Name='ssh_mobile_network_native';Dir='packages\infrastructure\ssh_mobile_network_native';Tests=@('test/ssh_mobile_network_native_test.dart','test/protocol_event_matrix_test.dart','test/protocol_event_matrix_events_test.dart')}
 )
 function Measure-Lcov([string]$Name,[string]$Path){
   $found=0;$hit=0;$scope=$false
@@ -50,7 +51,7 @@ try{
   if($found-eq 0){throw 'No Rust coverage.'}
   $percent=100.0*$hit/$found
   if($percent-lt[double]$Minimum){throw "Rust SDK coverage below $Minimum%."}
-  Write-Host ("SDK coverage passed: Dart {0:N2}%, Rust {1:N2}%."-f(100.0*$allHit/$allFound),$percent)
+  Write-Host ("SDK coverage passed: Dart {0:N2}%, Rust {1:N2}% (minimum {2}%)."-f(100.0*$allHit/$allFound),$percent,$Minimum)
 }finally{
   if($KeepArtifacts){Write-Host "Artifacts: $run"}else{Remove-Item $run -Recurse -Force -ErrorAction SilentlyContinue}
 }

@@ -1,5 +1,7 @@
 use super::*;
+use crate::runtime_event_lanes::EventSender;
 use network_protocol::network_event;
+use network_protocol::{CommandResultState, NetworkErrorCode, PeerConnectionState};
 
 #[tokio::test]
 async fn command_result_emits_one_correlated_success_terminal() {

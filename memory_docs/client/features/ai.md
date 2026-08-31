@@ -1,63 +1,47 @@
-> Last updated: 2026-08-24
+> Last updated: 2026-08-30
 
 # AI Feature Memory
 
-## Ownership and state
+`packages/features/feature_ai/` owns AI chat, Agent/Skills, LLM providers,
+tool orchestration, and `ai.db`. `AiModule` lazily owns the database,
+repositories, provider/runtime, and tool registry; Route Scope owns ViewModels,
+streams, timers, and controllers. App Shell injects settings, logging,
+protection, SSH/SFTP, monitoring, Playbook, RAG, MCP, and WebView capabilities;
+it retains their ownership.
 
-`packages/features/feature_ai/` owns AI chat, Agent, Skills, LLM
-provider/runtime code, tool orchestration, and `ai.db`. `AiModule` lazily owns
-the database, repositories, provider/runtime creation, and tool registry.
-Route Scope owns AI ViewModels, streams, timers, and controllers. App Shell
-adapters inject settings, logging, text protection, SSH/SFTP, monitoring,
-Playbook, RAG, MCP, and WebView capabilities without transferring ownership.
+Chat titles are not derived from prompt text. Route close rejects approvals,
+cancels the provider request, awaits generation, then releases notifiers. Module
+close invalidates in-flight lazy initialization before closing `ai.db`. Chat,
+metrics, traces, attachments, context, and other sensitive fields are encrypted
+before Drift writes; database-open failure never falls back to memory.
 
-Chat-list titles do not derive from user prompt text. Route teardown rejects
-pending approvals, cancels the active provider request, and joins the generation
-Future before releasing its streaming notifiers. `AiModule` invalidates an
-in-flight lazy initialization before closing `ai.db`, so a late open cannot
-resurrect the Module after App shutdown.
+Execution boundaries:
 
-Chat, metrics, trace, attachments, context, and other sensitive fields are
-encrypted before Drift writes. Database-open failures surface; they do not
-fall back to an in-memory production store.
+- OpenAI-compatible JSON is UTF-8; streaming handles fragmented tool-call
+  deltas and usage-only chunks before the terminal marker. Provider-required
+  reasoning survives tool rounds but hidden reasoning stays out of later context
+  and persisted traces.
+- Tool visibility is an execution gate: hidden/unexposed tools never reach
+  approval, execution, cache, loop guard, or budget. Preflight owns visibility and
+  plan gates; budget coordinator owns extensions/blocking; one result recorder
+  folds serial/parallel outcomes into provider messages, system hints, ledger,
+  and traces.
+- Remote writes and sensitive reads require approval bound to immutable target /
+  action snapshots; stale snapshots fail closed. `ToolSecretPolicy` redacts
+  arguments/results/approvals/traces; environment dumps, metadata endpoints, and
+  secret paths remain restricted. Shell commands are one-shot SSH and destructive
+  deletion remains blocked.
+- Default planning uses chat-bound `todoSteps`; a persisted Playbook is created
+  or executed only on explicit reusable-Playbook request. Helper agents receive
+  no tool definitions and never execute client/SSH/SFTP tools; the primary
+  runtime owns tool, approval, cancellation, and redaction.
 
-## Execution boundaries
+Cross-feature ports: `RagCapability`, `PlaybookAutomationPort`, and
+`AiWebViewPort`; MCP consumes an injected AI Tool Runtime Port and AI never
+imports MCP implementation. Add [MCP](mcp.md), [SFTP](sftp.md), or
+[LAN Share](lan-share.md) Memory only when that boundary changes.
 
-- Encode OpenAI-compatible JSON request bodies as UTF-8 bytes. Streaming
-  parsers must tolerate fragmented tool-call deltas and a usage-only chunk
-  before the terminal marker.
-- Preserve provider-required reasoning payloads across the provider's tool
-  rounds, while keeping hidden reasoning out of future model context and
-  redacted persisted traces.
-- Tool visibility is an execution boundary, not only a model hint. A hidden or
-  unexposed tool never reaches approval, execution, cache, loop guard, or budget paths.
-- Tool-loop preflight owns visibility and plan-step gates, the budget-audit
-  coordinator owns extensions and remaining-call blocking, and one result
-  recorder folds both serial and parallel outcomes into provider messages,
-  system hints, ledger entries, and traces.
-- Remote writes and sensitive reads require approval bound to immutable target
-  and action snapshots. Stale snapshots are rejected before execution.
-- Tool arguments, results, approvals, and persisted traces pass through
-  `ToolSecretPolicy`; environment dumps, metadata endpoints, and secret-bearing
-  paths remain restricted.
-- Shell commands use one-shot SSH execution, respect the target platform, and
-  keep destructive deletion blocked.
-- Default request planning uses chat-bound `todoSteps`. A persisted Playbook is
-  created or executed only when the user explicitly requests a reusable Playbook.
-- Helper agents do not receive tool definitions or execute client/SSH/SFTP
-  tools; the primary runtime retains tool, approval, cancellation, and redaction ownership.
-
-## Cross-feature routing
-
-- AI reaches RAG through `RagCapability`, Playbook through
-  `PlaybookAutomationPort`, and client WebView through `AiWebViewPort`.
-- MCP consumes an injected AI Tool Runtime Port; AI does not import the MCP implementation.
-- Add [MCP Memory](mcp.md), [SFTP Memory](sftp.md), or
-  [LAN Share Memory](lan-share.md) only when that boundary changes.
-
-Package-local contracts and focused design:
-
-- [AI README](../../../packages/features/feature_ai/README.md)
-- [AI AGENTS](../../../packages/features/feature_ai/AGENTS.md)
-- [Agent Trace design](../../../docs/AGENT_RUN_TRACE.md)
-- [Security regression guide](../../../docs/security_manual_regression.md)
+Contracts/design: [AI README](../../../packages/features/feature_ai/README.md),
+[AI AGENTS](../../../packages/features/feature_ai/AGENTS.md),
+[Agent Trace](../../../docs/AGENT_RUN_TRACE.md), and
+[security regression](../../../docs/security_manual_regression.md).

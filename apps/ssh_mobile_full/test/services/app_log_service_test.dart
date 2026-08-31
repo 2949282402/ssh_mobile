@@ -5,6 +5,28 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
 
+final class _RecordingLogSink implements app_core.LogSink {
+  final List<app_core.LogRecord> records = <app_core.LogRecord>[];
+
+  @override
+  void write(app_core.LogRecord record) {
+    records.add(record);
+  }
+
+  @override
+  Future<void> close() async {}
+}
+
+final class _ThrowingLogSink implements app_core.LogSink {
+  @override
+  void write(app_core.LogRecord record) {
+    throw StateError('sink failure');
+  }
+
+  @override
+  Future<void> close() async {}
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -127,6 +149,55 @@ void main() {
       expect(logs.entries.single.normalizedLevel, AppLogLevel.info);
     },
   );
+
+  test('forwards Core records to an attached sink exactly once', () {
+    final logs = AppLogService.instance;
+    logs.clear();
+    final sink = _RecordingLogSink();
+    final record = app_core.LogRecord(
+      timestamp: DateTime.utc(2026, 8, 7),
+      level: app_core.LogLevel.warning,
+      message: 'structured warning',
+    );
+
+    logs.addSink(sink);
+    logs.addSink(sink);
+    logs.log(record);
+
+    expect(sink.records, hasLength(1));
+    expect(sink.records.single, same(record));
+
+    logs.removeSink(sink);
+    logs.log(
+      app_core.LogRecord(
+        timestamp: DateTime.utc(2026, 8, 7, 0, 1),
+        level: app_core.LogLevel.info,
+        message: 'after removal',
+      ),
+    );
+    expect(sink.records, hasLength(1));
+  });
+
+  test('a failing sink cannot prevent local log forwarding', () {
+    final logs = AppLogService.instance;
+    logs.clear();
+    final sink = _ThrowingLogSink();
+    logs.addSink(sink);
+
+    expect(
+      () => logs.log(
+        app_core.LogRecord(
+          timestamp: DateTime.utc(2026, 8, 7),
+          level: app_core.LogLevel.error,
+          message: 'local error',
+        ),
+      ),
+      returnsNormally,
+    );
+    expect(logs.entries.single.message, 'local error');
+
+    logs.removeSink(sink);
+  });
 
   test('rotates log files when limit is exceeded', () async {
     final logs = AppLogService.instance;

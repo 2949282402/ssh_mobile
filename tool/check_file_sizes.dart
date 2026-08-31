@@ -3,7 +3,8 @@ import 'dart:io';
 /// Step31 的文件尺寸治理阈值。
 ///
 /// 300 行以上需要人工复核职责，400 行以上需要检查是否可以按职责拆分，
-/// 500 行以上视为高风险文件。脚本只负责报告，不会为了通过阈值机械改写代码。
+/// 500 行以上必须按功能/职责边界拆分。脚本只负责报告，不会为了通过阈值
+/// 机械改写代码；禁止用 part_01/file_01 等编号切片或无意义过度拆分。
 const fileSizeReviewThreshold = 300;
 const fileSizeSplitThreshold = 400;
 const fileSizeCriticalThreshold = 500;
@@ -21,7 +22,11 @@ final class DartFileSize {
 
 /// workspace 非 generated Dart 文件的尺寸报告。
 final class DartFileSizeReport {
-  const DartFileSizeReport(this.files);
+  const DartFileSizeReport(
+    this.files, {
+    this.testRootViolations = const <String>[],
+    this.numberedSplitViolations = const <String>[],
+  });
 
   /// 已按相对路径排序的文件记录。
   final List<DartFileSize> files;
@@ -29,6 +34,12 @@ final class DartFileSizeReport {
   /// 返回超过指定阈值的文件，并保持稳定的路径顺序。
   List<DartFileSize> above(int threshold) =>
       files.where((file) => file.lineCount > threshold).toList(growable: false);
+
+  /// Dart 测试文件不在 package/app 专属 test/tests 根下的路径。
+  final List<String> testRootViolations;
+
+  /// Dart source paths using mechanically numbered part/file chunks.
+  final List<String> numberedSplitViolations;
 }
 
 /// 扫描代码、工具和测试目录，收集所有非 generated Dart 文件的行数。
@@ -40,26 +51,45 @@ DartFileSizeReport collectDartFileSizeReport({
 }) {
   final root = repositoryRoot.absolute;
   final files = <DartFileSize>[];
+  final testRootViolations = <String>[];
+  final numberedSplitViolations = <String>[];
   for (final relativeRoot in _scanRoots) {
     final directory = Directory(_join(root.path, relativeRoot));
     if (!directory.existsSync()) continue;
     for (final file in _findDartFiles(directory)) {
+      final relativePath = _relativePath(root.path, file.path);
+      if (_isDartTestFile(file.path) && !_hasDedicatedTestRoot(relativePath)) {
+        testRootViolations.add(relativePath);
+      }
+      if (_isNumberedSplitPath(relativePath)) {
+        numberedSplitViolations.add(relativePath);
+      }
       files.add(
         DartFileSize(
-          path: _relativePath(root.path, file.path),
+          path: relativePath,
           lineCount: file.readAsLinesSync().length,
         ),
       );
     }
   }
   files.sort((a, b) => a.path.compareTo(b.path));
-  return DartFileSizeReport(List<DartFileSize>.unmodifiable(files));
+  testRootViolations.sort();
+  numberedSplitViolations.sort();
+  return DartFileSizeReport(
+    List<DartFileSize>.unmodifiable(files),
+    testRootViolations: List<String>.unmodifiable(testRootViolations),
+    numberedSplitViolations: List<String>.unmodifiable(numberedSplitViolations),
+  );
 }
 
 /// 将三个治理档位写入标准输出，供本地检查和 CI 日志使用。
 void writeDartFileSizeReport(DartFileSizeReport report, {IOSink? output}) {
   final sink = output ?? stdout;
   sink.writeln('Dart file size report: ${report.files.length} file(s).');
+  sink.writeln(
+    'Files over $fileSizeCriticalThreshold lines require functional/responsibility '
+    'decomposition; numbered chunks are prohibited.',
+  );
   _writeBucket(
     sink,
     '> $fileSizeReviewThreshold',
@@ -75,6 +105,18 @@ void writeDartFileSizeReport(DartFileSizeReport report, {IOSink? output}) {
     '> $fileSizeCriticalThreshold',
     report.above(fileSizeCriticalThreshold),
   );
+  sink.writeln(
+    'Dart test-root violations: ${report.testRootViolations.length}',
+  );
+  for (final path in report.testRootViolations) {
+    sink.writeln('  $path: move under a dedicated test/ or tests/ root');
+  }
+  sink.writeln(
+    'Numbered split violations: ${report.numberedSplitViolations.length}',
+  );
+  for (final path in report.numberedSplitViolations) {
+    sink.writeln('  $path: split by responsibility, not a numbered chunk');
+  }
 }
 
 void _writeBucket(IOSink sink, String label, List<DartFileSize> files) {
@@ -111,6 +153,27 @@ bool _isGenerated(String path) {
   return _generatedSuffixes.any(lowerPath.endsWith);
 }
 
+bool _isDartTestFile(String path) => path.toLowerCase().endsWith('_test.dart');
+
+bool _hasDedicatedTestRoot(String relativePath) {
+  final segments = relativePath.replaceAll('\\', '/').split('/');
+  for (var index = 0; index < segments.length - 1; index++) {
+    if (segments[index] != 'test' && segments[index] != 'tests') continue;
+    if (index == 0) return true;
+    final parent = segments[index - 1].toLowerCase();
+    if (parent != 'lib' && parent != 'src') return true;
+  }
+  return false;
+}
+
+bool _isNumberedSplitPath(String relativePath) {
+  final fileName = relativePath.replaceAll('\\', '/').split('/').last;
+  return RegExp(
+    r'^(?:part|file)[_-][0-9]+(?:[_-].*)?\.[^.]+$',
+    caseSensitive: false,
+  ).hasMatch(fileName);
+}
+
 String _relativePath(String root, String path) {
   final normalisedRoot = _normalise(root);
   final normalisedPath = _normalise(path);
@@ -136,4 +199,8 @@ const _generatedSuffixes = <String>[
 void main() {
   final report = collectDartFileSizeReport(repositoryRoot: Directory.current);
   writeDartFileSizeReport(report);
+  if (report.testRootViolations.isNotEmpty ||
+      report.numberedSplitViolations.isNotEmpty) {
+    exitCode = 1;
+  }
 }

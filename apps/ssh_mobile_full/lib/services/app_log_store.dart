@@ -221,8 +221,11 @@ extension AppLogServiceDatabaseStore on AppLogService {
     StackTrace stackTrace,
   ) {
     final safeError = _redact(error.toString());
+    final safeStackTrace =
+        _redactor.sanitizeStackTrace(stackTrace.toString()) ??
+        app_core.TelemetryRedactor.redacted;
     final printer = _previousDebugPrint ?? debugPrint;
-    printer('App log database $operation failed: $safeError\n$stackTrace');
+    printer('App log database $operation failed: $safeError\n$safeStackTrace');
   }
 
   db.AppLogRecordsCompanion _toDatabaseRecord(AppLogEntry entry) {

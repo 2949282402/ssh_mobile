@@ -115,12 +115,12 @@ extension SshSessionMetadataActions on SshService {
     );
   }
 
-  void _setSessionError(
+  Future<void> _setSessionError(
     String sessionId,
     String connectionId,
     String connectionName,
     String message,
-  ) {
+  ) async {
     final session = _sessions.putIfAbsent(
       sessionId,
       () => SshSession(
@@ -134,6 +134,16 @@ extension SshSessionMetadataActions on SshService {
     session.errorMessage = message;
     session.updatedAt = DateTime.now();
     _lastErrorMessage = message;
+    // 仅在 span 已开始（traceId 存在）时上报失败，避免为早期预检失败产生
+    // 无 started 对称事件的孤立 failed 记录。
+    if (_telemetryTraceIds.containsKey(sessionId)) {
+      await _failSessionTelemetry(
+        session,
+        'connect',
+        errorCode: _mapMessageErrorCode(message),
+        errorMessage: message,
+      );
+    }
     _notifySessionMetadataChanged();
 
     final completer = _connectCompleters.remove(sessionId);
@@ -151,13 +161,185 @@ extension SshSessionMetadataActions on SshService {
     return '${active.length} active SSH connections';
   }
 
-  Future<void> _stopServiceIfIdle() async {
-    final hasActive = _sessions.values.any(
-      (session) =>
-          session.state == SshConnectionState.connected ||
-          session.state == SshConnectionState.connecting,
+  // ---------------------------------------------------------------------------
+  // 业务遥测：SSH 会话生命周期 span。
+  //
+  // 同一个 SSH 会话的 started -> connected -> terminated/failed 全部共享一个
+  // traceId（TelemetryClient 未传入 traceId 时自动生成），用于端到端关联。
+  // 事件属性严格限制在 contract 白名单内（app_core 不允许编辑，详见任务映射）。
+  // ---------------------------------------------------------------------------
+
+  /// 开始一个 SSH 会话 span，生成 traceId 并上报 started 事件。
+  Future<void> _startSessionTelemetry(
+    SshSession session,
+    ConnectionConfig config,
+  ) async {
+    final client = telemetryClient;
+    if (client == null) return;
+    final traceId = _telemetryTraceIds[session.id] ??= newTelemetryTraceId();
+    _telemetrySpanStartedAt[session.id] = DateTime.now();
+    await _recordTelemetry(
+      client.record(
+        event: TelemetryEvents.sshSessionStarted,
+        traceId: traceId,
+        properties: {
+          'auth_method': config.authMethod.name,
+          'session_type': 'terminal',
+        },
+      ),
     );
-    if (!hasActive) {
+  }
+
+  /// 结束 SSH 会话 span（正常断开），上报 terminated 事件。
+  Future<void> _terminateSessionTelemetry(
+    SshSession session, {
+    int exitCode = 0,
+  }) async {
+    final client = telemetryClient;
+    if (client == null) return;
+    final traceId = _telemetryTraceIds.remove(session.id);
+    final startedAt = _telemetrySpanStartedAt.remove(session.id);
+    await _recordTelemetry(
+      client.record(
+        event: TelemetryEvents.sshSessionTerminated,
+        traceId: traceId,
+        properties: {
+          'duration_ms': _telemetryElapsedMs(startedAt),
+          'exit_code': exitCode,
+        },
+      ),
+    );
+  }
+
+  /// 会话建立成功后记录连接成功事件。
+  Future<void> _recordSessionConnectedTelemetry(SshSession session) async {
+    final client = telemetryClient;
+    if (client == null) return;
+    final traceId = _telemetryTraceIds[session.id];
+    if (traceId == null) return;
+    await _recordTelemetry(
+      client.record(
+        event: TelemetryEvents.sshSessionConnected,
+        traceId: traceId,
+        properties: {'session_type': 'terminal'},
+      ),
+    );
+  }
+
+  /// 以失败状态结束 SSH 会话 span，上报 failed 事件并附带注册的错误码。
+  Future<void> _failSessionTelemetry(
+    SshSession session,
+    String stage, {
+    TelemetryErrorCodeDefinition? errorCode,
+    String? errorMessage,
+    int retryCount = 0,
+  }) async {
+    final client = telemetryClient;
+    if (client == null) return;
+    final traceId = _telemetryTraceIds.remove(session.id);
+    _telemetrySpanStartedAt.remove(session.id);
+    // A background terminal callback can race the enclosing connect operation;
+    // the callback owns the one active trace in that case, so a later catch
+    // must not synthesize a second unrelated failed span.
+    if (traceId == null) return;
+    await _recordTelemetry(
+      client.record(
+        event: TelemetryEvents.sshSessionFailed,
+        traceId: traceId,
+        errorCode: errorCode,
+        errorMessage: errorMessage,
+        properties: {'stage': stage, 'retry_count': retryCount},
+      ),
+    );
+  }
+
+  /// A telemetry write is observational; storage failures must not alter SSH
+  /// connection semantics. Awaiting this boundary still guarantees that a
+  /// successful terminal outcome does not return before its accepted record is
+  /// serialized by [TelemetryClient].
+  Future<void> _recordTelemetry(Future<bool> operation) async {
+    try {
+      await operation;
+    } on Object {
+      // Telemetry is best effort when local storage is unavailable.
+    }
+  }
+
+  static int _telemetryElapsedMs(DateTime? startedAt) =>
+      telemetryElapsedMs(startedAt);
+
+  /// 后台桥接错误消息映射到已注册 SSH 错误码（无法访问异常对象）。
+  TelemetryErrorCodeDefinition _mapBackgroundErrorCode(String? error) {
+    final message = error?.toLowerCase() ?? '';
+    if (message.contains('auth') || message.contains('password')) {
+      return TelemetryErrorCodes.sshAuthFailed;
+    }
+    if (message.contains('host key') || message.contains('fingerprint')) {
+      return TelemetryErrorCodes.sshHostKeyMismatch;
+    }
+    if (message.contains('timeout')) {
+      return TelemetryErrorCodes.sshTimeout;
+    }
+    return TelemetryErrorCodes.sshConnectFailed;
+  }
+
+  /// 根据错误消息字符串映射到已注册 SSH 错误码。
+  TelemetryErrorCodeDefinition _mapMessageErrorCode(String message) {
+    final lower = message.toLowerCase();
+    if (lower.contains('auth') ||
+        lower.contains('password') ||
+        lower.contains('credential')) {
+      return TelemetryErrorCodes.sshAuthFailed;
+    }
+    if (lower.contains('host key') ||
+        lower.contains('fingerprint') ||
+        lower.contains('known_hosts')) {
+      return TelemetryErrorCodes.sshHostKeyMismatch;
+    }
+    if (lower.contains('timeout') || lower.contains('timed out')) {
+      return TelemetryErrorCodes.sshTimeout;
+    }
+    return TelemetryErrorCodes.sshConnectFailed;
+  }
+
+  /// 将连接异常映射到 contract 已注册的 SSH 错误码。
+  TelemetryErrorCodeDefinition _mapSshErrorCode(
+    Object error,
+    ConnectionConfig config,
+  ) {
+    final message = error.toString().toLowerCase();
+    if (error is ssh_core.SshHostKeyMismatchException ||
+        error is ssh_core.SshHostKeyUntrustedException ||
+        error is ssh_core.SshHostKeyRejectedException ||
+        message.contains('host key') ||
+        message.contains('hostkey') ||
+        message.contains('fingerprint')) {
+      return TelemetryErrorCodes.sshHostKeyMismatch;
+    }
+    if (message.contains('authentication') ||
+        message.contains('authenticate') ||
+        message.contains('password') ||
+        message.contains('passphrase') ||
+        message.contains('key')) {
+      return TelemetryErrorCodes.sshAuthFailed;
+    }
+    if (message.contains('timeout') || message.contains('timed out')) {
+      return TelemetryErrorCodes.sshTimeout;
+    }
+    return TelemetryErrorCodes.sshConnectFailed;
+  }
+
+  Future<void> _stopServiceIfIdle() async {
+    // Native sessions live in the foreground process and must not keep the
+    // mobile background isolate alive. Only an active session explicitly
+    // assigned to that isolate owns the background-service lease.
+    final hasActiveBackgroundSession = _sessions.entries.any(
+      (entry) =>
+          _usesBackgroundForSession(entry.key) &&
+          (entry.value.state == SshConnectionState.connected ||
+              entry.value.state == SshConnectionState.connecting),
+    );
+    if (!hasActiveBackgroundSession) {
       await BackgroundServiceManager.stop();
     } else {
       BackgroundServiceManager.updateStatus(_notificationSummary());

@@ -14,6 +14,10 @@ final class LogRecord {
     this.details,
     this.error,
     this.stackTrace,
+    this.traceId,
+    this.eventName,
+    this.errorCode,
+    this.attributes = const {},
   });
 
   /// 记录产生的时间。
@@ -36,4 +40,43 @@ final class LogRecord {
 
   /// 可选的错误堆栈。
   final StackTrace? stackTrace;
+
+  /// 关联遥测 traceId（如有），便于诊断日志与事件流串联。
+  final String? traceId;
+
+  /// 关联遥测事件名（如有），便于诊断日志归属到具体埋点。
+  final String? eventName;
+
+  /// 关联遥测错误码（如有），与 `contracts/telemetry/error_codes.yaml` 对齐。
+  final String? errorCode;
+
+  /// 可选的附加键值属性。
+  final Map<String, dynamic> attributes;
+
+  /// 返回去额外元数据后的副本，供作用域日志转发时保留原始遥测上下文。
+  LogRecord copyWith({
+    String? source,
+    String? details,
+    Object? error,
+    StackTrace? stackTrace,
+    String? traceId,
+    String? eventName,
+    String? errorCode,
+    Map<String, dynamic>? attributes,
+    bool clearTraceContext = false,
+  }) {
+    return LogRecord(
+      timestamp: timestamp,
+      level: level,
+      message: message,
+      source: source ?? this.source,
+      details: details ?? this.details,
+      error: error ?? this.error,
+      stackTrace: stackTrace ?? this.stackTrace,
+      traceId: clearTraceContext ? null : (traceId ?? this.traceId),
+      eventName: clearTraceContext ? null : (eventName ?? this.eventName),
+      errorCode: clearTraceContext ? null : (errorCode ?? this.errorCode),
+      attributes: attributes ?? this.attributes,
+    );
+  }
 }

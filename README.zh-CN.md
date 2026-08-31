@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-25
+> 最新更新时间：2026-08-30
 
 <p align="center">
   <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile 图标" width="112" />
@@ -44,6 +44,7 @@ SDP、Socket 与 Relay signaling 继续由 Rust/native/App Shell 持有。
 - **服务器监控**：查看性能、端口、应用进程、服务、用户和活动会话。
 - **AI Chat 与 Agent 执行**：支持流式输出、Plan Mode、审批式工具调用、聊天历史、消息分支、上下文压缩、RAG、Skills 和执行 Trace。
 - **本地 MCP Server**：桌面端可生成 Codex、Claude Code 和 Gemini CLI 配置；支持默认的 `reviewConfiguredTools` 与显式启用的 `trustedAgent` 两种模式，同时始终执行回环监听和硬安全边界。
+- **数据埋点与可观测性体系**：基于[架构设计](docs/数据埋点架构.md)与 [ADR-033](docs/adr/ADR-033-telemetry-data-tracking-architecture.md) 的解耦可观测性架构；采用统一契约目录（`contracts/telemetry/`）、客户端正交双状态机非丢失本地存储（`pending`/`synced`/`rejected` + `logicalDeletedAt`）、永久持久化幂等收据（`telemetry_ingest_receipts`）、服务端动态策略下发与生命周期清洗、Redis 诊断热缓存与 MySQL 回退，以及管理后台完整可视化套件。
 - **开发者面板**：可选显示运行时长、内存、FPS、掉帧、构建模式、平台、Dart 版本和已接入 Owner 的生命周期资源诊断，并可单独控制悬浮入口。
 - **安全存储**：使用平台 Secure Storage、加密 Drift 字段、加密预览缓存、敏感信息脱敏和不可变审批目标。
 - **自适应界面**：覆盖手机、平板和桌面环境，并提供专门的 1.5K 与 2K Android 测试配置。
@@ -301,7 +302,7 @@ Windows PowerShell 7 使用 `scripts/powershell/`。同相对路径的 `.sh`/`.p
 ```
 
 日常回归不收集 Flutter 覆盖率。大型重构、新功能或发布审查需独立运行四个
-Owner 覆盖率门禁，每个门禁对其文档化范围执行 80% 阈值：
+Owner 覆盖率门禁，每个门禁对其文档化范围执行 90% 阈值：
 
 ```bash
 bash scripts/bash/coverage/front_coverage.sh

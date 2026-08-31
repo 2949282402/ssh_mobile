@@ -16,5 +16,30 @@ void main() {
         );
       },
     );
+
+    test('requests high refresh rate on Android and logs success', () async {
+      var requests = 0;
+
+      await DisplayModeService.enableHighRefreshRate(
+        isAndroid: true,
+        requestHighRefreshRate: () async => requests++,
+      );
+
+      expect(requests, 1);
+    });
+
+    test(
+      'swallows platform failures while attempting Android refresh rate',
+      () async {
+        await expectLater(
+          DisplayModeService.enableHighRefreshRate(
+            isAndroid: true,
+            requestHighRefreshRate: () =>
+                Future<void>.error(StateError('display mode unavailable')),
+          ),
+          completes,
+        );
+      },
+    );
   });
 }
