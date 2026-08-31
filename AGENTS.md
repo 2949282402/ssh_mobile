@@ -1,4 +1,4 @@
-> Last updated: 2026-08-30
+> Last updated: 2026-08-31
 
 # Repository Bootstrap
 
@@ -81,12 +81,23 @@ actually run with exact gaps.
 
 本地 CI 仅在用户明确提及时运行；常规改动按受影响 Owner 做 format/diff/focused
 检查。用户要求发起 PR 时，完成最小门禁后可提交、推送并发起 PR，由 GitHub
-Actions 的并行 jobs 作为 CI 基准。遗漏、GAP、超时或失败都不是 PASS；发起
-PR/CI 后不主动观察或解读 GitHub 结果，不批准或合并，合并权只属于用户。
+Actions 的并行 jobs 作为 CI 基准。推送/发起 PR 后立即按 commit/run 绑定启动后台
+watcher；watcher 失败时读取失败 job 日志、自动完成最小修复并重新推送，然后重启
+watcher，直到通过或遇到明确阻塞。遗漏、GAP、超时或失败都不是 PASS；不自动批准
+或合并，合并权只属于用户。
 四大领域 coverage 门禁及新手写生产文件的独立测试/90% 文件覆盖率要求仍适用；
 coverage 旧别名保持兼容。Bash/PowerShell 同相对路径脚本须同步参数、环境、
 步骤、超时、清理、退出语义和范围，且按实际主机使用 Linux/WSL Bash 或原生
 Windows PowerShell 7。
+
+Windows/WSL 双 checkout 是两套独立代码树：WSL 工作树位于 Linux 文件系统，
+Windows 原生 checkout 固定为 `E:\coding\ssh_mobile`。两套代码只通过 Git 的
+提交、推送、拉取或切换分支同步，禁止直接复制文件、共用工作树或把 `/mnt/e`
+当作 WSL 的编辑目录。WSL 与 Windows 的 Flutter/Dart、Rust/MSVC、Android、
+Gradle、Cargo/Pub/SDK 缓存、TEMP/TMP 和构建输出必须分别归属各自主机；默认不
+交叉调用工具链。只有明确执行 Windows 端打包/设备测试时，才允许通过 WSL
+interop 调用原生 Windows PowerShell，并且命令必须指向该 Windows checkout 和
+Windows 工具链，不能把 Windows 产物写回 WSL checkout。
 
 `CLAUDE.md` 只是指向本文件的薄入口；canonical Skill 只维护在 `.agents/`。
 仅在用户要求或批准计划需要时提交；显式 stage，绝不带入无关工作。

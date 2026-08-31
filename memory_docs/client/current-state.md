@@ -48,12 +48,17 @@ new hand-written production files.
 
 WSL owns Linux validation. Native Windows is a separate platform check or Client
 coverage fallback when WSL Flutter cannot start, and does not turn a WSL gap into
-a pass. Use native PowerShell 7, pinned Flutter 3.47.0/Dart 3.13.0 and Rust
+a pass. Keep the WSL and native Windows checkouts independent and synchronize
+them only through Git; do not edit the Windows-mounted tree as if it were the
+WSL worktree. Use native PowerShell 7, pinned Flutter 3.47.0/Dart 3.13.0 and Rust
 1.97.1 MSVC, configured by
 [`configure_windows_toolchain.ps1`](../../scripts/powershell/platform/configure_windows_toolchain.ps1)
 with explicit `-FlutterRoot`; keep PATH/TEMP/TMP/Cargo/Rustup/cache/build paths
-isolated and never call Windows tools from WSL. `-PersistUserPath` is the only
-user-PATH mutation; native coverage clears inherited WSL `TMPDIR`.
+isolated. A deliberate WSL interop invocation may call native PowerShell for a
+Windows checkout test, but it must preserve the same checkout/toolchain/cache
+boundary and must not turn shared files into a synchronization mechanism.
+`-PersistUserPath` is the only user-PATH mutation; native coverage clears
+inherited WSL `TMPDIR`.
 
 Windows MSI uses the same native PowerShell/path boundary and native SDK temp
 directory. `-SuppressIceValidation` is only an explicit host-gap escape hatch;

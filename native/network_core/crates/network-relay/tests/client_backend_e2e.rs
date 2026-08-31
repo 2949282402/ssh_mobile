@@ -55,8 +55,8 @@ async fn real_clients_complete_control_and_reservation_data_flow() {
         .expect("CLIENT_BACKEND_E2E_BASE_URL must point at the Caddy HTTP origin");
     let enrollment_token = std::env::var("RELAY_ENROLLMENT_TOKEN")
         .expect("RELAY_ENROLLMENT_TOKEN must be supplied by client_backend_e2e.sh");
-    let mut device_a = Identity::new("e2e-rust-a");
-    let mut device_b = Identity::new("e2e-rust-b");
+    let mut device_a = Identity::new(&e2e_device_id("e2e-rust-a"));
+    let mut device_b = Identity::new(&e2e_device_id("e2e-rust-b"));
 
     let (health_status, _) = http_json(&base_url, "/healthz", "GET", &[])
         .await
@@ -68,7 +68,7 @@ async fn real_clients_complete_control_and_reservation_data_flow() {
         "/v2/devices/enroll",
         "POST",
         &serde_json::to_vec(&json!({
-            "device_id": "e2e-rust-invalid",
+            "device_id": e2e_device_id("e2e-rust-invalid"),
             "public_key": URL_SAFE_NO_PAD.encode([0u8; 32]),
             "protocol_version": 2,
             "enrollment_token": "deliberately-invalid-token"
@@ -286,33 +286,39 @@ async fn real_clients_complete_control_and_reservation_data_flow() {
         // Strict mode provisions a short credential TTL in the Compose env.
         // Wait past it, prove the old bearer is refused, then use the real
         // Ed25519 refresh proof and reconnect with the replacement credential.
-        tokio::time::sleep(Duration::from_secs(46)).await;
-        let mut expired_control = RelayControlClient::new(
-            base_url.clone(),
-            device_a.device_id.clone(),
-            device_a.credential.clone(),
-            device_a.signing_seed,
-        )
-        .expect("construct expired-credential control client");
-        assert!(
-            expired_control.connect().await.is_err(),
-            "an expired credential must be refused by /v2/control"
-        );
-        device_a.credential = refresh(&base_url, &device_a)
-            .await
-            .expect("refresh an expired credential");
-        let mut reconnected = RelayControlClient::new(
-            base_url.clone(),
-            device_a.device_id.clone(),
-            device_a.credential.clone(),
-            device_a.signing_seed,
-        )
-        .expect("construct refreshed control client");
-        reconnected
-            .connect()
-            .await
-            .expect("reconnect with refreshed credential");
-        reconnected.disconnect().await;
+        // An externally deployed service keeps its production TTL (normally
+        // 24h), so online-e2e skips the time-based probe and exercises the
+        // active revocation branch below instead of waiting 46 seconds only
+        // to fail against a production TTL.
+        if std::env::var("CLIENT_BACKEND_E2E_ONLINE").as_deref() != Ok("1") {
+            tokio::time::sleep(Duration::from_secs(46)).await;
+            let mut expired_control = RelayControlClient::new(
+                base_url.clone(),
+                device_a.device_id.clone(),
+                device_a.credential.clone(),
+                device_a.signing_seed,
+            )
+            .expect("construct expired-credential control client");
+            assert!(
+                expired_control.connect().await.is_err(),
+                "an expired credential must be refused by /v2/control"
+            );
+            device_a.credential = refresh(&base_url, &device_a)
+                .await
+                .expect("refresh an expired credential");
+            let mut reconnected = RelayControlClient::new(
+                base_url.clone(),
+                device_a.device_id.clone(),
+                device_a.credential.clone(),
+                device_a.signing_seed,
+            )
+            .expect("construct refreshed control client");
+            reconnected
+                .connect()
+                .await
+                .expect("reconnect with refreshed credential");
+            reconnected.disconnect().await;
+        }
 
         if std::env::var("CLIENT_BACKEND_E2E_REVOCATION").as_deref() == Ok("1") {
             strict_revocation_probe(&base_url, &enrollment_token).await;
@@ -329,8 +335,8 @@ async fn strict_revocation_probe(base_url: &str, enrollment_token: &str) {
         .expect("strict revocation ready-file path must be supplied");
     let done_file = std::env::var("CLIENT_BACKEND_E2E_REVOCATION_DONE_FILE")
         .expect("strict revocation done-file path must be supplied");
-    let mut device_a = Identity::new("e2e-rust-revoke-a");
-    let mut device_b = Identity::new("e2e-rust-revoke-b");
+    let mut device_a = Identity::new(&e2e_device_id("e2e-rust-revoke-a"));
+    let mut device_b = Identity::new(&e2e_device_id("e2e-rust-revoke-b"));
     device_a.credential = enroll(base_url, enrollment_token, &device_a)
         .await
         .expect("revocation probe device A enrollment");
@@ -748,6 +754,14 @@ fn unique_suffix() -> String {
     let mut bytes = [0u8; 8];
     rand::rngs::OsRng.fill_bytes(&mut bytes);
     hex::encode(bytes)
+}
+
+fn e2e_device_id(suffix: &str) -> String {
+    format!(
+        "{}{}",
+        std::env::var("CLIENT_BACKEND_E2E_DEVICE_PREFIX").unwrap_or_default(),
+        suffix
+    )
 }
 
 async fn next_control_event(events: &mut mpsc::Receiver<ControlEvent>) -> ControlEvent {

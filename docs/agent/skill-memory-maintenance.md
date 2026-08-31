@@ -1,4 +1,4 @@
-最新更新时间：2026-08-30
+最新更新时间：2026-08-31
 
 # Skill 与 Memory 维护规范
 
@@ -67,8 +67,10 @@ PR/提交完成条件；详细路由、流程、验证分别在 `references/memo
 
 本地 aggregate CI 仅在用户明确提及时运行；普通改动按 Owner 做必要 focused
 检查。用户要求发起 PR 时，最小 format/diff/focused 门禁后可提交、推送、发起 PR，
-由 GitHub Actions 并行 jobs 作为 CI 基准。GAP、超时、失败、遗漏或未执行都不是
-PASS；发起 PR/CI 后不主动观察或解读 GitHub，不批准或合并，合并权仅用户拥有。
+由 GitHub Actions 并行 jobs 作为 CI 基准。推送或发起 PR 后，Agent 必须为对应
+commit/run 启动临时后台 watcher；失败时读取失败 job 日志，自动修复首个可操作原因，
+重新提交/推送并重启 watcher，直到通过或明确阻塞。GAP、超时、失败、遗漏或未执行
+都不是 PASS；不自动批准或合并，合并权仅用户拥有。
 
 ## 结果原则
 

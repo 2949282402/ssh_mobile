@@ -1,4 +1,4 @@
-> Last updated: 2026-08-30
+> Last updated: 2026-08-31
 
 # Maintenance Workflow
 
@@ -102,9 +102,13 @@ native Windows). A GAP, timeout, failure, omission, or unrun check is not PASS.
 After minimum preflight, a requested branch may be committed, pushed, and
 opened (prefer draft) for GitHub Actions' independent parallel jobs. Record the
 changed contract, its regression/characterization evidence, focused gates, and
-any unrun or unprotected edge before handoff. Do not
-poll, interpret, approve, or merge from GitHub after handoff unless explicitly
-asked; the user supplies results and decides merging.
+any unrun or unprotected edge before handoff. Immediately start a temporary,
+commit-bound background watcher (for example, `gh run watch <run-id>
+--exit-status > <temp-log> 2>&1 &`). If it fails, inspect the failed-job logs,
+make the smallest safe fix, run permitted focused/static checks, commit/push,
+and restart the watcher for the new SHA. Continue until the required checks pass
+or a concrete blocker needs user input. Never approve or merge automatically;
+the user decides merging.
 
 ## 5. Report or commit
 

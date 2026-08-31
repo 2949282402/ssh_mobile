@@ -1,4 +1,4 @@
-> Last updated: 2026-08-28
+> Last updated: 2026-08-31
 
 # Repository scripts
 
@@ -33,3 +33,7 @@ arguments, timeout behavior, cleanup, and exit statuses across hosts. The
 GitHub Actions workflow is the authoritative full gate; use
 `bash scripts/bash/ci/full_test.sh` for the proportional Linux/WSL checks
 available on a local host.
+
+`e2e/online_e2e.sh` and `e2e/online_e2e.ps1` are an explicit external-deployment
+gate. They are manual-only and never start Compose or join the routine CI
+aggregate.
