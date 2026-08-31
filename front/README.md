@@ -1,4 +1,4 @@
-> Last updated: 2026-08-30
+> Last updated: 2026-08-31
 
 # SSH Mobile Relay Admin & Observability Console
 
@@ -7,6 +7,34 @@ console for SSH Mobile Relay and the Telemetry & Observability suite. It owns th
 `../relay/` owns authentication, device enrollment, optional Relay MySQL/Redis
 state, Relay sessions, isolated Analytics telemetry storage, and the v2
 control/data WebSocket protocol.
+
+## Architecture and Governance
+
+- Workspace constraints: [`AGENTS.md`](AGENTS.md)
+- Complete UI architecture and Design System: [`../docs/architecture/FRONT_ADMIN_UI_ARCHITECTURE.md`](../docs/architecture/FRONT_ADMIN_UI_ARCHITECTURE.md)
+- Memory reference: [`../memory_docs/front/overview.md`](../memory_docs/front/overview.md)
+- UI baseline entry points:
+  - Primitives: `src/components/ui.tsx`
+  - Style rules: `src/styles.css`
+  - Shell and navigation: `src/layout/app-shell.tsx`
+
+## Directory Ownership
+
+```text
+src/
+├── api/             # Typed API adapters and HTTP error normalization
+├── components/      # Generic cross-feature Admin UI primitives
+├── features/        # Feature pages and feature-scoped components
+│   ├── access/      # Enrollment Token management and rotation
+│   ├── auth/        # Administrator login gate
+│   ├── devices/     # Device catalog, presence, and revocation
+│   ├── overview/    # Relay runtime metrics and signal rail
+│   └── telemetry/   # Observability dashboard, explorer, logs, and settings
+├── hooks/           # TanStack Query hooks, query keys, and cache policies
+├── layout/          # AppShell, persistent navigation, and session header
+├── schemas/         # Zod runtime validation DTO contracts
+└── utils/           # Time, duration, and string formatters
+```
 
 ## Development
 
@@ -37,6 +65,7 @@ The legacy `/api/*` dashboard routes are intentionally not supported.
 
 ```sh
 npm run typecheck
+npm run typecheck:tests
 npm run lint
 npm run test:run
 npm run build

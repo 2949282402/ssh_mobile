@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import {
   AlertTriangle,
   BarChart3,
@@ -17,6 +17,7 @@ import {
   Skeleton,
 } from '../../components/ui';
 import type { TelemetryFilter } from '../../schemas/telemetry';
+import { TelemetryTrendList } from './components/telemetry-trend-list';
 
 const TIME_RANGES: Array<{ label: string; value: TelemetryFilter['timeRange'] }> = [
   { label: '1 小时', value: '1h' },
@@ -36,19 +37,6 @@ const TIME_RANGE_SECONDS: Record<TelemetryFilter['timeRange'], number | null> = 
   all: null,
 };
 
-function formatTrendTime(timestamp: string): string {
-  try {
-    const isoStr = timestamp.includes('T') ? timestamp : `${timestamp.replace(' ', 'T')}Z`;
-    const date = new Date(isoStr);
-    if (isNaN(date.getTime())) {
-      return timestamp;
-    }
-    return date.toLocaleDateString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  } catch {
-    return timestamp;
-  }
-}
-
 function formatLatency(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return 'No data';
   if (value >= 1000) return `${(value / 1000).toFixed(2)}s`;
@@ -64,13 +52,6 @@ function formatObservedLatency(value: number, samples: number): string {
 function formatRate(rate: number, denominator: number, digits: number): string {
   if (!Number.isFinite(rate) || !Number.isFinite(denominator) || denominator <= 0) return 'No data';
   return `${(rate * 100).toFixed(digits)}%`;
-}
-
-function trendBarWidth(value: number, denominator: number): string {
-  if (!Number.isFinite(value) || !Number.isFinite(denominator) || denominator <= 0) {
-    return '0%';
-  }
-  return `${Math.min(100, Math.max(0, (value / denominator) * 100))}%`;
 }
 
 function formatThroughput(events: number, seconds: number | null): string {
@@ -140,6 +121,11 @@ export function TelemetryDashboardPage() {
   const health = data.pipelineHealth;
   const healthTone = health.status === 'healthy' ? 'online' : health.status === 'degraded' ? 'warning' : 'danger';
 
+  const handleChannelSubmit = (event: FormEvent) => {
+    event.preventDefault();
+    setReleaseChannel(releaseChannelDraft.trim());
+  };
+
   return (
     <div className="page">
       <PageHeader
@@ -147,7 +133,7 @@ export function TelemetryDashboardPage() {
         title="数据埋点概览"
         description="全端埋点数据指标、诊断日志与采集流水线运行状态。"
         action={(
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <div className="dashboard-toolbar">
             <div className="filter-group" role="group" aria-label="时间区间筛选">
               {TIME_RANGES.map((tr) => (
                 <Button
@@ -160,26 +146,21 @@ export function TelemetryDashboardPage() {
                 </Button>
               ))}
             </div>
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                setReleaseChannel(releaseChannelDraft.trim());
-              }}
-              style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}
-            >
+
+            <form className="filter-channel-form" onSubmit={handleChannelSubmit}>
               <input
                 type="text"
                 aria-label="发布渠道 (releaseChannel)"
                 placeholder="发布渠道..."
                 value={releaseChannelDraft}
                 onChange={(event) => setReleaseChannelDraft(event.target.value)}
-                className="button button--quiet"
-                style={{ border: '1px solid var(--line)', padding: '0.4rem 0.6rem', width: '8rem' }}
+                className="form-control"
               />
               <Button type="submit" variant="quiet" aria-label="应用发布渠道筛选">
                 <Search size={15} aria-hidden="true" />
               </Button>
             </form>
+
             <Button
               variant="outline"
               onClick={() => void overviewQuery.refetch()}
@@ -209,7 +190,7 @@ export function TelemetryDashboardPage() {
             {health.status.toUpperCase()}
           </Badge>
         </div>
-        <div className="metric-grid" style={{ marginTop: '1rem' }}>
+        <div className="metric-grid" aria-label="流水线健康指标">
           <MetricTile
             label="服务端 Ingest 平均延迟"
             value={health.serverIngestRequests > 0 ? `${health.serverIngestLatencyMs.toFixed(2)} ms` : 'No data'}
@@ -242,201 +223,169 @@ export function TelemetryDashboardPage() {
       </section>
 
       {/* KPI Cards Grid */}
-      <div className="section-heading" style={{ marginTop: '1.5rem' }}>
-        <div>
-          <p className="eyebrow">Core Metrics</p>
-          <h2>业务与稳定性核心指标</h2>
+      <section className="dashboard-section" aria-label="埋点核心指标区块">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Core Metrics</p>
+            <h2>业务与稳定性核心指标</h2>
+          </div>
         </div>
-      </div>
-      <section className="metric-grid" aria-label="埋点核心指标">
-        <MetricTile
-          label="上报事件总数"
-          value={data.totalEvents}
-          detail="Analytics 记录总数（不等于业务操作成功率分母）"
-          accent="teal"
-          mono
-        />
-        <MetricTile
-          label="诊断日志总数"
-          value={data.totalDiagnostics}
-          detail="系统调试、链路追踪与异常日志"
-          accent="teal"
-          mono
-        />
-        <MetricTile
-          label="活跃设备数"
-          value={data.recentActiveDevices}
-          detail="当前时间窗口内活跃上报的客户端"
-          accent="teal"
-          mono
-        />
-        <MetricTile
-          label="异常与错误数"
-          value={`${data.errorCount} (严重: ${data.criticalErrorCount})`}
-          detail={`波及 ${data.affectedDevicesCount} 台设备`}
-          accent={data.criticalErrorCount > 0 ? 'coral' : data.errorCount > 0 ? 'amber' : 'ink'}
-          mono
-        />
-        <MetricTile
-          label="业务操作成功率"
-          value={formatRate(data.businessOperationSuccessRate, data.businessOperationDenominator, 1)}
-          detail={`目录中 businessOperation=true 且 role 为 success/failure 的终结事件（无论 recordType）按 success ÷ (success + failure)；排除 started 与 businessOperation=false 的诊断/投递事件；${data.businessOperationSuccesses}/${data.businessOperationDenominator} 个终结操作成功`}
-          accent={data.businessOperationDenominator > 0 && data.businessOperationSuccessRate < 0.99 ? 'coral' : 'teal'}
-          mono
-        />
-        <MetricTile
-          label="无错误会话率"
-          value={formatRate(data.errorFreeSessionRate, data.errorFreeSessionDenominator, 1)}
-          detail={`全程无任何 error/critical 的会话占比；${data.errorFreeSessionSuccesses}/${data.errorFreeSessionDenominator} 个会话无错误`}
-          accent={data.errorFreeSessionDenominator > 0 && data.errorFreeSessionRate < 0.95 ? 'amber' : 'teal'}
-          mono
-        />
+        <div className="metric-grid" aria-label="埋点核心指标">
+          <MetricTile
+            label="上报事件总数"
+            value={data.totalEvents}
+            detail="Analytics 记录总数（不等于业务操作成功率分母）"
+            accent="teal"
+            mono
+          />
+          <MetricTile
+            label="诊断日志总数"
+            value={data.totalDiagnostics}
+            detail="系统调试、链路追踪与异常日志"
+            accent="teal"
+            mono
+          />
+          <MetricTile
+            label="活跃设备数"
+            value={data.recentActiveDevices}
+            detail="当前时间窗口内活跃上报的客户端"
+            accent="teal"
+            mono
+          />
+          <MetricTile
+            label="异常与错误数"
+            value={`${data.errorCount} (严重: ${data.criticalErrorCount})`}
+            detail={`波及 ${data.affectedDevicesCount} 台设备`}
+            accent={data.criticalErrorCount > 0 ? 'coral' : data.errorCount > 0 ? 'amber' : 'ink'}
+            mono
+          />
+          <MetricTile
+            label="业务操作成功率"
+            value={formatRate(data.businessOperationSuccessRate, data.businessOperationDenominator, 1)}
+            detail={`目录中 businessOperation=true 且 role 为 success/failure 的终结事件（无论 recordType）按 success ÷ (success + failure)；排除 started 与 businessOperation=false 的诊断/投递事件；${data.businessOperationSuccesses}/${data.businessOperationDenominator} 个终结操作成功`}
+            accent={data.businessOperationDenominator > 0 && data.businessOperationSuccessRate < 0.99 ? 'coral' : 'teal'}
+            mono
+          />
+          <MetricTile
+            label="无错误会话率"
+            value={formatRate(data.errorFreeSessionRate, data.errorFreeSessionDenominator, 1)}
+            detail={`全程无任何 error/critical 的会话占比；${data.errorFreeSessionSuccesses}/${data.errorFreeSessionDenominator} 个会话无错误`}
+            accent={data.errorFreeSessionDenominator > 0 && data.errorFreeSessionRate < 0.95 ? 'amber' : 'teal'}
+            mono
+          />
+        </div>
       </section>
 
       {/* Latency Percentiles */}
-      <div className="section-heading" style={{ marginTop: '1.5rem' }}>
-        <div>
-          <p className="eyebrow">Completion Latency</p>
-          <h2>完成操作延迟分位</h2>
+      <section className="dashboard-section" aria-label="完成操作延迟分位区块">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Completion Latency</p>
+            <h2>完成操作延迟分位</h2>
+          </div>
         </div>
-      </div>
-      <section className="metric-grid" aria-label="完成操作延迟分位">
-        <MetricTile
-          label="P50 中位延迟"
-          value={formatLatency(data.latency?.p50Ms ?? 0)}
-          detail={latencyDetailLabel(data.latency?.samples)}
-          accent="teal"
-          mono
-        />
-        <MetricTile
-          label="P95 延迟"
-          value={formatLatency(data.latency?.p95Ms ?? 0)}
-          detail="95% 完成操作不超过该耗时"
-          accent={latencyAccent(data.latency?.p95Ms)}
-          mono
-        />
-        <MetricTile
-          label="P99 延迟"
-          value={formatLatency(data.latency?.p99Ms ?? 0)}
-          detail="99% 完成操作不超过该耗时"
-          accent={latencyAccent(data.latency?.p99Ms)}
-          mono
-        />
-        <MetricTile
-          label="事件吞吐"
-          value={formatThroughput(data.totalEvents, TIME_RANGE_SECONDS[timeRange] ?? TIME_RANGE_SECONDS.all)}
-          detail={`${timeRange === 'all' ? '全部时间' : timeRange} 窗口内上报速率`}
-          accent="teal"
-          mono
-        />
+        <div className="metric-grid" aria-label="完成操作延迟分位">
+          <MetricTile
+            label="P50 中位延迟"
+            value={formatLatency(data.latency?.p50Ms ?? 0)}
+            detail={latencyDetailLabel(data.latency?.samples)}
+            accent="teal"
+            mono
+          />
+          <MetricTile
+            label="P95 延迟"
+            value={formatLatency(data.latency?.p95Ms ?? 0)}
+            detail="95% 完成操作不超过该耗时"
+            accent={latencyAccent(data.latency?.p95Ms)}
+            mono
+          />
+          <MetricTile
+            label="P99 延迟"
+            value={formatLatency(data.latency?.p99Ms ?? 0)}
+            detail="99% 完成操作不超过该耗时"
+            accent={latencyAccent(data.latency?.p99Ms)}
+            mono
+          />
+          <MetricTile
+            label="事件吞吐"
+            value={formatThroughput(data.totalEvents, TIME_RANGE_SECONDS[timeRange] ?? TIME_RANGE_SECONDS.all)}
+            detail={`${timeRange === 'all' ? '全部时间' : timeRange} 窗口内上报速率`}
+            accent="teal"
+            mono
+          />
+        </div>
       </section>
 
       {/* Delivery Delay */}
-      <div className="section-heading" style={{ marginTop: '1.5rem' }}>
-        <div>
-          <p className="eyebrow">Delivery Delay</p>
-          <h2>客户端投递延迟</h2>
+      <section className="dashboard-section" aria-label="客户端投递延迟区块">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Delivery Delay</p>
+            <h2>客户端投递延迟</h2>
+          </div>
         </div>
-      </div>
-      <section className="metric-grid" aria-label="客户端投递延迟">
-        <MetricTile
-          label="平均投递延迟"
-          value={formatObservedLatency(data.deliveryDelay.averageMs, data.deliveryDelay.samples)}
-          detail="receivedAt − occurredAt；未来 occurredAt 按 0 ms 计入样本，并单独计数时钟偏差"
-          accent="teal"
-          mono
-        />
-        <MetricTile
-          label="P50 投递延迟"
-          value={formatObservedLatency(data.deliveryDelay.p50Ms, data.deliveryDelay.samples)}
-          detail={`客户端事件到服务端接收的中位延迟；${data.deliveryDelay.samples} 个可测样本`}
-          accent="teal"
-          mono
-        />
-        <MetricTile
-          label="P95 投递延迟"
-          value={formatObservedLatency(data.deliveryDelay.p95Ms, data.deliveryDelay.samples)}
-          detail="95% 可测事件的 receivedAt − occurredAt 不超过该值"
-          accent={latencyAccent(data.deliveryDelay.p95Ms)}
-          mono
-        />
-        <MetricTile
-          label="未来时间戳样本"
-          value={data.deliveryDelay.futureTimestampCount}
-          detail="occurredAt 晚于 receivedAt 的事件；延迟按 0 ms 计入统计"
-          accent={data.deliveryDelay.futureTimestampCount > 0 ? 'amber' : 'teal'}
-          mono
-        />
+        <div className="metric-grid" aria-label="客户端投递延迟">
+          <MetricTile
+            label="平均投递延迟"
+            value={formatObservedLatency(data.deliveryDelay.averageMs, data.deliveryDelay.samples)}
+            detail="receivedAt − occurredAt；未来 occurredAt 按 0 ms 计入样本，并单独计数时钟偏差"
+            accent="teal"
+            mono
+          />
+          <MetricTile
+            label="P50 投递延迟"
+            value={formatObservedLatency(data.deliveryDelay.p50Ms, data.deliveryDelay.samples)}
+            detail={`客户端事件到服务端接收的中位延迟；${data.deliveryDelay.samples} 个可测样本`}
+            accent="teal"
+            mono
+          />
+          <MetricTile
+            label="P95 投递延迟"
+            value={formatObservedLatency(data.deliveryDelay.p95Ms, data.deliveryDelay.samples)}
+            detail="95% 可测事件的 receivedAt − occurredAt 不超过该值"
+            accent={latencyAccent(data.deliveryDelay.p95Ms)}
+            mono
+          />
+          <MetricTile
+            label="未来时间戳样本"
+            value={data.deliveryDelay.futureTimestampCount}
+            detail="occurredAt 晚于 receivedAt 的事件；延迟按 0 ms 计入统计"
+            accent={data.deliveryDelay.futureTimestampCount > 0 ? 'amber' : 'teal'}
+            mono
+          />
+        </div>
       </section>
 
       {/* Trend Visualizer */}
-      <div className="overview-grid" style={{ marginTop: '1.5rem' }}>
-        <section className="panel">
+      <div className="overview-grid dashboard-section">
+        <section className="panel" aria-label="事件量趋势面板">
           <div className="section-heading">
             <div>
               <p className="eyebrow">Event Trend</p>
               <h2>事件量趋势</h2>
             </div>
-            <BarChart3 size={18} aria-hidden="true" />
+            <BarChart3 size={18} aria-hidden="true" className="section-heading__icon" />
           </div>
-          {data.eventsTrend.length === 0 ? (
-            <p style={{ color: 'var(--muted)', padding: '1rem 0' }}>No operations recorded in this time range</p>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1rem' }}>
-              {data.eventsTrend.map((point) => (
-                <div key={point.timestamp} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span className="type-mono" style={{ fontSize: '0.85rem', color: 'var(--ink-soft)' }}>
-                    {formatTrendTime(point.timestamp)}
-                  </span>
-                  <div style={{ flex: 1, margin: '0 1rem', background: 'var(--canvas)', height: '12px', borderRadius: '6px', overflow: 'hidden' }}>
-                    <div
-                      style={{
-                        height: '100%',
-                        width: trendBarWidth(point.value, data.totalEvents),
-                        background: 'var(--teal)',
-                        borderRadius: '6px',
-                      }}
-                    />
-                  </div>
-                  <strong className="type-mono">{point.value}</strong>
-                </div>
-              ))}
-            </div>
-          )}
+          <TelemetryTrendList
+            points={data.eventsTrend}
+            total={data.totalEvents}
+            accent="teal"
+          />
         </section>
 
-        <section className="panel">
+        <section className="panel" aria-label="异常与错误趋势面板">
           <div className="section-heading">
             <div>
               <p className="eyebrow">Error Trend</p>
               <h2>异常与错误趋势</h2>
             </div>
-            <AlertTriangle size={18} aria-hidden="true" />
+            <AlertTriangle size={18} aria-hidden="true" className="section-heading__icon" />
           </div>
-          {data.errorsTrend.length === 0 ? (
-            <p style={{ color: 'var(--muted)', padding: '1rem 0' }}>No operations recorded in this time range</p>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1rem' }}>
-              {data.errorsTrend.map((point) => (
-                <div key={point.timestamp} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span className="type-mono" style={{ fontSize: '0.85rem', color: 'var(--ink-soft)' }}>
-                    {formatTrendTime(point.timestamp)}
-                  </span>
-                  <div style={{ flex: 1, margin: '0 1rem', background: 'var(--canvas)', height: '12px', borderRadius: '6px', overflow: 'hidden' }}>
-                    <div
-                      style={{
-                        height: '100%',
-                        width: trendBarWidth(point.value, data.errorCount),
-                        background: point.value > 0 ? 'var(--coral)' : 'var(--teal)',
-                        borderRadius: '6px',
-                      }}
-                    />
-                  </div>
-                  <strong className="type-mono">{point.value}</strong>
-                </div>
-              ))}
-            </div>
-          )}
+          <TelemetryTrendList
+            points={data.errorsTrend}
+            total={data.errorCount}
+            accent="coral"
+          />
         </section>
       </div>
     </div>
@@ -455,7 +404,7 @@ function DashboardSkeleton() {
         <Skeleton className="skeleton-heading" />
         <Skeleton className="skeleton-rail" />
       </section>
-      <div className="metric-grid" style={{ marginTop: '1rem' }}>
+      <div className="metric-grid dashboard-section">
         {Array.from({ length: 6 }, (_, index) => (
           <Skeleton className="skeleton-metric" key={index} />
         ))}

@@ -1,4 +1,4 @@
-> Last updated: 2026-08-30
+> Last updated: 2026-08-31
 
 # Memory Map
 
@@ -78,9 +78,12 @@ has no nested contract, so use root rules, SDK Memory, code/tests, and exact ADR
   WebSocket lifecycle/Compose/Caddy are Backend. Wire/proofs/opaque data,
   Session route, or Client enrollment also add SDK; an admin response consumed by
   React also adds Front.
-- `front/**` → [Front overview](../../../../memory_docs/front/overview.md) and
-  [Front README](../../../../front/README.md). Pure presentation does not add
-  Client; API/auth/session changes add Backend.
+- `front/**` → [Front overview](../../../../memory_docs/front/overview.md),
+  [Front README](../../../../front/README.md), and nearest `AGENTS.md`. Add
+  [Front UI Architecture](../../../../docs/architecture/FRONT_ADMIN_UI_ARCHITECTURE.md)
+  for shared UI primitives, Design System, component ownership, page/state/responsive
+  architecture, form controls, or cross-page refactoring. Pure presentation does not
+  add Client; API/auth/session changes add Backend.
 
 ## Cross-domain and escalation
 
@@ -109,7 +112,7 @@ and [ADR-033 telemetry](../../../../docs/adr/ADR-033-telemetry-data-tracking-arc
 - Flutter UI → Client default + local contract; add Client architecture only for shared ownership/API.
 - Rust/transport → SDK default + Transport and Routing + exact ADR; add Client only for public FFI/Dart changes.
 - Backend API → Backend default + Relay README; add Front for admin consumers, SDK for wire/device changes.
-- Front Admin → Front overview/README; add Backend for API/auth/session changes.
+- Front Admin → Front overview/README/AGENTS; add Front UI Architecture for design system/shared UI/forms; add Backend for API/auth/session changes.
 - Client↔SDK → both defaults + architecture, both contracts, dependency/resource docs, exact ADRs.
 - Relay architecture → Backend + SDK architecture/current + Transport and Routing + Relay README + exact ADRs; add Front only for dashboard/API.
 - Telemetry → ADR-033 + [telemetry design](../../../../docs/数据埋点架构.md) + Client/Backend/Front overviews + `contracts/telemetry/`; add owning contracts for UI/storage.
