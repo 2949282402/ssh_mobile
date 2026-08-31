@@ -76,10 +76,12 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final usesDesktopShell = isDesktopLayout(context);
+    final usesRailShell =
+        isDesktopTargetPlatform() ||
+        WindowSizeClass.of(context).isExpandedOrLarger;
     final shellChanged =
-        _usesDesktopShell != null && _usesDesktopShell != usesDesktopShell;
-    _usesDesktopShell = usesDesktopShell;
+        _usesDesktopShell != null && _usesDesktopShell != usesRailShell;
+    _usesDesktopShell = usesRailShell;
     if (!shellChanged) return;
 
     // The navigation rail changes the PageView viewport width. Re-align its
@@ -101,10 +103,14 @@ class _HomeScreenState extends State<HomeScreen> {
       (settings) => settings.language,
     );
     final strings = AppStrings(language);
-    final desktop = isDesktopLayout(context);
+    final windowClass = WindowSizeClass.of(context);
+    final isDesktop = isDesktopTargetPlatform();
+    final useRailNavigation = isDesktop || windowClass.isExpandedOrLarger;
+    final useMobileBottomNavigation = !useRailNavigation;
+
     final mediaQuery = MediaQuery.of(context);
     final compactKeyboardLayout =
-        desktop &&
+        useRailNavigation &&
         usesCompactKeyboardLayoutFor(
           viewportHeight: mediaQuery.size.height,
           keyboardInset: mediaQuery.viewInsets.bottom,
@@ -165,7 +171,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Scaffold(
           backgroundColor: Colors.transparent,
           key: _scaffoldKey,
-          extendBody: !desktop,
+          extendBody: useMobileBottomNavigation,
           drawer: _buildSettingsDrawer(context, strings),
           drawerEnableOpenDragGesture: _selectedIndex == _serverPage,
           body: SafeArea(
@@ -176,7 +182,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   context,
                   content,
                   strings,
-                  desktop: desktop,
+                  useRailNavigation: useRailNavigation,
+                  isDesktopPlatform: isDesktop,
                   compactKeyboardLayout: compactKeyboardLayout,
                 ),
                 if (isBusy)
@@ -190,7 +197,9 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           floatingActionButton:
-              _selectedIndex == _serverPage && !desktop && hasConnections
+              _selectedIndex == _serverPage &&
+                  useMobileBottomNavigation &&
+                  hasConnections
               ? FloatingActionButton(
                   onPressed: () => Navigator.pushNamed(
                     context,
@@ -202,7 +211,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 )
               : null,
           bottomNavigationBar:
-              desktop || (_selectedIndex == _aiPage && _aiHistoryVisible)
+              !useMobileBottomNavigation ||
+                  (_selectedIndex == _aiPage && _aiHistoryVisible)
               ? null
               : _buildBottomNavigation(context, strings),
         ),
@@ -214,20 +224,22 @@ class _HomeScreenState extends State<HomeScreen> {
     BuildContext context,
     Widget content,
     AppStrings strings, {
-    required bool desktop,
+    required bool useRailNavigation,
+    required bool isDesktopPlatform,
     required bool compactKeyboardLayout,
   }) {
     final colorScheme = Theme.of(context).colorScheme;
     final size = MediaQuery.sizeOf(context);
     final width = size.width;
-    final extended = width >= AppBreakpoints.wideDesktop;
+    final extended = isDesktopPlatform && width >= AppBreakpoints.wideDesktop;
     final compactHeight = usesCompactRailForHeight(size.height);
+    final isNarrowDesktop = isDesktopPlatform && width < AppBreakpoints.desktop;
 
     final settingsButton = IconButton(
       tooltip: strings.settings,
       icon: const Icon(Icons.settings_outlined, size: 20),
       style: IconButton.styleFrom(
-        minimumSize: const Size.square(40),
+        minimumSize: Size.square(isDesktopPlatform ? 40 : 48),
         foregroundColor: colorScheme.onSurfaceVariant,
         hoverColor: colorScheme.surfaceContainerHighest,
       ),
@@ -236,7 +248,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Row(
       children: [
-        if (!desktop)
+        if (!useRailNavigation)
           const SizedBox.shrink()
         else if (compactKeyboardLayout)
           const SizedBox(width: 60)
@@ -254,19 +266,19 @@ class _HomeScreenState extends State<HomeScreen> {
             child: NavigationRail(
               backgroundColor: Colors.transparent,
               extended: extended,
-              minWidth: 60,
+              minWidth: isDesktopPlatform ? 60 : 72,
               minExtendedWidth: 200,
               labelType: extended
                   ? null
-                  : compactHeight
+                  : (compactHeight || isNarrowDesktop)
                   ? NavigationRailLabelType.none
                   : NavigationRailLabelType.all,
               selectedIndex: _navigationIndex,
               onDestinationSelected: _switchNavigationPage,
-              leading: compactHeight
+              leading: (compactHeight || isNarrowDesktop)
                   ? const SizedBox(height: 4)
                   : _buildRailBrand(context, extended),
-              trailing: compactHeight
+              trailing: (compactHeight || isNarrowDesktop)
                   ? Padding(
                       padding: const EdgeInsets.only(bottom: 4),
                       child: settingsButton,
@@ -512,7 +524,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildSettingsDrawer(BuildContext context, AppStrings strings) {
     final viewportWidth = MediaQuery.sizeOf(context).width;
-    final desktop = isDesktopLayout(context);
+    final desktop =
+        isDesktopTargetPlatform() ||
+        WindowSizeClass.of(context).isExpandedOrLarger;
     final width = settingsDrawerWidthFor(
       viewportWidth: viewportWidth,
       desktop: desktop,

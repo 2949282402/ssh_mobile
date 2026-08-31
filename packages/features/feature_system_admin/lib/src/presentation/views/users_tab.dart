@@ -84,132 +84,121 @@ class _UsersTabState extends State<_UsersTab>
                       ),
                     ],
                   )
-                : ListView.builder(
+                : Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
-                    itemCount: accounts.length,
-                    itemBuilder: (context, index) {
-                      final account = accounts[index];
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 8),
-                        decoration: BoxDecoration(
-                          color: widget.colorScheme.surface,
-                          borderRadius: BorderRadius.circular(
-                            AppTheme.radiusMedium,
-                          ),
-                          border: Border.all(
-                            color: widget.colorScheme.outlineVariant.withValues(
-                              alpha: 0.8,
-                            ),
-                            width: 1,
+                    child: _AdminListSurface(
+                      child: ListView.separated(
+                        itemCount: accounts.length,
+                        separatorBuilder: (_, _) => Divider(
+                          height: 1,
+                          thickness: 1,
+                          color: widget.colorScheme.outlineVariant.withValues(
+                            alpha: 0.5,
                           ),
                         ),
-                        clipBehavior: Clip.antiAlias,
-                        child: Theme(
-                          data: Theme.of(
-                            context,
-                          ).copyWith(dividerColor: Colors.transparent),
-                          child: ExpansionTile(
-                            leading: CircleAvatar(
-                              radius: 18,
-                              backgroundColor: account.uid == 0
-                                  ? widget.colorScheme.errorContainer
-                                  : widget.colorScheme.primaryContainer,
-                              child: Icon(
+                        itemBuilder: (context, index) {
+                          final account = accounts[index];
+                          return Theme(
+                            data: Theme.of(
+                              context,
+                            ).copyWith(dividerColor: Colors.transparent),
+                            child: ExpansionTile(
+                              leading: Icon(
                                 account.uid == 0
-                                    ? Icons.security
-                                    : Icons.person,
-                                size: 18,
+                                    ? Icons.security_rounded
+                                    : Icons.person_outline_rounded,
+                                size: 20,
                                 color: account.uid == 0
-                                    ? widget.colorScheme.onErrorContainer
-                                    : widget.colorScheme.onPrimaryContainer,
+                                    ? widget.colorScheme.error
+                                    : widget.colorScheme.primary,
                               ),
-                            ),
-                            title: Row(
+                              title: Row(
+                                children: [
+                                  Text(
+                                    account.username,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    '(${account.uid}/${account.gid})',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color:
+                                          widget.colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  if (account.isLocked)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 6,
+                                        vertical: 2,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: widget.colorScheme.error
+                                            .withValues(alpha: 0.1),
+                                        borderRadius: BorderRadius.circular(
+                                          AppTheme.radiusXs,
+                                        ),
+                                      ),
+                                      child: Text(
+                                        widget.strings.statusLocked,
+                                        style: TextStyle(
+                                          color: widget.colorScheme.error,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    )
+                                  else
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 6,
+                                        vertical: 2,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: widget.colorScheme.primary
+                                            .withValues(alpha: 0.1),
+                                        borderRadius: BorderRadius.circular(
+                                          AppTheme.radiusXs,
+                                        ),
+                                      ),
+                                      child: Text(
+                                        widget.strings.unlockUser,
+                                        style: TextStyle(
+                                          color: widget.colorScheme.primary,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              subtitle: OverflowScrollText(
+                                '${account.homeDir}  •  ${account.shell}',
+                                selectable: false,
+                                maxLines: 1,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: widget.colorScheme.onSurface
+                                      .withValues(alpha: 0.58),
+                                ),
+                              ),
                               children: [
-                                Text(
-                                  account.username,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                                _UserDetailActions(
+                                  viewModel: viewModel,
+                                  account: account,
+                                  strings: widget.strings,
+                                  colorScheme: widget.colorScheme,
                                 ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  '(${account.uid}/${account.gid})',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: widget.colorScheme.onSurfaceVariant,
-                                  ),
-                                ),
-                                const Spacer(),
-                                if (account.isLocked)
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 6,
-                                      vertical: 2,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: widget.colorScheme.error
-                                          .withValues(alpha: 0.1),
-                                      borderRadius: BorderRadius.circular(
-                                        AppTheme.radiusXs,
-                                      ),
-                                    ),
-                                    child: Text(
-                                      widget.strings.statusLocked,
-                                      style: TextStyle(
-                                        color: widget.colorScheme.error,
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  )
-                                else
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 6,
-                                      vertical: 2,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: widget.colorScheme.primary
-                                          .withValues(alpha: 0.1),
-                                      borderRadius: BorderRadius.circular(
-                                        AppTheme.radiusXs,
-                                      ),
-                                    ),
-                                    child: Text(
-                                      widget.strings.unlockUser,
-                                      style: TextStyle(
-                                        color: widget.colorScheme.primary,
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ),
                               ],
                             ),
-                            subtitle: OverflowScrollText(
-                              '${account.homeDir}  •  ${account.shell}',
-                              selectable: false,
-                              maxLines: 1,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: widget.colorScheme.onSurface.withValues(
-                                  alpha: 0.58,
-                                ),
-                              ),
-                            ),
-                            children: [
-                              _UserDetailActions(
-                                viewModel: viewModel,
-                                account: account,
-                                strings: widget.strings,
-                                colorScheme: widget.colorScheme,
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
+                          );
+                        },
+                      ),
+                    ),
                   ),
           ),
         ),

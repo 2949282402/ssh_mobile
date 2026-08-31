@@ -2,6 +2,7 @@ import 'package:app_core/app_core.dart';
 import 'package:app_ui/app_ui.dart';
 import 'package:drift/native.dart';
 import 'package:feature_sftp/feature_sftp.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -105,6 +106,121 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  group('SFTP Adaptive Workspace', () {
+    tearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+    });
+
+    testWidgets('Windows narrow uses desktop two-column shell', (tester) async {
+      tester.view.physicalSize = const Size(600, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+
+      final fixture = await _SftpScreenFixture.create();
+      try {
+        await tester.pumpWidget(fixture.host());
+        await tester.pumpAndSettle();
+
+        // Narrow desktop uses collapsed/compact desktop rail in two columns, NOT mobile server strip
+        expect(
+          find.byKey(const ValueKey('sftp-server-expanded')),
+          findsNothing,
+        );
+        expect(find.byType(Row), findsWidgets);
+        expect(find.text('notes.md'), findsOneWidget);
+      } finally {
+        await fixture.dispose();
+        debugDefaultTargetPlatformOverride = null;
+      }
+    });
+
+    testWidgets('Windows expanded uses two-column master detail workspace', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(1024, 768);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+
+      final fixture = await _SftpScreenFixture.create();
+      try {
+        await tester.pumpWidget(fixture.host());
+        await tester.pumpAndSettle();
+
+        expect(
+          find.byKey(const ValueKey('sftp-server-expanded')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('sftp-server-tile-server-1')),
+          findsOneWidget,
+        );
+        expect(find.text('notes.md'), findsOneWidget);
+      } finally {
+        await fixture.dispose();
+        debugDefaultTargetPlatformOverride = null;
+      }
+    });
+
+    testWidgets(
+      'Android compact uses mobile server strip and vertical layout',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+
+        final fixture = await _SftpScreenFixture.create();
+        try {
+          await tester.pumpWidget(fixture.host());
+          await tester.pumpAndSettle();
+
+          expect(
+            find.byKey(const ValueKey('sftp-server-expanded')),
+            findsOneWidget,
+          );
+          expect(find.text('notes.md'), findsOneWidget);
+        } finally {
+          await fixture.dispose();
+          debugDefaultTargetPlatformOverride = null;
+        }
+      },
+    );
+
+    testWidgets('Android tablet expanded uses two-column workspace', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(1000, 700);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+
+      final fixture = await _SftpScreenFixture.create();
+      try {
+        await tester.pumpWidget(fixture.host());
+        await tester.pumpAndSettle();
+
+        expect(
+          find.byKey(const ValueKey('sftp-server-expanded')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('sftp-server-tile-server-1')),
+          findsOneWidget,
+        );
+        expect(find.text('notes.md'), findsOneWidget);
+      } finally {
+        await fixture.dispose();
+        debugDefaultTargetPlatformOverride = null;
+      }
+    });
+  });
 }
 
 final class _SftpScreenFixture {

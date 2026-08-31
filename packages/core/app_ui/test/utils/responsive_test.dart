@@ -52,6 +52,41 @@ void main() {
       expect(WindowSizeClass.expanded.isExpandedOrLarger, isTrue);
       expect(WindowSizeClass.large.isExpandedOrLarger, isTrue);
     });
+
+    test('isMediumOrLarger returns true for medium, expanded and large', () {
+      expect(WindowSizeClass.compact.isMediumOrLarger, isFalse);
+      expect(WindowSizeClass.medium.isMediumOrLarger, isTrue);
+      expect(WindowSizeClass.expanded.isMediumOrLarger, isTrue);
+      expect(WindowSizeClass.large.isMediumOrLarger, isTrue);
+    });
+  });
+
+  group('Platform and Input Capabilities', () {
+    test('isDesktopTargetPlatform correctly identifies desktop platforms', () {
+      expect(isDesktopTargetPlatform(TargetPlatform.windows), isTrue);
+      expect(isDesktopTargetPlatform(TargetPlatform.macOS), isTrue);
+      expect(isDesktopTargetPlatform(TargetPlatform.linux), isTrue);
+      expect(isDesktopTargetPlatform(TargetPlatform.android), isFalse);
+      expect(isDesktopTargetPlatform(TargetPlatform.iOS), isFalse);
+    });
+
+    test('isMobileTargetPlatform correctly identifies mobile platforms', () {
+      expect(isMobileTargetPlatform(TargetPlatform.android), isTrue);
+      expect(isMobileTargetPlatform(TargetPlatform.iOS), isTrue);
+      expect(isMobileTargetPlatform(TargetPlatform.windows), isFalse);
+      expect(isMobileTargetPlatform(TargetPlatform.macOS), isFalse);
+      expect(isMobileTargetPlatform(TargetPlatform.linux), isFalse);
+    });
+
+    test('isDesktopInputPlatform matches desktop target platforms', () {
+      expect(isDesktopInputPlatform(TargetPlatform.windows), isTrue);
+      expect(isDesktopInputPlatform(TargetPlatform.android), isFalse);
+    });
+
+    test('isTouchPlatform matches mobile target platforms', () {
+      expect(isTouchPlatform(TargetPlatform.android), isTrue);
+      expect(isTouchPlatform(TargetPlatform.windows), isFalse);
+    });
   });
 
   group('MobileUiMetrics', () {

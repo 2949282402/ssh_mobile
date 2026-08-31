@@ -416,41 +416,49 @@ class _ServerTile extends StatelessWidget {
                 ),
                 SizedBox(width: 10 * scale),
                 Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (compact) ...[
-                        title,
-                        SizedBox(height: 3 * scale),
-                        endpoint,
-                      ] else if (stackStatus) ...[
-                        title,
-                        SizedBox(height: 2 * scale),
-                        Text(
-                          status.label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: status.color,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        SizedBox(height: 3 * scale),
-                        endpoint,
-                      ] else ...[
-                        Row(
-                          children: [
-                            Expanded(child: title),
-                            SizedBox(width: 8 * scale),
-                            _SftpServerStatusPill(status: status),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final showInlinePill =
+                          !compact &&
+                          !stackStatus &&
+                          constraints.maxWidth >= 150;
+                      return Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (compact) ...[
+                            title,
+                            SizedBox(height: 3 * scale),
+                            endpoint,
+                          ] else if (showInlinePill) ...[
+                            Row(
+                              children: [
+                                Expanded(child: title),
+                                SizedBox(width: 8 * scale),
+                                _SftpServerStatusPill(status: status),
+                              ],
+                            ),
+                            SizedBox(height: 5 * scale),
+                            endpoint,
+                          ] else ...[
+                            title,
+                            SizedBox(height: 2 * scale),
+                            Text(
+                              status.label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: status.color,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            SizedBox(height: 3 * scale),
+                            endpoint,
                           ],
-                        ),
-                        SizedBox(height: 5 * scale),
-                        endpoint,
-                      ],
-                    ],
+                        ],
+                      );
+                    },
                   ),
                 ),
               ],

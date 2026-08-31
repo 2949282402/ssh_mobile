@@ -83,34 +83,32 @@ class MessageBubble extends StatelessWidget {
                   ),
                 Container(
                   margin: const EdgeInsets.only(bottom: 4),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 12,
-                  ),
-                  decoration: BoxDecoration(
-                    color: isError
-                        ? colorScheme.error.withValues(alpha: 0.08)
-                        : isUser
-                        ? colorScheme.primary.withValues(alpha: 0.14)
-                        : colorScheme.surface,
-                    borderRadius: BorderRadius.only(
-                      topLeft: const Radius.circular(AppTheme.radiusMedium),
-                      topRight: isUser
-                          ? const Radius.circular(4)
-                          : const Radius.circular(AppTheme.radiusMedium),
-                      bottomLeft: const Radius.circular(AppTheme.radiusMedium),
-                      bottomRight: isUser
-                          ? const Radius.circular(AppTheme.radiusMedium)
-                          : const Radius.circular(4),
-                    ),
-                    border: Border.all(
-                      color: isError
-                          ? colorScheme.error.withValues(alpha: 0.3)
-                          : isUser
-                          ? colorScheme.primary.withValues(alpha: 0.2)
-                          : colorScheme.outlineVariant,
-                    ),
-                  ),
+                  padding: isAssistant
+                      ? const EdgeInsets.symmetric(horizontal: 4, vertical: 4)
+                      : const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 10,
+                        ),
+                  decoration: isAssistant
+                      ? const BoxDecoration(color: Colors.transparent)
+                      : BoxDecoration(
+                          color: isError
+                              ? colorScheme.error.withValues(alpha: 0.08)
+                              : colorScheme.surfaceContainerHighest.withValues(
+                                  alpha: 0.8,
+                                ),
+                          borderRadius: BorderRadius.circular(
+                            AppTheme.radiusSmall,
+                          ),
+                          border: Border.all(
+                            color: isError
+                                ? colorScheme.error.withValues(alpha: 0.3)
+                                : colorScheme.outlineVariant.withValues(
+                                    alpha: 0.6,
+                                  ),
+                            width: 1,
+                          ),
+                        ),
                   child: isUser || isError
                       ? Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -207,13 +205,7 @@ class MessageBubble extends StatelessWidget {
             'msg-animate-${message.createdAt.microsecondsSinceEpoch}',
           ),
         )
-        .fade(duration: 200.ms)
-        .slideX(
-          begin: isUser ? 0.05 : -0.05,
-          end: 0,
-          duration: 200.ms,
-          curve: Curves.easeOutQuad,
-        );
+        .fade(duration: 150.ms);
   }
 
   String _messageStats(AiChatMessageRecord message) {

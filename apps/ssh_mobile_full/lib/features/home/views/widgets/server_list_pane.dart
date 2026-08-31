@@ -425,8 +425,9 @@ class _ServerListPaneState extends State<ServerListPane> {
     final subtitle = strings.language == AppLanguage.en
         ? '$activeCount saved server${activeCount == 1 ? "" : "s"}'
         : '已保存 $activeCount 台服务器';
-    final desktop = isDesktopLayout(context);
-    final showDesktopAdd = desktop && activeCount > 0;
+    final isDesktopPlatform = isDesktopTargetPlatform();
+    final isExpanded = WindowSizeClass.of(context).isExpandedOrLarger;
+    final showDesktopAdd = (isDesktopPlatform || isExpanded) && activeCount > 0;
     final layoutMode = context.select<AppSettings, String>(
       (settings) => settings.serverListLayoutMode,
     );
@@ -470,7 +471,7 @@ class _ServerListPaneState extends State<ServerListPane> {
           ),
         ],
       );
-    } else if (!desktop) {
+    } else if (!isDesktopPlatform && !isExpanded) {
       trailing = Row(
         mainAxisSize: MainAxisSize.min,
         children: [

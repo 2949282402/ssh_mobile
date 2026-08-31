@@ -425,81 +425,82 @@ class _ServicesTabState extends State<_ServicesTab>
                           Center(child: Text('No services found.')),
                         ],
                       )
-                    : ListView.builder(
+                    : Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 12),
-                        itemCount: visibleServices.length,
-                        itemBuilder: (context, index) {
-                          final service = visibleServices[index];
-                          return Container(
-                            margin: const EdgeInsets.only(bottom: 8),
-                            decoration: BoxDecoration(
-                              color: widget.colorScheme.surface,
-                              borderRadius: BorderRadius.circular(
-                                AppTheme.radiusMedium,
-                              ),
-                              border: Border.all(
-                                color: widget.colorScheme.outlineVariant
-                                    .withValues(alpha: 0.8),
-                                width: 1,
-                              ),
+                        child: _AdminListSurface(
+                          child: ListView.separated(
+                            itemCount: visibleServices.length,
+                            separatorBuilder: (_, _) => Divider(
+                              height: 1,
+                              thickness: 1,
+                              color: widget.colorScheme.outlineVariant
+                                  .withValues(alpha: 0.5),
                             ),
-                            child: ListTile(
-                              leading: Icon(
-                                service.isRunning
-                                    ? Icons.play_circle
-                                    : Icons.stop_circle,
-                                color: service.isRunning
-                                    ? widget.colorScheme.secondary
-                                    : widget.colorScheme.onSurfaceVariant
-                                          .withValues(alpha: 0.5),
-                              ),
-                              title: OverflowScrollText(
-                                service.name,
-                                selectable: false,
-                                maxLines: 1,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
+                            itemBuilder: (context, index) {
+                              final service = visibleServices[index];
+                              return ListTile(
+                                leading: Icon(
+                                  service.isRunning
+                                      ? Icons.play_circle_filled_rounded
+                                      : Icons.stop_circle_outlined,
+                                  size: 20,
+                                  color: service.isRunning
+                                      ? widget.colorScheme.secondary
+                                      : widget.colorScheme.onSurfaceVariant
+                                            .withValues(alpha: 0.5),
                                 ),
-                              ),
-                              subtitle: OverflowScrollText(
-                                '${service.activeState} (${service.subState}) • ${service.description}',
-                                selectable: false,
-                                maxLines: 1,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: widget.colorScheme.onSurface
-                                      .withValues(alpha: 0.58),
+                                title: OverflowScrollText(
+                                  service.name,
+                                  selectable: false,
+                                  maxLines: 1,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
-                              ),
-                              trailing: PopupMenuButton<String>(
-                                onSelected: (action) =>
-                                    _manageService(service.name, action),
-                                itemBuilder: (context) => [
-                                  PopupMenuItem(
-                                    value: 'start',
-                                    child: Text(widget.strings.serviceStart),
+                                subtitle: OverflowScrollText(
+                                  '${service.activeState} (${service.subState}) • ${service.description}',
+                                  selectable: false,
+                                  maxLines: 1,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: widget.colorScheme.onSurface
+                                        .withValues(alpha: 0.58),
                                   ),
-                                  PopupMenuItem(
-                                    value: 'stop',
-                                    child: Text(widget.strings.serviceStop),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'restart',
-                                    child: Text(widget.strings.serviceRestart),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'enable',
-                                    child: Text(widget.strings.serviceEnable),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'disable',
-                                    child: Text(widget.strings.serviceDisable),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
+                                ),
+                                trailing: PopupMenuButton<String>(
+                                  onSelected: (action) =>
+                                      _manageService(service.name, action),
+                                  itemBuilder: (context) => [
+                                    PopupMenuItem(
+                                      value: 'start',
+                                      child: Text(widget.strings.serviceStart),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'stop',
+                                      child: Text(widget.strings.serviceStop),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'restart',
+                                      child: Text(
+                                        widget.strings.serviceRestart,
+                                      ),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'enable',
+                                      child: Text(widget.strings.serviceEnable),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'disable',
+                                      child: Text(
+                                        widget.strings.serviceDisable,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                        ),
                       ),
               ),
             ],

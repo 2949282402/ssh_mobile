@@ -862,7 +862,9 @@ String _selectServerHint(
   required String targetEn,
   required String targetZh,
 }) {
-  final desktop = isDesktopLayout(context);
+  final isDesktopPlatform = isDesktopTargetPlatform();
+  final desktop =
+      isDesktopPlatform || WindowSizeClass.of(context).isExpandedOrLarger;
   final isEnglish = language == SystemAdminLanguage.en;
 
   if (isEnglish) {
@@ -872,6 +874,30 @@ String _selectServerHint(
   }
 
   return desktop ? '请先在左侧选择要查看的$targetZh。' : '请先在上方选择要查看的$targetZh。';
+}
+
+/// 统一的系统管理列表容器，提供一致的 1px 微边框与表面底色。
+class _AdminListSurface extends StatelessWidget {
+  final Widget child;
+
+  const _AdminListSurface({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      decoration: BoxDecoration(
+        color: colorScheme.surface,
+        borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+        border: Border.all(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.8),
+          width: 1,
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: child,
+    );
+  }
 }
 
 String _durationLabel(Duration duration) {

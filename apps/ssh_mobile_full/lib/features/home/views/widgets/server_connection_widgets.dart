@@ -277,103 +277,79 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
         : cardBgColor;
 
     return MouseRegion(
-          onEnter: (_) => setState(() => _isHovered = true),
-          onExit: (_) => setState(() => _isHovered = false),
-          child: TactileFeedback(
-            onTap: widget.onTap,
-            onLongPress: widget.onLongPress,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 150),
-              curve: Curves.easeOutCubic,
-              margin: EdgeInsets.only(bottom: widget.isGrid ? 0 : (6 * scale)),
-              padding: EdgeInsets.all(
-                widget.isGrid
-                    ? 10 * scale
-                    : (compactMobileCard ? 8 : 14) * scale,
-              ),
-              decoration: BoxDecoration(
-                color: boxBgColor,
-                borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-                border: Border.all(color: boxBorderColor, width: 1),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      child: TactileFeedback(
+        onTap: widget.onTap,
+        onLongPress: widget.onLongPress,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          curve: Curves.easeOutCubic,
+          margin: EdgeInsets.only(bottom: widget.isGrid ? 0 : (6 * scale)),
+          padding: EdgeInsets.all(
+            widget.isGrid ? 10 * scale : (compactMobileCard ? 8 : 14) * scale,
+          ),
+          decoration: BoxDecoration(
+            color: boxBgColor,
+            borderRadius: BorderRadius.circular(
+              widget.isGrid ? AppTheme.radiusMedium : AppTheme.radiusSmall,
+            ),
+            border: Border.all(color: boxBorderColor, width: 1),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 children: [
-                  Row(
-                    children: [
-                      if (!widget.serverSelectionMode && !widget.isGrid)
-                        Padding(
-                          padding: EdgeInsets.only(right: 4 * scale),
-                          child: Tooltip(
-                            message: widget.strings.reorderServer,
-                            child: ReorderableDragStartListener(
-                              index: widget.connIndex,
-                              child: SizedBox.square(
-                                key: ValueKey(
-                                  'server-drag-handle-${widget.conn.id}',
-                                ),
-                                dimension: 48,
-                                child: Icon(
-                                  Icons.drag_handle_rounded,
-                                  size: 20 * scale,
-                                  color: mutedTextColor.withValues(alpha: 0.58),
-                                ),
-                              ),
+                  if (!widget.serverSelectionMode && !widget.isGrid)
+                    Padding(
+                      padding: EdgeInsets.only(right: 4 * scale),
+                      child: Tooltip(
+                        message: widget.strings.reorderServer,
+                        child: ReorderableDragStartListener(
+                          index: widget.connIndex,
+                          child: SizedBox.square(
+                            key: ValueKey(
+                              'server-drag-handle-${widget.conn.id}',
+                            ),
+                            dimension: 48,
+                            child: Icon(
+                              Icons.drag_handle_rounded,
+                              size: 20 * scale,
+                              color: mutedTextColor.withValues(alpha: 0.58),
                             ),
                           ),
                         ),
-                      if (widget.serverSelectionMode)
-                        Checkbox(
-                          value: widget.isSelected,
-                          onChanged: widget.onSelectedChanged,
-                        ),
-                      Container(
-                        width: 36 * scale,
-                        height: 36 * scale,
-                        decoration: BoxDecoration(
-                          color: isActive
-                              ? success.withValues(alpha: 0.15)
-                              : primary.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(
-                            AppTheme.radiusSmall,
-                          ),
-                        ),
-                        child: Icon(
-                          _getStatusIcon(widget.conn, latestState),
-                          color: isActive ? success : primary,
-                          size: 20 * scale,
-                        ),
                       ),
-                      SizedBox(width: 12 * scale),
-                      Expanded(
-                        child: compactMobileCard
-                            ? Column(
-                                mainAxisSize: MainAxisSize.min,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  OverflowScrollText(
-                                    widget.conn.name,
-                                    selectable: false,
-                                    maxLines: 1,
-                                    style: TextStyle(
-                                      color: textColor,
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  SizedBox(height: 2 * scale),
-                                  Text(
-                                    '${widget.conn.username}@${widget.conn.host}:${widget.conn.port}',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: mutedTextColor,
-                                    ),
-                                  ),
-                                ],
-                              )
-                            : OverflowScrollText(
+                    ),
+                  if (widget.serverSelectionMode)
+                    Checkbox(
+                      value: widget.isSelected,
+                      onChanged: widget.onSelectedChanged,
+                    ),
+                  Container(
+                    width: 36 * scale,
+                    height: 36 * scale,
+                    decoration: BoxDecoration(
+                      color: isActive
+                          ? success.withValues(alpha: 0.15)
+                          : primary.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                    ),
+                    child: Icon(
+                      _getStatusIcon(widget.conn, latestState),
+                      color: isActive ? success : primary,
+                      size: 20 * scale,
+                    ),
+                  ),
+                  SizedBox(width: 12 * scale),
+                  Expanded(
+                    child: compactMobileCard
+                        ? Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              OverflowScrollText(
                                 widget.conn.name,
                                 selectable: false,
                                 maxLines: 1,
@@ -383,235 +359,240 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
-                      ),
-                      if (!widget.serverSelectionMode)
-                        PopupMenuButton<String>(
-                          icon: Icon(
-                            Icons.more_vert,
-                            color: mutedTextColor,
-                            size: 20 * scale,
+                              SizedBox(height: 2 * scale),
+                              Text(
+                                '${widget.conn.username}@${widget.conn.host}:${widget.conn.port}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: mutedTextColor,
+                                ),
+                              ),
+                            ],
+                          )
+                        : OverflowScrollText(
+                            widget.conn.name,
+                            selectable: false,
+                            maxLines: 1,
+                            style: TextStyle(
+                              color: textColor,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
-                          onSelected: widget.onAction,
-                          itemBuilder: (_) => [
-                            PopupMenuItem(
-                              value: 'edit',
-                              child: Row(
-                                children: [
-                                  Icon(Icons.edit, size: 18 * scale),
-                                  SizedBox(width: 8 * scale),
-                                  Text(widget.strings.edit),
-                                ],
-                              ),
-                            ),
-                            PopupMenuItem(
-                              value: 'delete',
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    Icons.delete,
-                                    size: 18 * scale,
-                                    color: colorScheme.error,
-                                  ),
-                                  SizedBox(width: 8 * scale),
-                                  Text(
-                                    widget.strings.delete,
-                                    style: TextStyle(color: colorScheme.error),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                    ],
                   ),
-                  if (!compactMobileCard) ...[
-                    SizedBox(height: 8 * scale),
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.dns_outlined,
-                          size: 13 * scale,
-                          color: mutedTextColor.withValues(alpha: 0.72),
-                        ),
-                        SizedBox(width: 5 * scale),
-                        Flexible(
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: Text(
-                              '${widget.conn.username}@${widget.conn.host}:${widget.conn.port}',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: mutedTextColor,
-                              ),
-                            ),
-                          ),
-                        ),
-                        if (sessionCount > 0) ...[
-                          SizedBox(width: 8 * scale),
-                          Container(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: 6 * scale,
-                              vertical: 2 * scale,
-                            ),
-                            decoration: BoxDecoration(
-                              color: success.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(
-                                AppTheme.radiusPill,
-                              ),
-                            ),
-                            child: Text(
-                              widget.strings.language == AppLanguage.en
-                                  ? '$sessionCount window${sessionCount == 1 ? "" : "s"}'
-                                  : '$sessionCount 个窗口',
-                              style: TextStyle(
-                                color: success,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ],
-                  if (!compactMobileCard) ...[
-                    SizedBox(height: 6 * scale),
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child:
-                          Selector<
-                            monitoring.MonitoringService,
-                            monitoring.ServerHealthSnapshot
-                          >(
-                            selector: (_, monitor) =>
-                                monitor.healthFor(widget.conn.id),
-                            builder: (context, health, _) => _buildHealthChip(
-                              context,
-                              health,
-                              widget.strings,
-                            ),
-                          ),
-                    ),
-                    SizedBox(height: 12 * scale),
-                    Divider(height: 1, color: colorScheme.outlineVariant),
-                    SizedBox(height: 8 * scale),
-                  ] else
-                    SizedBox(height: 2 * scale),
-                  Row(
-                    children: [
-                      if (widget.isGrid) ...[
-                        IconButton(
-                          visualDensity: VisualDensity.standard,
-                          constraints: const BoxConstraints(
-                            minWidth: 44,
-                            minHeight: 44,
-                          ),
-                          tooltip: widget.strings.newWindow,
-                          icon: Icon(
-                            Icons.add_to_photos_outlined,
-                            size: 16 * scale,
-                          ),
-                          onPressed: widget.onOpenNewTerminal,
-                        ),
-                        if (sessionCount > 0) ...[
-                          const SizedBox(width: 4),
-                          IconButton(
-                            visualDensity: VisualDensity.standard,
-                            constraints: const BoxConstraints(
-                              minWidth: 44,
-                              minHeight: 44,
-                            ),
-                            tooltip: widget.strings.windows,
-                            icon: Icon(
-                              Icons.terminal_outlined,
-                              size: 16 * scale,
-                            ),
-                            onPressed: () => Navigator.pushNamed(
-                              context,
-                              '/terminal-windows',
-                              arguments: widget.conn.id,
-                            ),
-                          ),
-                        ],
-                        const Spacer(),
-                      ] else
-                        Expanded(
+                  if (!widget.serverSelectionMode)
+                    PopupMenuButton<String>(
+                      icon: Icon(
+                        Icons.more_vert,
+                        color: mutedTextColor,
+                        size: 20 * scale,
+                      ),
+                      onSelected: widget.onAction,
+                      itemBuilder: (_) => [
+                        PopupMenuItem(
+                          value: 'edit',
                           child: Row(
                             children: [
-                              Flexible(
-                                child: TextButton.icon(
-                                  onPressed: widget.onOpenNewTerminal,
-                                  icon: Icon(
-                                    Icons.add_to_photos_outlined,
-                                    size: 16 * scale,
-                                  ),
-                                  label: Text(
-                                    widget.strings.newWindow,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  style: TextButton.styleFrom(
-                                    padding: EdgeInsets.symmetric(
-                                      horizontal: 8 * scale,
-                                      vertical: 4 * scale,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              if (sessionCount > 0) ...[
-                                SizedBox(width: 8 * scale),
-                                Flexible(
-                                  child: TextButton.icon(
-                                    onPressed: widget.onToggleConnectionWindows,
-                                    icon: Icon(
-                                      widget.windowsExpanded
-                                          ? Icons.expand_less_rounded
-                                          : Icons.expand_more_rounded,
-                                      size: 16 * scale,
-                                    ),
-                                    label: Text(
-                                      widget.strings.language == AppLanguage.en
-                                          ? 'Window List · $sessionCount'
-                                          : '窗口列表 · $sessionCount',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    style: TextButton.styleFrom(
-                                      padding: EdgeInsets.symmetric(
-                                        horizontal: 8 * scale,
-                                        vertical: 4 * scale,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
+                              Icon(Icons.edit, size: 18 * scale),
+                              SizedBox(width: 8 * scale),
+                              Text(widget.strings.edit),
                             ],
                           ),
                         ),
-                    ],
-                  ),
-                  if (actualWindowsExpanded)
-                    TerminalWindowsPage(
-                      key: PageStorageKey<String>(
-                        'server-windows-${widget.conn.id}',
-                      ),
-                      connectionId: widget.conn.id,
-                      showHeader: false,
-                      embedded: true,
+                        PopupMenuItem(
+                          value: 'delete',
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.delete,
+                                size: 18 * scale,
+                                color: colorScheme.error,
+                              ),
+                              SizedBox(width: 8 * scale),
+                              Text(
+                                widget.strings.delete,
+                                style: TextStyle(color: colorScheme.error),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                 ],
               ),
-            ),
+              if (!compactMobileCard) ...[
+                SizedBox(height: 8 * scale),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.dns_outlined,
+                      size: 13 * scale,
+                      color: mutedTextColor.withValues(alpha: 0.72),
+                    ),
+                    SizedBox(width: 5 * scale),
+                    Flexible(
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Text(
+                          '${widget.conn.username}@${widget.conn.host}:${widget.conn.port}',
+                          style: TextStyle(fontSize: 13, color: mutedTextColor),
+                        ),
+                      ),
+                    ),
+                    if (sessionCount > 0) ...[
+                      SizedBox(width: 8 * scale),
+                      Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 6 * scale,
+                          vertical: 2 * scale,
+                        ),
+                        decoration: BoxDecoration(
+                          color: success.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(
+                            AppTheme.radiusPill,
+                          ),
+                        ),
+                        child: Text(
+                          widget.strings.language == AppLanguage.en
+                              ? '$sessionCount window${sessionCount == 1 ? "" : "s"}'
+                              : '$sessionCount 个窗口',
+                          style: TextStyle(
+                            color: success,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+              if (!compactMobileCard) ...[
+                SizedBox(height: 6 * scale),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child:
+                      Selector<
+                        monitoring.MonitoringService,
+                        monitoring.ServerHealthSnapshot
+                      >(
+                        selector: (_, monitor) =>
+                            monitor.healthFor(widget.conn.id),
+                        builder: (context, health, _) =>
+                            _buildHealthChip(context, health, widget.strings),
+                      ),
+                ),
+                SizedBox(height: 12 * scale),
+                Divider(height: 1, color: colorScheme.outlineVariant),
+                SizedBox(height: 8 * scale),
+              ] else
+                SizedBox(height: 2 * scale),
+              Row(
+                children: [
+                  if (widget.isGrid) ...[
+                    IconButton(
+                      visualDensity: VisualDensity.standard,
+                      constraints: const BoxConstraints(
+                        minWidth: 44,
+                        minHeight: 44,
+                      ),
+                      tooltip: widget.strings.newWindow,
+                      icon: Icon(
+                        Icons.add_to_photos_outlined,
+                        size: 16 * scale,
+                      ),
+                      onPressed: widget.onOpenNewTerminal,
+                    ),
+                    if (sessionCount > 0) ...[
+                      const SizedBox(width: 4),
+                      IconButton(
+                        visualDensity: VisualDensity.standard,
+                        constraints: const BoxConstraints(
+                          minWidth: 44,
+                          minHeight: 44,
+                        ),
+                        tooltip: widget.strings.windows,
+                        icon: Icon(Icons.terminal_outlined, size: 16 * scale),
+                        onPressed: () => Navigator.pushNamed(
+                          context,
+                          '/terminal-windows',
+                          arguments: widget.conn.id,
+                        ),
+                      ),
+                    ],
+                    const Spacer(),
+                  ] else
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Flexible(
+                            child: TextButton.icon(
+                              onPressed: widget.onOpenNewTerminal,
+                              icon: Icon(
+                                Icons.add_to_photos_outlined,
+                                size: 16 * scale,
+                              ),
+                              label: Text(
+                                widget.strings.newWindow,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              style: TextButton.styleFrom(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 8 * scale,
+                                  vertical: 4 * scale,
+                                ),
+                              ),
+                            ),
+                          ),
+                          if (sessionCount > 0) ...[
+                            SizedBox(width: 8 * scale),
+                            Flexible(
+                              child: TextButton.icon(
+                                onPressed: widget.onToggleConnectionWindows,
+                                icon: Icon(
+                                  widget.windowsExpanded
+                                      ? Icons.expand_less_rounded
+                                      : Icons.expand_more_rounded,
+                                  size: 16 * scale,
+                                ),
+                                label: Text(
+                                  widget.strings.language == AppLanguage.en
+                                      ? 'Window List · $sessionCount'
+                                      : '窗口列表 · $sessionCount',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                style: TextButton.styleFrom(
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: 8 * scale,
+                                    vertical: 4 * scale,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+              if (actualWindowsExpanded)
+                TerminalWindowsPage(
+                  key: PageStorageKey<String>(
+                    'server-windows-${widget.conn.id}',
+                  ),
+                  connectionId: widget.conn.id,
+                  showHeader: false,
+                  embedded: true,
+                ),
+            ],
           ),
-        )
-        .animate()
-        .fade(duration: 250.ms)
-        .slideY(
-          begin: 0.08,
-          end: 0,
-          duration: 250.ms,
-          curve: Curves.easeOutQuart,
-        );
+        ),
+      ),
+    ).animate().fade(duration: 150.ms);
   }
 
   Widget _buildHealthChip(

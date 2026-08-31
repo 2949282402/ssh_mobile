@@ -220,6 +220,7 @@ class _AppThemeComponentBuilders {
       style: FilledButton.styleFrom(
         minimumSize: const Size(36, 36),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        tapTargetSize: MaterialTapTargetSize.padded,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
         ),
@@ -238,6 +239,7 @@ class _AppThemeComponentBuilders {
       style: OutlinedButton.styleFrom(
         minimumSize: const Size(36, 36),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        tapTargetSize: MaterialTapTargetSize.padded,
         side: BorderSide(color: outline),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
@@ -258,6 +260,7 @@ class _AppThemeComponentBuilders {
         foregroundColor: foreground,
         minimumSize: const Size(36, 36),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        tapTargetSize: MaterialTapTargetSize.padded,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
         ),
@@ -275,6 +278,7 @@ class _AppThemeComponentBuilders {
       style: IconButton.styleFrom(
         foregroundColor: foreground,
         minimumSize: const Size(36, 36),
+        tapTargetSize: MaterialTapTargetSize.padded,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
         ),

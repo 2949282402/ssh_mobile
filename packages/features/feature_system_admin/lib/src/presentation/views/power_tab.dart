@@ -66,39 +66,49 @@ class _PowerTabState extends State<_PowerTab>
                 ),
               ),
               const SizedBox(height: 24),
-              SizedBox(
-                width: 240,
-                child: FilledButton.icon(
-                  icon: const Icon(Icons.cached, size: 18),
-                  label: Text(widget.strings.rebootServer),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: widget.colorScheme.tertiary,
-                    foregroundColor: widget.colorScheme.onTertiary,
-                    minimumSize: const Size.fromHeight(44),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 320),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    icon: const Icon(Icons.cached, size: 18),
+                    label: Text(widget.strings.rebootServer),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: widget.colorScheme.tertiary,
+                      foregroundColor: widget.colorScheme.onTertiary,
+                      minimumSize: const Size.fromHeight(44),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(
+                          AppTheme.radiusSmall,
+                        ),
+                      ),
                     ),
+                    onPressed: () =>
+                        _confirmPowerAction(SystemPowerAction.reboot),
                   ),
-                  onPressed: () =>
-                      _confirmPowerAction(SystemPowerAction.reboot),
                 ),
               ),
               const SizedBox(height: 10),
-              SizedBox(
-                width: 240,
-                child: OutlinedButton.icon(
-                  icon: const Icon(Icons.power_off, size: 18),
-                  label: Text(widget.strings.shutdownServer),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: widget.colorScheme.error,
-                    side: BorderSide(color: widget.colorScheme.error),
-                    minimumSize: const Size.fromHeight(44),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 320),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.power_off, size: 18),
+                    label: Text(widget.strings.shutdownServer),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: widget.colorScheme.error,
+                      side: BorderSide(color: widget.colorScheme.error),
+                      minimumSize: const Size.fromHeight(44),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(
+                          AppTheme.radiusSmall,
+                        ),
+                      ),
                     ),
+                    onPressed: () =>
+                        _confirmPowerAction(SystemPowerAction.shutdown),
                   ),
-                  onPressed: () =>
-                      _confirmPowerAction(SystemPowerAction.shutdown),
                 ),
               ),
             ],

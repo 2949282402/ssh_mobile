@@ -42,6 +42,22 @@ enum WindowSizeClass {
   bool get isExpanded => this == WindowSizeClass.expanded;
   bool get isLarge => this == WindowSizeClass.large;
   bool get isExpandedOrLarger => index >= WindowSizeClass.expanded.index;
+  bool get isMediumOrLarger => index >= WindowSizeClass.medium.index;
+}
+
+/// 输入交互模式，区分主要依赖鼠标键盘还是触控交互。
+enum AppInputMode {
+  mouseKeyboard,
+  touch;
+
+  static AppInputMode of(BuildContext context) {
+    return isDesktopInputPlatform()
+        ? AppInputMode.mouseKeyboard
+        : AppInputMode.touch;
+  }
+
+  bool get isMouseKeyboard => this == AppInputMode.mouseKeyboard;
+  bool get isTouch => this == AppInputMode.touch;
 }
 
 /// 界面密度模式。
@@ -49,6 +65,13 @@ enum AppDensity {
   compact,
   standard,
   comfortable;
+
+  static AppDensity of(BuildContext context) {
+    if (isDesktopInputPlatform()) {
+      return AppDensity.compact;
+    }
+    return AppDensity.standard;
+  }
 
   VisualDensity get visualDensity => switch (this) {
     AppDensity.compact => VisualDensity.compact,
@@ -131,26 +154,41 @@ double settingsDrawerWidthFor({
   return desiredWidth > viewportWidth ? viewportWidth : desiredWidth;
 }
 
-/// 判断当前视口是否应呈现展开式桌面工作区布局。
+/// 判断当前视口是否应呈现展开式工作区布局（宽屏布局）。
 ///
-/// 严格依据可用窗口宽度断点（>= 840dp），在 Windows/macOS 窄窗口下
-/// 自动自适应降级为紧凑布局，在 iPad / Android 平板横屏下自动启用展开布局。
+/// 严格依据可用窗口宽度断点（>= 840dp，即 [WindowSizeClass.expanded] 或 [WindowSizeClass.large]）。
+///
+/// 注意：该函数仅代表视口宽度能力，不代表当前 OS 平台或输入交互模式。
+/// 若需要判断操作系统或输入模式，请使用 [isDesktopTargetPlatform] 或 [isDesktopInputPlatform]。
 bool isDesktopLayout(BuildContext context) {
   final width = MediaQuery.sizeOf(context).width;
   return usesExpandedLayoutForWidth(width);
 }
 
-bool isMobileTargetPlatform() {
-  return !kIsWeb &&
-      (defaultTargetPlatform == TargetPlatform.android ||
-          defaultTargetPlatform == TargetPlatform.iOS);
+/// 判断当前是否为移动端目标平台 (Android / iOS)。
+bool isMobileTargetPlatform([TargetPlatform? platform]) {
+  if (kIsWeb) return false;
+  final target = platform ?? defaultTargetPlatform;
+  return target == TargetPlatform.android || target == TargetPlatform.iOS;
 }
 
-bool isDesktopTargetPlatform() {
-  return !kIsWeb &&
-      (defaultTargetPlatform == TargetPlatform.windows ||
-          defaultTargetPlatform == TargetPlatform.macOS ||
-          defaultTargetPlatform == TargetPlatform.linux);
+/// 判断当前是否为桌面端目标平台 (Windows / macOS / Linux)。
+bool isDesktopTargetPlatform([TargetPlatform? platform]) {
+  if (kIsWeb) return false;
+  final target = platform ?? defaultTargetPlatform;
+  return target == TargetPlatform.windows ||
+      target == TargetPlatform.macOS ||
+      target == TargetPlatform.linux;
+}
+
+/// 判断当前平台是否为主要使用鼠标/键盘的桌面交互模式。
+bool isDesktopInputPlatform([TargetPlatform? platform]) {
+  return isDesktopTargetPlatform(platform);
+}
+
+/// 判断当前平台是否为主要使用触控手势的移动交互模式。
+bool isTouchPlatform([TargetPlatform? platform]) {
+  return isMobileTargetPlatform(platform);
 }
 
 double mobileUiScaleForMetrics({
