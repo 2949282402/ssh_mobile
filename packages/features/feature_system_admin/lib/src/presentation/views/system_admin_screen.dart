@@ -887,11 +887,11 @@ class _AdminListSurface extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      decoration: BoxDecoration(
-        color: colorScheme.surface,
+    return Material(
+      color: colorScheme.surface,
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-        border: Border.all(
+        side: BorderSide(
           color: colorScheme.outlineVariant.withValues(alpha: 0.8),
           width: 1,
         ),
