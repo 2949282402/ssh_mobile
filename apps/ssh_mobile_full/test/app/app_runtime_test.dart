@@ -1,5 +1,6 @@
 import 'package:app_core/app_core.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:network_sdk/network_sdk.dart';
 import 'package:ssh_mobile/app/app_runtime.dart';
@@ -165,6 +166,31 @@ void main() {
       }
     },
   );
+
+  test('telemetry disables when Relay enrollment is cleared', () async {
+    final harness = await newRuntimeHarness(
+      relayEndpoint: 'https://relay.example.test',
+      relayCredential: 'runtime-test-relay-credential',
+      disposeLogger: false,
+    );
+    try {
+      final runtime = await harness.createFuture;
+
+      expect(runtime.telemetryClient!.telemetryEnabled, isTrue);
+
+      await const FlutterSecureStorage().delete(
+        key: 'relay_device_credential_v1',
+      );
+      runtime.lanReceiverCoordinator.notifyListeners();
+      await pumpEventQueue();
+
+      expect(runtime.telemetryClient!.telemetryEnabled, isFalse);
+
+      await runtime.dispose();
+    } finally {
+      await harness.close();
+    }
+  });
 
   test('late zone errors after Runtime disposal are ignored', () async {
     late AppRuntime runtime;
