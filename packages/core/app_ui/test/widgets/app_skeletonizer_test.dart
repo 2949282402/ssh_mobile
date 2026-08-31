@@ -145,7 +145,7 @@ void main() {
         findsNWidgets(4),
       );
       final skeletonizer = tester.widget<Skeletonizer>(
-        find.byType(Skeletonizer),
+        find.byWidgetPredicate((widget) => widget is Skeletonizer),
       );
       expect(skeletonizer.effect, isA<ShimmerEffect>());
       expect(tester.takeException(), isNull);
