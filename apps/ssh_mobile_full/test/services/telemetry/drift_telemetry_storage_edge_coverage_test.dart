@@ -113,6 +113,37 @@ void main() {
       expect(byId['synced']!.retryCount, 2);
     });
 
+    test('fetches rejected records in durable order for replay', () async {
+      await storage.insertRecord(
+        _record(
+          'rejected-newer',
+          syncState: TelemetrySyncState.rejected,
+          occurredAt: DateTime.utc(2026, 8, 29, 2),
+        ),
+      );
+      await storage.insertRecord(
+        _record(
+          'rejected-older',
+          syncState: TelemetrySyncState.rejected,
+          occurredAt: DateTime.utc(2026, 8, 29, 1),
+        ),
+      );
+      await storage.insertRecord(_record('pending'));
+
+      final rejected = await storage.fetchRejectedForReplay();
+
+      expect(rejected.map((record) => record.eventId), <String>[
+        'rejected-newer',
+        'rejected-older',
+      ]);
+      expect(
+        rejected.every((record) {
+          return record.syncState == TelemetrySyncState.rejected;
+        }),
+        isTrue,
+      );
+    });
+
     test('unknown persisted sync values fail closed to pending', () async {
       await database
           .into(database.telemetryRecords)

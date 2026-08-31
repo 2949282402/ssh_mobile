@@ -125,6 +125,26 @@ void main() {
     },
   );
 
+  test(
+    'telemetry remains disabled when a Relay endpoint has no enrollment',
+    () async {
+      final harness = await newRuntimeHarness(
+        relayEndpoint: 'https://relay.example.test',
+        disposeLogger: false,
+      );
+      try {
+        final runtime = await harness.createFuture;
+
+        expect(runtime.telemetryClient, isNotNull);
+        expect(runtime.telemetryClient!.telemetryEnabled, isFalse);
+
+        await runtime.dispose();
+      } finally {
+        await harness.close();
+      }
+    },
+  );
+
   test('late zone errors after Runtime disposal are ignored', () async {
     late AppRuntime runtime;
     Future<void>? lateReport;

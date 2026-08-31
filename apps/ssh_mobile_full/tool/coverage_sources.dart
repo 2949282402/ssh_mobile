@@ -96,6 +96,8 @@ const _documentedCoverageExclusions = <String>{
   'lib/services/telemetry/telemetry_database/tables/telemetry_records.dart',
   'lib/services/telemetry/telemetry_database/telemetry_database_connection.dart',
   'lib/services/telemetry/telemetry_database/telemetry_database_constants.dart',
+  'lib/services/app_log_database/tables/app_log_tables.dart',
+  'lib/services/sftp/sftp_service_stub.dart',
   'lib/main.dart',
 };
 

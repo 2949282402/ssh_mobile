@@ -78,6 +78,12 @@ the owning schema tests verify the resulting columns, constraints, and indexes
 through SQLite PRAGMA queries. These are precise declaration-only exclusions,
 not a waiver for DAO or database lifecycle behavior.
 
+The Web-only conditional implementation
+`apps/ssh_mobile_full/lib/services/sftp/sftp_service_stub.dart` is also excluded:
+it only mirrors the SFTP API with unsupported-operation stubs and no business
+logic, while the Linux/Windows/macOS/iOS coverage jobs compile the IO
+implementation. Web validation owns that platform branch separately.
+
 The App Network V2 boundary keeps two native-only status edges precise as well:
 `network_service_support.dart`'s `_networkNativeStatusError` and the
 `NativeOperationStatus.failure` arm in `network_service_runtime_gateway.dart`

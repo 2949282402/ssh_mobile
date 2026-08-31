@@ -210,10 +210,11 @@ Future<RuntimeHarness> newRuntimeHarness({
   HostKeyRepository? hostKeyRepository,
   NetworkRuntime? networkRuntime,
   feature_lan_share.LanShareDatabaseFactory? lanShareDatabaseFactory,
+  String relayEndpoint = '',
   bool disposeLogger = true,
   void Function(String event)? lifecycleObserver,
 }) async {
-  SharedPreferences.setMockInitialValues({});
+  SharedPreferences.setMockInitialValues({'relay_endpoint': relayEndpoint});
   FlutterSecureStorage.setMockInitialValues({});
   final connectionDatabase = ConnectionDatabase.forTesting(
     NativeDatabase.memory(),
