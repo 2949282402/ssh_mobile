@@ -29,9 +29,17 @@ class TelemetryUploadPolicy {
   static const int minTimeIntervalSeconds = 5;
   static const int maxTimeIntervalSeconds = 3600;
   static const int minMaxBatchSize = 1;
-  static const int maxMaxBatchSize = 1000;
+  // The relay enforces the same hard maximum for every public ingest entry
+  // point. Keeping this bound in the client contract prevents avoidable 413s.
+  static const int maxMaxBatchSize = 100;
   static const int minClientMaxLocalRecords = 100;
   static const int maxClientMaxLocalRecords = 1000000;
+  static const List<String> allowedTriggers = [
+    'highPriorityError',
+    'appBackground',
+    'networkRecovered',
+    'appForegroundWithBacklog',
+  ];
 
   factory TelemetryUploadPolicy.defaultPolicy() {
     return const TelemetryUploadPolicy(
@@ -66,6 +74,13 @@ class TelemetryUploadPolicy {
           'appForegroundWithBacklog',
         ];
     final rawVersion = json['policyVersion'] as int? ?? 1;
+    final filteredTriggers = <String>[];
+    for (final trigger in rawTriggers) {
+      if (allowedTriggers.contains(trigger) &&
+          !filteredTriggers.contains(trigger)) {
+        filteredTriggers.add(trigger);
+      }
+    }
 
     // Apply safety clamps
     final clampedBatchThreshold = rawBatchThreshold.clamp(
@@ -88,7 +103,9 @@ class TelemetryUploadPolicy {
       timeIntervalSeconds: clampedInterval,
       maxBatchSize: clampedMaxBatch,
       clientMaxLocalRecords: clampedMaxLocal,
-      specialTriggers: rawTriggers,
+      specialTriggers: filteredTriggers.isEmpty
+          ? allowedTriggers
+          : filteredTriggers,
       policyVersion: rawVersion > 0 ? rawVersion : 1,
     );
   }

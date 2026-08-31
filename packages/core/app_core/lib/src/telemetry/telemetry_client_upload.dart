@@ -3,6 +3,46 @@ part of 'telemetry_client.dart';
 const int _telemetryMinRetryDelayMs = 1000;
 const int _telemetryMaxRetryDelayMs = 60000;
 
+/// A request-size rejection is about the envelope, not all of its records.
+/// Split recursively until each chunk fits the relay body bound. If a single
+/// record is still too large it remains pending for a later policy/server fix.
+Future<TelemetryBatchUploadResult> _uploadTelemetryBatchAdaptive(
+  TelemetryTransport transport, {
+  required String baseUrl,
+  required String authToken,
+  required String deviceId,
+  required List<TelemetryEventRecord> records,
+}) async {
+  try {
+    return await transport.uploadBatch(
+      baseUrl: baseUrl,
+      authToken: authToken,
+      deviceId: deviceId,
+      records: records,
+    );
+  } on TelemetryUploadException catch (error) {
+    if (!error.isPayloadTooLarge || records.length < 2) rethrow;
+    final midpoint = records.length ~/ 2;
+    final first = await _uploadTelemetryBatchAdaptive(
+      transport,
+      baseUrl: baseUrl,
+      authToken: authToken,
+      deviceId: deviceId,
+      records: records.sublist(0, midpoint),
+    );
+    final second = await _uploadTelemetryBatchAdaptive(
+      transport,
+      baseUrl: baseUrl,
+      authToken: authToken,
+      deviceId: deviceId,
+      records: records.sublist(midpoint),
+    );
+    return TelemetryBatchUploadResult(
+      ackResults: [...first.ackResults, ...second.ackResults],
+    );
+  }
+}
+
 mixin _TelemetryClientUpload on _TelemetryClientBase {
   /// Flushes pending records through one shared upload drain.
   Future<void> flush() => _requestUpload();
@@ -94,7 +134,8 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
     }
 
     try {
-      final result = await transport.uploadBatch(
+      final result = await _uploadTelemetryBatchAdaptive(
+        transport,
         baseUrl: config.baseUrl,
         authToken: _authToken!,
         deviceId: config.deviceId,
@@ -121,7 +162,8 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
           return;
         }
         try {
-          final retried = await transport.uploadBatch(
+          final retried = await _uploadTelemetryBatchAdaptive(
+            transport,
             baseUrl: config.baseUrl,
             authToken: _authToken!,
             deviceId: config.deviceId,
@@ -447,7 +489,8 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
     }
 
     try {
-      return await transport.uploadBatch(
+      return await _uploadTelemetryBatchAdaptive(
+        transport,
         baseUrl: config.baseUrl,
         authToken: _authToken!,
         deviceId: config.deviceId,
@@ -471,7 +514,8 @@ mixin _TelemetryClientUpload on _TelemetryClientBase {
           return null;
         }
         if (!_canRecord) return null;
-        return await transport.uploadBatch(
+        return await _uploadTelemetryBatchAdaptive(
+          transport,
           baseUrl: config.baseUrl,
           authToken: _authToken!,
           deviceId: config.deviceId,

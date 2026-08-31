@@ -40,9 +40,9 @@ configuration, test-only files, and platform boilerplate without coverable
 business logic are excluded only when the owner validation report records the
 reason. A new source file without this evidence is not ready for merge.
 
-The Full App coverage gate passes the CI push base ref and `--source-root=lib`
+The Full App coverage gate passes the CI merge-base and `--source-root=lib`
 to `apps/ssh_mobile_full/tool/check_coverage.dart`. The checker discovers files
-added under that root with `git diff --diff-filter=A`, filters the documented
+added or changed under that root with `git diff --diff-filter=ACMR`, filters the documented
 generated/test/third-party/platform paths, and requires every remaining source
 to have an LCOV record and at least the active threshold on its own lines. The
 focused client gate uses the same mechanism for

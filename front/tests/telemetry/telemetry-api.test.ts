@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { telemetryApi } from '../../src/api/telemetry';
 import { AdminApiRoutes } from '../../src/api/routes';
+import type { TelemetrySettings } from '../../src/schemas/telemetry';
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -145,7 +146,7 @@ describe('telemetryApi', () => {
   });
 
   it('fetches and updates telemetry settings', async () => {
-    const mockSettings = {
+    const mockSettings: TelemetrySettings = {
       policy: {
         uploadEnabled: true,
         batchSizeThreshold: 50,

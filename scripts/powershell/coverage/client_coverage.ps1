@@ -24,7 +24,7 @@ try {
     $profiles += "--file=$profile"
   }
   $sourceArguments = @('--source-root=lib/services/network/')
-  $coverageBaseRef = if ($env:CLIENT_COVERAGE_BASE_REF) { $env:CLIENT_COVERAGE_BASE_REF } else { $env:GITHUB_EVENT_BEFORE }
+  $coverageBaseRef = if ($env:CLIENT_COVERAGE_BASE_REF) { $env:CLIENT_COVERAGE_BASE_REF } elseif ($env:CI_BASE_SHA) { $env:CI_BASE_SHA } elseif ($env:GITHUB_BASE_SHA) { $env:GITHUB_BASE_SHA } else { $env:GITHUB_EVENT_BEFORE }
   if ($coverageBaseRef) { $sourceArguments += "--base-ref=$coverageBaseRef" }
   Invoke-CommandChecked dart (@('run','tool/check_coverage.dart',"--minimum=$Minimum",'--details') + $profiles + $sourceArguments + '--include=lib/services/network/') $app
 } finally {

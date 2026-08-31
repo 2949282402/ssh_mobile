@@ -57,7 +57,7 @@ describe('Telemetry Contract & Schemas', () => {
       uploadEnabled: true,
       batchSizeThreshold: 0, // min is 1
       timeIntervalSeconds: 1, // min is 5
-      maxBatchSize: 2000, // max is 1000
+      maxBatchSize: 2000, // max is 100
       clientMaxLocalRecords: 10, // min is 100
       specialTriggers: ['invalid_trigger'],
       policyVersion: 0,

@@ -281,7 +281,7 @@ void main() {
   );
   _expect(
     workflow.contains('--minimum=90') &&
-        workflow.contains(r'--base-ref="${{ github.event.before }}"') &&
+        workflow.contains(r'--base-ref="${{ needs.change_scope.outputs.base_sha }}"') &&
         workflow.contains('--source-root=lib') &&
         !workflow.contains('--minimum=35') &&
         !workflow.contains('--all-sources'),

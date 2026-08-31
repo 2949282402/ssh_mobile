@@ -390,18 +390,18 @@ func TestServiceQueriesRetentionAndCloseBoundaries(t *testing.T) {
 	if events, total, err := service.QueryEvents(context.Background(), QueryFilter{}); err != nil || total != 1 || len(events) != 1 {
 		t.Fatalf("QueryEvents = len=%d total=%d err=%v, want one event", len(events), total, err)
 	}
-	if diagnostics, total, source, err := service.QueryDiagnostics(context.Background(), QueryFilter{PageSize: 0}); err != nil || source != "redis_cache" || total != 2 || len(diagnostics) != 1 {
-		t.Fatalf("cached QueryDiagnostics = len=%d total=%d source=%q err=%v", len(diagnostics), total, source, err)
+	if diagnostics, total, source, err := service.QueryDiagnostics(context.Background(), QueryFilter{PageSize: 0}); err != nil || source != "mysql" || total != 2 || len(diagnostics) != 1 {
+		t.Fatalf("authoritative QueryDiagnostics = len=%d total=%d source=%q err=%v", len(diagnostics), total, source, err)
 	}
 	cache.mu.Lock()
-	if cache.lastLimit != 50 {
-		t.Fatalf("cached diagnostics default limit = %d, want 50", cache.lastLimit)
+	if cache.lastLimit != 0 {
+		t.Fatalf("diagnostics query unexpectedly read Redis with limit %d", cache.lastLimit)
 	}
 	cache.mu.Unlock()
 
 	store.diagnosticsErr = errors.New("diagnostics query failed")
-	if diagnostics, total, source, err := service.QueryDiagnostics(context.Background(), QueryFilter{}); err != nil || source != "redis_cache" || total != 1 || len(diagnostics) != 1 {
-		t.Fatalf("cached fallback QueryDiagnostics = len=%d total=%d source=%q err=%v", len(diagnostics), total, source, err)
+	if _, _, source, err := service.QueryDiagnostics(context.Background(), QueryFilter{}); err == nil || source != "mysql" {
+		t.Fatalf("authoritative QueryDiagnostics unexpectedly hid store failure: source=%q err=%v", source, err)
 	}
 	cache.recent = nil
 	store.diagnosticsErr = nil
@@ -414,8 +414,8 @@ func TestServiceQueriesRetentionAndCloseBoundaries(t *testing.T) {
 		t.Fatalf("disabled-cache QueryDiagnostics source=%q err=%v, want mysql", source, err)
 	}
 	store.settingsErr = errors.New("settings query failed")
-	if _, _, _, err := service.QueryDiagnostics(context.Background(), QueryFilter{}); err == nil {
-		t.Fatal("QueryDiagnostics unexpectedly ignored settings failure")
+	if _, _, source, err := service.QueryDiagnostics(context.Background(), QueryFilter{}); err != nil || source != "mysql" {
+		t.Fatalf("QueryDiagnostics should not depend on settings reads: source=%q err=%v", source, err)
 	}
 
 	store.settingsErr = nil

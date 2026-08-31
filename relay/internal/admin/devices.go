@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+
+	"github.com/ssh-mobile/relay/internal/telemetry"
 )
 
 func (s *Server) devicesHandler(w http.ResponseWriter, r *http.Request) {
@@ -37,6 +39,17 @@ func (s *Server) revokeHandler(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), adminOperationTimeout)
 	defer cancel()
+
+	// Invalidate the telemetry bearer credential before revoking the Relay
+	// enrollment. This ordering fails closed: if telemetry persistence is
+	// unavailable, Relay is left untouched instead of leaving an active token
+	// behind. A device without telemetry enrollment is safe to continue.
+	if s.telemetryService != nil && s.telemetryService.StoreAvailable() {
+		if err := s.telemetryService.RevokeDeviceCredential(ctx, deviceID); err != nil && !errors.Is(err, telemetry.ErrDeviceCredentialNotFound) {
+			writeAdminError(w, http.StatusServiceUnavailable, adminErrorInternal, "Telemetry credential store is unavailable; device was not revoked.")
+			return
+		}
+	}
 
 	err := s.relayClient.RevokeDevice(ctx, deviceID)
 	if err != nil {

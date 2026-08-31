@@ -21,7 +21,9 @@ import {
 import { useToast } from '../../components/toast';
 import type { TelemetrySettings } from '../../schemas/telemetry';
 
-const ALL_SPECIAL_TRIGGERS = [
+type TelemetryTrigger = TelemetrySettings['policy']['specialTriggers'][number];
+
+const ALL_SPECIAL_TRIGGERS: Array<{ id: TelemetryTrigger; label: string; desc: string }> = [
   { id: 'highPriorityError', label: '严重错误即时上报 (highPriorityError)', desc: '遇到 error/critical 严重异常立刻触发 Flush' },
   { id: 'appBackground', label: 'App 切到后台 (appBackground)', desc: '进入后台时立刻清空本地积压' },
   { id: 'networkRecovered', label: '网络重新连接 (networkRecovered)', desc: '网络恢复正常后自动尝试上报' },
@@ -72,7 +74,7 @@ export function TelemetrySettingsPage() {
           ...form.policy,
           batchSizeThreshold: Math.min(1000, Math.max(1, form.policy.batchSizeThreshold || 50)),
           timeIntervalSeconds: Math.min(3600, Math.max(5, form.policy.timeIntervalSeconds || 60)),
-          maxBatchSize: Math.min(1000, Math.max(1, form.policy.maxBatchSize || 100)),
+          maxBatchSize: Math.min(100, Math.max(1, form.policy.maxBatchSize || 100)),
           clientMaxLocalRecords: Math.min(1000000, Math.max(100, form.policy.clientMaxLocalRecords || 10000)),
           policyVersion: form.policy.policyVersion + 1,
         },
@@ -115,7 +117,7 @@ export function TelemetrySettingsPage() {
     });
   };
 
-  const toggleSpecialTrigger = (triggerId: string) => {
+  const toggleSpecialTrigger = (triggerId: TelemetryTrigger) => {
     const current = form.policy.specialTriggers || [];
     const exists = current.includes(triggerId);
     setForm({
@@ -217,7 +219,7 @@ export function TelemetrySettingsPage() {
                 <input
                   type="number"
                   min={1}
-                  max={1000}
+                  max={100}
                   className="button button--quiet"
                   style={{ width: '100%', border: '1px solid var(--line)', padding: '0.5rem', textAlign: 'left' }}
                   value={form.policy.maxBatchSize}

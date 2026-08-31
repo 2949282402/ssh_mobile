@@ -19,9 +19,16 @@ export type Platform = z.infer<typeof PlatformSchema>;
 export const IngestStatusSchema = z.enum(['accepted', 'already_seen', 'rejected']);
 export type IngestStatus = z.infer<typeof IngestStatusSchema>;
 
+export const TelemetryTriggerSchema = z.enum([
+  'highPriorityError',
+  'appBackground',
+  'networkRecovered',
+  'appForegroundWithBacklog',
+]);
+
 export const TelemetryErrorSchema = z.object({
-  errorCode: z.string().min(1),
-  category: z.string().min(1),
+  errorCode: z.string().min(1).max(64),
+  category: z.string().min(1).max(64),
   terminalFailure: z.boolean(),
   message: z.string().max(512).optional(),
   stackTrace: z.string().max(512).optional(),
@@ -35,19 +42,19 @@ const TelemetryPropertyValueSchema = z.union([
 ]);
 
 export const TelemetryRecordSchema = z.object({
-  eventId: z.string().min(1),
+  eventId: z.string().min(1).max(64),
   recordType: RecordTypeSchema,
-  eventName: z.string().min(1),
+  eventName: z.string().min(1).max(128),
   eventVersion: z.number().int().min(1),
-  deviceId: z.string().min(1),
-  sessionId: z.string().min(1),
-  traceId: z.string().min(1),
+  deviceId: z.string().min(1).max(128),
+  sessionId: z.string().min(1).max(128),
+  traceId: z.string().min(1).max(128),
   occurredAt: z.string().datetime({ offset: true }).or(z.string().min(1)),
   receivedAt: z.string().datetime({ offset: true }).optional(),
-  feature: z.string().min(1),
+  feature: z.string().min(1).max(64),
   severity: SeveritySchema,
-  appVersion: z.string().min(1),
-  buildNumber: z.string().min(1),
+  appVersion: z.string().min(1).max(32),
+  buildNumber: z.string().min(1).max(32),
   platform: PlatformSchema,
   releaseChannel: z.string().min(1).max(32).optional(),
   properties: z.record(z.string(), TelemetryPropertyValueSchema).default({}),
@@ -76,9 +83,9 @@ export const TelemetryUploadPolicySchema = z.object({
   uploadEnabled: z.boolean(),
   batchSizeThreshold: z.number().int().min(1).max(1000),
   timeIntervalSeconds: z.number().int().min(5).max(3600),
-  maxBatchSize: z.number().int().min(1).max(1000),
+  maxBatchSize: z.number().int().min(1).max(100),
   clientMaxLocalRecords: z.number().int().min(100).max(1000000),
-  specialTriggers: z.array(z.string()),
+  specialTriggers: z.array(TelemetryTriggerSchema),
   policyVersion: z.number().int().min(1),
 });
 export type TelemetryUploadPolicy = z.infer<typeof TelemetryUploadPolicySchema>;

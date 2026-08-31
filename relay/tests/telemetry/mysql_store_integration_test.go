@@ -51,6 +51,7 @@ func TestMySQLStoreSettingsAndCredentialsRoundTrip(t *testing.T) {
 	updated.Policy.BatchSizeThreshold++
 	updated.RetentionDays++
 	updated.RedisMaxRecords++
+	updated.Policy.PolicyVersion++
 	if err := store.SaveSettings(ctx, updated); err != nil {
 		t.Fatalf("save telemetry settings: %v", err)
 	}
@@ -69,6 +70,7 @@ func TestMySQLStoreSettingsAndCredentialsRoundTrip(t *testing.T) {
 			TimeIntervalSeconds:   0,
 			MaxBatchSize:          0,
 			ClientMaxLocalRecords: 0,
+			PolicyVersion:         updated.Policy.PolicyVersion + 1,
 		},
 		RetentionDays:    0,
 		RetentionMaxRows: 0,

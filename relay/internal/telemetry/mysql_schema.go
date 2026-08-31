@@ -66,6 +66,8 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS telemetry_device_credentials (
 			device_id VARCHAR(128) PRIMARY KEY,
 			secret_hash VARCHAR(128) NOT NULL,
+			enrollment_generation BIGINT NOT NULL DEFAULT 0,
+			revoked_at DATETIME(3) DEFAULT NULL,
 			created_at DATETIME(3) NOT NULL,
 			updated_at DATETIME(3) NOT NULL
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
@@ -109,6 +111,40 @@ func (s *MySQLStore) EnsureSchema(ctx context.Context) error {
 	}
 	if err := s.ensureEventIDUniqueIndex(ctx); err != nil {
 		return err
+	}
+	if err := s.ensureTelemetryCredentialColumns(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ensureTelemetryCredentialColumns upgrades credential tables created before
+// generation-bound telemetry tokens. Existing rows remain usable at
+// generation zero until the next proof-bound rotation.
+func (s *MySQLStore) ensureTelemetryCredentialColumns(ctx context.Context) error {
+	columns := []struct {
+		name string
+		ddl  string
+	}{
+		{name: "enrollment_generation", ddl: "ADD COLUMN enrollment_generation BIGINT NOT NULL DEFAULT 0"},
+		{name: "revoked_at", ddl: "ADD COLUMN revoked_at DATETIME(3) DEFAULT NULL"},
+	}
+	for _, column := range columns {
+		var count int
+		if err := s.db.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM information_schema.columns
+			WHERE table_schema = DATABASE()
+			  AND table_name = 'telemetry_device_credentials'
+			  AND column_name = ?
+		`, column.name).Scan(&count); err != nil {
+			return fmt.Errorf("inspect telemetry credential column %s: %w", column.name, err)
+		}
+		if count == 0 {
+			if _, err := s.db.ExecContext(ctx, "ALTER TABLE telemetry_device_credentials "+column.ddl); err != nil {
+				return fmt.Errorf("add telemetry credential column %s: %w", column.name, err)
+			}
+		}
 	}
 	return nil
 }

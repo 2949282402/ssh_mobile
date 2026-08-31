@@ -139,7 +139,7 @@ func (s *MySQLStore) QueryEvents(ctx context.Context, filter QueryFilter) ([]Tel
 		       trace_id, occurred_at, received_at, feature, severity, app_version,
 		       build_number, platform, release_channel, properties_json, error_json
 		FROM telemetry_events
-	` + whereSQL + " ORDER BY received_at DESC LIMIT ? OFFSET ?"
+	` + whereSQL + " ORDER BY received_at DESC, event_id DESC LIMIT ? OFFSET ?"
 
 	selectArgs := append(args, pageSize, offset)
 	rows, err := s.db.QueryContext(ctx, query, selectArgs...)
@@ -215,6 +215,27 @@ func (s *MySQLStore) GetSettings(ctx context.Context) (*TelemetrySettings, error
 
 func (s *MySQLStore) SaveSettings(ctx context.Context, settings TelemetrySettings) error {
 	SanitizeSettings(&settings)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin telemetry settings update: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var currentJSON string
+	err = tx.QueryRowContext(ctx, "SELECT settings_json FROM telemetry_settings WHERE id = 1 FOR UPDATE").Scan(&currentJSON)
+	if err == nil {
+		var current TelemetrySettings
+		if unmarshalErr := json.Unmarshal([]byte(currentJSON), &current); unmarshalErr != nil {
+			return fmt.Errorf("unmarshal current telemetry settings: %w", unmarshalErr)
+		}
+		SanitizeSettings(&current)
+		if settings.Policy.PolicyVersion <= current.Policy.PolicyVersion {
+			return fmt.Errorf("%w: current=%d incoming=%d", ErrPolicyVersionConflict, current.Policy.PolicyVersion, settings.Policy.PolicyVersion)
+		}
+	} else if err != sql.ErrNoRows {
+		return fmt.Errorf("read current telemetry settings: %w", err)
+	}
+
 	now := time.Now().UTC()
 	settings.UpdatedAt = now
 	data, err := json.Marshal(settings)
@@ -222,12 +243,18 @@ func (s *MySQLStore) SaveSettings(ctx context.Context, settings TelemetrySetting
 		return fmt.Errorf("marshal settings: %w", err)
 	}
 
-	_, err = s.db.ExecContext(ctx, `
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO telemetry_settings (id, settings_json, updated_at)
 		VALUES (1, ?, ?)
 		ON DUPLICATE KEY UPDATE settings_json = VALUES(settings_json), updated_at = VALUES(updated_at)
 	`, string(data), now)
-	return err
+	if err != nil {
+		return fmt.Errorf("persist telemetry settings: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit telemetry settings: %w", err)
+	}
+	return nil
 }
 
 func (s *MySQLStore) PurgeRetention(ctx context.Context, cutoff time.Time, maxRows int, batchSize int) (int, error) {
@@ -242,7 +269,7 @@ func (s *MySQLStore) PurgeRetention(ctx context.Context, cutoff time.Time, maxRo
 			res, err := s.db.ExecContext(ctx, `
 				DELETE FROM telemetry_events
 				WHERE received_at < ?
-				ORDER BY received_at ASC
+				ORDER BY received_at ASC, event_id ASC
 				LIMIT ?
 			`, cutoff, batchSize)
 			if err != nil {
@@ -272,7 +299,7 @@ func (s *MySQLStore) PurgeRetention(ctx context.Context, cutoff time.Time, maxRo
 
 			res, err := s.db.ExecContext(ctx, `
 				DELETE FROM telemetry_events
-				ORDER BY received_at ASC
+				ORDER BY received_at ASC, event_id ASC
 				LIMIT ?
 			`, toDelete)
 			if err != nil {
@@ -291,29 +318,88 @@ func (s *MySQLStore) PurgeRetention(ctx context.Context, cutoff time.Time, maxRo
 }
 
 func (s *MySQLStore) RegisterDeviceCredential(ctx context.Context, deviceID, secretHash string) error {
-	// This upsert is used only by explicit proof-bound rotation. The public
-	// enrollment path calls CreateDeviceCredential, which is create-only.
+	return s.RegisterDeviceCredentialWithGeneration(ctx, deviceID, secretHash, 0)
+}
+
+// RegisterDeviceCredentialWithGeneration rotates a credential after a fresh
+// Relay attestation and clears the revoked marker from the previous secret.
+func (s *MySQLStore) RegisterDeviceCredentialWithGeneration(ctx context.Context, deviceID, secretHash string, generation int64) error {
+	if generation < 0 {
+		generation = 0
+	}
 	now := time.Now().UTC()
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO telemetry_device_credentials (device_id, secret_hash, created_at, updated_at)
-		VALUES (?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE secret_hash = VALUES(secret_hash), updated_at = VALUES(updated_at)
-	`, deviceID, secretHash, now, now)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var currentGeneration int64
+	var revokedAt sql.NullTime
+	err = tx.QueryRowContext(ctx, `
+		SELECT enrollment_generation, revoked_at
+		FROM telemetry_device_credentials
+		WHERE device_id = ?
+		FOR UPDATE
+	`, deviceID).Scan(&currentGeneration, &revokedAt)
+	switch {
+	case err == sql.ErrNoRows:
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO telemetry_device_credentials
+				(device_id, secret_hash, enrollment_generation, revoked_at, created_at, updated_at)
+			VALUES (?, ?, ?, NULL, ?, ?)
+		`, deviceID, secretHash, generation, now, now)
+	case err != nil:
+		return err
+	case generation < currentGeneration || (revokedAt.Valid && generation <= currentGeneration):
+		return ErrEnrollmentGenerationConflict
+	default:
+		_, err = tx.ExecContext(ctx, `
+			UPDATE telemetry_device_credentials
+			SET secret_hash = ?, enrollment_generation = ?, revoked_at = NULL, updated_at = ?
+			WHERE device_id = ?
+		`, secretHash, generation, now, deviceID)
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // CreateDeviceCredential atomically creates a telemetry credential and refuses
 // to overwrite an existing one. The public enrollment endpoint uses this
 // create-only operation so a replay cannot rotate a secret implicitly.
 func (s *MySQLStore) CreateDeviceCredential(ctx context.Context, deviceID, secretHash string) error {
+	return s.CreateDeviceCredentialWithGeneration(ctx, deviceID, secretHash, 0)
+}
+
+// CreateDeviceCredentialWithGeneration creates a credential exactly once,
+// except that a revoked row may be replaced by a strictly newer Relay
+// enrollment generation.
+func (s *MySQLStore) CreateDeviceCredentialWithGeneration(ctx context.Context, deviceID, secretHash string, generation int64) error {
 	if strings.TrimSpace(deviceID) == "" || strings.TrimSpace(secretHash) == "" {
 		return fmt.Errorf("invalid deviceId or secretHash")
 	}
+	if generation < 0 {
+		generation = 0
+	}
 	now := time.Now().UTC()
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO telemetry_device_credentials (device_id, secret_hash, created_at, updated_at)
-		VALUES (?, ?, ?, ?)
-	`, deviceID, secretHash, now, now)
+	updated, err := s.db.ExecContext(ctx, `
+		UPDATE telemetry_device_credentials
+		SET secret_hash = ?, enrollment_generation = ?, revoked_at = NULL, updated_at = ?
+		WHERE device_id = ? AND revoked_at IS NOT NULL AND enrollment_generation < ?
+	`, secretHash, generation, now, deviceID, generation)
+	if err != nil {
+		return err
+	}
+	if count, countErr := updated.RowsAffected(); countErr == nil && count > 0 {
+		return nil
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO telemetry_device_credentials
+			(device_id, secret_hash, enrollment_generation, revoked_at, created_at, updated_at)
+		VALUES (?, ?, ?, NULL, ?, ?)
+	`, deviceID, secretHash, generation, now, now)
 	if isDuplicateKeyError(err) {
 		return ErrDeviceCredentialAlreadyExists
 	}
@@ -327,6 +413,55 @@ func (s *MySQLStore) GetDeviceCredential(ctx context.Context, deviceID string) (
 		return "", fmt.Errorf("%w: %s", ErrDeviceCredentialNotFound, deviceID)
 	}
 	return secretHash, err
+}
+
+func (s *MySQLStore) GetDeviceCredentialMetadata(ctx context.Context, deviceID string) (DeviceCredential, error) {
+	var credential DeviceCredential
+	var revokedAt sql.NullTime
+	err := s.db.QueryRowContext(ctx, `
+		SELECT secret_hash, enrollment_generation, revoked_at
+		FROM telemetry_device_credentials
+		WHERE device_id = ?
+	`, deviceID).Scan(&credential.SecretHash, &credential.EnrollmentGeneration, &revokedAt)
+	if err == sql.ErrNoRows {
+		return DeviceCredential{}, fmt.Errorf("%w: %s", ErrDeviceCredentialNotFound, deviceID)
+	}
+	if err != nil {
+		return DeviceCredential{}, err
+	}
+	if revokedAt.Valid {
+		value := revokedAt.Time
+		credential.RevokedAt = &value
+	}
+	return credential, nil
+}
+
+func (s *MySQLStore) RevokeDeviceCredential(ctx context.Context, deviceID string) error {
+	now := time.Now().UTC()
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE telemetry_device_credentials
+		SET revoked_at = COALESCE(revoked_at, ?), updated_at = ?
+		WHERE device_id = ?
+	`, now, now, deviceID)
+	if err != nil {
+		return err
+	}
+	if affected, rowsErr := result.RowsAffected(); rowsErr == nil && affected == 0 {
+		// MySQL may report zero affected rows when the row already carries the
+		// same revocation timestamp. Distinguish an idempotent revoke from a
+		// missing credential with an explicit existence check.
+		var exists int
+		lookupErr := s.db.QueryRowContext(ctx,
+			"SELECT 1 FROM telemetry_device_credentials WHERE device_id = ?", deviceID,
+		).Scan(&exists)
+		if lookupErr == sql.ErrNoRows {
+			return fmt.Errorf("%w: %s", ErrDeviceCredentialNotFound, deviceID)
+		}
+		if lookupErr != nil {
+			return lookupErr
+		}
+	}
+	return nil
 }
 
 func (s *MySQLStore) Close() error {

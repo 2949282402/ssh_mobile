@@ -23,12 +23,20 @@ class TelemetryUploadException implements Exception {
       statusCode == 409 &&
       (errorCode == 'ALREADY_ENROLLED' || message == 'ALREADY_ENROLLED');
   bool get isRateLimited => statusCode == 429;
+
+  /// A 413 is a request-level size failure and can be recovered by splitting
+  /// the batch; it must not permanently reject every record in that request.
+  bool get isPayloadTooLarge =>
+      statusCode == 413 ||
+      errorCode == 'BATCH_TOO_LARGE' ||
+      errorCode == 'PAYLOAD_TOO_LARGE';
   bool get isPermanentClientError =>
       statusCode != null &&
       statusCode! >= 400 &&
       statusCode! < 500 &&
       statusCode != 401 &&
-      statusCode != 429;
+      statusCode != 429 &&
+      !isPayloadTooLarge;
   bool get isServerError =>
       statusCode == null || (statusCode! >= 500 && statusCode! < 600);
 

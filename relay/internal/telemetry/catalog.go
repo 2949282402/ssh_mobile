@@ -30,9 +30,19 @@ const (
 )
 
 const (
-	telemetryPropertyTypeString  = "string"
-	telemetryPropertyTypeInteger = "integer"
-	telemetryPropertyTypeBoolean = "boolean"
+	telemetryPropertyTypeString     = "string"
+	telemetryPropertyTypeInteger    = "integer"
+	telemetryPropertyTypeBoolean    = "boolean"
+	maxTelemetryEventNameBytes      = 128
+	maxTelemetryRecordTypeBytes     = 32
+	maxTelemetryFeatureBytes        = 64
+	maxTelemetrySeverityBytes       = 32
+	maxTelemetryAppVersionBytes     = 32
+	maxTelemetryBuildNumberBytes    = 32
+	maxTelemetryPlatformBytes       = 32
+	maxTelemetryReleaseChannelBytes = 32
+	maxTelemetryErrorCodeBytes      = 64
+	maxTelemetryErrorCategoryBytes  = 64
 )
 
 type AllowedProperty struct {
@@ -447,11 +457,23 @@ func (c *Catalog) ValidateEnvelopeAt(env *TelemetryEnvelope, now time.Time) erro
 	if len([]byte(env.TraceID)) > 128 {
 		return fmt.Errorf("traceId exceeds maximum length of 128 bytes")
 	}
-	// telemetry_events.release_channel is VARCHAR(32); enforce the same byte
-	// bound so overlong channel labels are rejected explicitly rather than
-	// failing inside the durable store.
-	if len([]byte(env.ReleaseChannel)) > 32 {
-		return fmt.Errorf("releaseChannel exceeds maximum length of 32 bytes")
+	for _, bound := range []struct {
+		field   string
+		value   string
+		maximum int
+	}{
+		{field: "eventName", value: env.EventName, maximum: maxTelemetryEventNameBytes},
+		{field: "recordType", value: string(env.RecordType), maximum: maxTelemetryRecordTypeBytes},
+		{field: "feature", value: env.Feature, maximum: maxTelemetryFeatureBytes},
+		{field: "severity", value: string(env.Severity), maximum: maxTelemetrySeverityBytes},
+		{field: "appVersion", value: env.AppVersion, maximum: maxTelemetryAppVersionBytes},
+		{field: "buildNumber", value: env.BuildNumber, maximum: maxTelemetryBuildNumberBytes},
+		{field: "platform", value: env.Platform, maximum: maxTelemetryPlatformBytes},
+		{field: "releaseChannel", value: env.ReleaseChannel, maximum: maxTelemetryReleaseChannelBytes},
+	} {
+		if len([]byte(bound.value)) > bound.maximum {
+			return fmt.Errorf("%s exceeds maximum length of %d bytes", bound.field, bound.maximum)
+		}
 	}
 	if env.OccurredAt.IsZero() {
 		return fmt.Errorf("missing or invalid occurredAt timestamp")
@@ -486,6 +508,12 @@ func (c *Catalog) ValidateEnvelopeAt(env *TelemetryEnvelope, now time.Time) erro
 	}
 
 	if env.Error != nil {
+		if len([]byte(env.Error.ErrorCode)) > maxTelemetryErrorCodeBytes {
+			return fmt.Errorf("errorCode exceeds maximum length of %d bytes", maxTelemetryErrorCodeBytes)
+		}
+		if len([]byte(env.Error.Category)) > maxTelemetryErrorCategoryBytes {
+			return fmt.Errorf("error category exceeds maximum length of %d bytes", maxTelemetryErrorCategoryBytes)
+		}
 		errorDef, ok := c.GetErrorCode(env.Error.ErrorCode)
 		if !ok {
 			return fmt.Errorf("unregistered error code: %q", env.Error.ErrorCode)

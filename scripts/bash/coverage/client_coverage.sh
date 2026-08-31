@@ -102,7 +102,7 @@ for test_file in "${test_files[@]}"; do
 done
 
 source_arguments=(--source-root=lib/services/network/)
-coverage_base_ref="${CLIENT_COVERAGE_BASE_REF:-${GITHUB_EVENT_BEFORE:-}}"
+coverage_base_ref="${CLIENT_COVERAGE_BASE_REF:-${CI_BASE_SHA:-${GITHUB_BASE_SHA:-${GITHUB_EVENT_BEFORE:-}}}}"
 if [[ -n "$coverage_base_ref" ]]; then
   source_arguments+=("--base-ref=$coverage_base_ref")
 fi

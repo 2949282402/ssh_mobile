@@ -161,6 +161,12 @@ func (c *schemaProbeConn) QueryContext(_ context.Context, query string, _ []driv
 			}
 			return &schemaProbeRows{columns: []string{"COUNT(*)"}, values: []driver.Value{count}}, nil
 		}
+		// Generation-bound credential migrations use a parameterized column
+		// lookup. The probe models the fresh schema with both columns present so
+		// existing schema tests continue past the migration inspection.
+		if strings.Contains(lower, "table_name = 'telemetry_device_credentials'") && strings.Contains(lower, "column_name = ?") {
+			return &schemaProbeRows{columns: []string{"COUNT(*)"}, values: []driver.Value{int64(1)}}, nil
+		}
 		c.state.mu.Lock()
 		dataType := "varbinary"
 		if c.state.legacyColumn {

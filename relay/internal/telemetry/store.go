@@ -70,14 +70,16 @@ type Store interface {
 
 // MemoryStore provides a thread-safe in-memory Store for tests and hermetic execution.
 type MemoryStore struct {
-	mu             sync.RWMutex
-	catalog        *Catalog
-	rawEvents      []TelemetryEnvelope
-	receipts       map[string]time.Time // eventId -> receivedAt (never purged)
-	receiptDevices map[string]string    // eventId -> deviceId (never purged)
-	credentials    map[string]string    // deviceId -> secretHash
-	settings       TelemetrySettings
-	redisCache     RedisCache
+	mu                  sync.RWMutex
+	catalog             *Catalog
+	rawEvents           []TelemetryEnvelope
+	receipts            map[string]time.Time // eventId -> receivedAt (never purged)
+	receiptDevices      map[string]string    // eventId -> deviceId (never purged)
+	credentials         map[string]string    // deviceId -> secretHash
+	credentialMeta      map[string]DeviceCredential
+	settings            TelemetrySettings
+	settingsInitialized bool
+	redisCache          RedisCache
 }
 
 const telemetryReceiptOwnershipConflictReason = "event id ownership conflict"
@@ -94,27 +96,6 @@ func telemetryReceiptIdentity(env TelemetryEnvelope) (eventID, deviceID string, 
 		return "", "", false
 	}
 	return env.EventID, env.DeviceID, true
-}
-
-// CreateDeviceCredential persists a credential hash exactly once. It is
-// separate from RegisterDeviceCredential because public device enrollment must
-// never silently rotate a credential after a replay or lost response.
-func (m *MemoryStore) CreateDeviceCredential(ctx context.Context, deviceID, secretHash string) error {
-	if ctx != nil {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if strings.TrimSpace(deviceID) == "" || strings.TrimSpace(secretHash) == "" {
-		return fmt.Errorf("invalid deviceId or secretHash")
-	}
-	if _, exists := m.credentials[deviceID]; exists {
-		return ErrDeviceCredentialAlreadyExists
-	}
-	m.credentials[deviceID] = secretHash
-	return nil
 }
 
 // SetRedisCache wires a cache used for pipeline health probing in QueryOverview.
@@ -135,6 +116,7 @@ func NewMemoryStore(catalog *Catalog) *MemoryStore {
 		receipts:       make(map[string]time.Time),
 		receiptDevices: make(map[string]string),
 		credentials:    make(map[string]string),
+		credentialMeta: make(map[string]DeviceCredential),
 		settings:       DefaultSettings(),
 	}
 }
@@ -322,8 +304,13 @@ func (m *MemoryStore) QueryEvents(ctx context.Context, filter QueryFilter) ([]Te
 	}
 
 	total := len(filtered)
-	// Sort newest receivedAt first
+	// Sort newest receivedAt first, then use the exact event ID as a stable
+	// cursor tie-breaker. Service.IngestBatch stamps one timestamp for a whole
+	// request, so receivedAt alone would make page boundaries nondeterministic.
 	sort.Slice(filtered, func(i, j int) bool {
+		if filtered[i].ReceivedAt.Equal(filtered[j].ReceivedAt) {
+			return filtered[i].EventID > filtered[j].EventID
+		}
 		return filtered[i].ReceivedAt.After(filtered[j].ReceivedAt)
 	})
 
@@ -364,8 +351,12 @@ func (m *MemoryStore) SaveSettings(ctx context.Context, settings TelemetrySettin
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	SanitizeSettings(&settings)
+	if m.settingsInitialized && settings.Policy.PolicyVersion <= m.settings.Policy.PolicyVersion {
+		return fmt.Errorf("%w: current=%d incoming=%d", ErrPolicyVersionConflict, m.settings.Policy.PolicyVersion, settings.Policy.PolicyVersion)
+	}
 	settings.UpdatedAt = time.Now().UTC()
 	m.settings = settings
+	m.settingsInitialized = true
 	return nil
 }
 
@@ -387,8 +378,12 @@ func (m *MemoryStore) PurgeRetention(ctx context.Context, cutoff time.Time, maxR
 
 	// 2. Max rows purge: keep newest maxRows
 	if maxRows > 0 && len(retained) > maxRows {
-		// Sort oldest to newest
+		// Sort oldest to newest with the same deterministic event-id tie-breaker
+		// used by QueryEvents.
 		sort.Slice(retained, func(i, j int) bool {
+			if retained[i].ReceivedAt.Equal(retained[j].ReceivedAt) {
+				return retained[i].EventID < retained[j].EventID
+			}
 			return retained[i].ReceivedAt.Before(retained[j].ReceivedAt)
 		})
 		excess := len(retained) - maxRows
@@ -398,26 +393,6 @@ func (m *MemoryStore) PurgeRetention(ctx context.Context, cutoff time.Time, maxR
 
 	m.rawEvents = retained
 	return deletedCount, nil
-}
-
-func (m *MemoryStore) RegisterDeviceCredential(ctx context.Context, deviceID, secretHash string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if strings.TrimSpace(deviceID) == "" || strings.TrimSpace(secretHash) == "" {
-		return fmt.Errorf("invalid deviceId or secretHash")
-	}
-	m.credentials[deviceID] = secretHash
-	return nil
-}
-
-func (m *MemoryStore) GetDeviceCredential(ctx context.Context, deviceID string) (string, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	hash, ok := m.credentials[deviceID]
-	if !ok {
-		return "", fmt.Errorf("%w: %s", ErrDeviceCredentialNotFound, deviceID)
-	}
-	return hash, nil
 }
 
 func (m *MemoryStore) Close() error {

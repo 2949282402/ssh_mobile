@@ -1,5 +1,8 @@
 part of 'telemetry_client.dart';
 
+/// Must stay aligned with the relay's `MaxRequestBodyBytes` boundary.
+const int telemetryMaxUploadBodyBytes = 1 << 20;
+
 /// Standard `dart:io` HTTPS transport for telemetry operations.
 class HttpTelemetryTransport implements TelemetryTransport {
   HttpTelemetryTransport({
@@ -332,6 +335,17 @@ class HttpTelemetryTransport implements TelemetryTransport {
     required List<TelemetryEventRecord> records,
     required void Function(HttpClientRequest request) onRequestCreated,
   }) async {
+    final payload = jsonEncode({
+      'records': records.map((r) => r.toJson()).toList(),
+    });
+    final payloadBytes = utf8.encode(payload);
+    if (payloadBytes.length > telemetryMaxUploadBodyBytes) {
+      throw const TelemetryUploadException(
+        'Telemetry upload request body is too large',
+        statusCode: 413,
+        errorCode: 'PAYLOAD_TOO_LARGE',
+      );
+    }
     final uri = _resolveUri(baseUrl, TelemetryEndpoints.publicIngestPath);
     final req = await _client.postUrl(uri);
     onRequestCreated(req);
@@ -341,10 +355,7 @@ class HttpTelemetryTransport implements TelemetryTransport {
     if (authToken.isNotEmpty) {
       req.headers.set('Authorization', 'Bearer $authToken');
     }
-    final payload = jsonEncode({
-      'records': records.map((r) => r.toJson()).toList(),
-    });
-    req.add(utf8.encode(payload));
+    req.add(payloadBytes);
     final res = await req.close();
     final resBody = await utf8.decodeStream(res);
     if (res.statusCode >= 200 && res.statusCode < 300) {

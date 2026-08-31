@@ -189,7 +189,7 @@ job_app_coverage() {
   local -a coverage_args=()
   local -a source_args=(--source-root=lib)
   local shard isolated
-  local coverage_base_ref="${FULL_TEST_COVERAGE_BASE_REF:-${GITHUB_EVENT_BEFORE:-}}"
+  local coverage_base_ref="${FULL_TEST_COVERAGE_BASE_REF:-${CI_BASE_SHA:-${GITHUB_BASE_SHA:-${GITHUB_EVENT_BEFORE:-}}}}"
   if [[ -n "$coverage_base_ref" ]]; then
     source_args+=("--base-ref=$coverage_base_ref")
   fi

@@ -427,3 +427,33 @@ func TestAuthenticateDevice_RefreshIssuesNewToken(t *testing.T) {
 		t.Fatal("expected both tokens to verify")
 	}
 }
+
+func TestGenerationBoundTelemetryTokenStopsAfterRevocation(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore(DefaultCatalog())
+	service := NewServiceWithSecret(store, DefaultCatalog(), &NoopRedisCache{}, testAuthSecret)
+	const (
+		deviceID = "dev-generation-bound"
+		hash     = "generation-bound-hash"
+	)
+	if err := store.RegisterDeviceCredentialWithGeneration(ctx, deviceID, hash, 42); err != nil {
+		t.Fatalf("register generation-bound credential: %v", err)
+	}
+	exp := futureEpoch()
+	token, _, err := service.AuthenticateDevice(ctx, deviceID, deviceProof(deviceID, hash, exp), exp)
+	if err != nil {
+		t.Fatalf("authenticate generation-bound credential: %v", err)
+	}
+	if !strings.Contains(token, ".42.") || !service.VerifyDeviceTokenAt(ctx, deviceID, token) {
+		t.Fatalf("expected active generation-bound token, got %q", token)
+	}
+	if err := service.RevokeDeviceCredential(ctx, deviceID); err != nil {
+		t.Fatalf("revoke telemetry credential: %v", err)
+	}
+	if service.VerifyDeviceTokenAt(ctx, deviceID, token) {
+		t.Fatal("revoked generation-bound token still verified")
+	}
+	if _, _, err := service.AuthenticateDevice(ctx, deviceID, deviceProof(deviceID, hash, exp), exp); !errors.Is(err, ErrDeviceNotRegistered) {
+		t.Fatalf("revoked credential auth error = %v, want ErrDeviceNotRegistered", err)
+	}
+}

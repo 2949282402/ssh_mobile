@@ -63,6 +63,12 @@ var (
 	// ErrIngestBatchTooLarge is returned before validation or storage allocation
 	// when a direct caller exceeds the bounded public-ingest batch contract.
 	ErrIngestBatchTooLarge = errors.New("telemetry ingest batch exceeds maximum size")
+	// ErrPolicyVersionConflict prevents a stale Admin writer from replacing a
+	// newer server-owned policy. Policy versions are strictly monotonic.
+	ErrPolicyVersionConflict = errors.New("telemetry policy version conflict")
+	// ErrEnrollmentGenerationConflict prevents a revoked credential from being
+	// reactivated by a stale Relay attestation.
+	ErrEnrollmentGenerationConflict = errors.New("telemetry enrollment generation conflict")
 )
 
 type credentialCreator interface {
@@ -133,6 +139,31 @@ func deviceAuthMessage(deviceID string, expEpoch int64) []byte {
 	return []byte("telemetry:auth:" + deviceID + ":" + strconv.FormatInt(expEpoch, 10))
 }
 
+func deviceTokenMessage(deviceID string, generation, expEpoch int64) []byte {
+	return []byte("telemetry:token:" + deviceID + ":" + strconv.FormatInt(generation, 10) + ":" + strconv.FormatInt(expEpoch, 10))
+}
+
+func (s *Service) deviceCredential(ctx context.Context, deviceID string) (DeviceCredential, error) {
+	hash, err := s.store.GetDeviceCredential(ctx, deviceID)
+	if err != nil {
+		return DeviceCredential{}, err
+	}
+	credential := DeviceCredential{SecretHash: hash}
+	if metadataStore, ok := s.store.(credentialMetadataStore); ok {
+		metadata, metadataErr := metadataStore.GetDeviceCredentialMetadata(ctx, deviceID)
+		if metadataErr != nil {
+			return DeviceCredential{}, metadataErr
+		}
+		// Keep the Store interface's lookup authoritative for compatibility with
+		// wrappers that decorate or audit the legacy credential method.
+		if strings.TrimSpace(metadata.SecretHash) == "" {
+			metadata.SecretHash = hash
+		}
+		credential = metadata
+	}
+	return credential, nil
+}
+
 // VerifyDeviceProof checks that proof is a valid HMAC-SHA256 over the auth
 // message using the device's stored credential hash as the key.
 func VerifyDeviceProof(deviceID, storedCredentialHash, proof string, expEpoch int64) bool {
@@ -166,22 +197,22 @@ func (s *Service) AuthenticateDevice(ctx context.Context, deviceID, proof string
 		return "", 0, fmt.Errorf("%w: expEpoch outside allowed skew window", ErrAuthFailed)
 	}
 
-	credHash, err := s.store.GetDeviceCredential(ctx, deviceID)
+	credential, err := s.deviceCredential(ctx, deviceID)
 	if err != nil {
 		if errors.Is(err, ErrDeviceCredentialNotFound) {
 			return "", 0, ErrDeviceNotRegistered
 		}
 		return "", 0, fmt.Errorf("%w: unable to verify device credential: %v", ErrServiceUnavailable, err)
 	}
-	if strings.TrimSpace(credHash) == "" {
+	if credential.RevokedAt != nil || strings.TrimSpace(credential.SecretHash) == "" {
 		return "", 0, ErrDeviceNotRegistered
 	}
 
-	if !VerifyDeviceProof(deviceID, credHash, proof, expEpoch) {
+	if !VerifyDeviceProof(deviceID, credential.SecretHash, proof, expEpoch) {
 		return "", 0, fmt.Errorf("%w: invalid device proof", ErrAuthFailed)
 	}
 
-	token, exp := s.GenerateDeviceToken(deviceID, DefaultTokenTTL)
+	token, exp := s.generateDeviceToken(deviceID, credential.EnrollmentGeneration, DefaultTokenTTL)
 	expiresIn := exp - time.Now().UTC().Unix()
 	if expiresIn <= 0 {
 		expiresIn = int64(DefaultTokenTTL.Seconds())
@@ -202,6 +233,20 @@ func (s *Service) GenerateDeviceToken(deviceID string, expiryDuration time.Durat
 	return s.signToken(deviceID, exp)
 }
 
+func (s *Service) generateDeviceToken(deviceID string, generation int64, expiryDuration time.Duration) (string, int64) {
+	if generation <= 0 {
+		return s.GenerateDeviceToken(deviceID, expiryDuration)
+	}
+	if !isValidDeviceID(deviceID) {
+		return "", 0
+	}
+	if expiryDuration <= 0 {
+		expiryDuration = DefaultTokenTTL
+	}
+	exp := time.Now().UTC().Add(expiryDuration).Unix()
+	return s.signTokenWithGeneration(deviceID, generation, exp)
+}
+
 func (s *Service) signToken(deviceID string, expEpoch int64) (string, int64) {
 	if s.tokenKey == nil || !isValidDeviceID(deviceID) || expEpoch <= 0 {
 		return "", 0
@@ -210,6 +255,16 @@ func (s *Service) signToken(deviceID string, expEpoch int64) (string, int64) {
 	mac.Write(deviceAuthMessage(deviceID, expEpoch))
 	sig := hex.EncodeToString(mac.Sum(nil))
 	return fmt.Sprintf("%d.%s", expEpoch, sig), expEpoch
+}
+
+func (s *Service) signTokenWithGeneration(deviceID string, generation, expEpoch int64) (string, int64) {
+	if s.tokenKey == nil || !isValidDeviceID(deviceID) || generation <= 0 || expEpoch <= 0 {
+		return "", 0
+	}
+	mac := hmac.New(sha256.New, s.tokenKey)
+	mac.Write(deviceTokenMessage(deviceID, generation, expEpoch))
+	sig := hex.EncodeToString(mac.Sum(nil))
+	return fmt.Sprintf("%d.%d.%s", expEpoch, generation, sig), expEpoch
 }
 
 // VerifyDeviceToken checks whether the bearer token matches the device identity,
@@ -223,7 +278,7 @@ func (s *Service) VerifyDeviceToken(deviceID, token string) bool {
 		return false
 	}
 	parts := strings.Split(token, ".")
-	if len(parts) != 2 {
+	if len(parts) != 2 && len(parts) != 3 {
 		return false
 	}
 
@@ -238,9 +293,41 @@ func (s *Service) VerifyDeviceToken(deviceID, token string) bool {
 	}
 
 	mac := hmac.New(sha256.New, s.tokenKey)
-	mac.Write(deviceAuthMessage(deviceID, exp))
+	if len(parts) == 3 {
+		generation, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil || generation <= 0 {
+			return false
+		}
+		mac.Write(deviceTokenMessage(deviceID, generation, exp))
+	} else {
+		mac.Write(deviceAuthMessage(deviceID, exp))
+	}
 	expectedSig := hex.EncodeToString(mac.Sum(nil))
-	return hmac.Equal([]byte(expectedSig), []byte(parts[1]))
+	return hmac.Equal([]byte(expectedSig), []byte(parts[len(parts)-1]))
+}
+
+// VerifyDeviceTokenAt performs cryptographic verification and, when the
+// backing store supports credential metadata, checks the current Relay
+// enrollment generation and revocation marker. This is the request-path check
+// used by public ingest, so a Relay/admin revoke invalidates existing tokens.
+func (s *Service) VerifyDeviceTokenAt(ctx context.Context, deviceID, token string) bool {
+	if !s.VerifyDeviceToken(deviceID, token) {
+		return false
+	}
+	metadataStore, ok := s.store.(credentialMetadataStore)
+	if !ok {
+		return true
+	}
+	credential, err := metadataStore.GetDeviceCredentialMetadata(ctx, deviceID)
+	if err != nil || credential.RevokedAt != nil {
+		return false
+	}
+	parts := strings.Split(token, ".")
+	if len(parts) == 2 {
+		return credential.EnrollmentGeneration <= 0
+	}
+	generation, err := strconv.ParseInt(parts[1], 10, 64)
+	return err == nil && generation > 0 && generation == credential.EnrollmentGeneration
 }
 
 // EnrollDevice verifies an existing Relay device identity and creates one
@@ -301,6 +388,10 @@ func (s *Service) issueDeviceCredential(ctx context.Context, request TelemetryEn
 	if attestation.DeviceID != request.DeviceID {
 		return TelemetryEnrollmentResponse{}, ErrEnrollmentProofFailed
 	}
+	generation := attestation.EnrollmentGeneration
+	if generation < 0 {
+		generation = 0
+	}
 
 	secretBytes := make([]byte, 32)
 	if _, err := rand.Read(secretBytes); err != nil {
@@ -309,23 +400,45 @@ func (s *Service) issueDeviceCredential(ctx context.Context, request TelemetryEn
 	secret := hex.EncodeToString(secretBytes)
 	var storeErr error
 	if rotate {
-		if _, err := s.store.GetDeviceCredential(ctx, request.DeviceID); err != nil {
+		if _, err := s.deviceCredential(ctx, request.DeviceID); err != nil {
 			if errors.Is(err, ErrDeviceCredentialNotFound) {
 				return TelemetryEnrollmentResponse{}, ErrEnrollmentCredentialMissing
 			}
 			return TelemetryEnrollmentResponse{}, ErrServiceUnavailable
 		}
-		storeErr = s.store.RegisterDeviceCredential(ctx, request.DeviceID, hashSecret(secret))
+		if metadataStore, ok := s.store.(credentialMetadataStore); ok && generation > 0 {
+			storeErr = metadataStore.RegisterDeviceCredentialWithGeneration(ctx, request.DeviceID, hashSecret(secret), generation)
+		} else {
+			storeErr = s.store.RegisterDeviceCredential(ctx, request.DeviceID, hashSecret(secret))
+		}
 	} else {
-		storeErr = creator.CreateDeviceCredential(ctx, request.DeviceID, hashSecret(secret))
+		if metadataStore, ok := s.store.(credentialMetadataStore); ok && generation > 0 {
+			storeErr = metadataStore.CreateDeviceCredentialWithGeneration(ctx, request.DeviceID, hashSecret(secret), generation)
+		} else {
+			storeErr = creator.CreateDeviceCredential(ctx, request.DeviceID, hashSecret(secret))
+		}
 	}
 	if storeErr != nil {
-		if errors.Is(storeErr, ErrDeviceCredentialAlreadyExists) {
+		if errors.Is(storeErr, ErrDeviceCredentialAlreadyExists) || errors.Is(storeErr, ErrEnrollmentGenerationConflict) {
 			return TelemetryEnrollmentResponse{}, ErrEnrollmentAlreadyExists
 		}
 		return TelemetryEnrollmentResponse{}, ErrServiceUnavailable
 	}
 	return TelemetryEnrollmentResponse{DeviceID: request.DeviceID, Secret: secret}, nil
+}
+
+// RevokeDeviceCredential invalidates telemetry credentials without deleting
+// their generation metadata. Admin calls this as part of device revocation;
+// subsequent bearer-token checks fail closed even if an old token is replayed.
+func (s *Service) RevokeDeviceCredential(ctx context.Context, deviceID string) error {
+	if s == nil || s.store == nil {
+		return ErrServiceUnavailable
+	}
+	metadataStore, ok := s.store.(credentialMetadataStore)
+	if !ok {
+		return ErrServiceUnavailable
+	}
+	return metadataStore.RevokeDeviceCredential(ctx, deviceID)
 }
 
 func validEnrollmentRequestForService(request TelemetryEnrollmentRequest, attestor DeviceAttestor) error {
@@ -346,109 +459,6 @@ func validEnrollmentRequest(request TelemetryEnrollmentRequest) bool {
 		request.Timestamp > 0 &&
 		strings.TrimSpace(request.Nonce) != "" &&
 		strings.TrimSpace(request.Signature) != ""
-}
-
-func (s *Service) QueryEvents(ctx context.Context, filter QueryFilter) ([]TelemetryEnvelope, int, error) {
-	if s.store == nil {
-		return nil, 0, ErrServiceUnavailable
-	}
-	return s.store.QueryEvents(ctx, filter)
-}
-
-func (s *Service) QueryDiagnostics(ctx context.Context, filter QueryFilter) ([]TelemetryEnvelope, int, string, error) {
-	if s.store == nil {
-		return nil, 0, "", ErrServiceUnavailable
-	}
-	settings, err := s.store.GetSettings(ctx)
-	if err != nil {
-		return nil, 0, "", err
-	}
-	canUseRedis := (settings == nil || settings.RedisCacheEnabled) &&
-		filter.DeviceID == "" &&
-		filter.TraceID == "" &&
-		filter.EventName == "" &&
-		filter.Feature == "" &&
-		filter.ErrorCode == "" &&
-		filter.Severity == "" &&
-		filter.Platform == "" &&
-		filter.ReleaseChannel == "" &&
-		filter.AppVersion == "" &&
-		filter.StartTime.IsZero() &&
-		filter.EndTime.IsZero() &&
-		(filter.TimeRange == "" || filter.TimeRange == "all") &&
-		filter.Page <= 1
-
-	if canUseRedis {
-		limit := filter.PageSize
-		if limit <= 0 {
-			limit = 50
-		}
-		cached, err := s.redisCache.GetRecentDiagnostics(ctx, limit)
-		if err == nil && len(cached) > 0 {
-			// Query real total count from store for accurate pagination
-			_, total, err := s.store.QueryDiagnostics(ctx, QueryFilter{RecordType: RecordTypeDiagnostic, PageSize: 1})
-			if err == nil && total >= len(cached) {
-				return cached, total, "redis_cache", nil
-			}
-			return cached, len(cached), "redis_cache", nil
-		}
-	}
-
-	// Fallback to MySQL Store
-	records, total, err := s.store.QueryDiagnostics(ctx, filter)
-	if err != nil {
-		return nil, 0, "mysql", err
-	}
-	return records, total, "mysql", nil
-}
-
-func (s *Service) GetPolicy(ctx context.Context) (*TelemetryUploadPolicy, error) {
-	settings, err := s.GetSettings(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &settings.Policy, nil
-}
-
-func (s *Service) GetSettings(ctx context.Context) (*TelemetrySettings, error) {
-	if s.store == nil {
-		return nil, ErrServiceUnavailable
-	}
-	return s.store.GetSettings(ctx)
-}
-
-func (s *Service) UpdateSettings(ctx context.Context, settings TelemetrySettings) error {
-	if s.store == nil {
-		return ErrServiceUnavailable
-	}
-	return s.store.SaveSettings(ctx, settings)
-}
-
-// PurgeRetention executes one retention cycle.
-func (s *Service) PurgeRetention(ctx context.Context) (int, error) {
-	if s.store == nil {
-		return 0, ErrServiceUnavailable
-	}
-	settings, err := s.store.GetSettings(ctx)
-	if err != nil {
-		return 0, err
-	}
-
-	var cutoff time.Time
-	if settings.RetentionTimeEnabled && settings.RetentionDays > 0 {
-		cutoff = time.Now().UTC().Add(-time.Duration(settings.RetentionDays) * 24 * time.Hour)
-	}
-
-	maxRows := 0
-	if settings.RetentionRowsEnabled && settings.RetentionMaxRows > 0 {
-		maxRows = settings.RetentionMaxRows
-	}
-
-	if cutoff.IsZero() && maxRows == 0 {
-		return 0, nil
-	}
-
-	return s.store.PurgeRetention(ctx, cutoff, maxRows, 500)
 }
 
 // Close closes the underlying store and cache resources.

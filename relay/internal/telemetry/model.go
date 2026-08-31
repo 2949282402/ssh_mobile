@@ -4,6 +4,7 @@ package telemetry
 
 import (
 	"context"
+	"sort"
 	"time"
 )
 
@@ -25,6 +26,15 @@ type TelemetryEnrollmentRequest struct {
 type TelemetryEnrollmentResponse struct {
 	DeviceID string `json:"deviceId"`
 	Secret   string `json:"secret"`
+}
+
+// DeviceCredential is the durable telemetry credential state. Enrollment
+// generation comes from Relay and lets bearer tokens be invalidated when the
+// Relay enrollment is revoked or replaced.
+type DeviceCredential struct {
+	SecretHash           string
+	EnrollmentGeneration int64
+	RevokedAt            *time.Time
 }
 
 // DeviceAttestationRequest is the proof forwarded by Admin to Relay. Keeping
@@ -188,28 +198,86 @@ func DefaultSettings() TelemetrySettings {
 	}
 }
 
-// SanitizeSettings validates and clamps configuration values to safe bounds.
+const (
+	maxTelemetryBatchThreshold = 1000
+	maxTelemetryInterval       = 3600
+	maxTelemetryLocalRecords   = 1000000
+	maxTelemetryRetentionDays  = 3650
+	maxTelemetryRetentionRows  = 100000000
+	maxTelemetryRedisRecords   = 10000
+)
+
+var allowedTelemetryTriggers = map[string]struct{}{
+	"highPriorityError":        {},
+	"appBackground":            {},
+	"networkRecovered":         {},
+	"appForegroundWithBacklog": {},
+}
+
+// SanitizeSettings validates and clamps configuration values to the bounds
+// shared by the JSON, Dart, TypeScript, and relay contracts. In particular,
+// maxBatchSize never exceeds MaxIngestBatchSize, which prevents a policy from
+// instructing clients to send a request the relay must reject with 413.
 func SanitizeSettings(s *TelemetrySettings) {
+	if s == nil {
+		return
+	}
 	if s.Policy.BatchSizeThreshold < 1 {
 		s.Policy.BatchSizeThreshold = 50
+	} else if s.Policy.BatchSizeThreshold > maxTelemetryBatchThreshold {
+		s.Policy.BatchSizeThreshold = maxTelemetryBatchThreshold
 	}
 	if s.Policy.TimeIntervalSeconds < 5 {
 		s.Policy.TimeIntervalSeconds = 60
+	} else if s.Policy.TimeIntervalSeconds > maxTelemetryInterval {
+		s.Policy.TimeIntervalSeconds = maxTelemetryInterval
 	}
 	if s.Policy.MaxBatchSize < 1 {
 		s.Policy.MaxBatchSize = 100
+	} else if s.Policy.MaxBatchSize > MaxIngestBatchSize {
+		s.Policy.MaxBatchSize = MaxIngestBatchSize
 	}
 	if s.Policy.ClientMaxLocalRecords < 100 {
 		s.Policy.ClientMaxLocalRecords = 10000
+	} else if s.Policy.ClientMaxLocalRecords > maxTelemetryLocalRecords {
+		s.Policy.ClientMaxLocalRecords = maxTelemetryLocalRecords
+	}
+	triggers := make([]string, 0, len(s.Policy.SpecialTriggers))
+	seen := make(map[string]struct{}, len(s.Policy.SpecialTriggers))
+	for _, trigger := range s.Policy.SpecialTriggers {
+		if _, ok := allowedTelemetryTriggers[trigger]; !ok {
+			continue
+		}
+		if _, ok := seen[trigger]; ok {
+			continue
+		}
+		seen[trigger] = struct{}{}
+		triggers = append(triggers, trigger)
+	}
+	if len(triggers) == 0 {
+		for trigger := range allowedTelemetryTriggers {
+			triggers = append(triggers, trigger)
+		}
+		sort.Strings(triggers)
+	}
+	s.Policy.SpecialTriggers = triggers
+	if s.Policy.PolicyVersion < 1 {
+		s.Policy.PolicyVersion = 1
 	}
 	if s.RetentionDays < 1 {
 		s.RetentionDays = 30
+	} else if s.RetentionDays > maxTelemetryRetentionDays {
+		s.RetentionDays = maxTelemetryRetentionDays
 	}
 	if s.RetentionMaxRows < 1000 {
 		s.RetentionMaxRows = 500000
+	} else if s.RetentionMaxRows > maxTelemetryRetentionRows {
+		s.RetentionMaxRows = maxTelemetryRetentionRows
 	}
 	if s.RedisMaxRecords < 10 {
 		s.RedisMaxRecords = 1000
+	} else if s.RedisMaxRecords > maxTelemetryRedisRecords {
+		s.RedisMaxRecords = maxTelemetryRedisRecords
 	}
 	if s.UpdatedAt.IsZero() {
 		s.UpdatedAt = time.Now().UTC()

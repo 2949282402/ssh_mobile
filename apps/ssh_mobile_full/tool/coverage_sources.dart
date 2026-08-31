@@ -14,7 +14,7 @@ List<String> readSourceManifest(String path) {
       .toList(growable: false);
 }
 
-/// Finds newly added production sources in [sourceRoots]. When [baseRef] is
+/// Finds added or changed production sources in [sourceRoots]. When [baseRef] is
 /// null, the explicit roots are treated as the expected source set; this is
 /// useful for local dry-runs where no CI base ref is available.
 List<String> discoverProductionSources({
@@ -59,6 +59,8 @@ String? resolveCoverageBaseRef({
     explicitBaseRef,
     env['COVERAGE_BASE_REF'],
     env['CI_BASE_REF'],
+    env['CI_BASE_SHA'],
+    env['GITHUB_BASE_SHA'],
     env['GITHUB_EVENT_BEFORE'],
     env['GITHUB_BASE_REF'],
   ]) {
@@ -180,7 +182,7 @@ List<String> _gitAddedSourcePaths(
     '--name-only',
     '--relative',
     '-z',
-    '--diff-filter=A',
+    '--diff-filter=ACMR',
     '--no-renames',
     baseRef,
     '--',

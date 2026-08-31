@@ -108,7 +108,7 @@ describe('TelemetrySettingsPage boundary behavior', () => {
       redisMaxRecords: 1000,
     });
 
-    const upperValues = ['1001', '3601', '1001', '1000001', '3651', '100000001', '10001'];
+    const upperValues = ['1001', '3601', '101', '1000001', '3651', '100000001', '10001'];
     const refreshedSpinbuttons = screen.getAllByRole('spinbutton');
     for (const [index, value] of upperValues.entries()) {
       await user.clear(refreshedSpinbuttons[index]);
@@ -122,7 +122,7 @@ describe('TelemetrySettingsPage boundary behavior', () => {
     expect(upperBody.policy).toMatchObject({
       batchSizeThreshold: 1000,
       timeIntervalSeconds: 3600,
-      maxBatchSize: 1000,
+      maxBatchSize: 100,
       clientMaxLocalRecords: 1000000,
     });
     expect(upperBody).toMatchObject({

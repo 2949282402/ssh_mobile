@@ -25,28 +25,35 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       app: ${{ steps.filter.outputs.app }}
+      base_sha: ${{ steps.filter.outputs.base_sha }}
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
       - name: Detect changed scopes
         id: filter
         env:
-          BEFORE_SHA: ${{ github.event.before }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           CURRENT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          if [[ "$BEFORE_SHA" == 0000000000000000000000000000000000000000 ]] || \
-            ! git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
+          base_sha="$EVENT_BASE_SHA"
+          if [[ -z "$base_sha" ]]; then
+            git fetch --no-tags origin main
+            base_sha="$(git merge-base "$CURRENT_SHA" origin/main)"
+          fi
+          if [[ -z "$base_sha" ]] || ! git cat-file -e "$base_sha^{commit}" 2>/dev/null; then
             changed_files="$(git diff-tree --root --no-commit-id --name-only -r "$CURRENT_SHA")"
           else
-            changed_files="$(git diff --name-only "$BEFORE_SHA" "$CURRENT_SHA")"
+            changed_files="$(git diff --name-only "$base_sha" "$CURRENT_SHA")"
           fi
           app=false
           app_path_pattern='^(apps/ssh_mobile_full/|packages/(core|features|infrastructure)/|native/|protocol/|pubspec(\.yaml|\.lock)$|melos\.yaml$|analysis_options\.yaml$|dart_test\.yaml$|build\.yaml$|tool/|scripts/(bash|powershell)/(ci|coverage)/|\.github/workflows/flutter\.yml$)'
           if printf '%s\n' "$changed_files" | grep -Eq "$app_path_pattern"; then app=true; fi
           echo "app=$app" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
           echo "Full App scope changed: $app"
+          echo "Comparison base: $base_sha"
 
   front-quality:
     runs-on: ubuntu-latest
@@ -925,7 +932,7 @@ jobs:
 
           dart run tool/check_coverage.dart \
             --minimum=90 \
-            --base-ref="${{ github.event.before }}" \
+            --base-ref="${{ needs.change_scope.outputs.base_sha }}" \
             --source-root=lib \
             "${coverage_args[@]}"
 

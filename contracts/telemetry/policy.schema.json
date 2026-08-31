@@ -34,9 +34,9 @@
     "maxBatchSize": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 1000,
+      "maximum": 100,
       "default": 100,
-      "description": "Maximum number of records to include in a single HTTPS upload request body."
+      "description": "Maximum number of records to include in a single HTTPS upload request body; aligned with the relay hard limit."
     },
     "clientMaxLocalRecords": {
       "type": "integer",

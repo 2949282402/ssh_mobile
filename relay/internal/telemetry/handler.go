@@ -238,7 +238,7 @@ func (h *Handler) handlePublicIngest(w http.ResponseWriter, r *http.Request) {
 	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
 	token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
 
-	if deviceID == "" || token == "" || !h.service.VerifyDeviceToken(deviceID, token) {
+	if deviceID == "" || token == "" || !h.service.VerifyDeviceTokenAt(r.Context(), deviceID, token) {
 		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized telemetry device credential")
 		return
 	}
@@ -463,6 +463,10 @@ func (h *Handler) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := h.service.UpdateSettings(r.Context(), settings); err != nil {
+			if errors.Is(err, ErrPolicyVersionConflict) {
+				h.writeError(w, http.StatusConflict, "POLICY_VERSION_CONFLICT", "telemetry policy is newer; reload settings before updating")
+				return
+			}
 			h.logError("telemetry settings update failed", err)
 			h.writeError(w, http.StatusInternalServerError, "UPDATE_SETTINGS_ERROR", "telemetry settings update failed")
 			return
