@@ -255,7 +255,7 @@ export function TelemetrySettingsPage() {
 
           <div>
             <p className="settings-group-label">特殊触发场景 (Special Triggers)</p>
-            <div className="form-grid form-grid--2col" style={{ marginTop: '8px' }}>
+            <div className="form-grid form-grid--2col settings-trigger-grid">
               {ALL_SPECIAL_TRIGGERS.map((t) => (
                 <div key={t.id} className="settings-option-card">
                   <label className="form-check">
@@ -385,13 +385,13 @@ function SettingsSkeleton() {
       />
       <section className="panel">
         <Skeleton className="skeleton-heading" />
-        <div className="skeleton-row" style={{ marginTop: '16px' }}>
+        <div className="skeleton-row settings-skeleton-group">
           <Skeleton className="skeleton-metric" />
         </div>
       </section>
       <section className="panel dashboard-section">
         <Skeleton className="skeleton-heading" />
-        <div className="skeleton-row" style={{ marginTop: '16px' }}>
+        <div className="skeleton-row settings-skeleton-group">
           <Skeleton className="skeleton-metric" />
         </div>
       </section>

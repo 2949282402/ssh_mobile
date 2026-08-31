@@ -32,49 +32,35 @@ The `front/` workspace contains the browser-based administration and observabili
 
 ## 2. Layer architecture
 
-Front enforces a strict unidirectional dependency graph. Lower layers never depend on or import from upper layers.
+Front enforces a strict directional dependency DAG. Lower layers never depend on or import from upper layers.
 
 ```text
-┌─────────────────────────────────────────────────────────────────────────┐
-│ Layout & Router (src/layout/app-shell.tsx, React Router)               │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     │
-┌────────────────────────────────────▼────────────────────────────────────┐
-│ Feature Pages (src/features/<feature>/*-page.tsx)                      │
-│   Overview | Devices | Access | Telemetry (Dashboard, Events, ...)      │
-└──────────────┬───────────────────────────────────────────┬──────────────┘
-               │                                           │
-┌──────────────▼──────────────────────────┐ ┌──────────────▼──────────────┐
-│ Feature Components                      │ │ Shared UI Primitives        │
-│ (src/features/<feature>/components/*)   │ │ (src/components/ui.tsx,     │
-│   TelemetryFilterPanel, RecordCard, ... │ │  confirm-dialog, toast)     │
-└──────────────┬──────────────────────────┘ └──────────────┬──────────────┘
-               │                                           │
-               └─────────────────────┬─────────────────────┘
-                                     │
-┌────────────────────────────────────▼────────────────────────────────────┐
-│ Query & Mutation Hooks (src/hooks/)                                     │
-│   TanStack Query orchestration, cache keys, polling, refetch logic      │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     │
-┌────────────────────────────────────▼────────────────────────────────────┐
-│ API Request Adapters (src/api/)                                         │
-│   HTTP client, error normalization (ApiRequestError), fetch wrappers   │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     │
-┌────────────────────────────────────▼────────────────────────────────────┐
-│ Runtime Validation & DTO Contracts (src/schemas/)                       │
-│   Zod schemas, input/output TypeScript types                            │
-└─────────────────────────────────────────────────────────────────────────┘
+App / Router
+├── Layout
+└── Feature Pages
+    ├── Feature Components
+    │   ├── Shared UI Primitives
+    │   └── Schema Types
+    ├── Shared UI Primitives
+    ├── Query Hooks
+    │   ├── API Adapters
+    │   ├── Query Keys
+    │   └── Schema Types
+    └── Schema Types
+
+API Adapters
+├── HTTP Client
+├── Canonical Routes
+└── Zod Schemas
 ```
 
 ### Layer responsibilities
 
 1. **Schemas (`src/schemas/`)**: Source of truth for API payload contracts. Every incoming response is validated with Zod before consumption by hooks or views.
-2. **API Adapters (`src/api/`)**: Pure async functions that invoke the browser `fetch` API. Handles query string serialization, request cancellation (`AbortSignal`), status code checking, and error payload extraction.
+2. **API Adapters (`src/api/`)**: Pure async functions that invoke the typed HTTP request client (`src/api/client.ts`) using canonical routes (`src/api/routes.ts`) and Zod schemas. Handles query string serialization, request cancellation (`AbortSignal`), status code checking, and error payload extraction.
 3. **Query Hooks (`src/hooks/`)**: Wraps TanStack Query (`useQuery`, `useMutation`). Centralizes query cache keys (`src/api/query-keys.ts`), cache garbage collection times (`gcTime`), staleness thresholds (`staleTime`), and retry policies (`shouldRetryApiRequest`).
-4. **Shared UI Primitives (`src/components/`)**: Feature-agnostic UI building blocks (`Button`, `Badge`, `PageHeader`, `MetricTile`, `Pagination`, `CodeBlock`, `ConfirmDialog`, `Toast`).
-5. **Feature Components (`src/features/<feature>/components/`)**: Reusable presentation components specific to a domain feature (e.g. `TelemetryFilterPanel`, `TelemetryRecordCard`, `TelemetryTrendList`).
+4. **Shared UI Primitives (`src/components/`)**: Generic, feature-agnostic UI building blocks (`Button`, `Badge`, `PageHeader`, `MetricTile`, `Pagination`, `CodeBlock`, `ConfirmDialog`, `Toast`). Never depends on feature components or schema contracts.
+5. **Feature Components (`src/features/<feature>/components/`)**: Reusable presentation components specific to a domain feature (e.g. `TelemetryFilterPanel`, `TelemetryRecordCard`, `TelemetryTrendList`). Depends on shared UI primitives and schema types; never initiates direct HTTP requests.
 6. **Feature Pages (`src/features/<feature>/`)**: Top-level page route components that assemble feature components and shared primitives, binding them to query hooks and local state.
 7. **Layout (`src/layout/`)**: Application shell, persistent navigation sidebar, mobile drawer, topbar breadcrumb, and administrator session controls.
 
@@ -104,7 +90,7 @@ All network interactions pass through `/api/admin/v1/*` endpoints.
 Feature Page ──► Query Hook ──► API Adapter ──► Relay Backend Handlers
 ```
 
-- **Authentication**: Authenticated sessions rely on an `HttpOnly`, `SameSite=Lax` cookie issued upon successful login at `/api/v1/auth/login`. The browser attaches the cookie automatically to same-origin requests.
+- **Authentication**: Authenticated sessions rely on an `HttpOnly`, `SameSite=Lax` cookie issued upon successful login at `AdminApiRoutes.auth.login` (canonical route `/api/admin/v1/auth/login`, prefixed by `VITE_ADMIN_API_BASE_URL` with default `/api/admin/v1` as defined in `src/api/routes.ts`). The browser attaches the cookie automatically to same-origin requests.
 - **Development Proxy**: In local development, Vite proxies API requests to the configured Relay daemon. In production, Caddy routes frontend assets and backend endpoints under the same origin.
 - **Error Normalization**: All non-2xx responses are parsed into structured `ApiRequestError` instances carrying the HTTP status code, machine-readable error code, and localized operator message.
 
@@ -177,27 +163,31 @@ Form inputs must never borrow button styles. Form controls use dedicated CSS cla
 
 1. **Static Presentation Belongs in CSS**: All static styling (layout, grid structure, padding, margins, borders, radii, typography, hover transitions, and media queries) must be defined in `src/styles.css` using semantic class names.
 2. **Dynamic Runtime Data Rule**: Inline `style={{ ... }}` attributes are permitted only for truly dynamic runtime data (such as calculated percentage widths for trend bars) or dynamic CSS custom property overrides.
-3. **No Magic Numbers**: Colors and radii must strictly use defined CSS custom properties.
+3. **Design System First**: Prefer existing CSS custom properties and the established spacing/radius scale. Do not introduce arbitrary page-specific colors, radii, shadows, or spacing values when an existing Design System value/pattern already exists.
 
 ---
 
 ## 7. Responsive architecture
 
-Front adapts across three primary layout viewports:
+Front adapts across three primary layout viewports (`1100px`, `900px`, `760px`):
 
 ```text
 ┌────────────────────────┬────────────────────────┬────────────────────────┐
-│  Desktop (≥ 1100px)    │   Medium (760–1100px)  │   Mobile (320–760px)   │
+│  Desktop (≥ 1100px)    │   Medium (900–1100px)  │   Mobile (≤ 760px)     │
 ├────────────────────────┼────────────────────────┼────────────────────────┤
-│ - Sticky 250px sidebar │ - Sticky sidebar       │ - Collapsible drawer   │
-│ - 4-column metric grid │ - 2-column metric grid │ - 1-column metric grid │
-│ - Full filter grid     │ - Responsive wrapping  │ - Stacked filter panel │
-│ - Table layout         │ - Horizontal scroll    │ - Card/list adaptation │
+│ - Sticky 250px sidebar │ - Sticky 250px sidebar │ - Off-canvas drawer    │
+│ - 4-column metric grid │ - 2-column metric grid │ - 2-col tight metrics  │
+│ - Auto-fit form grids  │ - Auto-fit form grids  │ - 1-col form grids     │
+│ - Table layout         │ - Table scroll wrapper │ - Stacked card summary │
 └────────────────────────┴────────────────────────┴────────────────────────┘
 ```
 
-- Content scroll containers prevent window-level layout breaking.
-- Monospace strings (Trace IDs, Session IDs, URLs, JSON payloads) use `overflow-x: auto` or ellipsis truncation to prevent viewport expansion on narrow devices.
+- **Desktop (≥ 1100px)**: Persistent 250px sidebar, 4-column metric grid (`.metric-grid`), full-width tables with horizontal scroll wrapper.
+- **Medium (900px–1100px)**: Persistent sidebar maintained, `.metric-grid` collapses to 2 columns, standard form layouts preserved.
+- **Mobile (≤ 900px / ≤ 760px)**:
+  - At ≤ 900px: Explicit multi-column form grids (`.form-grid--2col`, `.form-grid--3col`) and two-column overview layout collapse to 1 column.
+  - At ≤ 760px: Sidebar becomes an off-canvas drawer toggled via the header brand trigger; `.metric-grid` remains 2 columns with tightened padding and gaps (`9px` gap, `10px` margin); record card summaries stack vertically with full-width action aside.
+- **Data Overflow Containment**: Monospace strings (Trace IDs, Session IDs, URLs, JSON payloads, and stack traces) use `overflow-x: auto` or word-wrapping to prevent viewport expansion on narrow devices.
 
 ---
 

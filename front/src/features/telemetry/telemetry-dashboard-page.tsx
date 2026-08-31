@@ -190,7 +190,7 @@ export function TelemetryDashboardPage() {
             {health.status.toUpperCase()}
           </Badge>
         </div>
-        <div className="metric-grid" style={{ marginTop: '16px' }}>
+        <div className="metric-grid" aria-label="流水线健康指标">
           <MetricTile
             label="服务端 Ingest 平均延迟"
             value={health.serverIngestRequests > 0 ? `${health.serverIngestLatencyMs.toFixed(2)} ms` : 'No data'}

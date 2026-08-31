@@ -148,6 +148,12 @@ describe('TelemetryDiagnosticsPage boundary behavior', () => {
     expect(screen.getByText('error_event')).toBeInTheDocument();
     expect(screen.getByText('info_event')).toBeInTheDocument();
 
+    // Verify semantic severity badge tone mapping (info->online, warn->warning, error/critical->danger)
+    expect(screen.getByText('critical_event').closest('article')?.querySelector('.badge')).toHaveClass('badge--danger');
+    expect(screen.getByText('error_event').closest('article')?.querySelector('.badge')).toHaveClass('badge--danger');
+    expect(screen.getByText('warning_event').closest('article')?.querySelector('.badge')).toHaveClass('badge--warning');
+    expect(screen.getByText('info_event').closest('article')?.querySelector('.badge')).toHaveClass('badge--online');
+
     const severity = screen.getByRole('combobox');
     await user.selectOptions(severity, 'critical');
     await user.selectOptions(severity, '');
@@ -177,14 +183,24 @@ describe('TelemetryDiagnosticsPage boundary behavior', () => {
     const warnDetails = screen.getByRole('button', {
       name: '查看日志详情 warning_event',
     });
+    expect(warnDetails).toHaveAttribute('aria-expanded', 'false');
     await user.click(warnDetails);
+    expect(warnDetails).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getAllByText(/WARN_QUEUE/)).toHaveLength(2);
     expect(screen.getByText(/"component": "queue"/)).toBeInTheDocument();
     await user.click(warnDetails);
+    expect(warnDetails).toHaveAttribute('aria-expanded', 'false');
 
-    const errorRow = screen.getByText('error_event').parentElement?.parentElement;
-    expect(errorRow).not.toBeNull();
-    await user.click(errorRow!);
+    // Clicking non-button row text does not expand (button is the sole disclosure trigger)
+    await user.click(screen.getByText('error_event'));
+    expect(screen.queryByText(/Error: The sync failed/)).not.toBeInTheDocument();
+
+    const errorDetails = screen.getByRole('button', {
+      name: '查看日志详情 error_event',
+    });
+    expect(errorDetails).toHaveAttribute('aria-expanded', 'false');
+    await user.click(errorDetails);
+    expect(errorDetails).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getAllByText(/SYNC_FAILED/)).toHaveLength(2);
     expect(screen.getByText(/Error: The sync failed/)).toBeInTheDocument();
     expect(screen.getByText(/"retryable": true/)).toBeInTheDocument();

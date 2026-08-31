@@ -6,7 +6,7 @@ import type { Severity, TelemetryRecord } from '../../../schemas/telemetry';
 const SEVERITY_TONES: Record<Severity, 'online' | 'warning' | 'danger'> = {
   info: 'online',
   warn: 'warning',
-  error: 'warning',
+  error: 'danger',
   critical: 'danger',
 };
 
@@ -40,12 +40,7 @@ export function TelemetryRecordCard({
 
   return (
     <article className={`record-card${expanded ? ' record-card--expanded' : ''}`}>
-      <div
-        className="record-card__summary"
-        onClick={onToggle}
-        role="region"
-        aria-label={`${record.eventName} summary`}
-      >
+      <div className="record-card__summary">
         <div className="record-card__main">
           <Badge tone={tone} dot>
             {record.severity.toUpperCase()}
@@ -75,10 +70,7 @@ export function TelemetryRecordCard({
           <span className="record-card__time">{timeFormatted}</span>
           <Button
             variant="quiet"
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggle();
-            }}
+            onClick={onToggle}
             aria-label={buttonAriaLabel}
             aria-expanded={expanded}
           >

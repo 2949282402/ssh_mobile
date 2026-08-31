@@ -27,25 +27,34 @@
 
 ## React layer architecture
 
-Front code is strictly structured into unidirectional layers:
+Front code is structured as a directional dependency DAG with strict layer boundaries:
 
 ```text
-src/layout/ & Router
-        ↓
-src/features/<feature>/ (page composition & feature-specific components)
-        ↓
-src/components/ (generic Admin UI primitives)
-        ↓
-src/hooks/ (TanStack Query hooks & mutations)
-        ↓
-src/api/ (typed client request adapters)
-        ↓
-src/schemas/ (runtime Zod DTO contracts)
+App / Router
+├── Layout
+└── Feature Pages
+    ├── Feature Components
+    │   ├── Shared UI Primitives
+    │   └── Schema Types
+    ├── Shared UI Primitives
+    ├── Query Hooks
+    │   ├── API Adapters
+    │   ├── Query Keys
+    │   └── Schema Types
+    └── Schema Types
+
+API Adapters
+├── HTTP Client
+├── Canonical Routes
+└── Zod Schemas
 ```
 
-- **Feature pages** compose UI using generic primitives and feature components; pages must not execute raw `fetch()` or construct unvalidated API calls directly.
+- **Feature pages** assemble feature components and shared primitives, and bind query hooks; pages must not execute raw `fetch()` or construct unvalidated API calls directly.
+- **Feature components** are presentation-only, importing shared UI primitives and schema types; they never perform direct HTTP requests or import hooks/API adapters.
+- **Shared UI primitives** (`src/components/ui.tsx`) remain strictly feature-agnostic and never depend on feature components, pages, hooks, or schemas.
 - **Query hooks** encapsulate TanStack Query caching, polling intervals, query keys (`src/api/query-keys.ts`), and error normalization (`ApiRequestError`).
-- **Server state** belongs to TanStack Query; page-transient state (search drafts, expanded cards, modal open state) belongs to local component state. Never duplicate server cache into secondary global state stores.
+- **API adapters** encapsulate the typed HTTP request layer, error handling, and canonical routes with Zod schemas.
+- **Strict Invariants**: Lower layers never reverse-depend on or import from upper layers. Server state is exclusively managed by TanStack Query; page-transient state (search drafts, expanded cards, modal open state) is managed by local component state (`useState`, local refs). Never duplicate server cache into secondary global state stores.
 
 ## UI design system and styling rules
 

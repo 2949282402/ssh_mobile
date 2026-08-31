@@ -17,7 +17,7 @@ behavior (Relay and SDK own those).
   - `src/features/<feature>/components/`: Feature-scoped reusable presentation (`TelemetryFilterPanel`, `TelemetryRecordCard`, `TelemetryTrendList`).
   - `src/features/<feature>/*-page.tsx`: Page assembly and route-level state orchestration.
 - **Styling Policy**: Static presentation rules live in `src/styles.css`; dynamic data styles (e.g. calculated trend percentage widths) stay minimal in component logic. Form controls use `.form-control` / `.form-select` and never reuse `.button` classes.
-- **Layering & State**: Unidirectional dependency (`Page -> Feature Component -> Shared Primitive -> Query Hook -> API Adapter -> Zod Schema`). Server state belongs to TanStack Query; transient UI state belongs to local component state.
+- **Layering & State**: Directional dependency DAG (`Router/Layout -> Pages -> Feature Components/Shared Primitives/Hooks/Schemas`). Feature Components never execute raw HTTP. Server state belongs to TanStack Query; transient UI state belongs to local component state.
 
 ## Surfaces and Capabilities
 
