@@ -222,7 +222,9 @@ void main() {
   );
   _expect(
     appCoverage.contains('--minimum=90') &&
-        appCoverage.contains(r'--base-ref="${{ needs.change_scope.outputs.base_sha }}"') &&
+        appCoverage.contains(
+          r'--base-ref="${{ needs.change_scope.outputs.base_sha }}"',
+        ) &&
         appCoverage.contains('--source-root=lib') &&
         !appCoverage.contains('--minimum=35') &&
         !appCoverage.contains('--all-sources'),
