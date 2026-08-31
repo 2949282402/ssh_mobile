@@ -2,12 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import {
+  Activity,
   KeyRound,
+  Layers,
   LayoutDashboard,
   LogOut,
   Menu,
   RadioTower,
   Server,
+  Sliders,
+  Terminal,
   X,
 } from 'lucide-react';
 import { authApi } from '../api/auth';
@@ -19,12 +23,20 @@ const navItems = [
   { to: '/overview', label: 'Overview', chinese: '运行概览', icon: LayoutDashboard },
   { to: '/devices', label: 'Devices', chinese: '设备管理', icon: Server },
   { to: '/access', label: 'Access', chinese: '注册授权', icon: KeyRound },
+  { to: '/telemetry', label: 'Telemetry', chinese: '埋点概览', icon: Activity },
+  { to: '/telemetry/events', label: 'Events', chinese: '事件检索', icon: Layers },
+  { to: '/telemetry/diagnostics', label: 'Diagnostics', chinese: '诊断日志', icon: Terminal },
+  { to: '/telemetry/settings', label: 'Settings', chinese: '埋点策略', icon: Sliders },
 ];
 
 const pageNames: Record<string, string> = {
   '/overview': '运行概览',
   '/devices': '设备管理',
   '/access': '注册授权',
+  '/telemetry': '数据埋点概览',
+  '/telemetry/events': '事件浏览器',
+  '/telemetry/diagnostics': '诊断日志',
+  '/telemetry/settings': '埋点与策略设置',
 };
 
 const NAV_FOCUSABLE_SELECTOR = [

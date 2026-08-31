@@ -4,7 +4,11 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
+# The Docker context is `front/`; production code must consume the committed,
+# self-contained generated catalog rather than reaching outside this context.
 COPY . .
+RUN test -s src/generated/telemetry_contract.ts \
+    && ! grep -R -E '\.\./[^;]*\.json' src
 RUN npm run build
 
 FROM nginx:1.27-alpine

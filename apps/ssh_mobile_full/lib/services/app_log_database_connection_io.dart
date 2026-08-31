@@ -7,19 +7,23 @@ import 'dart:io';
 
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'app_log_database_constants.dart';
 
 /// 打开正式环境的 App 日志数据库。
-QueryExecutor openAppLogDatabaseConnection() {
-  if (isFlutterTestEnvironment) {
+QueryExecutor openAppLogDatabaseConnection({
+  @visibleForTesting Future<Directory> Function()? directoryProvider,
+}) {
+  if (isFlutterTestEnvironment && directoryProvider == null) {
     return NativeDatabase.memory();
   }
 
   return LazyDatabase(() async {
-    final directory = await getApplicationSupportDirectory();
+    final directory =
+        await (directoryProvider ?? getApplicationSupportDirectory)();
     if (!await directory.exists()) {
       await directory.create(recursive: true);
     }

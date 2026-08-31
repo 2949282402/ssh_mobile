@@ -10,7 +10,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 APP_DIR="$ROOT_DIR/apps/ssh_mobile_full"
-MINIMUM="${CLIENT_COVERAGE_MINIMUM:-80}"
+MINIMUM="${CLIENT_COVERAGE_MINIMUM:-90}"
 FLUTTER_TIMEOUT="${CLIENT_FLUTTER_COVERAGE_TIMEOUT:-30m}"
 FLUTTER_BIN="${CLIENT_FLUTTER_BIN:-flutter}"
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ssh-mobile-client-coverage.XXXXXX")"
@@ -56,7 +56,13 @@ cd "$APP_DIR"
 
 test_files=(
   test/services/network/network_protocol_v2_codec_test.dart
+  test/services/network/network_protocol_v2_codec_commands_test.dart
+  test/services/network/network_protocol_v2_codec_events_test.dart
+  test/services/network/network_protocol_v2_codec_stream_events_test.dart
+  test/services/network/network_protocol_v2_codec_transfer_progress_test.dart
   test/services/network/transfer_transport_test.dart
+  test/services/network/transfer_transport_gateway_test.dart
+  test/services/network/network_identity_service_test.dart
   test/app/realtime_feature_adapters_test.dart
   test/app/app_runtime_test.dart
 )
@@ -95,8 +101,15 @@ for test_file in "${test_files[@]}"; do
   fi
 done
 
+source_arguments=(--source-root=lib/services/network/)
+coverage_base_ref="${CLIENT_COVERAGE_BASE_REF:-${CI_BASE_SHA:-${GITHUB_BASE_SHA:-${GITHUB_EVENT_BEFORE:-}}}}"
+if [[ -n "$coverage_base_ref" ]]; then
+  source_arguments+=("--base-ref=$coverage_base_ref")
+fi
+
 dart run tool/check_coverage.dart \
   --minimum="$MINIMUM" \
   --details \
   "${coverage_arguments[@]}" \
+  "${source_arguments[@]}" \
   --include=lib/services/network/

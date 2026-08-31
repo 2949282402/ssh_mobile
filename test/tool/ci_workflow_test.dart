@@ -1,5 +1,7 @@
 import 'dart:io';
 
+part 'ci_workflow_checks.dart';
+
 /// 验证模块级 CI 合同，避免 Workspace、Melos 脚本和 GitHub Actions 漂移。
 ///
 /// 这个测试只读取文本，不执行 CI 命令；它把 CI 的关键入口固定为可审计的
@@ -77,6 +79,20 @@ void main() {
     'admin-api-contract 必须运行真实 Go handler → Front schema 门禁',
   );
 
+  final telemetryContract = _jobSection(workflow, 'telemetry-contract');
+  _expect(
+    telemetryContract.contains('actions/setup-go@v5') &&
+        telemetryContract.contains('actions/setup-node@v4') &&
+        telemetryContract.contains('subosito/flutter-action@v2'),
+    'telemetry-contract 必须同时安装 Go、Node.js 与 Flutter',
+  );
+  _expect(
+    telemetryContract.contains(
+      'bash scripts/bash/contracts/telemetry_contract.sh',
+    ),
+    'telemetry-contract 必须运行跨语言 Telemetry 数据契约门禁',
+  );
+
   for (final jobName in const ['android-build', 'macos-build', 'ios-build']) {
     final job = _jobSection(workflow, jobName);
     _expect(
@@ -143,6 +159,18 @@ void main() {
     'architecture-check 必须运行 CI workflow 合同回归测试',
   );
   _expect(
+    architectureCheck.contains(
+      'dart run tool/check_telemetry_contract_generated.dart',
+    ),
+    'architecture-check 必须运行 Telemetry 契约生成检查器',
+  );
+  _expect(
+    architectureCheck.contains(
+      'dart run test/tool/telemetry_contract_codegen_test.dart',
+    ),
+    'architecture-check 必须运行 Telemetry 契约代码生成回归测试',
+  );
+  _expect(
     architectureCheck.contains('dart run tool/check_module_dependencies.dart'),
     'architecture-check 必须运行模块依赖检查器',
   );
@@ -150,12 +178,17 @@ void main() {
     architectureCheck.contains('dart run tool/check_resource_owners.dart'),
     'architecture-check 必须运行资源 Owner 检查器',
   );
+  _expect(
+    architectureCheck.contains('dart run tool/check_file_sizes.dart'),
+    'architecture-check 必须运行文件尺寸、测试根与编号拆分检查器',
+  );
 
   final appUnitTests = _jobSection(workflow, 'app-unit-tests');
   _expect(
     appUnitTests.contains('--coverage') &&
-        appUnitTests.contains('--reporter expanded'),
-    'app-unit-tests 必须保留 coverage 与 expanded reporter 参数',
+        appUnitTests.contains('--reporter compact') &&
+        appUnitTests.contains('--concurrency 1'),
+    'app-unit-tests 必须保留 coverage、compact reporter 与串行测试参数',
   );
   _expect(
     !appUnitTests.contains('Test native Dart package'),
@@ -166,6 +199,20 @@ void main() {
   _expect(
     appCoverage.contains('dart run tool/check_coverage.dart'),
     'app-coverage 必须运行覆盖率门禁',
+  );
+  _expect(
+    appCoverage.contains('--minimum=90') &&
+        appCoverage.contains(r'--base-ref="${{ needs.change_scope.outputs.base_sha }}"') &&
+        appCoverage.contains('--source-root=lib') &&
+        !appCoverage.contains('--minimum=35') &&
+        !appCoverage.contains('--all-sources'),
+    'app-coverage 必须保留 90% 门禁并检查新增手写生产源文件',
+  );
+  _expect(
+    appCoverage.contains('pattern: flutter-coverage-*') &&
+        appCoverage.contains('Expected 4 shard coverage files') &&
+        appCoverage.contains('Expected 2 isolated coverage files'),
+    'app-coverage 必须合并四个测试分片和两个隔离覆盖率产物',
   );
 
   for (final jobName in _buildOnlyJobNames) {
@@ -203,260 +250,17 @@ void main() {
   stdout.writeln('CI workflow contract tests passed.');
 }
 
-void _verifyScriptTrees(Directory root) {
-  final bashRoot = Directory('${root.path}/scripts/bash');
-  final powerShellRoot = Directory('${root.path}/scripts/powershell');
-  final bashDirectories = bashRoot
-      .listSync(recursive: true)
-      .whereType<Directory>()
-      .map((directory) => directory.path.substring(bashRoot.path.length + 1))
-      .toSet();
-  final powerShellDirectories = powerShellRoot
-      .listSync(recursive: true)
-      .whereType<Directory>()
-      .map(
-        (directory) => directory.path.substring(powerShellRoot.path.length + 1),
-      )
-      .toSet();
-  _expect(
-    bashDirectories.length == powerShellDirectories.length &&
-        bashDirectories.containsAll(powerShellDirectories),
-    'Bash 与 PowerShell 的功能子目录结构必须一致',
-  );
-  for (final shellScript
-      in bashRoot
-          .listSync(recursive: true)
-          .whereType<File>()
-          .where((file) => file.path.endsWith('.sh'))) {
-    final relative = shellScript.path.substring(bashRoot.path.length + 1);
-    final pair =
-        '${powerShellRoot.path}/${relative.replaceFirst(RegExp(r'\.sh$'), '.ps1')}';
-    _expect(File(pair).existsSync(), 'Shell 脚本缺少 PowerShell 配对：$relative');
-  }
-  const powerShellOnly = <String>{
-    'common/powershell_common.ps1',
-    'platform/build_windows_msi.ps1',
-    'platform/configure_windows_toolchain.ps1',
-  };
-  for (final script
-      in powerShellRoot
-          .listSync(recursive: true)
-          .whereType<File>()
-          .where((file) => file.path.endsWith('.ps1'))) {
-    final relative = script.path.substring(powerShellRoot.path.length + 1);
-    if (powerShellOnly.contains(relative)) continue;
-    final pair =
-        '${bashRoot.path}/${relative.replaceFirst(RegExp(r'\.ps1$'), '.sh')}';
-    _expect(File(pair).existsSync(), 'PowerShell 脚本缺少 Shell 配对：$relative');
-  }
-}
-
-/// 查找仓库根目录，支持从测试文件目录或仓库根目录启动。
-Directory _findRepositoryRoot() {
-  var current = Directory.current;
-  while (true) {
-    if (File('${current.path}/pubspec.yaml').existsSync() &&
-        File('${current.path}/.github/workflows/flutter.yml').existsSync()) {
-      return current;
-    }
-    final parent = current.parent;
-    if (parent.path == current.path) {
-      throw StateError('无法找到 SSH Mobile Workspace 根目录');
-    }
-    current = parent;
-  }
-}
-
 void _expect(bool condition, String message) {
   if (!condition) {
     throw StateError(message);
   }
 }
 
-String _jobSection(String workflow, String jobName) {
-  final startMatch = RegExp(
-    '^  ${RegExp.escape(jobName)}:\\s*\\n',
-    multiLine: true,
-  ).firstMatch(workflow);
-  if (startMatch == null) {
-    throw StateError('CI 缺少 job：$jobName');
-  }
-
-  final endMatches = RegExp(
-    r'^  [A-Za-z0-9_-]+:\s*$',
-    multiLine: true,
-  ).allMatches(workflow, startMatch.end);
-  final endMatch = endMatches.isEmpty ? null : endMatches.first;
-  return workflow.substring(
-    startMatch.start,
-    endMatch?.start ?? workflow.length,
-  );
-}
-
-String _stepSection(String jobSection, String stepName) {
-  final startMatch = RegExp(
-    r'^\s*-\s+name:\s+' + RegExp.escape(stepName) + r'\s*$',
-    multiLine: true,
-  ).firstMatch(jobSection);
-  if (startMatch == null) {
-    throw StateError('Job 缺少 step：$stepName');
-  }
-
-  final nextStepMatches = RegExp(
-    r'^\s*-\s+(?:name|uses):\s+',
-    multiLine: true,
-  ).allMatches(jobSection, startMatch.end);
-  final nextStepMatch = nextStepMatches.isEmpty ? null : nextStepMatches.first;
-  return jobSection.substring(
-    startMatch.start,
-    nextStepMatch?.start ?? jobSection.length,
-  );
-}
-
-void _verifyProtocolV2Workflow(String workflow) {
-  final protocolV2Contract = _jobSection(workflow, 'protocol-v2-contract');
-  _expect(
-    protocolV2Contract.contains('subosito/flutter-action@v2'),
-    'protocol-v2-contract 必须安装 Flutter 后运行 Dart owner tests',
-  );
-  _expect(
-    protocolV2Contract.contains('run: dart pub get'),
-    'protocol-v2-contract 必须安装 workspace dependencies',
-  );
-  _expect(
-    protocolV2Contract.contains(
-          'working-directory: packages/infrastructure/ssh_mobile_network_native',
-        ) &&
-        protocolV2Contract.contains('run: flutter pub get'),
-    'protocol-v2-contract 必须安装 native Dart package dependencies',
-  );
-
-  final paritySelfTest = _stepSection(
-    protocolV2Contract,
-    'Test Network V2 parity checker',
-  );
-  _expect(
-    paritySelfTest.contains(
-      'dart run scripts/bash/contracts/check_network_v2_contract.dart --test',
-    ),
-    'Test Network V2 parity checker 必须运行在 --test 自测模式',
-  );
-
-  final parityCheck = _stepSection(
-    protocolV2Contract,
-    'Check Network V2 schema parity',
-  );
-  _expect(
-    parityCheck.contains(
-      'dart run scripts/bash/contracts/check_network_v2_contract.dart',
-    ),
-    'Check Network V2 schema parity 必须运行正式 parity check',
-  );
-  _expect(
-    !parityCheck.contains('--test'),
-    'Check Network V2 schema parity 严禁使用 --test 模式',
-  );
-}
-
-void _testProtocolV2WorkflowChecker() {
-  const validSnippet = '''
-  protocol-v2-contract:
-    steps:
-      - uses: subosito/flutter-action@v2
-      - run: dart pub get
-      - working-directory: packages/infrastructure/ssh_mobile_network_native
-        run: flutter pub get
-      - name: Test Network V2 parity checker
-        run: dart run scripts/bash/contracts/check_network_v2_contract.dart --test
-      - name: Check Network V2 schema parity
-        run: dart run scripts/bash/contracts/check_network_v2_contract.dart
-''';
-
-  _verifyProtocolV2Workflow(validSnippet);
-
-  const missingFormalStep = '''
-  protocol-v2-contract:
-    steps:
-      - uses: subosito/flutter-action@v2
-      - run: dart pub get
-      - working-directory: packages/infrastructure/ssh_mobile_network_native
-        run: flutter pub get
-      - name: Test Network V2 parity checker
-        run: dart run scripts/bash/contracts/check_network_v2_contract.dart --test
-''';
-  var failedMissing = false;
-  try {
-    _verifyProtocolV2Workflow(missingFormalStep);
-  } catch (_) {
-    failedMissing = true;
-  }
-  _expect(
-    failedMissing,
-    'CI contract checker must fail when formal parity step is missing',
-  );
-
-  const formalCheckWithTestFlag = '''
-  protocol-v2-contract:
-    steps:
-      - uses: subosito/flutter-action@v2
-      - run: dart pub get
-      - working-directory: packages/infrastructure/ssh_mobile_network_native
-        run: flutter pub get
-      - name: Test Network V2 parity checker
-        run: dart run scripts/bash/contracts/check_network_v2_contract.dart --test
-      - name: Check Network V2 schema parity
-        run: dart run scripts/bash/contracts/check_network_v2_contract.dart --test
-''';
-  var failedWithTestFlag = false;
-  try {
-    _verifyProtocolV2Workflow(formalCheckWithTestFlag);
-  } catch (_) {
-    failedWithTestFlag = true;
-  }
-  _expect(
-    failedWithTestFlag,
-    'CI contract checker must fail when formal parity step contains --test',
-  );
-}
-
-void _verifyFullTestScripts(Directory root) {
-  final bashFullTest = File(
-    '${root.path}/scripts/bash/ci/full_test.sh',
-  ).readAsStringSync();
-  final powerShellFullTest = File(
-    '${root.path}/scripts/powershell/ci/full_test.ps1',
-  ).readAsStringSync();
-
-  _expect(
-    bashFullTest.contains(
-      "step 'Test Network V2 schema parity checker' dart run scripts/bash/contracts/check_network_v2_contract.dart --test",
-    ),
-    'full_test.sh 缺少 Network V2 schema parity checker self-test step',
-  );
-  _expect(
-    bashFullTest.contains(
-      "step 'Run Network V2 schema parity check' dart run scripts/bash/contracts/check_network_v2_contract.dart",
-    ),
-    'full_test.sh 缺少 Network V2 schema parity check step',
-  );
-
-  _expect(
-    powerShellFullTest.contains(
-      "Cmd dart @('run','scripts/bash/contracts/check_network_v2_contract.dart','--test')",
-    ),
-    'full_test.ps1 缺少 Network V2 schema parity checker self-test',
-  );
-  _expect(
-    powerShellFullTest.contains(
-      "Cmd dart @('run','scripts/bash/contracts/check_network_v2_contract.dart')",
-    ),
-    'full_test.ps1 缺少 Network V2 schema parity check',
-  );
-}
-
 const _requiredWorkflowMarkers = <String>[
+  'change_scope:',
   'architecture-check:',
   'admin-api-contract:',
+  'telemetry-contract:',
   'sdk-dart-quality:',
   'lan-network-v2-targeted:',
   'native-network-quality:',
@@ -467,6 +271,7 @@ const _requiredWorkflowMarkers = <String>[
   'workspace-features-quality:',
   'app-static-quality:',
   'app-unit-tests:',
+  'app-isolated-tests:',
   'app-coverage:',
   'terminal-smoke-build:',
   'android-build:',
@@ -474,14 +279,19 @@ const _requiredWorkflowMarkers = <String>[
   'macos-build:',
   'ios-build:',
   'flutter analyze --no-fatal-infos',
-  'flutter test --coverage --reporter expanded',
+  'flutter test --no-pub',
+  '--reporter compact',
   'dart run tool/architecture_check.dart',
   'dart run tool/check_agent_docs.dart',
   'dart run test/tool/agent_docs_check_test.dart',
+  'dart run test/tool/ci_production_config_test.dart',
+  'dart run tool/check_telemetry_contract_generated.dart',
+  'dart run test/tool/telemetry_contract_codegen_test.dart',
   'dart run tool/check_module_dependencies.dart',
   'dart run tool/check_resource_owners.dart',
   'dart run tool/compatibility_check.dart',
   'dart run tool/duplicate_implementation_check.dart',
+  'bash scripts/bash/contracts/telemetry_contract.sh',
   'dart run melos run analyze',
   'dart run melos run test',
   'flutter build apk --debug --no-pub',

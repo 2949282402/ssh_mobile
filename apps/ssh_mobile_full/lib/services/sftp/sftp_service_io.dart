@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 // ignore: depend_on_referenced_packages
+import 'package:app_core/app_core.dart';
 import 'package:crypto/crypto.dart';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:connection_core/connection_core.dart';
@@ -19,6 +20,7 @@ import '../../core/services/data_protection_service.dart';
 import '../connection_target_binding.dart';
 import '../remote_target_scope.dart';
 import '../sftp_path_history_store.dart';
+import '../telemetry/telemetry_span.dart';
 import '../tool_secret_policy.dart';
 import '../sftp_service.dart';
 import 'sftp_entry_parser.dart';
@@ -28,6 +30,10 @@ part 'sftp_cache.dart';
 part 'sftp_operations.dart';
 part 'sftp_connection_lifecycle.dart';
 part 'sftp_directory_navigation.dart';
+part 'sftp_session.dart';
+part 'sftp_transfer_telemetry.dart';
+part 'sftp_transfer_downloads.dart';
+part 'sftp_transfer_uploads.dart';
 
 /// SFTP 文件操作服务。
 ///
@@ -43,20 +49,15 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   static const int maxDownloadBytes = 512 * 1024 * 1024;
   static const int maxInMemoryTransferBytes = maxDownloadBytes;
   static const Duration _notifyCoalesceDelay = Duration(milliseconds: 16);
+  static const Duration _defaultTelemetryFailureTimeout = Duration(
+    milliseconds: 250,
+  );
 
   final ConnectionRepository _connectionRepository;
   final CredentialRepository _credentialRepository;
-  final HostKeyRepository _hostKeyRepository;
   final SftpPathHistoryStore _pathHistoryStore;
-  final ssh_core.SshNativeStreamConnector? _nativeStreamConnector;
   final ssh_core.SshPeerIdResolver? _peerIdResolver;
-  late final SshClientFactory _clientFactory = SshClientFactory(
-    credentialRepository: _credentialRepository,
-    hostKeyRepository: _hostKeyRepository,
-    logger: AppLogService.instance,
-    nativeStreamConnector: _nativeStreamConnector,
-    peerIdResolver: _peerIdResolver,
-  );
+  final SshClientFactory _clientFactory;
 
   final Map<String, _SftpSession> _sessions = {};
   final Map<String, String> _lastPaths = {};
@@ -68,6 +69,17 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   SftpTransferState? _activeTransfer;
   String? _cancelTransferId;
 
+  /// 可选遥测客户端；由 Composition Root 在 SFTP 服务创建后注入。
+  ///
+  /// transfer span 共享同一个 traceId（started -> completed/failed），便于
+  /// 端到端关联。本地路径、远程路径不写入事件属性，避免泄露服务器布局。
+  TelemetryClient? telemetryClient;
+
+  // 传输 span：键为 transferId，沿用 UUID traceId；跨 completed/failed
+  // 端点保持会话内关联。
+  final Map<String, String> _telemetryTransferTraceIds = {};
+  final Map<String, DateTime> _telemetryTransferStartedAt = {};
+
   @override
   SftpTransferState? get activeTransfer => _activeTransfer;
   @override
@@ -76,24 +88,54 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   SftpService({
     required this._connectionRepository,
     required this._credentialRepository,
-    required this._hostKeyRepository,
+    required HostKeyRepository hostKeyRepository,
     SftpPathHistoryStore? pathHistoryStore,
-    this._nativeStreamConnector,
+    ssh_core.SshNativeStreamConnector? nativeStreamConnector,
     this._peerIdResolver,
-  }) : _pathHistoryStore = pathHistoryStore ?? InMemorySftpPathHistoryStore();
+    SshClientFactory? clientFactory,
+    this.telemetryClient,
+    Duration telemetryFailureTimeout = _defaultTelemetryFailureTimeout,
+  }) : _pathHistoryStore = pathHistoryStore ?? InMemorySftpPathHistoryStore(),
+       _telemetryFailureTimeout = _validateTelemetryFailureTimeout(
+         telemetryFailureTimeout,
+       ),
+       _clientFactory =
+           clientFactory ??
+           SshClientFactory(
+             credentialRepository: _credentialRepository,
+             hostKeyRepository: hostKeyRepository,
+             logger: AppLogService.instance,
+             nativeStreamConnector: nativeStreamConnector,
+             peerIdResolver: _peerIdResolver,
+           );
 
   @visibleForTesting
   SftpService.forTesting(
     this._connectionRepository,
     this._credentialRepository,
-    this._hostKeyRepository, {
+    HostKeyRepository hostKeyRepository, {
     required ConnectionConfig connection,
     required SftpClient sftpClient,
     String currentPath = '.',
     SftpPathHistoryStore? pathHistoryStore,
-    this._nativeStreamConnector,
+    ssh_core.SshNativeStreamConnector? nativeStreamConnector,
     this._peerIdResolver,
-  }) : _pathHistoryStore = pathHistoryStore ?? InMemorySftpPathHistoryStore() {
+    SshClientFactory? clientFactory,
+    this.telemetryClient,
+    Duration telemetryFailureTimeout = _defaultTelemetryFailureTimeout,
+  }) : _pathHistoryStore = pathHistoryStore ?? InMemorySftpPathHistoryStore(),
+       _telemetryFailureTimeout = _validateTelemetryFailureTimeout(
+         telemetryFailureTimeout,
+       ),
+       _clientFactory =
+           clientFactory ??
+           SshClientFactory(
+             credentialRepository: _credentialRepository,
+             hostKeyRepository: hostKeyRepository,
+             logger: AppLogService.instance,
+             nativeStreamConnector: nativeStreamConnector,
+             peerIdResolver: _peerIdResolver,
+           ) {
     final session =
         _SftpSession(
             connectionId: connection.id,
@@ -105,6 +147,19 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
           ..state = SftpConnectionState.connected;
     _sessions[connection.id] = session;
     _activeConnectionId = connection.id;
+  }
+
+  final Duration _telemetryFailureTimeout;
+
+  static Duration _validateTelemetryFailureTimeout(Duration timeout) {
+    if (timeout.compareTo(Duration.zero) < 0) {
+      throw ArgumentError.value(
+        timeout,
+        'telemetryFailureTimeout',
+        'must not be negative',
+      );
+    }
+    return timeout;
   }
 
   static String _decodeUtf8(Uint8List bytes) {
@@ -180,77 +235,8 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   }
 
   @override
-  Future<void> connect(String connectionId, {dynamic onUnknownHostKey}) async {
-    ConnectionRuntimeTarget runtimeTarget;
-    try {
-      runtimeTarget = await RemoteTargetScope.resolveIfBound(
-        connectionRepository: _connectionRepository,
-        credentialRepository: _credentialRepository,
-        connectionId: connectionId,
-      );
-    } on RemoteTargetScopeException catch (e) {
-      _activeConnectionId = connectionId;
-      final session = _sessions.putIfAbsent(
-        connectionId,
-        () => _SftpSession(
-          connectionId: connectionId,
-          connectionName: connectionId,
-          currentPath: _lastPaths[connectionId] ?? '.',
-        ),
-      );
-      session.state = SftpConnectionState.error;
-      session.errorMessage = e.message;
-      notifyListeners();
-      return;
-    }
-    final config = runtimeTarget.config;
-
-    var existing = _sessions[connectionId];
-    if (existing != null &&
-        existing.targetBinding?.fingerprint !=
-            runtimeTarget.binding.fingerprint) {
-      existing.close();
-      _sessions.remove(connectionId);
-      existing = null;
-    }
-    if (existing?.sftp != null) {
-      _activeConnectionId = connectionId;
-      notifyListeners();
-      return;
-    }
-    if (existing?.state == SftpConnectionState.connecting) {
-      _activeConnectionId = connectionId;
-      notifyListeners();
-      final task = _connectTasks[connectionId];
-      if (task != null) await task;
-      return;
-    }
-
-    final session = _SftpSession(
-      connectionId: connectionId,
-      connectionName: config.name,
-      currentPath: _lastPaths[connectionId] ?? '.',
-      targetBinding: runtimeTarget.binding,
-    );
-    _sessions[connectionId] = session;
-    _activeConnectionId = connectionId;
-    session.state = SftpConnectionState.connecting;
-    session.errorMessage = null;
-    notifyListeners();
-    final task = _connect(
-      session,
-      runtimeTarget,
-      onUnknownHostKey: onUnknownHostKey,
-    );
-    _connectTasks[connectionId] = task;
-    try {
-      await task;
-    } finally {
-      if (identical(_connectTasks[connectionId], task)) {
-        _connectTasks.remove(connectionId);
-      }
-    }
-  }
+  Future<void> connect(String connectionId, {dynamic onUnknownHostKey}) =>
+      _connectForConnection(connectionId, onUnknownHostKey: onUnknownHostKey);
 
   @override
   Future<void> refresh() async {
@@ -273,538 +259,47 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   Future<void> uploadFile({
     required String localPath,
     required String filename,
-  }) async {
-    final session = _activeSession;
-    final sftp = session?.sftp;
-    if (sftp == null) throw StateError('SFTP is not connected');
-    final activeSession = session!;
-
-    final localFile = File(localPath);
-    if (!await localFile.exists()) {
-      throw FileSystemException('Local file not found', localPath);
-    }
-    final totalSize = await localFile.length();
-    _assertWithinMemoryLimit(totalSize, 'upload', maxBytes: maxUploadBytes);
-
-    final remotePath = _joinRemotePath(activeSession.currentPath, filename);
-
-    final transferId = DateTime.now().millisecondsSinceEpoch.toString();
-    final transfer = SftpTransferState(
-      id: transferId,
-      name: filename,
-      totalBytes: totalSize,
-      isUpload: true,
-    );
-    _activeTransfer = transfer;
-    _cancelTransferId = null;
-    activeSession.state = SftpConnectionState.loading;
-    notifyListeners();
-
-    RandomAccessFile? raf;
-    SftpFile? remoteFile;
-    try {
-      raf = await localFile.open(mode: FileMode.read);
-      remoteFile = await sftp.open(
-        remotePath,
-        mode:
-            SftpFileOpenMode.create |
-            SftpFileOpenMode.truncate |
-            SftpFileOpenMode.write,
-      );
-
-      const chunkSize = 256 * 1024; // 256KB chunks
-      int offset = 0;
-
-      while (offset < totalSize) {
-        if (_cancelTransferId == transferId) {
-          throw const SftpTransferCancelledException();
-        }
-
-        final len = (totalSize - offset) < chunkSize
-            ? (totalSize - offset)
-            : chunkSize;
-        final chunk = await raf.read(len);
-        if (chunk.isEmpty) break;
-
-        await remoteFile.writeBytes(chunk, offset: offset);
-        offset += chunk.length;
-
-        _activeTransfer = transfer.copyWith(bytesTransferred: offset);
-        notifyListeners();
-      }
-
-      _directoryCache.invalidate(
-        activeSession.connectionId,
-        activeSession.targetFingerprint,
-      );
-      await SftpFileCache.invalidate(
-        activeSession.connectionId,
-        activeSession.targetFingerprint,
-        remotePath,
-      );
-      AppLogService.instance.info(
-        'SFTP file uploaded via stream',
-        details: SftpLogSafety.details(
-          operation: 'stream_upload',
-          connectionId: activeSession.connectionId,
-          path: remotePath,
-          bytes: totalSize,
-        ),
-      );
-      await _openPath(activeSession, activeSession.currentPath);
-    } catch (e) {
-      if (e is SftpTransferCancelledException) {
-        AppLogService.instance.info(
-          'SFTP upload cancelled',
-          details: SftpLogSafety.details(
-            operation: 'stream_upload_cancelled',
-            connectionId: activeSession.connectionId,
-            path: remotePath,
-          ),
-        );
-        try {
-          await sftp.remove(remotePath);
-        } catch (_) {}
-        activeSession.state = SftpConnectionState.connected;
-      } else {
-        AppLogService.instance.error(
-          'SFTP upload failed',
-          details: SftpLogSafety.details(
-            operation: 'stream_upload',
-            connectionId: activeSession.connectionId,
-            path: remotePath,
-            error: e,
-          ),
-        );
-        activeSession.state = SftpConnectionState.error;
-        activeSession.errorMessage = 'Upload failed: $e';
-      }
-      notifyListeners();
-      rethrow;
-    } finally {
-      await raf?.close();
-      await _closeFileQuietly(remoteFile);
-      _activeTransfer = null;
-      _cancelTransferId = null;
-      notifyListeners();
-    }
-  }
+  }) => _uploadFileImpl(localPath: localPath, filename: filename);
 
   @override
   Future<void> downloadFile(
     SftpEntry entry, {
     required String localPath,
     int maxBytes = SftpService.maxDownloadBytes,
-  }) async {
-    final session = _sessionForEntry(entry);
-    final sftp = session.sftp;
-    if (sftp == null) throw StateError('SFTP is not connected');
-    if (entry.isDirectory) throw StateError('Directories cannot be downloaded');
-
-    final totalSize = entry.size ?? 0;
-    if (totalSize > 0) {
-      _assertWithinMemoryLimit(totalSize, 'download', maxBytes: maxBytes);
-    }
-
-    final transferId = DateTime.now().millisecondsSinceEpoch.toString();
-    final transfer = SftpTransferState(
-      id: transferId,
-      name: entry.name,
-      totalBytes: totalSize,
-      isUpload: false,
-    );
-    _activeTransfer = transfer;
-    _cancelTransferId = null;
-    session.state = SftpConnectionState.loading;
-    notifyListeners();
-
-    RandomAccessFile? raf;
-    SftpFile? remoteFile;
-    var shouldDeletePartialLocalFile = false;
-    try {
-      final localFile = File(localPath);
-      final parentDir = localFile.parent;
-      if (!await parentDir.exists()) {
-        await parentDir.create(recursive: true);
-      }
-
-      raf = await localFile.open(mode: FileMode.write);
-      remoteFile = await sftp.open(entry.path, mode: SftpFileOpenMode.read);
-
-      const chunkSize = 256 * 1024; // 256KB chunks
-      int offset = 0;
-
-      while (totalSize == 0 || offset < totalSize) {
-        if (_cancelTransferId == transferId) {
-          throw const SftpTransferCancelledException();
-        }
-
-        final len = (totalSize > 0 && (totalSize - offset) < chunkSize)
-            ? (totalSize - offset)
-            : chunkSize;
-        final chunk = await remoteFile.readBytes(length: len, offset: offset);
-        if (chunk.isEmpty) break;
-
-        if (offset + chunk.length > maxBytes) {
-          throw StateError(
-            'Download exceeds max size of ${_formatBytes(maxBytes)}',
-          );
-        }
-
-        await raf.writeFrom(chunk);
-        offset += chunk.length;
-
-        _activeTransfer = transfer.copyWith(bytesTransferred: offset);
-        notifyListeners();
-      }
-
-      AppLogService.instance.info(
-        'SFTP file downloaded via stream',
-        details: SftpLogSafety.details(
-          operation: 'stream_download',
-          connectionId: entry.connectionId,
-          path: entry.path,
-          destinationPath: localPath,
-          bytes: offset,
-        ),
-      );
-
-      session.state = SftpConnectionState.connected;
-      notifyListeners();
-    } catch (e) {
-      shouldDeletePartialLocalFile = true;
-
-      if (e is SftpTransferCancelledException) {
-        AppLogService.instance.info(
-          'SFTP download cancelled',
-          details: SftpLogSafety.details(
-            operation: 'stream_download_cancelled',
-            connectionId: entry.connectionId,
-            path: entry.path,
-            destinationPath: localPath,
-          ),
-        );
-        session.state = SftpConnectionState.connected;
-      } else {
-        AppLogService.instance.error(
-          'SFTP download failed',
-          details: SftpLogSafety.details(
-            operation: 'stream_download',
-            connectionId: entry.connectionId,
-            path: entry.path,
-            destinationPath: localPath,
-            error: e,
-          ),
-        );
-        session.state = SftpConnectionState.error;
-        session.errorMessage = 'Download failed: $e';
-      }
-      notifyListeners();
-      rethrow;
-    } finally {
-      await raf?.close();
-      await _closeFileQuietly(remoteFile);
-
-      // 先关闭本地文件句柄再删除半成品，避免 Windows 上文件占用导致删除失败。
-      if (shouldDeletePartialLocalFile) {
-        try {
-          final file = File(localPath);
-          if (await file.exists()) {
-            await file.delete();
-          }
-        } catch (_) {}
-      }
-
-      _activeTransfer = null;
-      _cancelTransferId = null;
-      notifyListeners();
-    }
-  }
+  }) => _downloadFileImpl(entry, localPath: localPath, maxBytes: maxBytes);
 
   @override
   Future<void> uploadBytes({
     required String filename,
     required Uint8List bytes,
-  }) async {
-    final session = _activeSession;
-    final sftp = session?.sftp;
-    if (sftp == null) return;
-    _assertWithinMemoryLimit(bytes.length, 'upload', maxBytes: maxUploadBytes);
-
-    session!.state = SftpConnectionState.loading;
-    session.errorMessage = null;
-    notifyListeners();
-
-    final remotePath = _joinRemotePath(session.currentPath, filename);
-    SftpFile? file;
-    try {
-      file = await sftp.open(
-        remotePath,
-        mode:
-            SftpFileOpenMode.create |
-            SftpFileOpenMode.truncate |
-            SftpFileOpenMode.write,
-      );
-      await file.writeBytes(bytes);
-      _directoryCache.invalidate(
-        session.connectionId,
-        session.targetFingerprint,
-      );
-      await SftpFileCache.invalidate(
-        session.connectionId,
-        session.targetFingerprint,
-        remotePath,
-      );
-      AppLogService.instance.info(
-        'SFTP file uploaded',
-        details: SftpLogSafety.details(
-          operation: 'upload_bytes',
-          connectionId: session.connectionId,
-          path: remotePath,
-          bytes: bytes.length,
-        ),
-      );
-      await _openPath(session, session.currentPath);
-    } catch (e) {
-      AppLogService.instance.error(
-        'SFTP upload failed',
-        details: SftpLogSafety.details(
-          operation: 'upload_bytes',
-          connectionId: session.connectionId,
-          path: remotePath,
-          error: e,
-        ),
-      );
-      session.state = SftpConnectionState.error;
-      session.errorMessage = 'Upload failed: $e';
-      notifyListeners();
-      rethrow;
-    } finally {
-      await _closeFileQuietly(file);
-    }
-  }
+  }) => _uploadBytesImpl(filename: filename, bytes: bytes);
 
   @override
-  Future<void> deleteEntry(
-    SftpEntry entry, {
-    required String confirmedName,
-  }) async {
-    if (confirmedName != entry.name && confirmedName.trim() != entry.name) {
-      throw StateError('Deletion confirmation does not match the entry name.');
-    }
-    final session = _sessionForEntry(entry);
-    final sftp = session.sftp;
-    if (sftp == null) return;
-
-    session.state = SftpConnectionState.loading;
-    session.errorMessage = null;
-    notifyListeners();
-
-    try {
-      if (entry.isDirectory) {
-        await sftp.rmdir(entry.path);
-      } else {
-        await sftp.remove(entry.path);
-      }
-      _directoryCache.invalidate(entry.connectionId, session.targetFingerprint);
-      await SftpFileCache.invalidate(
-        entry.connectionId,
-        session.targetFingerprint,
-        entry.path,
-      );
-      AppLogService.instance.info(
-        'SFTP entry deleted',
-        details: SftpLogSafety.details(
-          operation: 'delete_entry',
-          connectionId: entry.connectionId,
-          path: entry.path,
-          directory: entry.isDirectory,
-        ),
-      );
-      await _openPath(session, session.currentPath);
-    } catch (e) {
-      AppLogService.instance.error(
-        'SFTP delete failed',
-        details: SftpLogSafety.details(
-          operation: 'delete_entry',
-          connectionId: entry.connectionId,
-          path: entry.path,
-          directory: entry.isDirectory,
-          error: e,
-        ),
-      );
-      session.state = SftpConnectionState.error;
-      session.errorMessage = 'Delete failed: $e';
-      notifyListeners();
-    }
-  }
+  Future<void> deleteEntry(SftpEntry entry, {required String confirmedName}) =>
+      _deleteEntryImpl(entry, confirmedName: confirmedName);
 
   Future<Uint8List> downloadBytes(
     SftpEntry entry, {
-    int maxBytes = maxDownloadBytes,
+    int maxBytes = SftpService.maxDownloadBytes,
     bool updateState = false,
     bool bypassCache = false,
-  }) async {
-    final session = _sessionForEntry(entry);
-    final sftp = session.sftp;
-    if (sftp == null) throw StateError('SFTP is not connected');
-    if (entry.isDirectory) throw StateError('Directories cannot be downloaded');
-    _assertWithinMemoryLimit(entry.size, 'download', maxBytes: maxBytes);
-
-    if (!bypassCache) {
-      final cachedBytes = await SftpFileCache.get(
-        entry.connectionId,
-        session.targetFingerprint,
-        entry.path,
-        entry.size,
-        entry.modifiedAt,
-        maxBytes: maxBytes,
-      );
-      if (cachedBytes != null) {
-        return cachedBytes;
-      }
-    }
-
-    if (updateState) {
-      session.state = SftpConnectionState.loading;
-      session.errorMessage = null;
-      notifyListeners();
-    }
-
-    SftpFile? file;
-    try {
-      file = await sftp.open(entry.path, mode: SftpFileOpenMode.read);
-      final bytes = await _readFileBytesWithinLimit(file, maxBytes: maxBytes);
-      AppLogService.instance.info(
-        'SFTP file downloaded',
-        details: SftpLogSafety.details(
-          operation: 'download_bytes',
-          connectionId: entry.connectionId,
-          path: entry.path,
-          bytes: bytes.length,
-        ),
-      );
-
-      await SftpFileCache.put(
-        entry.connectionId,
-        session.targetFingerprint,
-        entry.path,
-        entry.size,
-        entry.modifiedAt,
-        bytes,
-      );
-
-      if (updateState) {
-        session.state = SftpConnectionState.connected;
-        notifyListeners();
-      }
-      return bytes;
-    } catch (e) {
-      AppLogService.instance.error(
-        'SFTP download failed',
-        details: SftpLogSafety.details(
-          operation: 'download_bytes',
-          connectionId: entry.connectionId,
-          path: entry.path,
-          error: e,
-        ),
-      );
-      if (updateState) {
-        session.state = SftpConnectionState.error;
-        session.errorMessage = 'Download failed: $e';
-        notifyListeners();
-      }
-      rethrow;
-    } finally {
-      await _closeFileQuietly(file);
-    }
-  }
+  }) => _downloadBytesImpl(
+    entry,
+    maxBytes: maxBytes,
+    updateState: updateState,
+    bypassCache: bypassCache,
+  );
 
   Future<String> readTextFile(
     SftpEntry entry, {
-    int maxBytes = maxTextEditBytes,
-  }) async {
-    final sftp = _sessionForEntry(entry).sftp;
-    if (sftp == null) throw StateError('SFTP is not connected');
-    _assertWithinMemoryLimit(entry.size, 'edit', maxBytes: maxBytes);
-
-    SftpFile? file;
-    try {
-      file = await sftp.open(entry.path, mode: SftpFileOpenMode.read);
-      final bytes = await _readFileBytesWithinLimit(file, maxBytes: maxBytes);
-      return utf8.decode(bytes, allowMalformed: true);
-    } finally {
-      await _closeFileQuietly(file);
-    }
-  }
+    int maxBytes = SftpService.maxTextEditBytes,
+  }) => _readTextFileImpl(entry, maxBytes: maxBytes);
 
   Future<void> saveTextFile(
     SftpEntry entry,
     String text, {
-    int maxBytes = maxTextEditBytes,
-  }) async {
-    final bytes = Uint8List.fromList(utf8.encode(text));
-    if (bytes.length > maxBytes) {
-      throw SftpTextSizeLimitException(
-        actualBytes: bytes.length,
-        maxBytes: maxBytes,
-      );
-    }
-
-    final session = _sessionForEntry(entry);
-    final sftp = session.sftp;
-    if (sftp == null) throw StateError('SFTP is not connected');
-
-    session.state = SftpConnectionState.loading;
-    session.errorMessage = null;
-    notifyListeners();
-
-    SftpFile? file;
-    try {
-      file = await sftp.open(
-        entry.path,
-        mode:
-            SftpFileOpenMode.create |
-            SftpFileOpenMode.truncate |
-            SftpFileOpenMode.write,
-      );
-      await file.writeBytes(bytes);
-      await _closeFileQuietly(file);
-      file = null;
-      _directoryCache.invalidate(entry.connectionId, session.targetFingerprint);
-      await SftpFileCache.invalidate(
-        entry.connectionId,
-        session.targetFingerprint,
-        entry.path,
-      );
-      AppLogService.instance.info(
-        'SFTP text file saved',
-        details: SftpLogSafety.details(
-          operation: 'save_text',
-          connectionId: entry.connectionId,
-          path: entry.path,
-          bytes: bytes.length,
-        ),
-      );
-      await _openPath(session, session.currentPath, bypassCache: true);
-    } catch (e) {
-      AppLogService.instance.error(
-        'SFTP save failed',
-        details: SftpLogSafety.details(
-          operation: 'save_text',
-          connectionId: entry.connectionId,
-          path: entry.path,
-          error: e,
-        ),
-      );
-      session.state = SftpConnectionState.error;
-      session.errorMessage = 'Save failed: $e';
-      notifyListeners();
-      rethrow;
-    } finally {
-      await _closeFileQuietly(file);
-    }
-  }
+    int maxBytes = SftpService.maxTextEditBytes,
+  }) => _saveTextFileImpl(entry, text, maxBytes: maxBytes);
 
   @override
   Future<void> openPath(String path) async {
@@ -980,44 +475,5 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
 
   void notify() {
     notifyListeners();
-  }
-}
-
-class _SftpSession {
-  final String connectionId;
-  final String connectionName;
-  final ConnectionTargetBinding? targetBinding;
-  SSHClient? client;
-  SftpClient? sftp;
-  String currentPath;
-  SftpConnectionState state = SftpConnectionState.disconnected;
-  String? errorMessage;
-  List<SftpEntry> entries = const [];
-  int entriesRevision = 0;
-  bool _closed = false;
-
-  _SftpSession({
-    required this.connectionId,
-    required this.connectionName,
-    required this.currentPath,
-    this.targetBinding,
-  });
-
-  String get targetFingerprint {
-    final binding = targetBinding;
-    if (binding == null) {
-      throw StateError('SFTP session has no bound remote target');
-    }
-    return binding.fingerprint;
-  }
-
-  void close() {
-    _closed = true;
-    sftp?.close();
-    client?.close();
-  }
-
-  bool isCurrent(Map<String, _SftpSession> sessions) {
-    return !_closed && identical(sessions[connectionId], this);
   }
 }

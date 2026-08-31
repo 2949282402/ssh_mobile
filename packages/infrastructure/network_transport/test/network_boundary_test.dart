@@ -84,6 +84,27 @@ void main() {
       await malformedRuntime.dispose();
     },
   );
+
+  test('default native adapter exposes a bounded handle lifecycle', () async {
+    final handle = await const SshMobileNativeNetworkAdapter().create();
+
+    expect(handle.rawEvents, isA<Stream<Uint8List>>());
+    expect(handle.boundLocalPort, isNull);
+    expect(
+      handle.sendCommand(Uint8List(0)),
+      TransportOperationStatus.invalidArgument,
+    );
+
+    await handle.close();
+    expect(handle.boundLocalPort, isNull);
+    expect(
+      handle.sendCommand(Uint8List.fromList(<int>[0])),
+      TransportOperationStatus.stopped,
+    );
+
+    await handle.close();
+    await handle.dispose();
+  });
 }
 
 final class _BoundaryNativeAdapter implements NativeNetworkAdapter {

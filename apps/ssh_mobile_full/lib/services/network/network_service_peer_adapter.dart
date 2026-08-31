@@ -7,12 +7,14 @@ final class _NetworkPeerAdapter {
     required this.commands,
     required this.eventHub,
     required this.projection,
+    this.traceRegistry,
   });
 
   final NetworkProtocolV2Codec codec;
   final _NetworkCommandCoordinator commands;
   final _NetworkEventHub eventHub;
   final _NetworkStateProjection projection;
+  final TelemetryTraceRegistry? traceRegistry;
 
   Future<NetworkResult<void>> upsertPeer(PeerConfig peer) => commands.submit(
     codec.upsertPeerCommand(commandId: const Uuid().v4(), peer: peer),
@@ -53,10 +55,16 @@ final class _NetworkPeerAdapter {
       );
     }
     if (projection.hasRoute(peerId)) {
+      final traceId = traceRegistry?.traceForPeer(peerId);
+      if (traceId != null) {
+        traceRegistry?.completePeer(peerId, traceId: traceId);
+      }
       return const NetworkSuccess<void>(null);
     }
 
     final terminalState = Completer<PeerStateChanged>();
+    final traceId = traceRegistry?.traceForPeer(peerId);
+    var terminalObserved = false;
     final subscription = eventHub.stream
         .where(
           (event) =>
@@ -78,15 +86,20 @@ final class _NetworkPeerAdapter {
       ),
       operation: NetworkOperation.connect,
       timeout: const Duration(seconds: 12),
+      peerId: peerId,
     );
     if (result is NetworkFailure<void>) {
       await subscription.cancel();
+      traceRegistry?.releasePeerTrace(peerId: peerId, traceId: traceId);
       return result;
     }
+    PeerStateChanged? terminalEvent;
     try {
       final event = await terminalState.future.timeout(
         const Duration(seconds: 12),
       );
+      terminalEvent = event;
+      terminalObserved = true;
       if (event.state == PeerConnectionState.connected) {
         return const NetworkSuccess<void>(null);
       }
@@ -110,6 +123,16 @@ final class _NetworkPeerAdapter {
       );
     } finally {
       await subscription.cancel();
+      if (traceId != null &&
+          terminalEvent?.state == PeerConnectionState.connected) {
+        // The bridge also observes this event, but it must not be the only
+        // cleanup path: tests or another consumer may use the facade without
+        // installing telemetry. The exact trace guard preserves a newer
+        // same-peer operation.
+        traceRegistry?.completePeer(peerId, traceId: traceId);
+      } else if (traceId != null && !terminalObserved) {
+        traceRegistry?.releasePeerTrace(peerId: peerId, traceId: traceId);
+      }
     }
   }
 

@@ -1,4 +1,5 @@
 use super::*;
+use prost::Message;
 
 #[test]
 fn network_error_code_additions_preserve_existing_values() {
@@ -121,6 +122,48 @@ fn peer_presence_snapshot_round_trips_peers_and_state() {
         }
         other => panic!("unexpected event payload: {other:?}"),
     }
+}
+
+#[test]
+fn route_attempt_events_round_trip_causal_fallback_phases() {
+    let event = NetworkEvent {
+        event_id: "peer-a/route-attempt/attempt-a".into(),
+        timestamp_ms: 123,
+        protocol_version: NETWORK_PROTOCOL_VERSION,
+        payload: Some(network_event::Payload::RouteAttemptChanged(
+            RouteAttemptChangedEvent {
+                peer_id: "peer-a".into(),
+                attempt_id: "attempt-a".into(),
+                phase: RouteAttemptPhase::RelayFallbackStarted as i32,
+                route_type: RouteType::Relay as i32,
+                error: Some(NetworkError {
+                    code: NetworkErrorCode::QuicError as i32,
+                    message: "direct refused".into(),
+                    operation: "connect".into(),
+                    peer_id: "peer-a".into(),
+                    retry_disposition: RetryDisposition::Unspecified as i32,
+                    retry_after_seconds: 0,
+                }),
+                command_id: "command-a".into(),
+            },
+        )),
+    };
+    let decoded = NetworkEvent::decode(event.encode_to_vec().as_slice()).expect("decode");
+    let Some(network_event::Payload::RouteAttemptChanged(attempt)) = decoded.payload else {
+        panic!("expected route attempt event");
+    };
+    assert_eq!(attempt.peer_id, "peer-a");
+    assert_eq!(attempt.attempt_id, "attempt-a");
+    assert_eq!(
+        attempt.phase,
+        RouteAttemptPhase::RelayFallbackStarted as i32
+    );
+    assert_eq!(attempt.route_type, RouteType::Relay as i32);
+    assert_eq!(attempt.command_id, "command-a");
+    assert_eq!(
+        attempt.error.expect("direct error").code,
+        NetworkErrorCode::QuicError as i32
+    );
 }
 
 #[test]

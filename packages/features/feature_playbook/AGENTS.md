@@ -1,21 +1,21 @@
-最新更新时间：2026-08-09
+最新更新时间：2026-08-30
 
-# Playbook Package Guidelines
+# feature_playbook 维护约束
 
-- `PlaybookModule` 是 `playbook.db`、Repository 和执行 Service 的唯一 Owner。
-- SSH、连接目录、日志和加密能力只能通过 `Playbook*Port` 注入；不要在
-  Feature 内创建全局 Service 或直接访问旧 App 实现。
-- approved execution 必须使用不可变的 `SshTargetBinding` 和 action fingerprint；
-  目标或命令发生变化时停止执行并等待重新审批。
-- 远端命令限制、审批状态、目标绑定和 secret filtering 保持在 Service/Port
-  层，UI 只负责展示状态和触发用户操作。
-- 修改 Dart 后必须在 Package 目录运行 format、analyze 和 test。
+- `PlaybookModule` alone owns `playbook.db`, Repository, and execution Service.
+  SSH, connection catalogue, logging, and encryption arrive through
+  `Playbook*Port`; never create global Services or use old App implementations.
+- Approved execution binds immutable `SshTargetBinding` + action fingerprint;
+  target/command change stops execution and requires new approval. Remote command
+  limits, approval state, target binding, and secret filtering remain in
+  Service/Port; UI only displays state and starts user actions.
+- Contract: allowed playbook models/Repository/Module/Service/approval Port/pages/
+  tests; no other Feature/App `/src/`, unified storage, or un-injected SSH/credential
+  service. Public API changes sync `PlaybookAutomationPort`, App adapters, AI
+  callers, and security tests. Sensitive DB fields are encrypted; Module releases
+  DB/Repository/Service and AppRuntime releases injected resources.
 
-## Step29 标准字段
+## 验证（代码变更）
 
-- 允许修改范围：剧本模型、Repository、Module、执行 Service、审批 Port、页面和测试。
-- 禁止依赖：其他 Feature 实现、App `/src/`、统一存储或未注入的 SSH/凭据服务。
-- Public API 修改要求：同步 `PlaybookAutomationPort`、App adapters、AI 调用方和安全测试。
-- 数据库约束：`PlaybookModule` 独占 `playbook.db`；敏感内容写入前必须加密。
-- 资源释放规则：Module 释放数据库/Repository/Service；AppRuntime 释放注入的 SSH、日志和保护 Port。
-- 必须运行的测试：`dart format --output=none --set-exit-if-changed lib test`、`flutter analyze`、`flutter test`。
+`dart format --output=none --set-exit-if-changed lib test`、`flutter analyze`、
+`flutter test`；local aggregate CI 仅按用户明确要求运行。

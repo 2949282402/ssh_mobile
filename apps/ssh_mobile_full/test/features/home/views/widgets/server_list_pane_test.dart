@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -14,9 +15,13 @@ import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:ssh_mobile/app/sftp_backend_adapters.dart';
+import 'package:ssh_mobile/app/terminal_feature_adapters.dart';
+import 'package:ssh_mobile/app/terminal_ssh_capability_adapter.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import '../../../../test_utils/test_storage_adapter.dart';
 import 'package:app_ui/app_ui.dart';
+import 'package:feature_terminal/feature_terminal.dart';
+import 'package:ssh_core/ssh_core.dart' as ssh_core;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -27,6 +32,9 @@ void main() {
   late SftpService sftpService;
   late monitoring.MonitoringService performanceService;
   late feature.ConnectionViewModel connectionViewModel;
+  late AppTerminalSettingsAdapter terminalSettings;
+  late AppTerminalSshSessionManager terminalManager;
+  late _UiConnectionAdapter connectionUiAdapter;
 
   setUp(() async {
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
@@ -40,11 +48,14 @@ void main() {
     storageService = TestStorageAdapter();
     await storageService.init();
     sshService = _TestSshService(storageService);
-    sftpService = createTestSftpService(storageService);
+    sftpService = _UiSftpService();
     performanceService = createTestPerformanceMonitorService(
       sshService,
       storageService,
     );
+    terminalSettings = AppTerminalSettingsAdapter(appSettings);
+    terminalManager = AppTerminalSshSessionManager(sshService);
+    connectionUiAdapter = _UiConnectionAdapter();
     connectionViewModel = feature.ConnectionViewModel(
       connectionRepository: storageService.connectionRepository,
       credentialRepository: storageService.credentialRepository,
@@ -65,6 +76,8 @@ void main() {
 
   tearDown(() async {
     connectionViewModel.dispose();
+    await terminalManager.terminal.dispose();
+    terminalSettings.dispose();
     performanceService.dispose();
     sftpService.dispose();
     sshService.dispose();
@@ -74,7 +87,11 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
-  Widget host({required ValueChanged<bool> onSettings}) {
+  Widget host({
+    required ValueChanged<bool> onSettings,
+    monitoring.MonitoringService? monitor,
+  }) {
+    final monitorForPage = monitor ?? performanceService;
     return MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: appSettings),
@@ -82,10 +99,18 @@ void main() {
           value: connectionViewModel,
         ),
         ChangeNotifierProvider<SshService>.value(value: sshService),
-        ChangeNotifierProvider.value(value: performanceService),
+        ChangeNotifierProvider.value(value: monitorForPage),
+        Provider<ssh_core.SshSessionManager>.value(value: terminalManager),
+        ListenableProvider<TerminalSettingsPort>.value(value: terminalSettings),
+        Provider<feature.ConnectionUiAdapter>.value(value: connectionUiAdapter),
       ],
       child: MaterialApp(
         theme: AppTheme.lightThemeFor(),
+        onGenerateRoute: (settings) => MaterialPageRoute<void>(
+          builder: (_) =>
+              Scaffold(body: Center(child: Text('route ${settings.name}'))),
+          settings: settings,
+        ),
         builder: (context, child) => MediaQuery(
           data: MediaQuery.of(
             context,
@@ -293,6 +318,512 @@ void main() {
       expect(find.byType(AppSkeletonizer), findsNothing);
     },
   );
+
+  testWidgets(
+    'desktop cards render health states, actions, and embedded windows',
+    (tester) async {
+      tester.view.physicalSize = const Size(1600, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final configs = <ConnectionConfig>[
+        ConnectionConfig(
+          id: 'healthy-server',
+          name: 'Healthy server',
+          host: 'healthy.example.test',
+          username: 'operator',
+        ),
+        ConnectionConfig(
+          id: 'warning-server',
+          name: 'Warning server',
+          host: 'warning.example.test',
+          username: 'operator',
+        ),
+        ConnectionConfig(
+          id: 'critical-server',
+          name: 'Critical server',
+          host: 'critical.example.test',
+          username: 'operator',
+        ),
+        ConnectionConfig(
+          id: 'unknown-server',
+          name: 'Unknown server',
+          host: 'unknown.example.test',
+          username: 'operator',
+        ),
+      ];
+      await tester.runAsync(() async {
+        await appSettings.setServerListLayoutMode('grid');
+        for (final config in configs) {
+          await storageService.addConnection(config);
+        }
+        await connectionViewModel.fetchConnections();
+      });
+      sshService.setServerOverview(
+        const SshServerOverviewSnapshot(
+          byConnection: {
+            'healthy-server': SshConnectionOverview(
+              count: 2,
+              latestState: SshConnectionState.connected,
+              hasConnected: true,
+            ),
+            'warning-server': SshConnectionOverview(
+              count: 1,
+              latestState: SshConnectionState.connecting,
+              hasConnected: false,
+            ),
+          },
+          windowCount: 3,
+        ),
+      );
+      final monitor = _UiMonitoringService({
+        'healthy-server': _health(
+          'healthy-server',
+          monitoring.ServerHealthLevel.healthy,
+          95,
+          const ['CPU normal', 'Disk normal'],
+        ),
+        'warning-server': _health(
+          'warning-server',
+          monitoring.ServerHealthLevel.warning,
+          50,
+          const [],
+        ),
+        'critical-server': _health(
+          'critical-server',
+          monitoring.ServerHealthLevel.critical,
+          20,
+          const ['Disk full'],
+        ),
+      });
+
+      await tester.pumpWidget(host(onSettings: (_) {}, monitor: monitor));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(GridView), findsOneWidget);
+      expect(find.text('Healthy server'), findsOneWidget);
+      expect(find.text('Warning server'), findsOneWidget);
+      expect(find.text('Critical server'), findsOneWidget);
+      expect(find.text('Unknown server'), findsOneWidget);
+      expect(find.text('Health 95 · CPU normal / Disk normal'), findsOneWidget);
+      expect(find.text('Health 50 · Warning'), findsOneWidget);
+      expect(find.text('Health 20 · Disk full'), findsOneWidget);
+      expect(find.text('No monitoring data'), findsOneWidget);
+      expect(find.text('2 windows'), findsOneWidget);
+
+      final healthyCard = find.byKey(
+        const ValueKey<String>('server-card-healthy-server'),
+      );
+      await tester.ensureVisible(healthyCard);
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.moveTo(tester.getCenter(healthyCard));
+      await tester.pump();
+      await mouse.moveTo(const Offset(0, 0));
+      await mouse.removePointer();
+      await tester.pump();
+
+      await tester.tap(find.byIcon(Icons.more_vert).first);
+      await tester.pumpAndSettle();
+      expect(find.text('Edit'), findsOneWidget);
+      await tester.tap(find.text('Edit'));
+      await tester.pumpAndSettle();
+      expect(find.text('route /edit'), findsOneWidget);
+      Navigator.of(tester.element(find.text('route /edit'))).pop();
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.more_vert).first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete').last);
+      await tester.pumpAndSettle();
+      expect(find.text('Delete connection'), findsOneWidget);
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.widgetWithText(TextButton, 'Cancel'),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      sshService.invokeUnknownHostKey = true;
+      await tester.tap(
+        find.byKey(const ValueKey<String>('server-card-healthy-server')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('route /terminal'), findsOneWidget);
+      Navigator.of(tester.element(find.text('route /terminal'))).pop();
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('New window').first);
+      await tester.pumpAndSettle();
+      expect(find.text('route /terminal'), findsOneWidget);
+      Navigator.of(tester.element(find.text('route /terminal'))).pop();
+      await tester.pumpAndSettle();
+
+      await appSettings.setServerListLayoutMode('list');
+      await tester.pumpAndSettle();
+      final windowToggle = find.text('Window List · 2');
+      expect(windowToggle, findsOneWidget);
+      await tester.tap(windowToggle);
+      await tester.pumpAndSettle();
+      expect(find.byType(TerminalWindowsPage), findsOneWidget);
+      expect(find.text('No open terminal windows'), findsNothing);
+
+      await tester.tap(windowToggle);
+      await tester.pumpAndSettle();
+      expect(find.byType(TerminalWindowsPage), findsNothing);
+
+      final unknownMenu = find.descendant(
+        of: find.byKey(const ValueKey<String>('server-card-unknown-server')),
+        matching: find.byIcon(Icons.more_vert),
+      );
+      await tester.ensureVisible(unknownMenu);
+      await tester.tap(unknownMenu);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete').last);
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.widgetWithText(TextButton, 'Delete'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      // The confirmation callback is asynchronous; a cleanup failure remains
+      // visible on the VM instead of being mistaken for a successful delete.
+      await tester.runAsync(() async {
+        await Future<void>.delayed(Duration.zero);
+      });
+      await tester.pumpAndSettle();
+      expect(connectionViewModel.errorMessage, isNull);
+      expect(storageService.getConnection('unknown-server'), isNull);
+      expect(find.text('Unknown server'), findsNothing);
+
+      sshService.openSessionError = StateError('tmux is not installed');
+      await tester.tap(
+        find.byKey(const ValueKey<String>('server-card-warning-server')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Please install tmux manually'),
+        findsOneWidget,
+      );
+      sshService.openSessionError = StateError('connection refused');
+      await tester.tap(
+        find.byKey(const ValueKey<String>('server-card-critical-server')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Connection failed:'), findsOneWidget);
+      sshService.openSessionError = null;
+      sshService.returnNullSession = true;
+      await tester.tap(
+        find.byKey(const ValueKey<String>('server-card-critical-server')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(SnackBar), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'desktop list supports reorder, selection, batch delete, and add route',
+    (tester) async {
+      tester.view.physicalSize = const Size(1440, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.runAsync(() async {
+        await appSettings.setServerListLayoutMode('list');
+        for (final id in ['first-server', 'second-server']) {
+          await storageService.addConnection(
+            ConnectionConfig(
+              id: id,
+              name: id,
+              host: '$id.example.test',
+              username: 'operator',
+            ),
+          );
+        }
+        await connectionViewModel.fetchConnections();
+      });
+      await tester.pumpWidget(host(onSettings: (_) {}));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ReorderableListView), findsOneWidget);
+      final reorderable = tester.widget<ReorderableListView>(
+        find.byType(ReorderableListView),
+      );
+      await tester.runAsync(() async {
+        reorderable.onReorderItem!(0, 1);
+      });
+      await tester.pumpAndSettle();
+      expect(connectionViewModel.connections.first.id, 'second-server');
+
+      await tester.tap(find.text('Add connection'));
+      await tester.pumpAndSettle();
+      expect(find.text('route /add'), findsOneWidget);
+      Navigator.of(tester.element(find.text('route /add'))).pop();
+      await tester.pumpAndSettle();
+
+      final firstCard = find.byKey(
+        const ValueKey<String>('server-card-second-server'),
+      );
+      await tester.longPress(firstCard);
+      await tester.pumpAndSettle();
+      expect(find.text('1 selected'), findsOneWidget);
+      expect(find.byType(Checkbox), findsNWidgets(2));
+
+      await tester.tap(find.byType(Checkbox).first);
+      await tester.pumpAndSettle();
+      expect(find.text('1 selected'), findsNothing);
+
+      await tester.longPress(
+        find.byKey(const ValueKey<String>('server-card-second-server')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('1 selected'), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(const ValueKey<String>('server-card-first-server')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('2 selected'), findsOneWidget);
+
+      await tester.tap(find.byType(Checkbox).first);
+      await tester.pumpAndSettle();
+      expect(find.text('1 selected'), findsOneWidget);
+      await tester.tap(find.byType(Checkbox).first);
+      await tester.pumpAndSettle();
+      expect(find.text('2 selected'), findsOneWidget);
+
+      final selectionDelete = find.widgetWithText(FilledButton, 'Delete');
+      expect(selectionDelete, findsOneWidget);
+      await tester.tap(selectionDelete);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Delete 2 selected servers?'), findsOneWidget);
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.widgetWithText(TextButton, 'Cancel'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('2 selected'), findsOneWidget);
+
+      await tester.tap(selectionDelete);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Delete 2 selected servers?'), findsOneWidget);
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.widgetWithText(TextButton, 'Delete'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        await Future<void>.delayed(Duration.zero);
+      });
+      await tester.pumpAndSettle();
+      expect(find.byType(AppEmptyState), findsOneWidget);
+
+      expect(find.text('2 selected'), findsNothing);
+    },
+  );
+
+  testWidgets('Chinese desktop header and batch confirmation stay localized', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await appSettings.toggleLanguage();
+    await tester.runAsync(() async {
+      await storageService.addConnection(
+        ConnectionConfig(
+          id: 'localized-server',
+          name: '本地化服务器',
+          host: 'localized.example.test',
+          username: 'operator',
+        ),
+      );
+      await connectionViewModel.fetchConnections();
+    });
+    await tester.pumpWidget(host(onSettings: (_) {}));
+    await tester.pumpAndSettle();
+
+    expect(find.text('已保存 1 台服务器'), findsOneWidget);
+    final layoutButton = find.byTooltip('服务器列表布局');
+    expect(layoutButton, findsOneWidget);
+    await tester.tap(layoutButton);
+    await tester.pumpAndSettle();
+    expect(find.text('列表'), findsOneWidget);
+    expect(find.text('网格'), findsOneWidget);
+    await tester.tap(find.text('网格'), warnIfMissed: false);
+    await tester.pumpAndSettle();
+    expect(find.byType(GridView), findsOneWidget);
+
+    await tester.longPress(
+      find.byKey(const ValueKey<String>('server-card-localized-server')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('已选择 1 台服务器'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, '删除'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('确定删除选中的 1 台服务器吗？'), findsOneWidget);
+    await tester.tap(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.widgetWithText(TextButton, '取消'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('已选择 1 台服务器'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, '取消'));
+    await tester.pumpAndSettle();
+    expect(find.text('已选择 1 台服务器'), findsNothing);
+  });
+}
+
+monitoring.ServerHealthSnapshot _health(
+  String connectionId,
+  monitoring.ServerHealthLevel level,
+  int score,
+  List<String> details,
+) => monitoring.ServerHealthSnapshot(
+  connectionId: connectionId,
+  level: level,
+  score: score,
+  summary: level.name,
+  details: details,
+  updatedAt: DateTime.utc(2026, 1, 1),
+);
+
+final class _UiMonitoringService extends Fake
+    implements monitoring.MonitoringService {
+  _UiMonitoringService(this._healthByConnection);
+
+  final Map<String, monitoring.ServerHealthSnapshot> _healthByConnection;
+
+  @override
+  bool isRunning = false;
+  @override
+  bool isSampling = false;
+  @override
+  Set<String> selectedConnectionIds = <String>{};
+  @override
+  Set<String> monitoringConnectionIds = <String>{};
+  @override
+  Duration interval = const Duration(seconds: 10);
+  @override
+  Duration historyWindow = const Duration(minutes: 5);
+  @override
+  Duration effectiveInterval = const Duration(seconds: 10);
+  @override
+  DateTime? startedAt;
+  @override
+  Map<String, String> errorsByConnection = const {};
+  @override
+  List<monitoring.MonitorAlert> alerts = const [];
+
+  @override
+  void addListener(VoidCallback listener) {}
+
+  @override
+  void removeListener(VoidCallback listener) {}
+
+  @override
+  monitoring.ServerHealthSnapshot healthFor(String connectionId) =>
+      _healthByConnection[connectionId] ??
+      _health(connectionId, monitoring.ServerHealthLevel.unknown, 0, const []);
+
+  @override
+  List<monitoring.PerformanceSample> visibleSamplesFor(String connectionId) =>
+      const [];
+
+  @override
+  List<monitoring.PerformanceSample> samplesFor(String connectionId) =>
+      const [];
+
+  @override
+  List<monitoring.DiskUsageSnapshot> diskUsageFor(String connectionId) =>
+      const [];
+
+  @override
+  Future<void> startMonitoring({
+    ssh_core.SshHostKeyConfirmation? onUnknownHostKey,
+    Map<String, ssh_core.SshTargetBinding>? targetBindings,
+  }) async {}
+
+  @override
+  void stopMonitoring() {}
+
+  @override
+  void stopForConnection(String connectionId) {}
+
+  @override
+  Future<void> sampleNow({
+    ssh_core.SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {}
+
+  @override
+  void setInterval(Duration value) {}
+
+  @override
+  void setHistoryWindow(Duration value) {}
+
+  @override
+  void toggleSelection(String connectionId) {}
+
+  @override
+  void clearSelection() {}
+
+  @override
+  Future<List<monitoring.PortProcessSnapshot>> fetchPorts(
+    String connectionId, {
+    ssh_core.SshHostKeyConfirmation? onUnknownHostKey,
+  }) async => const [];
+
+  @override
+  Future<List<monitoring.ApplicationMemorySnapshot>> fetchApplications(
+    String connectionId, {
+    ssh_core.SshHostKeyConfirmation? onUnknownHostKey,
+  }) async => const [];
+
+  @override
+  Future<List<monitoring.ServiceStatusSnapshot>> fetchServices(
+    String connectionId, {
+    ssh_core.SshHostKeyConfirmation? onUnknownHostKey,
+  }) async => const [];
+}
+
+final class _UiSftpService extends Fake implements SftpService {
+  @override
+  Future<void> disconnectConnection(
+    String connectionId, {
+    bool notify = true,
+    bool forgetPath = false,
+  }) async {}
+
+  @override
+  void dispose() {}
+}
+
+final class _UiConnectionAdapter extends Fake
+    implements feature.ConnectionUiAdapter {
+  @override
+  Future<bool> confirmHostKey(
+    BuildContext context,
+    feature.ConnectionHostKeyPrompt prompt,
+  ) async => true;
+
+  @override
+  void logSaveFailure({
+    required Object error,
+    required StackTrace stackTrace,
+    required ConnectionConfig? config,
+  }) {}
 }
 
 class _TestSshService extends SshService {
@@ -305,6 +836,9 @@ class _TestSshService extends SshService {
       );
 
   SshServerOverviewSnapshot _overview = const SshServerOverviewSnapshot.empty();
+  Object? openSessionError;
+  bool invokeUnknownHostKey = false;
+  bool returnNullSession = false;
 
   @override
   SshServerOverviewSnapshot get serverOverviewSnapshot => _overview;
@@ -313,6 +847,37 @@ class _TestSshService extends SshService {
     _overview = value;
     notifyListeners();
   }
+
+  @override
+  Future<void> ensureInitialized() async {}
+
+  @override
+  Future<String?> openSession(
+    String connectionId, {
+    String? displayName,
+    ssh_core.SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
+    final error = openSessionError;
+    if (error != null) throw error;
+    if (invokeUnknownHostKey && onUnknownHostKey != null) {
+      await onUnknownHostKey(
+        ssh_core.SshHostKeyPromptRequest(
+          connectionId: connectionId,
+          connectionName: connectionId,
+          host: '$connectionId.example.test',
+          port: 22,
+          username: 'operator',
+          algorithm: 'ssh-ed25519',
+          fingerprint: 'SHA256:test',
+        ),
+      );
+    }
+    if (returnNullSession) return null;
+    return 'ui-session-$connectionId';
+  }
+
+  @override
+  Future<void> disconnectSessionsForConnection(String connectionId) async {}
 }
 
 class _DelayedConnectionRepository extends Fake

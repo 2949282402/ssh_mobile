@@ -6,11 +6,13 @@ final class _NetworkCommandCoordinator {
     required this.gateway,
     required this.codec,
     required this.state,
+    this.traceRegistry,
   });
 
   final NetworkCommandGateway gateway;
   final NetworkProtocolV2Codec codec;
   final _NetworkServiceState state;
+  final TelemetryTraceRegistry? traceRegistry;
   final Map<String, _PendingNetworkCommand> _pendingCommands =
       <String, _PendingNetworkCommand>{};
 
@@ -21,24 +23,44 @@ final class _NetworkCommandCoordinator {
     Uint8List command, {
     required NetworkOperation operation,
     Duration timeout = const Duration(seconds: 3),
+    String? peerId,
   }) async {
     state.ensureUsable();
     if (state.stopped) return _networkCancelled(operation);
     final commandId = codec.commandId(command);
+    if (_pendingCommands.containsKey(commandId)) {
+      return _networkFailure(
+        NetworkError(
+          code: NetworkErrorCode.invalidArgument,
+          message: 'native command id is already pending',
+          operation: operation,
+        ),
+      );
+    }
     final pending = _PendingNetworkCommand(
       completer: Completer<NetworkResult<void>>(),
       operation: operation,
     );
     _pendingCommands[commandId] = pending;
+    final traceId = peerId == null ? null : traceRegistry?.traceForPeer(peerId);
+    if (peerId != null && traceId != null) {
+      traceRegistry?.bindCommand(
+        commandId: commandId,
+        peerId: peerId,
+        traceId: traceId,
+      );
+    }
     final status = gateway.sendCommand(command);
     if (status != TransportOperationStatus.success) {
       _pendingCommands.remove(commandId);
+      traceRegistry?.completeCommand(commandId);
       return _networkFailure(
         _networkTransportStatusError(status, operation: operation),
       );
     }
+    NetworkResult<void>? result;
     try {
-      return await pending.completer.future.timeout(
+      result = await pending.completer.future.timeout(
         timeout,
         onTimeout: () => _networkFailure(
           NetworkError(
@@ -48,8 +70,15 @@ final class _NetworkCommandCoordinator {
           ),
         ),
       );
+      return result;
     } finally {
       _pendingCommands.remove(commandId);
+      traceRegistry?.completeCommand(
+        commandId,
+        retainPeerBinding:
+            operation == NetworkOperation.connect &&
+            result is NetworkSuccess<void>,
+      );
     }
   }
 
@@ -80,12 +109,16 @@ final class _NetworkCommandCoordinator {
 
   /// 在 stop/dispose 边界完成全部尚未确认的命令。
   void cancelPending({NetworkOperation operation = NetworkOperation.stop}) {
+    final commandIds = _pendingCommands.keys.toList(growable: false);
     for (final pending in _pendingCommands.values) {
       if (!pending.completer.isCompleted) {
         pending.completer.complete(_networkCancelled(operation));
       }
     }
     _pendingCommands.clear();
+    for (final commandId in commandIds) {
+      traceRegistry?.completeCommand(commandId);
+    }
   }
 }
 

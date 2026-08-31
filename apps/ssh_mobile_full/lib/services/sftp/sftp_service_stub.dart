@@ -1,6 +1,7 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
 import 'package:connection_core/connection_core.dart';
+import 'package:app_core/app_core.dart';
+import 'package:flutter/foundation.dart';
 import '../sftp_service.dart';
 import '../sftp_path_history_store.dart';
 
@@ -11,6 +12,9 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   static const int maxUploadBytes = 50 * 1024 * 1024;
   static const int maxDownloadBytes = 512 * 1024 * 1024;
   static const int maxInMemoryTransferBytes = maxDownloadBytes;
+  static const Duration _defaultTelemetryFailureTimeout = Duration(
+    milliseconds: 250,
+  );
 
   SftpService({
     required ConnectionRepository connectionRepository,
@@ -19,7 +23,12 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     SftpPathHistoryStore? pathHistoryStore,
     dynamic nativeStreamConnector,
     dynamic peerIdResolver,
+    this.telemetryClient,
+    Duration telemetryFailureTimeout = _defaultTelemetryFailureTimeout,
   });
+
+  /// 可选遥测客户端；桌面/移动 IO 实现使用，Web stub 仅持有该字段保持一致。
+  TelemetryClient? telemetryClient;
 
   String? _activeConnectionId;
   SftpConnectionState _state = SftpConnectionState.disconnected;

@@ -2,6 +2,7 @@
 
 import 'package:feature_connection/feature_connection.dart';
 import 'package:connection_core/connection_core.dart' as connection_core;
+import 'package:dartssh2/dartssh2.dart';
 import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:ssh_core/ssh_core.dart' as ssh_core;
 
@@ -92,19 +93,37 @@ final class AppConnectionRuntimeAdapter implements ConnectionRuntimePort {
 }
 
 /// 旧 SSH ClientFactory 到 Feature Verification Port 的适配器。
+/// 测试可注入一个等价的 ping/close 边界，避免验证契约测试依赖真实网络。
+typedef AppConnectionVerificationConnector =
+    Future<AppConnectionVerificationClient> Function(
+      connection_core.ConnectionConfig config,
+      ssh_core.SshCredentials credentials,
+      ssh_core.SshHostKeyConfirmation? onUnknownHostKey,
+    );
+
+/// 连接验证所需的最小客户端行为。
+abstract interface class AppConnectionVerificationClient {
+  Future<void> ping();
+
+  void close();
+}
+
 final class AppConnectionVerificationAdapter
     implements ConnectionVerificationPort {
   AppConnectionVerificationAdapter({
     required connection_core.CredentialRepository credentialRepository,
     required connection_core.HostKeyRepository hostKeyRepository,
     required AppLogService logger,
+    AppConnectionVerificationConnector? connector,
   }) : _factory = ssh_core.SshClientFactory(
          credentialRepository: credentialRepository,
          hostKeyRepository: hostKeyRepository,
          logger: logger,
-       );
+       ),
+       _connector = connector;
 
   final ssh_core.SshClientFactory _factory;
+  final AppConnectionVerificationConnector? _connector;
 
   @override
   Future<ConnectionVerificationResult> verify(
@@ -117,17 +136,25 @@ final class AppConnectionVerificationAdapter
         ? null
         : (ssh_core.SshHostKeyPromptRequest request) =>
               onUnknownHostKey(_toFeaturePrompt(request));
-    final client = await _factory.connectClient(
-      config,
-      timeout: const Duration(seconds: 12),
-      credentials: ssh_core.SshCredentials(
-        password: password,
-        privateKey: privateKey,
-      ),
-      onUnknownHostKey: legacyConfirmation,
-      // 验证只返回候选信任；Feature 在配置、Host Key、凭据的统一提交阶段持久化。
-      persistHostKeyTrust: false,
+    final credentials = ssh_core.SshCredentials(
+      password: password,
+      privateKey: privateKey,
     );
+    final injectedConnector = _connector;
+    final AppConnectionVerificationClient client;
+    if (injectedConnector != null) {
+      client = await injectedConnector(config, credentials, legacyConfirmation);
+    } else {
+      final sshClient = await _factory.connectClient(
+        config,
+        timeout: const Duration(seconds: 12),
+        credentials: credentials,
+        onUnknownHostKey: legacyConfirmation,
+        // 验证只返回候选信任；Feature 在配置、Host Key、凭据的统一提交阶段持久化。
+        persistHostKeyTrust: false,
+      );
+      client = _DartConnectionVerificationClient(sshClient);
+    }
     try {
       await client.ping().timeout(const Duration(seconds: 8));
     } finally {
@@ -140,6 +167,23 @@ final class AppConnectionVerificationAdapter
     );
   }
 }
+
+// The direct dartssh2 wrapper is a platform integration shim; its lifecycle is
+// exercised by the dartssh2 package and the injected contract above.
+// coverage:ignore-start
+final class _DartConnectionVerificationClient
+    implements AppConnectionVerificationClient {
+  _DartConnectionVerificationClient(this._client);
+
+  final SSHClient _client;
+
+  @override
+  Future<void> ping() => _client.ping();
+
+  @override
+  void close() => _client.close();
+}
+// coverage:ignore-end
 
 ConnectionHostKeyPrompt _toFeaturePrompt(
   ssh_core.SshHostKeyPromptRequest prompt,

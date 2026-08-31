@@ -1,4 +1,4 @@
-最新更新时间：2026-08-25
+最新更新时间：2026-08-30
 
 # 模块依赖审计
 
@@ -14,7 +14,8 @@ dart run test/tool/module_dependency_check_test.dart
 dart run tool/architecture_check.dart
 ```
 
-当前结果：21 个成员、65 条内部生产依赖边，未发现禁止的层级依赖或循环依赖。
+当前结果：依赖审计通过，未发现禁止的层级依赖或循环依赖。成员清单与直接
+生产依赖以根 `pubspec.yaml` 和顶部审计命令的当前输出为准。
 
 ```mermaid
 flowchart TD
@@ -55,7 +56,7 @@ Feature。Feature 之间默认禁止直接依赖，当前唯一登记的例外�
 | Feature | `feature_mcp` | `app_core`, `app_ui` | MCP 服务、审批和活动记录 |
 | Feature | `feature_monitoring` | `app_core`, `connection_core`, `ssh_core` | 监控业务代码不依赖共享 UI；展示由调用方组合 |
 | Feature | `feature_playbook` | `app_core`, `app_ui`, `connection_core`, `ssh_core` | Playbook 执行、审批和运行记录 |
-| Feature | `feature_rag` | `app_core` | RAG 检索、元数据和有界缓存 |
+| Feature | `feature_rag` | `app_core`, `app_ui` | RAG 检索、元数据和有界缓存 |
 | Feature | `feature_sftp` | `app_core`, `app_ui`, `ssh_core` | SFTP 路由、路径记录和 SSH 能力 |
 | Feature | `feature_system_admin` | `app_core`, `app_ui`, `connection_core`, `ssh_core` | 系统管理路由和管理命令 |
 | Feature | `feature_terminal` | `app_core`, `app_ui`, `ssh_core` | Terminal UI、路由状态和历史记录 |

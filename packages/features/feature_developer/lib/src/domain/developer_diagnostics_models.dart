@@ -125,6 +125,77 @@ final class DeveloperResourceSnapshot {
   final int activeSubscriptions;
 }
 
+/// Telemetry 模块的只读诊断快照。
+final class DeveloperTelemetrySnapshot {
+  /// 创建 Telemetry 诊断快照。
+  const DeveloperTelemetrySnapshot({
+    required this.localPendingCount,
+    required this.localRejectedCount,
+    required this.localSyncedCount,
+    required this.totalCount,
+    required this.cacheOverflow,
+    this.oldestPendingAge,
+    this.oldestRejectedAge,
+    this.overflowCount = 0,
+    this.telemetryEnabled = false,
+    required this.uploadEnabled,
+    required this.policyVersion,
+    required this.batchSizeThreshold,
+    required this.timeIntervalSeconds,
+    this.lastSyncTime,
+    this.lastSyncError,
+    required this.isUploading,
+  });
+
+  /// 待上传记录数。
+  final int localPendingCount;
+
+  /// 已被拒绝记录数。
+  final int localRejectedCount;
+
+  /// 已成功同步记录数。
+  final int localSyncedCount;
+
+  /// 本地总记录数。
+  final int totalCount;
+
+  /// 是否发生缓存超限（非丢失不变量激活）。
+  final bool cacheOverflow;
+
+  /// Age of the oldest pending local record, if present.
+  final Duration? oldestPendingAge;
+
+  /// Age of the oldest rejected local record, if present.
+  final Duration? oldestRejectedAge;
+
+  /// Number of rows above the configured local target capacity.
+  final int overflowCount;
+
+  /// Whether the App Shell has confirmed an active Relay enrollment.
+  final bool telemetryEnabled;
+
+  /// 上传是否开启。
+  final bool uploadEnabled;
+
+  /// 策略版本。
+  final int policyVersion;
+
+  /// 批次条数阈值。
+  final int batchSizeThreshold;
+
+  /// 定时上传周期（秒）。
+  final int timeIntervalSeconds;
+
+  /// 最近同步时间。
+  final DateTime? lastSyncTime;
+
+  /// 最近同步错误（如有）。
+  final String? lastSyncError;
+
+  /// 当前是否正在上传。
+  final bool isUploading;
+}
+
 /// Developer Panel 展示的完整生命周期诊断快照。
 final class DeveloperDiagnosticsSnapshot {
   /// 创建完整诊断快照，并冻结所有集合，避免页面观察期间被外部修改。
@@ -135,6 +206,7 @@ final class DeveloperDiagnosticsSnapshot {
     required this.network,
     required Iterable<DeveloperDatabaseSnapshot> databases,
     required this.resources,
+    this.telemetry,
   }) : modules = List.unmodifiable(modules),
        databases = List.unmodifiable(databases);
 
@@ -155,4 +227,7 @@ final class DeveloperDiagnosticsSnapshot {
 
   /// 已接入诊断的 Timer/订阅计数。
   final DeveloperResourceSnapshot resources;
+
+  /// Telemetry 诊断快照（若已接入）。
+  final DeveloperTelemetrySnapshot? telemetry;
 }

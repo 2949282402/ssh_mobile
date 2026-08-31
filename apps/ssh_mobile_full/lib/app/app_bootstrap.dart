@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 
 import '../utils/startup_instrumentation.dart';
+import '../services/telemetry/app_crash_telemetry_bridge.dart';
 import 'app_runtime.dart';
 import 'app_runtime_factory.dart';
 import 'ssh_mobile_app.dart';
@@ -15,28 +16,46 @@ final class AppBootstrap {
   AppBootstrap._();
 
   /// 启动应用并把未处理的异步异常桥接到应用日志。
-  static Future<void> run() async {
+  ///
+  /// [runtimeFactory] and [startApp] are injectable so startup failure handling
+  /// can be exercised without constructing the complete App Scope graph.
+  static Future<void> run({
+    Future<AppRuntime> Function()? runtimeFactory,
+    void Function(Widget app)? startApp,
+  }) async {
     AppRuntime? runtime;
     await runZonedGuarded(
       () async {
         WidgetsFlutterBinding.ensureInitialized();
         StartupInstrumentation.instance.recordMainStart();
 
-        runtime = await AppRuntimeFactory.create();
+        runtime = await (runtimeFactory ?? AppRuntimeFactory.create)();
         StartupInstrumentation.instance.recordRunAppStart();
-        runApp(SshMobileApp(runtime: runtime));
+        (startApp ?? runApp)(SshMobileApp(runtime: runtime));
       },
       (error, stackTrace) {
-        final appLogService = runtime?.appLogService;
-        if (appLogService != null) {
-          appLogService.error(
+        final currentRuntime = runtime;
+        if (currentRuntime != null && !currentRuntime.isDisposed) {
+          // Keep the existing local App Scope log projection while the
+          // structured bridge writes the durable telemetry record below.
+          currentRuntime.appLogService.error(
             'Uncaught zone error',
             error: error,
             stackTrace: stackTrace,
           );
+          // The bridge awaits durable local insertion before attempting its
+          // asynchronous upload. runZonedGuarded itself remains non-blocking.
+          unawaited(
+            reportUncaughtErrorToRuntime(
+              currentRuntime,
+              error: error,
+              stackTrace: stackTrace,
+            ),
+          );
         } else {
-          // Runtime 尚未创建时无法注入 Logger，只保留启动边界的最小兜底。
-          debugPrint('Uncaught zone error: $error\n$stackTrace');
+          // Runtime 尚未创建或已经释放时无法注入 Logger，只保留不含错误、
+          // 主机、路径或堆栈内容的启动边界兜底，避免泄漏敏感信息。
+          debugPrint('Uncaught zone error before AppRuntime logging');
         }
       },
     );

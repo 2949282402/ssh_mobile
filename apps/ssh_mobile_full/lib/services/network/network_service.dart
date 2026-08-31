@@ -13,6 +13,7 @@ import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
 import 'package:uuid/uuid.dart';
 
 import 'network_protocol_v2_codec.dart';
+import '../telemetry/telemetry_span.dart';
 
 part 'network_service_command_coordinator.dart';
 part 'network_service_event_hub.dart';
@@ -35,6 +36,7 @@ final class NativeNetworkService implements NetworkService {
   NativeNetworkService(
     NativeNetworkRuntime runtime, {
     NetworkProtocolV2Codec? codec,
+    this._traceRegistry,
   }) : _gateway = _NativeRuntimeCommandGateway(runtime),
        _ownedRuntime = runtime,
        _codec = codec ?? const NetworkProtocolV2Codec() {
@@ -48,6 +50,7 @@ final class NativeNetworkService implements NetworkService {
   NativeNetworkService.fromGateway(
     NetworkCommandGateway gateway, {
     NetworkProtocolV2Codec? codec,
+    this._traceRegistry,
   }) : _gateway = gateway,
        _ownedRuntime = null,
        _codec = codec ?? const NetworkProtocolV2Codec() {
@@ -57,6 +60,7 @@ final class NativeNetworkService implements NetworkService {
   final NetworkCommandGateway _gateway;
   final NativeNetworkRuntime? _ownedRuntime;
   final NetworkProtocolV2Codec _codec;
+  final TelemetryTraceRegistry? _traceRegistry;
   final _NetworkServiceState _state = _NetworkServiceState();
   final _NetworkEventHub _eventHub = _NetworkEventHub();
 
@@ -74,6 +78,7 @@ final class NativeNetworkService implements NetworkService {
       gateway: _gateway,
       codec: _codec,
       state: _state,
+      traceRegistry: _traceRegistry,
     );
     _projection = _NetworkStateProjection();
     _eventRouter = _NetworkEventRouter(
@@ -95,6 +100,7 @@ final class NativeNetworkService implements NetworkService {
       commands: _commands,
       eventHub: _eventHub,
       projection: _projection,
+      traceRegistry: _traceRegistry,
     );
     _relayAdapter = _NetworkRelayAdapter(
       codec: _codec,

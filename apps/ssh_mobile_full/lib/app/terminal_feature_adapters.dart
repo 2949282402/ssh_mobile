@@ -281,10 +281,18 @@ final class AppTerminalHistoryRepository
 /// Terminal Route 的 Module Scope；页面销毁时释放 terminal.db。
 final class AppTerminalModuleScope extends StatefulWidget {
   /// 创建包级 Module 的路由边界。
-  const AppTerminalModuleScope({super.key, required this.child});
+  const AppTerminalModuleScope({
+    super.key,
+    required this.child,
+    @visibleForTesting this.moduleFactory,
+  });
 
   /// Module 完成初始化后要显示的页面。
   final Widget child;
+
+  /// 可选的测试 Module 构造器；生产路由仍使用默认数据库实现。
+  @visibleForTesting
+  final feature_terminal.TerminalModule Function()? moduleFactory;
 
   @override
   State<AppTerminalModuleScope> createState() => _AppTerminalModuleScopeState();
@@ -298,7 +306,7 @@ final class _AppTerminalModuleScopeState extends State<AppTerminalModuleScope> {
   @override
   void initState() {
     super.initState();
-    _module = feature_terminal.TerminalModule();
+    _module = widget.moduleFactory?.call() ?? feature_terminal.TerminalModule();
     final manager = context.read<SshSessionManager>();
     _activation = _activate(manager);
   }

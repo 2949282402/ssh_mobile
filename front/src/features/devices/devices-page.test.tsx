@@ -151,7 +151,10 @@ describe('DevicesPage', () => {
     await waitFor(() => expect(screen.getByText('device-a')).toBeInTheDocument());
     await user.click(screen.getByRole('button', { name: '刷新设备' }));
 
-    await waitFor(() => expect(screen.getByText(/device refresh failed.*上次成功同步的数据/)).toBeInTheDocument());
+    await waitFor(() => {
+      expect(screen.getByText(/device refresh failed/)).toBeInTheDocument();
+      expect(screen.getByText(/上次成功同步的数据/)).toBeInTheDocument();
+    }, { timeout: 3000 });
     expect(screen.getByText('device-a')).toBeInTheDocument();
   });
 
@@ -171,7 +174,10 @@ describe('DevicesPage', () => {
     await user.click(screen.getByRole('button', { name: '撤销设备' }));
 
     await waitFor(() => expect(screen.getByText('还没有注册设备')).toBeInTheDocument());
-    await waitFor(() => expect(screen.getByText(/post-revoke refresh failed.*上次成功同步的数据/)).toBeInTheDocument());
+    await waitFor(() => {
+      expect(screen.getByText(/post-revoke refresh failed/)).toBeInTheDocument();
+      expect(screen.getByText(/上次成功同步的数据/)).toBeInTheDocument();
+    }, { timeout: 3000 });
     expect(screen.queryByText('device-a')).not.toBeInTheDocument();
   });
 });

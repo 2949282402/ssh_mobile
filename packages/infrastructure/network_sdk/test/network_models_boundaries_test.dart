@@ -26,6 +26,9 @@ void main() {
       for (final value in NetworkRouteTransport.values) {
         expect(NetworkRouteTransport.fromWire(value.wireValue), value);
       }
+      for (final value in RouteAttemptPhase.values) {
+        expect(RouteAttemptPhase.fromWire(value.wireValue), value);
+      }
       for (final value in RelayConnectionState.values) {
         expect(RelayConnectionState.fromWire(value.wireValue), value);
       }
@@ -44,6 +47,7 @@ void main() {
         NetworkRouteTransport.fromWire(-1),
         NetworkRouteTransport.unspecified,
       );
+      expect(RouteAttemptPhase.fromWire(-1), RouteAttemptPhase.unspecified);
       expect(
         RelayConnectionState.fromWire(-1),
         RelayConnectionState.unspecified,
@@ -190,6 +194,14 @@ void main() {
           routeType: NetworkRouteType.relay,
         ),
         RouteChanged(eventId: '6', timestamp: timestamp, snapshot: route),
+        RouteAttemptChanged(
+          eventId: '6a',
+          timestamp: timestamp,
+          peerId: 'peer-a',
+          attemptId: 'attempt-a',
+          phase: RouteAttemptPhase.relayFallbackStarted,
+          routeType: NetworkRouteType.relay,
+        ),
         RelayStateChanged(
           eventId: '7',
           timestamp: timestamp,
@@ -209,7 +221,7 @@ void main() {
           peers: <PeerPresenceChanged>[],
         ),
       ];
-      expect(events, hasLength(9));
+      expect(events, hasLength(10));
       expect((events[0] as PeerStateChanged).error, same(error));
       expect((events[1] as TransferProgress).totalBytes, 3);
       expect((events[2] as TransferCompleted).localPath, '/tmp/file');
@@ -223,11 +235,15 @@ void main() {
         const Duration(milliseconds: 12),
       );
       expect(
-        (events[6] as RelayStateChanged).state,
+        (events[6] as RouteAttemptChanged).phase,
+        RouteAttemptPhase.relayFallbackStarted,
+      );
+      expect(
+        (events[7] as RelayStateChanged).state,
         RelayConnectionState.connected,
       );
-      expect((events[7] as PeerPresenceChanged).generation, 2);
-      expect((events[8] as PeerPresenceSnapshot).peers, isEmpty);
+      expect((events[8] as PeerPresenceChanged).generation, 2);
+      expect((events[9] as PeerPresenceSnapshot).peers, isEmpty);
     },
   );
 

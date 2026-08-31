@@ -37,6 +37,10 @@ migrate_working_dir/
 **/build/
 /coverage/
 
+# Local test coverage and isolated build outputs.
+/apps/ssh_mobile_full/coverage/
+/packages/core/app_core/build-isolated*/
+
 # Symbolication related
 app.*.symbols
 

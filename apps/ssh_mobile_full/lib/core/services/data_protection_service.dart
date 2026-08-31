@@ -1,7 +1,7 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../../services/app_log_service.dart';
@@ -28,13 +28,25 @@ class DataProtectionService {
 
   // macOS Data Protection Keychain 需要额外的签名授权，否则返回 -34018 错误
   // 因此显式关闭 usesDataProtectionKeychain
-  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage(
-    mOptions: MacOsOptions(usesDataProtectionKeychain: false),
-  );
-  final AesGcm _algorithm = AesGcm.with256bits();
+  final FlutterSecureStorage _secureStorage;
+  final AesGcm _algorithm;
   SecretKey? _cachedKey; // 内存缓存，避免高频 Keychain 读取
 
-  DataProtectionService._();
+  DataProtectionService._({
+    FlutterSecureStorage? secureStorage,
+    AesGcm? algorithm,
+  }) : _secureStorage =
+           secureStorage ??
+           const FlutterSecureStorage(
+             mOptions: MacOsOptions(usesDataProtectionKeychain: false),
+           ),
+       _algorithm = algorithm ?? AesGcm.with256bits();
+
+  @visibleForTesting
+  DataProtectionService.forTesting({
+    FlutterSecureStorage? secureStorage,
+    AesGcm? algorithm,
+  }) : this._(secureStorage: secureStorage, algorithm: algorithm);
 
   /// 加密明文字符串，返回带前缀的密文。
   /// 空字符串直接返回特化格式 '$encryptedPrefix.' 以保持判据一致性。

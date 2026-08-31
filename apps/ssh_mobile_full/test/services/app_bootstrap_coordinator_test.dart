@@ -33,6 +33,31 @@ void main() {
       expect(coordinator.phase, equals(BootstrapPhase.ready));
       expect(coordinator.isReady, isTrue);
       expect(appSettings.coreLoaded, isTrue);
+      await coordinator.ensureBootstrap();
+      expect(coordinator.phase, BootstrapPhase.ready);
+    });
+
+    test('failed bootstrap records the error and allows a retry', () async {
+      final failure = StateError('settings unavailable');
+      final coordinator = AppBootstrapCoordinator(
+        appSettings: _FailingAppSettings(failure),
+      );
+
+      await expectLater(coordinator.ensureBootstrap(), throwsA(same(failure)));
+      expect(coordinator.phase, BootstrapPhase.failed);
+      expect(coordinator.isReady, isFalse);
+      expect(coordinator.error, same(failure));
+      await expectLater(coordinator.ensureBootstrap(), throwsA(same(failure)));
+      expect(coordinator.phase, BootstrapPhase.failed);
     });
   });
+}
+
+final class _FailingAppSettings extends AppSettings {
+  _FailingAppSettings(this.failure);
+
+  final Object failure;
+
+  @override
+  Future<void> ensureCoreLoaded() => Future<void>.error(failure);
 }

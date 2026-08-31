@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ssh-mobile/relay/internal/telemetry"
 )
 
 const (
@@ -37,23 +39,27 @@ const (
 
 // Config holds the configuration for the standalone Admin backend service.
 type Config struct {
-	Address            string
-	AdminUser          string
-	AdminPassword      string
-	AuthKey            []byte
-	SessionTTL         time.Duration
-	MaxSessions        int
-	LoginMaxAttempts   int
-	LoginWindow        time.Duration
-	LoginBlockDuration time.Duration
-	MaxLoginEntries    int
-	TrustedProxyCIDRs  []netip.Prefix
-	HTTPReadTimeout    time.Duration
-	HTTPWriteTimeout   time.Duration
-	HTTPIdleTimeout    time.Duration
-	HTTPMaxHeaderBytes int
-	RelayURL           string
-	RelayInternalToken string
+	Address             string
+	AdminUser           string
+	AdminPassword       string
+	AuthKey             []byte
+	SessionTTL          time.Duration
+	MaxSessions         int
+	LoginMaxAttempts    int
+	LoginWindow         time.Duration
+	LoginBlockDuration  time.Duration
+	MaxLoginEntries     int
+	TrustedProxyCIDRs   []netip.Prefix
+	HTTPReadTimeout     time.Duration
+	HTTPWriteTimeout    time.Duration
+	HTTPIdleTimeout     time.Duration
+	HTTPMaxHeaderBytes  int
+	RelayURL            string
+	RelayInternalToken  string
+	TelemetryMySQLDSN   string
+	TelemetryRedisURL   string
+	TelemetryAuthSecret string
+	TelemetryIngest     telemetry.IngestConfig
 }
 
 // ConfigFromEnvironment loads and validates Admin backend configuration from environment variables.
@@ -120,23 +126,30 @@ func ConfigFromEnvironment() (Config, error) {
 	}
 
 	config := Config{
-		Address:            address,
-		AdminUser:          adminUser,
-		AdminPassword:      adminPassword,
-		AuthKey:            authKey,
-		SessionTTL:         readDuration("ADMIN_SESSION_TTL", defaultSessionTTL),
-		MaxSessions:        readInt("ADMIN_MAX_SESSIONS", defaultMaxSessions),
-		LoginMaxAttempts:   readInt("ADMIN_LOGIN_MAX_ATTEMPTS", defaultLoginMaxAttempts),
-		LoginWindow:        readDuration("ADMIN_LOGIN_WINDOW", defaultLoginWindow),
-		LoginBlockDuration: readDuration("ADMIN_LOGIN_BLOCK", defaultLoginBlockDuration),
-		MaxLoginEntries:    readInt("ADMIN_MAX_LOGIN_ENTRIES", defaultMaxLoginEntries),
-		HTTPReadTimeout:    readDuration("ADMIN_HTTP_READ_TIMEOUT", defaultHTTPReadTimeout),
-		HTTPWriteTimeout:   readDuration("ADMIN_HTTP_WRITE_TIMEOUT", defaultHTTPWriteTimeout),
-		HTTPIdleTimeout:    readDuration("ADMIN_HTTP_IDLE_TIMEOUT", defaultHTTPIdleTimeout),
-		HTTPMaxHeaderBytes: readInt("ADMIN_HTTP_MAX_HEADER_BYTES", defaultHTTPMaxHeaderBytes),
-		TrustedProxyCIDRs:  cidrListEnv("ADMIN_TRUSTED_PROXY_CIDRS"),
-		RelayURL:           relayURLStr,
-		RelayInternalToken: relayInternalToken,
+		Address:             address,
+		AdminUser:           adminUser,
+		AdminPassword:       adminPassword,
+		AuthKey:             authKey,
+		SessionTTL:          readDuration("ADMIN_SESSION_TTL", defaultSessionTTL),
+		MaxSessions:         readInt("ADMIN_MAX_SESSIONS", defaultMaxSessions),
+		LoginMaxAttempts:    readInt("ADMIN_LOGIN_MAX_ATTEMPTS", defaultLoginMaxAttempts),
+		LoginWindow:         readDuration("ADMIN_LOGIN_WINDOW", defaultLoginWindow),
+		LoginBlockDuration:  readDuration("ADMIN_LOGIN_BLOCK", defaultLoginBlockDuration),
+		MaxLoginEntries:     readInt("ADMIN_MAX_LOGIN_ENTRIES", defaultMaxLoginEntries),
+		HTTPReadTimeout:     readDuration("ADMIN_HTTP_READ_TIMEOUT", defaultHTTPReadTimeout),
+		HTTPWriteTimeout:    readDuration("ADMIN_HTTP_WRITE_TIMEOUT", defaultHTTPWriteTimeout),
+		HTTPIdleTimeout:     readDuration("ADMIN_HTTP_IDLE_TIMEOUT", defaultHTTPIdleTimeout),
+		HTTPMaxHeaderBytes:  readInt("ADMIN_HTTP_MAX_HEADER_BYTES", defaultHTTPMaxHeaderBytes),
+		TrustedProxyCIDRs:   cidrListEnv("ADMIN_TRUSTED_PROXY_CIDRS"),
+		RelayURL:            relayURLStr,
+		RelayInternalToken:  relayInternalToken,
+		TelemetryMySQLDSN:   strings.TrimSpace(os.Getenv("TELEMETRY_MYSQL_DSN")),
+		TelemetryRedisURL:   strings.TrimSpace(os.Getenv("TELEMETRY_REDIS_URL")),
+		TelemetryAuthSecret: strings.TrimSpace(os.Getenv("TELEMETRY_AUTH_SECRET")),
+	}
+	config.TelemetryIngest, err = telemetry.IngestConfigFromEnvironment()
+	if err != nil {
+		return Config{}, err
 	}
 
 	if parseErr != nil {

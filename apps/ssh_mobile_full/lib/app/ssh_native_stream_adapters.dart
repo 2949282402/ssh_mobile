@@ -17,11 +17,18 @@ import 'package:network_transport/network_transport.dart';
 import 'package:ssh_core/ssh_core.dart';
 import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
 
+import '../services/telemetry/telemetry_span.dart';
+
+part 'ssh_native_stream.dart';
+
 /// 打开 AppRuntime-owned native command gateway 的提供者。
 typedef SshNativeGatewayProvider = Future<NetworkCommandGateway> Function();
 
 /// 提供当前 runtime 的稳定本地设备身份。
 typedef SshNativeOpenerDeviceIdProvider = Future<String> Function();
+
+/// Lazily resolves the App-owned network facade after composition completes.
+typedef SshNetworkFacadeProvider = NetworkFacade? Function();
 
 /// 基于 native ReliableStream 的 SSH 流连接器。
 final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
@@ -36,19 +43,33 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
     required SshNativeGatewayProvider gatewayProvider,
     required SshNativeOpenerDeviceIdProvider openerDeviceIdProvider,
     NetworkFacade? facade,
+    SshNetworkFacadeProvider? facadeProvider,
+    TelemetryTraceRegistry? traceRegistry,
   }) : _gatewayProvider = gatewayProvider,
        _openerDeviceIdProvider = openerDeviceIdProvider,
-       _facade = facade;
+       _facade = facade,
+       _facadeProvider = facadeProvider,
+       _traceRegistry = traceRegistry;
 
   final SshNativeGatewayProvider _gatewayProvider;
   final SshNativeOpenerDeviceIdProvider _openerDeviceIdProvider;
   final NetworkFacade? _facade;
+  final SshNetworkFacadeProvider? _facadeProvider;
+  final TelemetryTraceRegistry? _traceRegistry;
   final Map<String, bool> _connectedPeers = <String, bool>{};
+  final Map<String, Future<void>> _peerConnectOperations =
+      <String, Future<void>>{};
+  final Map<String, String> _peerTraceIds = <String, String>{};
   final Map<NativeStreamHandle, _AppSshNativeStream> _streams =
       <NativeStreamHandle, _AppSshNativeStream>{};
   // 等待 native CommandResult 确认的 SshStreamOpen：commandId → StreamHandle。
   final Map<String, NativeStreamHandle> _pendingOpens =
       <String, NativeStreamHandle>{};
+  // Accepted open commands remain traceable until the stream's terminal
+  // close/failure event. The native protocol has no trace field, so retaining
+  // this command-to-handle edge is the only safe late-result boundary.
+  final Map<NativeStreamHandle, String> _acceptedOpenCommands =
+      <NativeStreamHandle, String>{};
 
   NetworkCommandGateway? _gateway;
   Future<NetworkCommandGateway>? _gatewayFuture;
@@ -65,14 +86,15 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
   Future<SshNativeStream> open({
     required String peerId,
     String service = kSshNativeStreamService,
+    String? traceId,
   }) async {
     _ensureOpen();
     final openerDeviceId = await _ensureOpenerDeviceId();
     _ensureOpen();
     final gateway = await _ensureGateway();
     _ensureOpen();
-    if (_facade != null) {
-      await _ensurePeerConnected(peerId);
+    if (_facade != null || _facadeProvider != null) {
+      await _ensurePeerConnected(peerId, traceId: traceId);
       _ensureOpen();
     }
 
@@ -85,6 +107,13 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
     _streams[handle] = stream;
     final commandId = _nextCommandId('ssh-open');
     _pendingOpens[commandId] = handle;
+    if (traceId != null && _traceRegistry != null) {
+      _traceRegistry.bindCommand(
+        commandId: commandId,
+        peerId: peerId,
+        traceId: traceId,
+      );
+    }
     final status = gateway.sendCommand(
       NativeNetworkProtocol.sshStreamOpenCommand(
         commandId: commandId,
@@ -96,6 +125,8 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
     if (status != TransportOperationStatus.success) {
       _streams.remove(handle);
       _pendingOpens.remove(commandId);
+      _traceRegistry?.completeCommand(commandId);
+      _releasePeerWhenNoStreams(peerId);
       throw StateError(
         'Failed to queue native SSH stream open: ${status.name}.',
       );
@@ -169,24 +200,55 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
     return future;
   }
 
-  Future<void> _ensurePeerConnected(String peerId) async {
-    if (_connectedPeers.containsKey(peerId)) return;
-    final facade = _facade;
+  Future<void> _ensurePeerConnected(String peerId, {String? traceId}) {
+    if (_connectedPeers.containsKey(peerId)) return Future<void>.value();
+    final existing = _peerConnectOperations[peerId];
+    if (existing != null) return existing;
+
+    late final Future<void> operation;
+    operation = _connectPeer(peerId, traceId: traceId).whenComplete(() {
+      if (identical(_peerConnectOperations[peerId], operation)) {
+        _peerConnectOperations.remove(peerId);
+      }
+    });
+    _peerConnectOperations[peerId] = operation;
+    return operation;
+  }
+
+  Future<void> _connectPeer(String peerId, {String? traceId}) async {
+    final facade = _facade ?? _facadeProvider?.call();
     if (facade == null) {
-      _connectedPeers[peerId] = true;
-      return;
-    }
-    final result = await facade.connectPeer(
-      peerId,
-      communicationClass: CommunicationClass.reliableStream,
-    );
-    if (result is SdkFailure<void>) {
       throw StateError(
-        'Failed to connect peer $peerId: ${result.error.message}',
+        'Native network facade is unavailable; cannot connect SSH peer.',
       );
     }
-    _ensureOpen();
-    _connectedPeers[peerId] = true;
+
+    if (traceId != null && _traceRegistry != null) {
+      _traceRegistry.bindPeer(peerId: peerId, traceId: traceId);
+      _peerTraceIds[peerId] = traceId;
+    }
+    try {
+      final result = await facade.connectPeer(
+        peerId,
+        communicationClass: CommunicationClass.reliableStream,
+      );
+      if (result is SdkFailure<void>) {
+        throw StateError(
+          'Failed to connect peer $peerId: ${result.error.message}',
+        );
+      }
+      _ensureOpen();
+      _connectedPeers[peerId] = true;
+    } catch (_) {
+      final operationTraceId = _peerTraceIds.remove(peerId);
+      if (operationTraceId != null) {
+        _traceRegistry?.releasePeerTrace(
+          peerId: peerId,
+          traceId: operationTraceId,
+        );
+      }
+      rethrow;
+    }
   }
 
   void _onRawEvent(Uint8List bytes) {
@@ -207,7 +269,22 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
         // accepted=false；必须让 open 返回的流立即失败，而不是被 default 丢弃
         // 导致 done 永久挂起。
         final handle = _pendingOpens.remove(commandId);
-        if (handle == null) break;
+        if (handle == null) {
+          // A duplicate/late result has no live stream terminal boundary. Do
+          // not retain an unknown command context that can never be released
+          // by one. A duplicate for an accepted live stream is ignored so it
+          // cannot erase that operation's still-valid correlation edge.
+          if (!_acceptedOpenCommands.containsValue(commandId)) {
+            _traceRegistry?.completeCommand(commandId);
+          }
+          break;
+        }
+        final retainPeerBinding = accepted;
+        _traceRegistry?.completeCommand(
+          commandId,
+          retainPeerBinding: retainPeerBinding,
+        );
+        if (accepted) _acceptedOpenCommands[handle] = commandId;
         final stream = _streams[handle];
         if (stream == null) break;
         if (!accepted) {
@@ -253,8 +330,35 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
   }
 
   _AppSshNativeStream? _removeStream(NativeStreamHandle handle) {
-    _pendingOpens.removeWhere((_, pendingHandle) => pendingHandle == handle);
-    return _streams.remove(handle);
+    final acceptedCommand = _acceptedOpenCommands.remove(handle);
+    if (acceptedCommand != null) {
+      _traceRegistry?.completeCommand(acceptedCommand);
+    }
+    final pendingCommands = _pendingOpens.entries
+        .where((entry) => entry.value == handle)
+        .map((entry) => entry.key)
+        .toList(growable: false);
+    for (final commandId in pendingCommands) {
+      _pendingOpens.remove(commandId);
+      _traceRegistry?.completeCommand(commandId);
+    }
+    final stream = _streams.remove(handle);
+    if (stream != null) _releasePeerWhenNoStreams(stream.peerId);
+    return stream;
+  }
+
+  /// A peer connect is shared by all streams opened for that peer, but its
+  /// trace belongs to the logical SSH operation that established the route.
+  /// Once the final stream closes there is no consumer left that can safely
+  /// correlate a late route result, so release that exact context and allow a
+  /// subsequent operation to establish a fresh one.
+  void _releasePeerWhenNoStreams(String peerId) {
+    if (_streams.values.any((stream) => stream.peerId == peerId)) return;
+    _connectedPeers.remove(peerId);
+    final traceId = _peerTraceIds.remove(peerId);
+    if (traceId != null) {
+      _traceRegistry?.releasePeerTrace(peerId: peerId, traceId: traceId);
+    }
   }
 
   void _failStream(
@@ -276,107 +380,38 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
     _gatewayFuture = null;
     _openerDeviceIdFuture = null;
     final streams = _streams.values.toList();
+    for (final commandId in _pendingOpens.keys.toList(growable: false)) {
+      _traceRegistry?.completeCommand(commandId);
+    }
+    for (final commandId in _acceptedOpenCommands.values) {
+      _traceRegistry?.completeCommand(commandId);
+    }
     _streams.clear();
     _pendingOpens.clear();
+    _acceptedOpenCommands.clear();
     for (final stream in streams) {
       stream._abort();
     }
     _gateway = null;
     _connectedPeers.clear();
+    final peerOperations = _peerConnectOperations.values.toList(
+      growable: false,
+    );
+    try {
+      await Future.wait<void>(peerOperations, eagerError: false);
+    } catch (_) {
+      // Every peer operation observes `_closed` and releases its own trace;
+      // one failed operation must not prevent the remaining cleanup.
+    }
+    _peerConnectOperations.clear();
+    for (final entry in _peerTraceIds.entries) {
+      _traceRegistry?.releasePeerTrace(peerId: entry.key, traceId: entry.value);
+    }
+    _peerTraceIds.clear();
   }
 
   String _nextCommandId(String operation) {
     _commandSequence = (_commandSequence + 1) & 0x7fffffff;
     return '$operation-${DateTime.now().microsecondsSinceEpoch}-$_commandSequence';
-  }
-}
-
-/// App Shell 的 [SshNativeStream] 实现。
-final class _AppSshNativeStream implements SshNativeStream {
-  _AppSshNativeStream({
-    required this.connector,
-    required this.peerId,
-    required this.handle,
-  });
-
-  final AppSshNativeStreamConnector connector;
-  final String peerId;
-  final NativeStreamHandle handle;
-  final StreamController<Uint8List> _incoming = StreamController<Uint8List>();
-  final Completer<void> _done = Completer<void>();
-  bool _closed = false;
-
-  @override
-  Stream<Uint8List> get incoming => _incoming.stream;
-
-  @override
-  Future<void> get done => _done.future;
-
-  @override
-  Future<void> send(Uint8List data) async {
-    if (_closed) throw StateError('SSH native stream is closed.');
-    if (!connector._sendData(handle, peerId, data)) {
-      // 字节未被真正投递到 native 时，立即以错误终止流并向上抛出，
-      // 让 dartssh2 的 socket.done 拿到失败而不是永久挂起。
-      final error = StateError(
-        'SSH native stream send was dropped: the gateway is closed '
-        'or rejected the command.',
-      );
-      connector._failStream(handle, error);
-      throw error;
-    }
-  }
-
-  @override
-  Future<void> close() async {
-    if (_closed) return _done.future;
-    _closed = true;
-    connector._closeStream(handle, peerId);
-    // 单订阅 StreamController 在无监听者时 await close() 会永久挂起，必须 unawaited。
-    if (!_incoming.isClosed) unawaited(_incoming.close());
-    if (!_done.isCompleted) _done.complete();
-    return _done.future;
-  }
-
-  @override
-  void destroy() {
-    if (_closed) return;
-    _closed = true;
-    connector._closeStream(handle, peerId);
-    if (!_incoming.isClosed) unawaited(_incoming.close());
-    if (!_done.isCompleted) _done.complete();
-  }
-
-  void _onData(Uint8List data) {
-    if (_closed) return;
-    _incoming.add(data);
-  }
-
-  void _onClosed() {
-    if (_closed) return;
-    _closed = true;
-    if (!_incoming.isClosed) unawaited(_incoming.close());
-    if (!_done.isCompleted) _done.complete();
-  }
-
-  /// native 拒绝打开（CommandResult accepted=false）时以错误终止流，
-  /// 让调用方立即拿到可操作失败而不是永久挂起。
-  void _fail(Object error, [StackTrace? stackTrace]) {
-    if (_closed) return;
-    _closed = true;
-    if (!_incoming.isClosed) {
-      _incoming.addError(error, stackTrace ?? StackTrace.current);
-      unawaited(_incoming.close());
-    }
-    if (!_done.isCompleted) {
-      _done.completeError(error, stackTrace ?? StackTrace.current);
-    }
-  }
-
-  void _abort() {
-    if (_closed) return;
-    _closed = true;
-    if (!_incoming.isClosed) unawaited(_incoming.close());
-    if (!_done.isCompleted) _done.complete();
   }
 }

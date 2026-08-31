@@ -36,9 +36,13 @@ if [[ -n "${CLIENT_BACKEND_E2E_CA_FILE:-}" ]]; then
   CURL_TLS_ARGS=(--cacert "$CLIENT_BACKEND_E2E_CA_FILE")
 fi
 
+# shellcheck source=client_backend_telemetry.sh
+source "$SCRIPT_DIR/client_backend_telemetry.sh"
+
 case "$STORAGE_MODE" in
-  memory) ;;
-  mysql) COMPOSE_PROFILE_ARGS=(--profile storage) ;;
+  # Analytics storage is part of every E2E deployment. The Relay storage
+  # profile is harmless in memory mode and keeps admin-api dependencies active.
+  memory|mysql) COMPOSE_PROFILE_ARGS=(--profile storage) ;;
   *)
     echo "CLIENT_BACKEND_E2E_STORAGE must be memory or mysql: $STORAGE_MODE" >&2
     exit 64
@@ -97,6 +101,36 @@ sock.close()
 PY
 }
 
+network_overlaps_existing() {
+  local candidate existing_subnets
+  candidate="$1"
+  # Docker rejects a new network when its subnet overlaps any existing
+  # network, including a broader /16 or /8. Compare CIDRs rather than only
+  # matching identical strings so the E2E deployment can avoid runner-level
+  # networks as well as networks left by another job.
+  existing_subnets="$(
+    docker network inspect --format '{{range .IPAM.Config}}{{.Subnet}}{{"\n"}}{{end}}' \
+      $(docker network ls --quiet) 2>/dev/null || true
+  )"
+  python3 - "$candidate" "$existing_subnets" <<'PY'
+import ipaddress
+import sys
+
+candidate = ipaddress.ip_network(sys.argv[1], strict=False)
+for value in sys.argv[2].splitlines():
+    value = value.strip()
+    if not value:
+        continue
+    try:
+        existing = ipaddress.ip_network(value, strict=False)
+    except ValueError:
+        continue
+    if candidate.overlaps(existing):
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 wait_health() {
   local attempt status
   for attempt in $(seq 1 90); do
@@ -148,8 +182,10 @@ start_compose() {
   chmod 700 "$TMP_ROOT"
   PROJECT_NAME="ssh-mobile-client-backend-${BASHPID}"
   ENV_FILE="$TMP_ROOT/relay.env"
-  local http_port https_port credential_key network_octet network_subnet caddy_ip
+  local http_port https_port credential_key network_second network_third
+  local network_subnet caddy_ip network_attempt
   local mysql_root_password mysql_user mysql_password redis_password relay_storage_mode relay_database_url relay_redis_url
+  local analytics_mysql_password analytics_mysql_root_password analytics_redis_password telemetry_auth_secret
   http_port="$(find_free_port)"
   https_port="$(find_free_port)"
   ENROLLMENT_TOKEN="$(random_hex 24)"
@@ -163,21 +199,27 @@ start_compose() {
   mysql_user="e2e_relay"
   mysql_password="$(random_hex 24)"
   redis_password="$(random_hex 24)"
+  analytics_mysql_password="$(random_hex 24)"
+  analytics_mysql_root_password="$(random_hex 24)"
+  analytics_redis_password="$(random_hex 24)"
+  telemetry_auth_secret="$(random_hex 24)"
   BASE_URL="http://127.0.0.1:${http_port}"
-  network_octet=$((16 + $(od -An -N1 -tu1 /dev/urandom) % 16))
-  while [[ "$network_octet" == 17 || "$network_octet" == 30 ]]; do
-    network_octet=$((16 + $(od -An -N1 -tu1 /dev/urandom) % 16))
+  # Keep test networks in a high, private 10/8 range. The candidate is still
+  # checked against every Docker CIDR because runner images may customize
+  # their address pools or retain broader networks than Docker's defaults.
+  for network_attempt in $(seq 1 128); do
+    network_second=$((240 + $(od -An -N1 -tu1 /dev/urandom) % 16))
+    network_third=$(( $(od -An -N1 -tu1 /dev/urandom) ))
+    network_subnet="10.${network_second}.${network_third}.0/24"
+    if ! network_overlaps_existing "$network_subnet"; then
+      break
+    fi
+    if ((network_attempt == 128)); then
+      echo "ENVIRONMENT GAP: no isolated Docker subnet is available" >&2
+      return 125
+    fi
   done
-  network_subnet="172.${network_octet}.0.0/24"
-  while docker network inspect --format '{{range .IPAM.Config}}{{.Subnet}}{{"\n"}}{{end}}' \
-    $(docker network ls --quiet) 2>/dev/null | grep -Fxq "$network_subnet"; do
-    network_octet=$((16 + $(od -An -N1 -tu1 /dev/urandom) % 16))
-    while [[ "$network_octet" == 17 || "$network_octet" == 30 ]]; do
-      network_octet=$((16 + $(od -An -N1 -tu1 /dev/urandom) % 16))
-    done
-    network_subnet="172.${network_octet}.0.0/24"
-  done
-  caddy_ip="172.${network_octet}.0.10"
+  caddy_ip="10.${network_second}.${network_third}.10"
 
   # Keep this file private and outside the repository.  Values are passed to
   # child processes through their environment, never echoed by this script.
@@ -252,7 +294,13 @@ start_compose() {
     "MYSQL_ROOT_PASSWORD=$mysql_root_password" \
     'MYSQL_DATABASE=relay' \
     "MYSQL_USER=$mysql_user" \
-    "MYSQL_PASSWORD=$mysql_password" > "$ENV_FILE"
+    "MYSQL_PASSWORD=$mysql_password" \
+    "TELEMETRY_MYSQL_DSN=telemetry:${analytics_mysql_password}@tcp(analytics-mysql:3306)/telemetry?parseTime=true&loc=UTC" \
+    "TELEMETRY_REDIS_URL=redis://:${analytics_redis_password}@analytics-redis:6379/0" \
+    "TELEMETRY_AUTH_SECRET=$telemetry_auth_secret" \
+    "ANALYTICS_MYSQL_PASSWORD=$analytics_mysql_password" \
+    "ANALYTICS_MYSQL_ROOT_PASSWORD=$analytics_mysql_root_password" \
+    "ANALYTICS_REDIS_PASSWORD=$analytics_redis_password" > "$ENV_FILE"
 
   COMPOSE_STARTED=1
   compose up -d --build
@@ -463,6 +511,7 @@ if [[ "$MODE" == strict ]]; then
 fi
 
 assert_relay_routes
+telemetry_ingestion_probe
 run_dart
 if [[ "$MODE" == strict && -n "$ADMIN_USER" && -n "$ADMIN_PASSWORD" ]]; then
   run_rust_with_revocation

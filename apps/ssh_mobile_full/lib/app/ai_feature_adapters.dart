@@ -220,12 +220,12 @@ final class AppAiSshAdapter implements ai.AiSshPort {
     );
   }
 
-  ai.AiSshConnectionState _toState(dynamic state) {
-    final name = state?.name;
-    return switch (name) {
-      'connecting' => ai.AiSshConnectionState.connecting,
-      'connected' => ai.AiSshConnectionState.connected,
-      'error' => ai.AiSshConnectionState.error,
+  // 状态直接按枚举分支转换；不要改为动态读取 name。
+  ai.AiSshConnectionState _toState(SshConnectionState? state) {
+    return switch (state) {
+      SshConnectionState.connecting => ai.AiSshConnectionState.connecting,
+      SshConnectionState.connected => ai.AiSshConnectionState.connected,
+      SshConnectionState.error => ai.AiSshConnectionState.error,
       _ => ai.AiSshConnectionState.disconnected,
     };
   }

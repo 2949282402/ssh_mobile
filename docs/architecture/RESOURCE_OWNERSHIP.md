@@ -1,4 +1,4 @@
-最新更新时间：2026-08-25
+最新更新时间：2026-08-28
 
 # 资源 Owner 审计
 
@@ -44,6 +44,7 @@
 | ViewModel | owning Route Provider/Scope | Route | Provider/Scope `dispose` |
 | Route Controller | owning Widget State/ViewModel | Route/Widget | State `dispose` |
 | Timer | owning Module/Service/ViewModel | Owner scope | `cancel` before owner release |
+| TelemetryClient timers (periodic flush/retry/policy refresh) | `TelemetryClient` | App | `dispose` cancels all three timers before storage release |
 | Foreground-service power locks | `BackgroundServiceLifecycle` | App/Platform | release immediately when native start returns false; stop retries release after failures |
 | StreamSubscription | owning Service/Controller | Owner scope | `cancel` / `DisposableBag` |
 | StreamController | owning Service/Controller | Owner scope | `close` before owner release |

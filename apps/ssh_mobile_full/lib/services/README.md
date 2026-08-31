@@ -1,4 +1,4 @@
-最新更新时间：2026-08-24
+最新更新时间：2026-08-28
 
 # App Shell Services 分类
 
@@ -19,8 +19,11 @@ RAG 和 Network 的旧 Feature/业务入口已经完成零引用收口；剩余�
   `app_strings.dart`、`background_service.dart`、
   `conditional_app_lifecycle_coordinator.dart`、`display_mode_service.dart`、
   `native_memory_service.dart`、`shortcut_command_service.dart`，以及
-  `app_log_*` 和 `app_log_database/**`。这些资源由 AppRuntime 或 App Shell
+  `app_log_*`、`app_log_database/**` 和 `telemetry/**`。这些资源由 AppRuntime 或 App Shell
   持有并负责释放；`AppLogDatabase` 是独立的 `app_logs` 诊断数据库。
+  `AppCrashTelemetryBridge` 只拥有进程级错误 handler 包装，`TelemetryLogSink`
+  独立借用 TelemetryClient；两者在本地 SQLite durable write 完成后再异步 flush，
+  不改变 AppLogDatabase 的 Owner。
   `AppLogService.databaseOpen` 和 `activeTimerCount` 只供生命周期诊断读取，
   不改变数据库绑定或关闭 Owner。
 - App 能力适配器：`ai_storage_adapter.dart` 与 `ai_storage/**`、

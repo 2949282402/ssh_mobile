@@ -1,4 +1,4 @@
-最新更新时间：2026-08-09
+最新更新时间：2026-08-30
 
 # feature_developer
 
@@ -17,6 +17,8 @@ Developer Log、Developer Panel 和 diagnostics 展示页面的 Feature Package�
   中未接入的 Timer 或 Stream。
 - `DeveloperPanelViewModel` 独占路由级帧计时回调和内存轮询 Timer，页面退出
   时通过 `dispose()` 移除监听、取消 Timer，避免调试页面泄漏资源。
+- Telemetry 诊断操作区分原样重放 pending/synced 记录与显式重试 rejected 记录；
+  后者通过独立 Port 方法执行，不改变 pending/synced 的语义。
 - 调用方只允许从 `package:feature_developer/feature_developer.dart` 使用公共 API。
 
 ## 生命周期与注入

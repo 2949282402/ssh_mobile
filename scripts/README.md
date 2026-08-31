@@ -1,4 +1,4 @@
-> Last updated: 2026-08-25
+> Last updated: 2026-08-28
 
 # Repository scripts
 
@@ -22,3 +22,14 @@ The native network quality pair runs the common Rust format, workspace-test,
 and Clippy gates on both platforms. Its coturn host-network fallback test is a
 Linux-only capability: the PowerShell aggregate reports that step as an explicit
 environment GAP after completing the common checks.
+
+The CI aggregate entrypoints are intentionally thin dispatchers:
+`ci/full_test.sh` and `ci/full_test.ps1` load paired configuration, runtime,
+runner, App, and workspace/service helper modules. Each helper stays below the
+500-line review limit by keeping functional and responsibility boundaries
+cohesive; mechanically numbered chunks (`part_01`, `file_01`) and gratuitous
+over-splitting are prohibited. The helpers preserve the same job names,
+arguments, timeout behavior, cleanup, and exit statuses across hosts. The
+GitHub Actions workflow is the authoritative full gate; use
+`bash scripts/bash/ci/full_test.sh` for the proportional Linux/WSL checks
+available on a local host.

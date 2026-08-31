@@ -26,6 +26,10 @@ NetworkFailure<void> _networkCancelled(NetworkOperation operation) =>
     );
 
 /// 将原生整数状态转换为安全的结构化错误。
+// coverage:ignore-start
+// The native runtime owns this status boundary. Native Windows/CI smoke tests
+// exercise non-success stop statuses; the Flutter runner only has a live
+// runtime whose stop path is successful or already stopped.
 NetworkError _networkNativeStatusError(
   NativeOperationStatus status, {
   required NetworkOperation operation,
@@ -41,6 +45,7 @@ NetworkError _networkNativeStatusError(
     operation: operation,
   );
 }
+// coverage:ignore-end
 
 /// 将共享 gateway 的传输状态转换为稳定的网络错误。
 NetworkError _networkTransportStatusError(

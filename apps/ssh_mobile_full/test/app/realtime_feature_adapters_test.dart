@@ -76,6 +76,38 @@ void main() {
     },
   );
 
+  test('native queue failure maps to an IO error', () async {
+    final gateway = _FakeRealtimeGateway(
+      startStatus: NativeOperationStatus.failure,
+    );
+    final backend = AppRealtimeSessionBackend(
+      networkRuntime: _FakeNetworkRuntime(gateway),
+    );
+    final client = RealtimeClientImpl(backend: backend);
+    final session = client.createSession(
+      realtimeId: realtimeId,
+      peerId: 'peer-a',
+    );
+
+    final result = await session.start();
+
+    expect(result, isA<SdkFailure<void>>());
+    expect((result as SdkFailure<void>).error.code, NetworkErrorCode.ioError);
+    await client.dispose();
+  });
+
+  test('gateway open failure is surfaced and can be retried', () async {
+    final gateway = _FakeRealtimeGateway();
+    final runtime = _FakeNetworkRuntime(gateway, openError: StateError('open'));
+    final backend = AppRealtimeSessionBackend(networkRuntime: runtime);
+
+    await expectLater(
+      backend.start(realtimeId: realtimeId, peerId: 'peer-a'),
+      throwsA(isA<StateError>()),
+    );
+    await backend.dispose();
+  });
+
   test(
     'start completion does not advance state before native state events',
     () async {
@@ -311,6 +343,64 @@ void main() {
     await client.dispose();
   });
 
+  test(
+    'failed state and snapshot events preserve structured native errors',
+    () async {
+      final gateway = _FakeRealtimeGateway();
+      final backend = AppRealtimeSessionBackend(
+        networkRuntime: _FakeNetworkRuntime(gateway),
+        commandResultTimeout: const Duration(seconds: 1),
+      );
+      final client = RealtimeClientImpl(backend: backend);
+      final session = client.createSession(
+        realtimeId: realtimeId,
+        peerId: 'peer-a',
+      );
+
+      final startFuture = session.start();
+      await _pump();
+      gateway.emitCommandResult(commandId: gateway.lastStartCommandId!);
+      await startFuture;
+      const error = NativeNetworkError(
+        code: 7,
+        message: 'peer unavailable',
+        operation: 'start_realtime_session',
+        retryDisposition: NativeRetryDisposition.retryWithBackoff,
+        retryAfterSeconds: 4,
+      );
+
+      final stateEventFuture = backend.events
+          .where((event) => event is RealtimeSessionStateChangedEvent)
+          .cast<RealtimeSessionStateChangedEvent>()
+          .first;
+      gateway.emitState(
+        NativeRealtimeSessionState.failed,
+        error: error,
+        revision: 8,
+      );
+      await _pump();
+      expect(session.state, RealtimeSessionState.failed);
+      final stateEvent = await stateEventFuture;
+      expect(stateEvent.error?.code, NetworkErrorCode.natError);
+      expect(stateEvent.error?.retryAfterSeconds, 4);
+
+      final snapshotEventFuture = backend.events
+          .where((event) => event is RealtimeSnapshotBackendEvent)
+          .cast<RealtimeSnapshotBackendEvent>()
+          .first;
+      gateway.emitSnapshot(
+        NativeRealtimeSessionState.failed,
+        revision: 9,
+        error: error,
+      );
+      await _pump();
+      expect(session.revision, 9);
+      final snapshotEvent = await snapshotEventFuture;
+      expect(snapshotEvent.snapshot.error?.message, 'peer unavailable');
+      await client.dispose();
+    },
+  );
+
   test('snapshot before session exists is ignored', () async {
     final gateway = _FakeRealtimeGateway();
     final backend = AppRealtimeSessionBackend(
@@ -423,9 +513,10 @@ void main() {
 Future<void> _pump() => Future<void>.delayed(Duration.zero);
 
 final class _FakeNetworkRuntime implements NetworkRuntime {
-  _FakeNetworkRuntime(this.gateway);
+  _FakeNetworkRuntime(this.gateway, {this.openError});
 
   final NetworkRealtimeGateway gateway;
+  final Object? openError;
 
   @override
   NetworkRuntimeState get state => NetworkRuntimeState.ready;
@@ -449,7 +540,11 @@ final class _FakeNetworkRuntime implements NetworkRuntime {
       throw UnimplementedError();
 
   @override
-  Future<NetworkRealtimeGateway> openRealtimeGateway() async => gateway;
+  Future<NetworkRealtimeGateway> openRealtimeGateway() async {
+    final error = openError;
+    if (error != null) throw error;
+    return gateway;
+  }
 
   @override
   Future<void> dispose() async {}
@@ -505,7 +600,11 @@ final class _FakeRealtimeGateway implements NetworkRealtimeGateway {
     );
   }
 
-  void emitState(NativeRealtimeSessionState state, {int? revision}) {
+  void emitState(
+    NativeRealtimeSessionState state, {
+    int? revision,
+    NativeNetworkError? error,
+  }) {
     _events.add(
       NativeRealtimeStateChangedEvent(
         eventId: 'state-${++_sequence}',
@@ -515,6 +614,7 @@ final class _FakeRealtimeGateway implements NetworkRealtimeGateway {
         peerId: 'peer-a',
         state: state,
         revision: revision ?? _sequence,
+        error: error,
       ),
     );
   }
