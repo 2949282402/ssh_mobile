@@ -3,6 +3,11 @@ part of 'app_runtime_factory.dart';
 /// Builds durable telemetry, crash reporting, and developer diagnostics owners.
 extension _AppRuntimeFactoryTelemetry on _AppRuntimeFactoryContext {
   Future<void> _prepareTelemetryResources() async {
+    // The Relay gate is evaluated during composition, before the deferred
+    // AppSettings initializer runs. Load the persisted endpoint here so a
+    // previously enrolled device is not treated as unconfigured on startup.
+    await appSettings.ensureCoreLoaded();
+
     // 这里只登记 AppRuntime 能直接观测到的数据库；Terminal/SFTP 数据库
     // 由 Route Scope 持有，不在 App Scope 诊断中伪装成已打开资源。
     const connectionDatabaseName = 'connection.sqlite';
