@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-27
+> 最新更新时间：2026-08-31
 
 # SSH Mobile 跨平台 P2P 网络平台实施计划
 
@@ -130,8 +130,8 @@ where marked below. WireGuard scope is removed from the current project.
   不属于当前实现和发布验收范围。
 - Go Relay 使用 `/v1/devices/enroll` 与 `/v1/devices/refresh` 管理设备凭据，
   transport 只使用 `/v2/control` 与 `/v2/relay/{reservation_id}` 两条物理分离的
-  WebSocket；不存在 `/v1/connect`。默认 `memory` 模式是进程本地状态，
-  `mysql` 模式用 MySQL 持久化 enrollment/revocation，并要求 Redis 承载共享 live state。
+  WebSocket；不存在 `/v1/connect`。Go 进程仍支持显式 `memory` 模式；随附 Compose
+  部署默认启用 MySQL 持久化 enrollment/revocation，并要求 Redis 承载共享 live state。
 - Flutter 公共网络层统一返回 `NetworkResult`，公开事件使用类型化事件；
   Realtime command result 只在 App Shell adapter 内部关联，不向 Feature 暴露。
   LAN HTTP 错误使用稳定的
@@ -185,7 +185,7 @@ where marked below. WireGuard scope is removed from the current project.
 | 服务端 | Go |
 | 控制连接 | HTTPS + WSS |
 | 控制消息 | Protobuf |
-| Relay | Go；默认 memory，可选 MySQL + Redis storage profile |
+| Relay | Go；Compose 默认 MySQL + Redis（memory 仅显式本地测试） |
 | 文件 E2E | X25519 + AEAD |
 | 实时音视频 | WebRTC（后续） |
 

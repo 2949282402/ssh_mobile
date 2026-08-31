@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-23
+> 最新更新时间：2026-08-31
 > 状态：单实例 Phase 0–4 已实施；跨实例数据面仍 deferred
 > 适用对象：Go Relay 控制面（`relay/`）后端
 
@@ -22,9 +22,9 @@
 ## 0. 摘要
 
 Go Relay 控制面已引入 MySQL（持久化 source of truth）与 Redis（短生命周期共享状态），
-把默认 memory 模式之外的部署升级为**可持久化**的
-会话/鉴权/状态架构；部署拓扑为**单 Relay Control + 单 Relay Data 实例**，Redis
-为外部共享 live state。
+形成**可持久化**的会话/鉴权/状态架构；随附 Compose 部署默认启用这两个服务并使用
+持久化 named volume。部署拓扑为**单 Relay Control + 单 Relay Data 实例**，Redis
+为外部共享 live state；进程级 `memory` 仍保留给显式的本地测试。
 
 **本轮范围边界**：只做**状态/缓存面**接入 MySQL / Redis 共享 live state。数据面
 （两个设备之间的 WS 控制帧转发）保持单实例；多实例部署与跨实例数据面转发
@@ -33,9 +33,10 @@ Go Relay 控制面已引入 MySQL（持久化 source of truth）与 Redis（短�
 **核心不变量**：
 - MySQL 是 enrollment 与吊销的**唯一持久化 source of truth**。
 - Redis 只承载**短期、可重建、高频**状态（在线 presence、防重放 nonce、admin 会话、传输会话元数据），全部带 TTL。
-- MySQL/Redis storage profile 的依赖或安全状态不可用时 **fail closed**；不得回退到
+- MySQL/Redis 运行依赖或安全状态不可用时 **fail closed**；不得回退到
   会重新打开 replay window 的进程内 nonce 状态。
-- 存储模式在进程启动时显式选择；不把进程内 enrollment 隐式导入持久层。
+- 存储模式在进程启动时显式选择；Compose 默认注入 `mysql`，本地 memory 必须显式
+  opt-in；不把进程内 enrollment 隐式导入持久层。
 
 ---
 
@@ -50,7 +51,7 @@ Go Relay 控制面已引入 MySQL（持久化 source of truth）与 Redis（短�
 | Q5 | 共享状态事件 | Redis Pub/Sub 广播 `session.invalidate` / `device.revoked` 等事件 |
 | Q6 | Token 形态 | **适配现状**：不新造双 token 签发；enrollment（deviceID+公钥）落 MySQL，连接态/防重放/presence 落 Redis，保住无状态 HMAC 凭据 |
 | Q7 | 降级 | **已按实现修正为 fail-closed**：mysql 模式强制 Redis，启动与安全状态操作失败均不得回退到进程内 nonce/cache |
-| Q8 | 升级 | 统一鉴权校验入口；通过显式 storage profile 切换，不隐式迁移进程内状态 |
+| Q8 | 升级 | 统一鉴权校验入口；Compose 默认启用持久化存储，memory 仅显式 opt-in，不隐式迁移进程内状态 |
 | Q9 | 数据面 | 本期数据面保持单实例（单 Relay Control + 单 Relay Data 实例）；跨实例转发后续里程碑 |
 
 ---
@@ -223,9 +224,10 @@ type Cache interface {
 ## 6. 配置与部署
 
 - 当前 env：`RELAY_DATABASE_URL`（MySQL DSN）、`RELAY_REDIS_URL`、
-  `RELAY_STORAGE_MODE`（`memory` 默认或 `mysql`）。完整配置归属
-  `relay/.env.example` 与 `relay/README.md`。
-- `relay/compose.yaml`：新增 `mysql`、`redis` 服务 + 数据卷；Caddy 拓扑保持。
+  `RELAY_STORAGE_MODE`（Go 进程默认 `memory`；bundled Compose 默认注入
+  `mysql`）。完整配置归属 `relay/.env.example` 与 `relay/README.md`。
+- 根 `compose.yaml`：Relay 默认启用 `mysql`、`redis` 服务 + 数据卷与健康依赖；
+  `storage` profile 仅额外启用 Analytics 服务；Caddy 拓扑保持。
 - **第一阶段部署为单 Relay Control + 单 Relay Data 实例**：单实例共享同一 `CredentialKey`（env）；presence 路由与 Pub/Sub 事件在同一实例内闭环。多实例部署（`Global Control Routing` 与 `Relay Data Node Selection`）未完整实现前不支持，也不在 compose 中提供 LB 实例亲和路由。
 - 密钥/口令走环境注入或密钥管理，不进 compose 明文（生产用 secret 文件/外部注入）。
 
@@ -233,9 +235,9 @@ type Cache interface {
 
 ## 7. 已实施顺序与剩余边界
 
-1. **Phase 0 — 已完成**：`Storage`/`Cache` 接口与默认 `memory` 实现。
-2. **Phase 1 — 已完成**：MySQL 持久化 enrollment/revocation；部署切换通过显式
-   storage profile 完成，不提供隐式进程内状态迁移。
+1. **Phase 0 — 已完成**：`Storage`/`Cache` 接口与默认 `memory` 实现（供显式本地测试）。
+2. **Phase 1 — 已完成**：MySQL 持久化 enrollment/revocation；bundled Compose 默认
+   启用 MySQL/Redis，不提供隐式进程内状态迁移。
 3. **Phase 2 — 已完成当前范围**：Redis 承载 presence、discovery、nonce、admin
    session、reservation 与共享事件；活跃 Relay Data pair 仍由单实例内存 owner 持有。
 4. **Phase 3 — 已完成**：设备鉴权收敛到统一入口，README 与 Backend Memory 记录

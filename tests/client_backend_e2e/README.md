@@ -6,7 +6,7 @@
 `scripts/bash/e2e/client_backend_e2e.sh` 编排：默认在 WSL/Linux 中创建临时 Compose
 项目、临时环境文件和临时凭据，运行结束后通过 `trap` 删除容器、卷和临时目录。
 
-临时 Compose 环境会为 Analytics MySQL、Analytics Redis 和 telemetry auth
+临时 Compose 环境会为 Relay MySQL/Redis、Analytics MySQL/Redis 和 telemetry auth
 生成独立随机凭据，并把 DSN/URL 与容器密码保持一致；因此新增的生产配置
 fail-fast 检查不会让 memory 或 mysql 矩阵通过缺省密码运行。凭据仍只存在于
 临时目录，脚本退出时删除。
@@ -21,9 +21,10 @@ fail-fast 检查不会让 memory 或 mysql 矩阵通过缺省密码运行。凭�
 - `smoke`：每日快速验证 enrollment/refresh、双客户端 v2 控制面、reservation
   数据面、ACK/关闭和 `/v2` Caddy 路由。
 - `strict`：短 TTL 凭据过期→刷新→重连，并在测试后重启 Caddy/Relay 验证路由与
-  健康检查恢复；默认隔离 Compose 还会保持控制面/数据面在线并通过管理 API
+  健康检查恢复；默认隔离 Compose 还会启动 Relay MySQL/Redis，并通过管理 API
   撤销设备，断言两条连接都关闭。设置 `CLIENT_BACKEND_E2E_STORAGE=mysql`
-  会额外启动 MySQL/Redis storage profile；HTTPS/WSS 仍由发布环境的受信任 CA
+  会选择 MySQL/Redis 持久化路径；Analytics MySQL/Redis 仍由 `storage` profile
+  启动。HTTPS/WSS 仍由发布环境的受信任 CA
   矩阵显式启用，不能在未配置依赖时静默伪装成通过。
 
 存储 profile 示例：

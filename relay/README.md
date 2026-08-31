@@ -1,4 +1,4 @@
-> Last updated: 2026-08-30
+> Last updated: 2026-08-31
 
 # SSH Mobile Control, Relay, and Admin Backend Services
 
@@ -90,12 +90,18 @@ Deploy using the root Docker Compose file:
 ```sh
 # Run from the repository root.
 cp .env.example .env
-# Replace every replace-with-* placeholder before starting the stack. In
-# particular, TELEMETRY_MYSQL_DSN and TELEMETRY_REDIS_URL must use the same
+# Replace every replace-with-* placeholder before starting the stack. Relay
+# defaults to durable MySQL + Redis; keep RELAY_DATABASE_URL/RELAY_REDIS_URL in
+# sync with the Relay storage credentials and keep RELAY_CREDENTIAL_KEY stable
+# across restarts. TELEMETRY_MYSQL_DSN and TELEMETRY_REDIS_URL must use the same
 # generated credentials as ANALYTICS_MYSQL_PASSWORD and ANALYTICS_REDIS_PASSWORD.
-# The production stack requires all six analytics/telemetry values; Compose
-# fails fast instead of selecting a predictable default.
+# Compose fails fast instead of selecting a predictable storage or secret default.
 
-# Start services and durable Analytics storage.
+# Start services, durable Relay storage, and the Analytics storage profile.
 docker compose --env-file .env --profile storage up -d --build
 ```
+
+Compose requires the Relay storage inputs (`RELAY_DATABASE_URL`,
+`RELAY_REDIS_URL`, `RELAY_REDIS_PASSWORD`, `MYSQL_ROOT_PASSWORD`, and
+`MYSQL_PASSWORD`) as well as the six Analytics/Telemetry inputs documented in
+`.env.example`; the example file contains placeholders only.

@@ -1,4 +1,4 @@
-> Last updated: 2026-08-30
+> Last updated: 2026-08-31
 
 <p align="center">
   <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile icon" width="112" />
@@ -100,9 +100,9 @@ The application can launch without real server or AI credentials. A reachable SS
 ## Control Plane & Public Relay Production Deployment
 
 The bundled `relay/` Go service provides the WSS control/data plane for Network
-Transfer and P2P fallback. It defaults to process-local memory state; the
-optional `storage` Compose profile uses MySQL for durable enrollment/revocation
-and Redis for shared live state. Its standalone React + Vite + TypeScript
+Transfer and P2P fallback. The bundled Compose deployment defaults to MySQL for
+durable enrollment/revocation and Redis for shared live state, with persistent
+named volumes for Relay state. Its standalone React + Vite + TypeScript
 administration console lives in `front/`; enrollment and dashboard credentials
 must be configured explicitly, and the service refuses to start with missing or
 weak secrets.
@@ -111,21 +111,27 @@ Docker Compose with Caddy is the supported production deployment path. Follow th
 
 ```powershell
 Copy-Item .env.example .env
-# Replace every replace-with-* placeholder, including the Analytics MySQL/Redis
-# credentials, telemetry DSN/URL, telemetry auth secret, and admin credentials.
+# Replace every replace-with-* placeholder, including the Relay and Analytics
+# MySQL/Redis credentials, telemetry DSN/URL, telemetry auth secret, and admin
+# credentials.
 docker compose --env-file .env --profile storage up -d --build
 ```
 
-The `storage` profile is required for the production Analytics MySQL and Redis
-services. Compose fails fast if any `TELEMETRY_MYSQL_DSN`,
+The Relay MySQL and Redis services are started by default and use the named
+`relay_mysql_data` and `relay_redis_data` volumes, so a Relay restart does not
+clear enrollment. The `storage` profile is additionally required for the
+production Analytics MySQL and Redis services. Compose fails fast if any
+`RELAY_DATABASE_URL`, `RELAY_REDIS_URL`, `RELAY_REDIS_PASSWORD`,
+`MYSQL_ROOT_PASSWORD`, `MYSQL_PASSWORD`, `TELEMETRY_MYSQL_DSN`,
 `TELEMETRY_REDIS_URL`, `TELEMETRY_AUTH_SECRET`, `ANALYTICS_MYSQL_PASSWORD`,
 `ANALYTICS_MYSQL_ROOT_PASSWORD`, or `ANALYTICS_REDIS_PASSWORD` value is absent;
 the example file contains placeholders only. This command builds and starts
 `front`, `relay`, `admin-api`, Analytics storage, and `caddy`. Caddy exposes the front-end SPA publicly and forwards
 `/api/admin/v1`, `/v1`, `/v2`, and `/healthz` to the internal Relay service. In
-the default `memory` mode a restart clears enrollment; in `mysql` mode enrollment
-and revocation persist while live connections are re-established. See the Relay
-guide for the explicit `storage` profile command.
+the Compose default `mysql` mode, enrollment and revocation persist while live
+connections are re-established. Set `RELAY_STORAGE_MODE=memory` explicitly only
+for a local, non-durable test. See the Relay guide for the storage and secret
+requirements.
 
 In SSH Mobile, open **LAN Share Settings** and enter the HTTPS relay host, port, and enrollment token. The token is used only for enrollment and is never persisted in preferences; the endpoint is stored as an origin while the device credential remains in platform secure storage. The page reports connected/disconnected/failed state and provides explicit reconnect, disconnect, and clear actions. Production clients require a valid TLS certificate.
 

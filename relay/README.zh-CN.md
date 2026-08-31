@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-30
+> 最新更新时间：2026-08-31
 
 # SSH Mobile 控制、Relay 与 Admin 后端服务
 
@@ -81,14 +81,18 @@ Bearer Token 验证的设备使用带 TTL 清理的有界令牌桶，限流键�
 # 命令从仓库根目录执行。
 # 复制环境变量配置
 cp .env.example .env
-# 启动前替换所有 replace-with-* 占位符，尤其要让
+# 启动前替换所有 replace-with-* 占位符。Relay 默认启用持久化 MySQL + Redis；
+# RELAY_DATABASE_URL/RELAY_REDIS_URL 必须与 Relay 存储凭据一致，
+# RELAY_CREDENTIAL_KEY 必须在重启间保持不变。还要让
 # TELEMETRY_MYSQL_DSN/TELEMETRY_REDIS_URL 与 Analytics 容器密码一致。
 
-# 构建并启动服务及持久化 Analytics 存储
+# 构建并启动服务、持久化 Relay 存储及 Analytics 存储
 docker compose --env-file .env --profile storage up -d --build
 ```
 
-生产配置要求 `TELEMETRY_MYSQL_DSN`、`TELEMETRY_REDIS_URL`、
-`TELEMETRY_AUTH_SECRET`、`ANALYTICS_MYSQL_PASSWORD`、
-`ANALYTICS_MYSQL_ROOT_PASSWORD` 和 `ANALYTICS_REDIS_PASSWORD` 六项值；
-Compose 缺少任一项会快速失败，示例文件只提供占位符，不包含可预测密码。
+生产配置要求 Relay 的 `RELAY_DATABASE_URL`、`RELAY_REDIS_URL`、
+`RELAY_REDIS_PASSWORD`、`MYSQL_ROOT_PASSWORD`、`MYSQL_PASSWORD`，以及
+`TELEMETRY_MYSQL_DSN`、`TELEMETRY_REDIS_URL`、`TELEMETRY_AUTH_SECRET`、
+`ANALYTICS_MYSQL_PASSWORD`、`ANALYTICS_MYSQL_ROOT_PASSWORD` 和
+`ANALYTICS_REDIS_PASSWORD`；Compose 缺少任一项会快速失败，示例文件只提供占位符，
+不包含可预测密码。

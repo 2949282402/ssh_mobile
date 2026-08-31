@@ -228,19 +228,21 @@ start_compose() {
   umask 077
   local credential_ttl="${CLIENT_BACKEND_E2E_CREDENTIAL_TTL:-24h}"
   if [[ "$MODE" == strict && -z "${CLIENT_BACKEND_E2E_CREDENTIAL_TTL:-}" ]]; then
-    credential_ttl=45s
+    # Leave enough margin for the fixed 46s expiry probe under Docker load.
+    credential_ttl=30s
   fi
   # Caddy listens on its container port 80; the host port belongs only in
   # the advertised URL. Including the random host port in the Caddy site
   # address would make Caddy listen on that port inside the container and
   # cause Docker's 80→host mapping to reset connections.
   relay_storage_mode=memory
-  relay_database_url=
-  relay_redis_url=
+  # Relay MySQL/Redis services are always part of the Compose topology now,
+  # so provide valid endpoints even when the Relay process is intentionally
+  # running in explicit memory mode for this test.
+  relay_database_url="${mysql_user}:${mysql_password}@tcp(mysql:3306)/relay?parseTime=true&loc=UTC"
+  relay_redis_url='redis://redis:6379/0'
   if [[ "$STORAGE_MODE" == mysql ]]; then
     relay_storage_mode=mysql
-    relay_database_url="${mysql_user}:${mysql_password}@tcp(mysql:3306)/relay?parseTime=true&loc=UTC"
-    relay_redis_url='redis://redis:6379/0'
   fi
   printf '%s\n' \
     'RELAY_PUBLIC_DOMAIN=http://127.0.0.1' \
