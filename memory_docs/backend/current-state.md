@@ -110,8 +110,10 @@ endpoints live in an independent one-shot Relay Data registry.
   only owned scalar routing/capacity/lifecycle capabilities, never startup
   endpoints/credentials. Memory mode restart clears device/Admin/Relay session
   state; MySQL keeps enrollment/revocation and devices continue working.
-- Supported production topology is Docker Compose + Caddy; `storage` profile adds
-  MySQL/Redis for the durable shared-state stack (one Control + one Data).
+- Supported production topology is Docker Compose + Caddy; the bundled Compose
+  stack defaults Relay to MySQL + Redis with persistent volumes. The `storage`
+  profile additionally starts the Analytics MySQL/Redis services (one Control +
+  one Data).
 
 ## Telemetry & Observability (`internal/telemetry`)
 

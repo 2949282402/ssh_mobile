@@ -133,6 +133,55 @@ void main() {
     'Analytics Redis must retain its health, resource, persistence, and auth boundaries.',
   );
 
+  _expect(
+    compose.contains('RELAY_STORAGE_MODE: \${RELAY_STORAGE_MODE:-mysql}'),
+    'Compose must default Relay to durable MySQL storage.',
+  );
+  for (final variable in const [
+    'RELAY_DATABASE_URL',
+    'RELAY_REDIS_URL',
+    'RELAY_REDIS_PASSWORD',
+    'MYSQL_ROOT_PASSWORD',
+    'MYSQL_PASSWORD',
+  ]) {
+    _expect(
+      compose.contains('\${$variable:?'),
+      'Compose must require Relay storage variable $variable.',
+    );
+  }
+  final relayDependsOn = compose.substring(
+    compose.indexOf('  relay:'),
+    compose.indexOf('    networks:', compose.indexOf('  relay:')),
+  );
+  _expect(
+    relayDependsOn.contains(
+          'mysql:\n        condition: service_healthy\n        required: true',
+        ) &&
+        relayDependsOn.contains(
+          'redis:\n        condition: service_healthy\n        required: true',
+        ),
+    'Relay must wait for healthy MySQL and Redis services.',
+  );
+  final relayMysql = compose.substring(
+    compose.indexOf('  mysql:\n    image:'),
+    compose.indexOf(
+      '  redis:\n    image:',
+      compose.indexOf('  mysql:\n    image:'),
+    ),
+  );
+  final relayRedis = compose.substring(
+    compose.indexOf('  redis:\n    image:'),
+    compose.indexOf('  front:', compose.indexOf('  redis:\n    image:')),
+  );
+  _expect(
+    !relayMysql.contains('profiles:') &&
+        !relayRedis.contains('profiles:') &&
+        relayMysql.contains('healthcheck:') &&
+        relayRedis.contains('healthcheck:') &&
+        relayRedis.contains('--requirepass'),
+    'Relay MySQL and Redis must be always-on, healthy, and password protected.',
+  );
+
   for (final example in [
     File('${root.path}/.env.example'),
     File('${root.path}/relay/.env.example'),
@@ -149,6 +198,22 @@ void main() {
       _expect(
         text.contains('$variable='),
         '${example.path} must document $variable.',
+      );
+    }
+    _expect(
+      text.contains('RELAY_STORAGE_MODE=mysql'),
+      '${example.path} must default Relay to mysql storage.',
+    );
+    for (final variable in const [
+      'RELAY_DATABASE_URL',
+      'RELAY_REDIS_URL',
+      'RELAY_REDIS_PASSWORD',
+      'MYSQL_ROOT_PASSWORD',
+      'MYSQL_PASSWORD',
+    ]) {
+      _expect(
+        text.contains('$variable='),
+        '${example.path} must document Relay storage variable $variable.',
       );
     }
     _expect(
@@ -281,7 +346,9 @@ void main() {
   );
   _expect(
     workflow.contains('--minimum=90') &&
-        workflow.contains(r'--base-ref="${{ needs.change_scope.outputs.base_sha }}"') &&
+        workflow.contains(
+          r'--base-ref="${{ needs.change_scope.outputs.base_sha }}"',
+        ) &&
         workflow.contains('--source-root=lib') &&
         !workflow.contains('--minimum=35') &&
         !workflow.contains('--all-sources'),

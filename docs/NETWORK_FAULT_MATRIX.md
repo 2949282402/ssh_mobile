@@ -1,4 +1,4 @@
-最新更新时间：2026-08-27
+最新更新时间：2026-08-31
 
 # Network Fault Matrix
 
@@ -51,7 +51,7 @@ Linux 容器测试替代。
 | E | Direct transport loss；显式重新 Resolve 后下一次 attempt 可选择 Relay | `cargo test -p network-core --locked --lib delivery_reliable_message_resends_same_message_id_after_reconnect`；Relay `recover` smoke | 旧 Direct ConnectionSession 关闭并得到新 SessionId；旧 ACK 不误判成功，Relay 重放不重复执行，MessageId/TransferId 与 offset 不回退 | native recovery/Relay harness 已覆盖 |
 | F | Wi-Fi disconnect/reconnect；注入 Caddy/链路断开后恢复 | `bash scripts/bash/e2e/client_backend_e2e.sh strict`（含 Caddy restart probe）；真实设备另按 G/I 记录 | 凭据刷新/重连、Caddy 重启后路由恢复；真实设备仍需记录 TransferId/offset、recovery time、task count、duplicate count | Linux strict 覆盖进程级重连；真实 Wi-Fi 需设备记录 |
 | G | Wi-Fi → 4G/5G；系统网络接口切换 | Android/iOS physical-device runbook（见下文） | 记录切换前后 ConnectionSessionId/Route；同一已认证 QUIC connection 内部 path migration 仅作为 transport 观测，若 connection 丢失则必须显式新建 Session；不能依赖旧 socket token | 需要真实 Android/iOS 设备，未在 Linux CI 伪造 |
-| H | Relay restart；Relay 内存状态清空后重新 enrollment | `bash scripts/bash/e2e/client_backend_e2e.sh strict`（含 Relay restart 和未认证路由 probe）；`CLIENT_BACKEND_E2E_STORAGE=mysql bash scripts/bash/e2e/client_backend_e2e.sh strict` | 短 TTL 旧 credential 被拒绝；只有包含新鲜时间戳的 refresh 可续签并重连，过时证明返回类型化认证失败；Relay restart 后健康检查和 `/v2` 路由恢复；storage profile 额外验证 MySQL/Redis wiring | strict 已覆盖内存模式生命周期与在线撤销；MySQL/Redis 持久性由显式 storage profile 覆盖 |
+| H | Relay restart；memory 模式内存状态清空，Compose mysql 模式保留 enrollment | `bash scripts/bash/e2e/client_backend_e2e.sh strict`（含 Relay restart 和未认证路由 probe）；`CLIENT_BACKEND_E2E_STORAGE=mysql bash scripts/bash/e2e/client_backend_e2e.sh strict` | 短 TTL 旧 credential 被拒绝；只有包含新鲜时间戳的 refresh 可续签并重连，过时证明返回类型化认证失败；Relay restart 后健康检查和 `/v2` 路由恢复；mysql 模式验证 MySQL/Redis wiring 与 enrollment 持久性 | strict 已覆盖显式内存模式生命周期与在线撤销；mysql 持久性由 `CLIENT_BACKEND_E2E_STORAGE=mysql` 覆盖 |
 | I | App background/foreground；挂起/恢复 App | Android/iOS physical-device runbook（见下文） | adapter/session 生命周期、后台策略、恢复时间、task/订阅无泄漏；前台恢复不重复执行命令 | 需要真实 Android/iOS 设备，未在 Linux CI 伪造 |
 | J | 1GB+ file resume；在 checkpoint 后断网并继续传输 | `cargo test -p network-transfer -p network-core --locked`；设备上用 1 GiB+ fixture 重复 F/G | offset 单调、Manifest/File Hash 相同、最终 exactly-once、内存不随文件大小线性增长 | native checkpoint/resume 已通过；1 GiB+ physical transfer 需设备记录 |
 | K | Ordered long handler；应用处理超过 processed dedup TTL 后再 ACK，期间收到后续序号 | 当前工作区 `cargo test -p network-core --locked`；覆盖 `inflight_survives_processed_dedup_ttl_until_application_ack`、`ordered_buffer_survives_processed_dedup_ttl_and_releases_in_sequence` 与 Runtime owner 测试 | active handler 与 ordered buffer 不被 TTL/LRU 删除，ACK 后严格按 `0 → 1 → 2` 推进；显式 Session close 清空接收态 | native 自动化测试已通过；真实设备长 handler 时间窗尚未执行 |

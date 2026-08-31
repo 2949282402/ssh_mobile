@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-30
+> 最新更新时间：2026-08-31
 
 <p align="center">
   <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile 图标" width="112" />
@@ -90,25 +90,30 @@ flutter run -d chrome
 
 ## 控制平面与中继服务器生产部署
 
-仓库内的 `relay/` Go 服务提供 Network V2 的 WSS 控制面与数据面。默认
-`memory` 模式使用进程本地状态；可选 `storage` Compose profile 使用 MySQL
-持久化注册/吊销，并用 Redis 保存共享在线、防重放、管理会话和事件状态。独立的
+仓库内的 `relay/` Go 服务提供 Network V2 的 WSS 控制面与数据面。随附的 Compose
+部署默认使用 MySQL 持久化注册/吊销，并用 Redis 保存共享在线、防重放、管理会话和
+事件状态；Relay 数据使用持久化 named volume。独立的
 React + Vite + TypeScript 管理端位于根目录 `front/`。注册凭据与管理凭据必须显式
 配置；缺少密钥或使用弱口令时，服务会拒绝启动。
 
 仅支持使用 Docker Compose 与 Caddy 进行生产部署。按照[中继部署说明](relay/README.zh-CN.md)完成配置后运行：
 
 ```powershell
-cd relay
 Copy-Item .env.example .env
-# 在 .env 中设置公网域名、所有端口/运行参数，以及 Token、签名密钥和管理员凭据。
-docker compose --env-file .env up --build
+# 在 .env 中替换所有 replace-with-* 占位符，包括 Relay/Analytics 的
+# MySQL/Redis 凭据、Telemetry DSN/URL、Telemetry 密钥和管理员凭据。
+docker compose --env-file .env --profile storage up -d --build
 ```
 
-这一条命令会构建并启动 `front`、`relay` 与 `caddy`，随后持续显示三者的合并日志。
+Relay 的 MySQL/Redis 服务默认启动，并将状态写入 `relay_mysql_data` 与
+`relay_redis_data` named volume，因此 Relay 重启不会清空注册。`storage` profile
+另外负责启动生产环境的 Analytics MySQL/Redis。Compose 对缺少
+`RELAY_DATABASE_URL`、`RELAY_REDIS_URL`、`RELAY_REDIS_PASSWORD`、
+`MYSQL_ROOT_PASSWORD`、`MYSQL_PASSWORD` 或任一 Analytics/Telemetry 必填值会快速失败；
+示例文件只包含占位符。Compose 默认 `mysql` 模式下注册和吊销会持久化，活动连接仍
+需重建；仅本地非持久化测试时才显式设置 `RELAY_STORAGE_MODE=memory`。
 Caddy 对外提供前端 SPA，并把 `/api/admin/v1`、`/v1`、`/v2` 和 `/healthz`
-转发到内部 Relay 服务。默认 `memory` 模式重启后需要重新注册；`mysql` 模式保留
-注册和吊销状态，但活动连接仍需重建。显式 `storage` profile 命令见中继部署说明。
+转发到内部 Relay 服务。
 
 在 SSH Mobile 中打开“局域网共享设置”，填写具备有效 TLS 证书的 HTTPS 中继主机、端口和注册 Token。Token 只用于本次注册，不会写入偏好设置；应用只保存 Relay origin，设备凭据保存在平台安全存储中。设置页会显示已连接、已断开或失败状态，并提供手动连接、断开和清除操作。
 
