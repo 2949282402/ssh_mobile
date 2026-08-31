@@ -211,11 +211,26 @@ Future<RuntimeHarness> newRuntimeHarness({
   NetworkRuntime? networkRuntime,
   feature_lan_share.LanShareDatabaseFactory? lanShareDatabaseFactory,
   String relayEndpoint = '',
+  String? relayCredential,
+  String relayDeviceId = 'runtime-test-device',
   bool disposeLogger = true,
   void Function(String event)? lifecycleObserver,
 }) async {
-  SharedPreferences.setMockInitialValues({'relay_endpoint': relayEndpoint});
-  FlutterSecureStorage.setMockInitialValues({});
+  final preferences = <String, Object>{'relay_endpoint': relayEndpoint};
+  final secureStorage = <String, String>{};
+  if (relayCredential != null) {
+    preferences['lan_device_id'] = relayDeviceId;
+    secureStorage['lan_device_id'] = relayDeviceId;
+    secureStorage['relay_device_credential_v1'] = jsonEncode({
+      'endpoint': relayEndpoint,
+      'device_id': relayDeviceId,
+      'credential': relayCredential,
+      'expires_at': DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600,
+      'protocol_version': 2,
+    });
+  }
+  SharedPreferences.setMockInitialValues(preferences);
+  FlutterSecureStorage.setMockInitialValues(secureStorage);
   final connectionDatabase = ConnectionDatabase.forTesting(
     NativeDatabase.memory(),
   );
