@@ -287,11 +287,13 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
     final future = widget.future;
 
     if (connections.isEmpty) {
-      final desktop = isDesktopLayout(context);
+      final isTwoColumn =
+          isDesktopTargetPlatform() ||
+          WindowSizeClass.of(context).isExpandedOrLarger;
       return AppEmptyState(
         icon: Icons.dns_outlined,
         title: strings.adminSelectServer,
-        message: desktop
+        message: isTwoColumn
             ? _monitorText(
                 strings,
                 'Select a server from the left.',

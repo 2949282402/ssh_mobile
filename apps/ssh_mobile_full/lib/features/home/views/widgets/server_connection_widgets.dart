@@ -262,7 +262,8 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
         widget.windowsExpanded && !widget.isGrid && sessionCount > 0;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final extColors = Theme.of(context).extension<ExtendedColors>();
-    final compactMobileCard = !widget.isGrid && !isDesktopLayout(context);
+    final compactMobileCard =
+        !widget.isGrid && WindowSizeClass.of(context).isCompact;
 
     final boxBorderColor = _isHovered
         ? (extColors?.cardHoverBorder ??

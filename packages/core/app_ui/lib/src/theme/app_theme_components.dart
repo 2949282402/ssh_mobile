@@ -436,6 +436,7 @@ class _AppThemeComponentBuilders {
         padding: const WidgetStatePropertyAll(
           EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         ),
+        tapTargetSize: MaterialTapTargetSize.padded,
         backgroundColor: WidgetStateProperty.resolveWith(
           (states) => states.contains(WidgetState.selected)
               ? primary.withValues(alpha: 0.08)

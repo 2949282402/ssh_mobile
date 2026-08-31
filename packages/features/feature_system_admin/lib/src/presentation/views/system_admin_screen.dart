@@ -161,14 +161,16 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
           );
         }
 
-        final desktop = isDesktopLayout(context);
+        final isTwoColumn =
+            isDesktopTargetPlatform() ||
+            WindowSizeClass.of(context).isExpandedOrLarger;
         final colorScheme = Theme.of(context).colorScheme;
 
         final bodyContent = _buildMainContent(
           strings,
           colorScheme,
           _activeTabIndex,
-          reserveTopRightRefreshSpace: desktop,
+          reserveTopRightRefreshSpace: isTwoColumn,
         );
 
         return Scaffold(
@@ -185,7 +187,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                     72.0 + (textScale - 1.0) * 38.0;
                 final collapsedMobileServerHeight =
                     48.0 + (textScale - 1.0) * 22.0;
-                return desktop
+                return isTwoColumn
                     ? Row(
                         children: [
                           AnimatedContainer(
