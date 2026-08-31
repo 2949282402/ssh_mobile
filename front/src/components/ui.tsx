@@ -2,6 +2,8 @@ import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import {
   AlertTriangle,
   Check,
+  ChevronLeft,
+  ChevronRight,
   CircleDashed,
   LoaderCircle,
   RadioTower,
@@ -233,5 +235,58 @@ export function ConnectionBadge({ online, available = true }: { online: boolean;
     <Badge tone="online" dot><Wifi size={13} aria-hidden="true" />在线</Badge>
   ) : (
     <Badge tone="offline" dot><X size={13} aria-hidden="true" />离线</Badge>
+  );
+}
+
+export function Pagination({
+  page,
+  totalPages,
+  onPageChange,
+  disabled = false,
+}: {
+  page: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+  disabled?: boolean;
+}) {
+  if (totalPages <= 1) return null;
+  return (
+    <nav className="pagination-bar" aria-label="分页导航" aria-live="polite">
+      <Button
+        variant="quiet"
+        disabled={page <= 1 || disabled}
+        onClick={() => onPageChange(page - 1)}
+      >
+        <ChevronLeft size={16} aria-hidden="true" />
+        上一页
+      </Button>
+      <span className="pagination-info">
+        第 {page} / {totalPages} 页
+      </span>
+      <Button
+        variant="quiet"
+        disabled={page >= totalPages || disabled}
+        onClick={() => onPageChange(page + 1)}
+      >
+        下一页
+        <ChevronRight size={16} aria-hidden="true" />
+      </Button>
+    </nav>
+  );
+}
+
+export function CodeBlock({
+  children,
+  json = false,
+  className = '',
+}: {
+  children: ReactNode;
+  json?: boolean;
+  className?: string;
+}) {
+  return (
+    <pre className={`code-block${json ? ' code-block--json' : ''}${className ? ` ${className}` : ''}`}>
+      {children}
+    </pre>
   );
 }
