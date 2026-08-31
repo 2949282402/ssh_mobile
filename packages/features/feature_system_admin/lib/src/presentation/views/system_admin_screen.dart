@@ -781,15 +781,15 @@ class _MonitorResponsiveEmptyState extends StatelessWidget {
         final showIcon = constraints.maxHeight >= 150;
         return Center(
           child: SingleChildScrollView(
-            padding: EdgeInsets.all(compact ? 12 : 28),
+            padding: EdgeInsets.all(compact ? 12 : 24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (showIcon) ...[
                   AppIconBadge(
                     icon: Icons.monitor_heart_outlined,
-                    size: compact ? 44 : 72,
-                    iconSize: compact ? 24 : 34,
+                    size: compact ? 36 : 48,
+                    iconSize: compact ? 20 : 24,
                   ),
                   SizedBox(height: compact ? 8 : 14),
                 ],
@@ -804,7 +804,7 @@ class _MonitorResponsiveEmptyState extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: colorScheme.onSurface,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w600,
                     fontSize: compact ? 14 : 16,
                   ),
                 ),

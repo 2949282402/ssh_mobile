@@ -430,7 +430,19 @@ class _ServicesTabState extends State<_ServicesTab>
                         itemCount: visibleServices.length,
                         itemBuilder: (context, index) {
                           final service = visibleServices[index];
-                          return Card(
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            decoration: BoxDecoration(
+                              color: widget.colorScheme.surface,
+                              borderRadius: BorderRadius.circular(
+                                AppTheme.radiusMedium,
+                              ),
+                              border: Border.all(
+                                color: widget.colorScheme.outlineVariant
+                                    .withValues(alpha: 0.8),
+                                width: 1,
+                              ),
+                            ),
                             child: ListTile(
                               leading: Icon(
                                 service.isRunning
@@ -446,7 +458,7 @@ class _ServicesTabState extends State<_ServicesTab>
                                 selectable: false,
                                 maxLines: 1,
                                 style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
                               subtitle: OverflowScrollText(

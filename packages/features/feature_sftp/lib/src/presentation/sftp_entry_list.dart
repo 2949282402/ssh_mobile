@@ -296,13 +296,13 @@ class _SftpEntryTile extends StatelessWidget {
                 ),
                 child: Row(
                   children: [
-                    AppIconBadge(
-                      icon: icon,
-                      size: 34 * scale,
-                      iconSize: 18 * scale,
-                      color: iconColor,
+                    SizedBox.square(
+                      dimension: 28 * scale,
+                      child: Center(
+                        child: Icon(icon, size: 20 * scale, color: iconColor),
+                      ),
                     ),
-                    SizedBox(width: 10 * scale),
+                    SizedBox(width: 8 * scale),
                     Expanded(
                       child: Column(
                         mainAxisSize: MainAxisSize.min,

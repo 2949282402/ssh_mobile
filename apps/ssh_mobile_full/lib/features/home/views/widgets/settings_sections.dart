@@ -8,10 +8,10 @@ class _SettingsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AppSectionCard(
+    return AppSection(
       title: title,
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-      contentGap: 8,
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      headerGap: 4,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: children,

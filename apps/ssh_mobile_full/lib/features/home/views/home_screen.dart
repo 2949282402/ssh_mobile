@@ -222,17 +222,14 @@ class _HomeScreenState extends State<HomeScreen> {
     final width = size.width;
     final extended = width >= AppBreakpoints.wideDesktop;
     final compactHeight = usesCompactRailForHeight(size.height);
-    final railMargin = compactHeight
-        ? const EdgeInsets.fromLTRB(8, 6, 0, 6)
-        : const EdgeInsets.fromLTRB(12, 12, 0, 12);
 
     final settingsButton = IconButton(
       tooltip: strings.settings,
-      icon: const Icon(Icons.settings_outlined),
+      icon: const Icon(Icons.settings_outlined, size: 20),
       style: IconButton.styleFrom(
-        minimumSize: const Size.square(44),
-        foregroundColor: colorScheme.primary,
-        backgroundColor: colorScheme.primary.withValues(alpha: 0.1),
+        minimumSize: const Size.square(40),
+        foregroundColor: colorScheme.onSurfaceVariant,
+        hoverColor: colorScheme.surfaceContainerHighest,
       ),
       onPressed: () => _openSettings(context),
     );
@@ -242,32 +239,23 @@ class _HomeScreenState extends State<HomeScreen> {
         if (!desktop)
           const SizedBox.shrink()
         else if (compactKeyboardLayout)
-          const SizedBox(width: 80)
+          const SizedBox(width: 60)
         else
           Container(
-            margin: railMargin,
             decoration: BoxDecoration(
-              color: colorScheme.surface.withValues(alpha: 0.92),
-              borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
-              border: Border.all(
-                color: colorScheme.outline.withValues(alpha: 0.72),
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(
-                    alpha: Theme.of(context).brightness == Brightness.dark
-                        ? 0.20
-                        : 0.045,
-                  ),
-                  blurRadius: 26,
-                  offset: const Offset(0, 10),
+              color: colorScheme.surface,
+              border: Border(
+                right: BorderSide(
+                  color: colorScheme.outlineVariant.withValues(alpha: 0.8),
+                  width: 1,
                 ),
-              ],
+              ),
             ),
-            clipBehavior: Clip.antiAlias,
             child: NavigationRail(
               backgroundColor: Colors.transparent,
               extended: extended,
+              minWidth: 60,
+              minExtendedWidth: 200,
               labelType: extended
                   ? null
                   : compactHeight
@@ -294,34 +282,36 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
               destinations: [
                 NavigationRailDestination(
-                  icon: const Icon(Icons.dns_outlined),
-                  selectedIcon: const Icon(Icons.dns_rounded),
+                  icon: const Icon(Icons.dns_outlined, size: 20),
+                  selectedIcon: const Icon(Icons.dns_rounded, size: 20),
                   label: Text(strings.servers),
                 ),
                 NavigationRailDestination(
-                  icon: const Icon(Icons.folder_open_outlined),
-                  selectedIcon: const Icon(Icons.folder_open_rounded),
+                  icon: const Icon(Icons.folder_open_outlined, size: 20),
+                  selectedIcon: const Icon(Icons.folder_open_rounded, size: 20),
                   label: Text(strings.sftp),
                 ),
                 NavigationRailDestination(
-                  icon: const Icon(Icons.auto_awesome_outlined),
-                  selectedIcon: const Icon(Icons.auto_awesome_rounded),
+                  icon: const Icon(Icons.psychology_outlined, size: 20),
+                  selectedIcon: const Icon(Icons.psychology_rounded, size: 20),
                   label: _buildAiLabel(context, _selectedIndex == _aiPage),
                 ),
                 NavigationRailDestination(
-                  icon: const Icon(Icons.monitor_heart_outlined),
-                  selectedIcon: const Icon(Icons.monitor_heart_rounded),
+                  icon: const Icon(Icons.monitor_heart_outlined, size: 20),
+                  selectedIcon: const Icon(
+                    Icons.monitor_heart_rounded,
+                    size: 20,
+                  ),
                   label: Text(strings.admin),
                 ),
                 NavigationRailDestination(
-                  icon: const Icon(Icons.radar_outlined),
-                  selectedIcon: const Icon(Icons.radar_rounded),
+                  icon: const Icon(Icons.radar_outlined, size: 20),
+                  selectedIcon: const Icon(Icons.radar_rounded, size: 20),
                   label: Text(strings.lanShare),
                 ),
               ],
             ),
           ),
-        SizedBox(width: desktop ? 12 : 0),
         Expanded(
           child: KeyedSubtree(
             key: const ValueKey<String>('home-navigation-content'),
@@ -334,42 +324,26 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildRailBrand(BuildContext context, bool extended) {
     final colors = Theme.of(context).colorScheme;
-    final mark = Container(
-      width: 42,
-      height: 42,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [colors.primary, colors.tertiary],
-        ),
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: [
-          BoxShadow(
-            color: colors.primary.withValues(alpha: 0.22),
-            blurRadius: 14,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      alignment: Alignment.center,
-      child: const Icon(Icons.terminal_rounded, color: Colors.white, size: 23),
-    );
+    final mark = Icon(Icons.terminal_rounded, color: colors.primary, size: 22);
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
+      padding: const EdgeInsets.fromLTRB(14, 16, 14, 16),
       child: extended
           ? Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 mark,
-                const SizedBox(width: 12),
-                const Flexible(
+                const SizedBox(width: 10),
+                Flexible(
                   child: Text(
                     'SSH Mobile',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: colors.onSurface,
+                    ),
                   ),
                 ),
               ],
@@ -381,32 +355,20 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildBottomNavigation(BuildContext context, AppStrings strings) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
     final mobileMetrics = mobileUiMetricsOf(context);
 
     return SafeArea(
       top: false,
-      minimum: EdgeInsets.fromLTRB(
-        mobileMetrics.navigationHorizontalInset,
-        0,
-        mobileMetrics.navigationHorizontalInset,
-        mobileMetrics.navigationBottomInset,
-      ),
       child: Container(
         height: mobileMetrics.navigationHeight,
         decoration: BoxDecoration(
-          color: colorScheme.surface.withValues(alpha: isDark ? 0.94 : 0.97),
-          borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
-          border: Border.all(
-            color: colorScheme.outline.withValues(alpha: 0.76),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: isDark ? 0.28 : 0.10),
-              blurRadius: 30,
-              offset: const Offset(0, 12),
+          color: colorScheme.surface,
+          border: Border(
+            top: BorderSide(
+              color: colorScheme.outlineVariant.withValues(alpha: 0.8),
+              width: 1,
             ),
-          ],
+          ),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 4),
         child: Row(
@@ -414,40 +376,40 @@ class _HomeScreenState extends State<HomeScreen> {
             _buildNavItem(
               context: context,
               mobileMetrics: mobileMetrics,
-              icon: const Icon(Icons.dns_outlined),
-              selectedIcon: const Icon(Icons.dns_rounded),
+              icon: const Icon(Icons.dns_outlined, size: 20),
+              selectedIcon: const Icon(Icons.dns_rounded, size: 20),
               label: strings.servers,
               index: _serverPage,
             ),
             _buildNavItem(
               context: context,
               mobileMetrics: mobileMetrics,
-              icon: const Icon(Icons.folder_open_outlined),
-              selectedIcon: const Icon(Icons.folder_open_rounded),
+              icon: const Icon(Icons.folder_open_outlined, size: 20),
+              selectedIcon: const Icon(Icons.folder_open_rounded, size: 20),
               label: strings.sftp,
               index: _sftpPage,
             ),
             _buildNavItem(
               context: context,
               mobileMetrics: mobileMetrics,
-              icon: const Icon(Icons.auto_awesome_outlined),
-              selectedIcon: const Icon(Icons.auto_awesome_rounded),
+              icon: const Icon(Icons.psychology_outlined, size: 20),
+              selectedIcon: const Icon(Icons.psychology_rounded, size: 20),
               label: 'AI',
               index: _aiPage,
             ),
             _buildNavItem(
               context: context,
               mobileMetrics: mobileMetrics,
-              icon: const Icon(Icons.monitor_heart_outlined),
-              selectedIcon: const Icon(Icons.monitor_heart_rounded),
+              icon: const Icon(Icons.monitor_heart_outlined, size: 20),
+              selectedIcon: const Icon(Icons.monitor_heart_rounded, size: 20),
               label: strings.admin,
               index: _adminPage,
             ),
             _buildNavItem(
               context: context,
               mobileMetrics: mobileMetrics,
-              icon: const Icon(Icons.radar_outlined),
-              selectedIcon: const Icon(Icons.radar_rounded),
+              icon: const Icon(Icons.radar_outlined, size: 20),
+              selectedIcon: const Icon(Icons.radar_rounded, size: 20),
               label: strings.lanShare,
               index: _logPage,
             ),
@@ -480,51 +442,28 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeOutCubic,
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      curve: Curves.easeOutCubic,
-                      width: mobileMetrics.navigationIndicatorWidth,
-                      height: mobileMetrics.navigationIndicatorHeight,
-                      decoration: BoxDecoration(
-                        color: isSelected
-                            ? colorScheme.primary.withValues(alpha: 0.12)
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(
-                          AppTheme.radiusPill,
-                        ),
-                      ),
-                    ),
-                    IconTheme(
-                      data: IconThemeData(
-                        color: isSelected
-                            ? colorScheme.primary
-                            : colorScheme.onSurfaceVariant,
-                        size: mobileMetrics.navigationIconSize,
-                      ),
-                      child: isSelected ? selectedIcon : icon,
-                    ),
-                  ],
+              IconTheme(
+                data: IconThemeData(
+                  color: isSelected
+                      ? colorScheme.primary
+                      : colorScheme.onSurfaceVariant,
+                  size: mobileMetrics.navigationIconSize,
                 ),
+                child: isSelected ? selectedIcon : icon,
               ),
-              const SizedBox(height: 1),
-              AnimatedDefaultTextStyle(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeOutCubic,
+              const SizedBox(height: 3),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: isSelected
                       ? colorScheme.primary
                       : colorScheme.onSurfaceVariant,
                   fontSize: mobileMetrics.navigationLabelSize,
-                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
                   letterSpacing: 0,
                 ),
-                child: Text(label),
               ),
             ],
           ),

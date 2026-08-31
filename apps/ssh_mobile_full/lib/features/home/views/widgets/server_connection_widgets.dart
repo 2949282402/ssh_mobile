@@ -295,17 +295,6 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
                 color: boxBgColor,
                 borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
                 border: Border.all(color: boxBorderColor, width: 1),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(
-                      alpha: _isHovered
-                          ? (isDark ? 0.22 : 0.055)
-                          : (isDark ? 0.16 : 0.025),
-                    ),
-                    blurRadius: _isHovered ? 18 : 10,
-                    offset: Offset(0, _isHovered ? 7 : 3),
-                  ),
-                ],
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,

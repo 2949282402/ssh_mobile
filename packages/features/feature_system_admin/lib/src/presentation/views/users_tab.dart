@@ -89,98 +89,124 @@ class _UsersTabState extends State<_UsersTab>
                     itemCount: accounts.length,
                     itemBuilder: (context, index) {
                       final account = accounts[index];
-                      return Card(
-                        child: ExpansionTile(
-                          leading: CircleAvatar(
-                            backgroundColor: account.uid == 0
-                                ? widget.colorScheme.errorContainer
-                                : widget.colorScheme.primaryContainer,
-                            child: Icon(
-                              account.uid == 0 ? Icons.security : Icons.person,
-                              color: account.uid == 0
-                                  ? widget.colorScheme.onErrorContainer
-                                  : widget.colorScheme.onPrimaryContainer,
-                            ),
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        decoration: BoxDecoration(
+                          color: widget.colorScheme.surface,
+                          borderRadius: BorderRadius.circular(
+                            AppTheme.radiusMedium,
                           ),
-                          title: Row(
+                          border: Border.all(
+                            color: widget.colorScheme.outlineVariant.withValues(
+                              alpha: 0.8,
+                            ),
+                            width: 1,
+                          ),
+                        ),
+                        clipBehavior: Clip.antiAlias,
+                        child: Theme(
+                          data: Theme.of(
+                            context,
+                          ).copyWith(dividerColor: Colors.transparent),
+                          child: ExpansionTile(
+                            leading: CircleAvatar(
+                              radius: 18,
+                              backgroundColor: account.uid == 0
+                                  ? widget.colorScheme.errorContainer
+                                  : widget.colorScheme.primaryContainer,
+                              child: Icon(
+                                account.uid == 0
+                                    ? Icons.security
+                                    : Icons.person,
+                                size: 18,
+                                color: account.uid == 0
+                                    ? widget.colorScheme.onErrorContainer
+                                    : widget.colorScheme.onPrimaryContainer,
+                              ),
+                            ),
+                            title: Row(
+                              children: [
+                                Text(
+                                  account.username,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  '(${account.uid}/${account.gid})',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: widget.colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                                const Spacer(),
+                                if (account.isLocked)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: widget.colorScheme.error
+                                          .withValues(alpha: 0.1),
+                                      borderRadius: BorderRadius.circular(
+                                        AppTheme.radiusXs,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      widget.strings.statusLocked,
+                                      style: TextStyle(
+                                        color: widget.colorScheme.error,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  )
+                                else
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: widget.colorScheme.primary
+                                          .withValues(alpha: 0.1),
+                                      borderRadius: BorderRadius.circular(
+                                        AppTheme.radiusXs,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      widget.strings.unlockUser,
+                                      style: TextStyle(
+                                        color: widget.colorScheme.primary,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            subtitle: OverflowScrollText(
+                              '${account.homeDir}  •  ${account.shell}',
+                              selectable: false,
+                              maxLines: 1,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: widget.colorScheme.onSurface.withValues(
+                                  alpha: 0.58,
+                                ),
+                              ),
+                            ),
                             children: [
-                              Text(
-                                account.username,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                ),
+                              _UserDetailActions(
+                                viewModel: viewModel,
+                                account: account,
+                                strings: widget.strings,
+                                colorScheme: widget.colorScheme,
                               ),
-                              const SizedBox(width: 8),
-                              Text(
-                                '(${account.uid}/${account.gid})',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: widget.colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                              const Spacer(),
-                              if (account.isLocked)
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 2,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: widget.colorScheme.error.withValues(
-                                      alpha: 0.1,
-                                    ),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    widget.strings.statusLocked,
-                                    style: TextStyle(
-                                      color: widget.colorScheme.error,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                )
-                              else
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 2,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: widget.colorScheme.primary
-                                        .withValues(alpha: 0.1),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    widget.strings.unlockUser,
-                                    style: TextStyle(
-                                      color: widget.colorScheme.primary,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
                             ],
                           ),
-                          subtitle: OverflowScrollText(
-                            '${account.homeDir}  •  ${account.shell}',
-                            selectable: false,
-                            maxLines: 1,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: widget.colorScheme.onSurface.withValues(
-                                alpha: 0.58,
-                              ),
-                            ),
-                          ),
-                          children: [
-                            _UserDetailActions(
-                              viewModel: viewModel,
-                              account: account,
-                              strings: widget.strings,
-                              colorScheme: widget.colorScheme,
-                            ),
-                          ],
                         ),
                       );
                     },
@@ -305,9 +331,10 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
             spacing: 8,
             runSpacing: 8,
             children: [
-              ElevatedButton.icon(
+              OutlinedButton.icon(
                 icon: Icon(
                   widget.account.isLocked ? Icons.lock_open : Icons.lock,
+                  size: 16,
                 ),
                 label: Text(
                   widget.account.isLocked
@@ -316,24 +343,27 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
                 ),
                 onPressed: _toggleUserLock,
               ),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.password),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.password, size: 16),
                 label: Text(widget.strings.changePassword),
                 onPressed: _openPasswordDialog,
               ),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.folder_shared),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.folder_shared, size: 16),
                 label: Text(widget.strings.viewHomeDir),
                 onPressed: _openHomeExplorer,
               ),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.donut_large),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.donut_large, size: 16),
                 label: Text(widget.strings.usageStats),
                 onPressed: _openProcessesDialog,
               ),
               if (!_loadingSudo)
-                ElevatedButton.icon(
-                  icon: Icon(_isAdmin ? Icons.gpp_bad : Icons.verified_user),
+                OutlinedButton.icon(
+                  icon: Icon(
+                    _isAdmin ? Icons.gpp_bad : Icons.verified_user,
+                    size: 16,
+                  ),
                   label: Text(
                     _isAdmin
                         ? widget.strings.revokeSudo
@@ -762,7 +792,19 @@ class _UserProcessesDialogState extends State<_UserProcessesDialog> {
                             itemBuilder: (context, index) {
                               final p = _processes[index];
                               final memMB = p.rssBytes / (1024 * 1024);
-                              return Card(
+                              return Container(
+                                margin: const EdgeInsets.only(bottom: 6),
+                                decoration: BoxDecoration(
+                                  color: colorScheme.surface,
+                                  borderRadius: BorderRadius.circular(
+                                    AppTheme.radiusSmall,
+                                  ),
+                                  border: Border.all(
+                                    color: colorScheme.outlineVariant
+                                        .withValues(alpha: 0.8),
+                                    width: 1,
+                                  ),
+                                ),
                                 child: ListTile(
                                   dense: true,
                                   title: OverflowScrollText(
@@ -785,6 +827,9 @@ class _UserProcessesDialogState extends State<_UserProcessesDialog> {
                                   ),
                                   trailing: Text(
                                     '${memMB.toStringAsFixed(1)} M',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                 ),
                               );

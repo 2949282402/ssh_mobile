@@ -1,15 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-/// 移动端布局自适应工具函数。
-///
-/// 设计目标：在大屏设备（平板、桌面）上保持标准间距，在小屏手机上
-/// 保留系统默认的 text scale（保障无障碍可访问性）并收紧 VisualDensity 来适配。
-///
-/// isDesktopLayout() 在性能监控等页面用于切换紧凑/展开布局。
-/// adaptMobileMediaQuery() + mobileVisualDensityFor() 在 main.dart 的 builder 中
-/// 作为 MaterialApp 的全局 Adaptive MediaQuery 注入。
+/// 响应式布局断点常量。
 class AppBreakpoints {
+  static const double compact = 600;
   static const double compactHeight = 480;
   static const double serverGrid = 720;
   static const double desktop = 840;
@@ -18,6 +12,54 @@ class AppBreakpoints {
   const AppBreakpoints._();
 }
 
+/// 窗口尺寸类别定义，用于解耦操作系统平台与实际窗口可用宽度。
+enum WindowSizeClass {
+  /// 宽度 < 600 dp (手机竖屏、桌面窄窗口)
+  compact,
+
+  /// 宽度 600 .. 839 dp (折叠屏、平板竖屏、中等桌面窗口)
+  medium,
+
+  /// 宽度 840 .. 1279 dp (平板横屏、常规桌面窗口)
+  expanded,
+
+  /// 宽度 >= 1280 dp (大屏桌面工作区)
+  large;
+
+  static WindowSizeClass of(BuildContext context) {
+    return fromWidth(MediaQuery.sizeOf(context).width);
+  }
+
+  static WindowSizeClass fromWidth(double width) {
+    if (width < AppBreakpoints.compact) return WindowSizeClass.compact;
+    if (width < AppBreakpoints.desktop) return WindowSizeClass.medium;
+    if (width < AppBreakpoints.wideDesktop) return WindowSizeClass.expanded;
+    return WindowSizeClass.large;
+  }
+
+  bool get isCompact => this == WindowSizeClass.compact;
+  bool get isMedium => this == WindowSizeClass.medium;
+  bool get isExpanded => this == WindowSizeClass.expanded;
+  bool get isLarge => this == WindowSizeClass.large;
+  bool get isExpandedOrLarger => index >= WindowSizeClass.expanded.index;
+}
+
+/// 界面密度模式。
+enum AppDensity {
+  compact,
+  standard,
+  comfortable;
+
+  VisualDensity get visualDensity => switch (this) {
+    AppDensity.compact => VisualDensity.compact,
+    AppDensity.standard => VisualDensity.standard,
+    AppDensity.comfortable => VisualDensity.comfortable,
+  };
+}
+
+/// 移动端与自适应 UI 度量工具。
+///
+/// 依赖 Flutter 逻辑像素与标准 density，去除了对特定屏幕物理分辨率的补丁计算。
 @immutable
 class MobileUiMetrics {
   const MobileUiMetrics({
@@ -27,8 +69,13 @@ class MobileUiMetrics {
   });
 
   const MobileUiMetrics.desktop()
-    : controlScale = 1,
-      chromeScale = 1,
+    : controlScale = 1.0,
+      chromeScale = 1.0,
+      visualDensity = VisualDensity.standard;
+
+  const MobileUiMetrics.standard()
+    : controlScale = 1.0,
+      chromeScale = 1.0,
       visualDensity = VisualDensity.standard;
 
   factory MobileUiMetrics.fromMetrics({
@@ -39,39 +86,20 @@ class MobileUiMetrics {
     final mobileTarget = mobileTargetOverride ?? isMobileTargetPlatform();
     if (!mobileTarget) return const MobileUiMetrics.desktop();
 
-    final physicalShortestSide = size.shortestSide * devicePixelRatio;
-    final resolutionProgress = ((physicalShortestSide - 1240) / (1440 - 1240))
-        .clamp(0.0, 1.0)
-        .toDouble();
-    final controlScale = 0.82 + resolutionProgress * 0.10;
-
-    // Logical dp already handles most device differences. Keep this correction
-    // deliberately narrow: 1.5K OEM density buckets need slightly tighter app
-    // chrome, while 2K-class devices retain the standard Material dimensions.
-    final chromeScale = 0.94 + resolutionProgress * 0.06;
-    final densityCorrection = -0.5 * (1 - resolutionProgress);
-
-    return MobileUiMetrics(
-      controlScale: controlScale,
-      chromeScale: chromeScale,
-      visualDensity: VisualDensity(
-        horizontal: densityCorrection,
-        vertical: densityCorrection,
-      ),
-    );
+    return const MobileUiMetrics.standard();
   }
 
   final double controlScale;
   final double chromeScale;
   final VisualDensity visualDensity;
 
-  double get navigationHeight => 68 * chromeScale;
-  double get navigationHorizontalInset => 10 * chromeScale;
-  double get navigationBottomInset => 10 * chromeScale;
-  double get navigationIconSize => 21 * chromeScale;
-  double get navigationIndicatorWidth => 48 * chromeScale;
-  double get navigationIndicatorHeight => 30 * chromeScale;
-  double get navigationLabelSize => 10.5 * chromeScale;
+  double get navigationHeight => 56.0 * chromeScale;
+  double get navigationHorizontalInset => 0.0;
+  double get navigationBottomInset => 0.0;
+  double get navigationIconSize => 20.0 * chromeScale;
+  double get navigationIndicatorWidth => 44.0 * chromeScale;
+  double get navigationIndicatorHeight => 28.0 * chromeScale;
+  double get navigationLabelSize => 11.0 * chromeScale;
 }
 
 bool supportsServerGridForWidth(double width) {
@@ -103,12 +131,13 @@ double settingsDrawerWidthFor({
   return desiredWidth > viewportWidth ? viewportWidth : desiredWidth;
 }
 
+/// 判断当前视口是否应呈现展开式桌面工作区布局。
+///
+/// 严格依据可用窗口宽度断点（>= 840dp），在 Windows/macOS 窄窗口下
+/// 自动自适应降级为紧凑布局，在 iPad / Android 平板横屏下自动启用展开布局。
 bool isDesktopLayout(BuildContext context) {
   final width = MediaQuery.sizeOf(context).width;
-  return usesExpandedLayoutForWidth(width) ||
-      defaultTargetPlatform == TargetPlatform.windows ||
-      defaultTargetPlatform == TargetPlatform.macOS ||
-      defaultTargetPlatform == TargetPlatform.linux;
+  return usesExpandedLayoutForWidth(width);
 }
 
 bool isMobileTargetPlatform() {
@@ -117,30 +146,27 @@ bool isMobileTargetPlatform() {
           defaultTargetPlatform == TargetPlatform.iOS);
 }
 
+bool isDesktopTargetPlatform() {
+  return !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.windows ||
+          defaultTargetPlatform == TargetPlatform.macOS ||
+          defaultTargetPlatform == TargetPlatform.linux);
+}
+
 double mobileUiScaleForMetrics({
   required Size size,
   required double devicePixelRatio,
   bool? mobileTargetOverride,
 }) {
-  return MobileUiMetrics.fromMetrics(
-    size: size,
-    devicePixelRatio: devicePixelRatio,
-    mobileTargetOverride: mobileTargetOverride,
-  ).controlScale;
+  return 1.0;
 }
 
 double mobileUiScaleFor(MediaQueryData mediaQuery) {
-  return mobileUiScaleForMetrics(
-    size: mediaQuery.size,
-    devicePixelRatio: mediaQuery.devicePixelRatio,
-  );
+  return 1.0;
 }
 
 double mobileUiScaleOf(BuildContext context) {
-  return mobileUiScaleForMetrics(
-    size: MediaQuery.sizeOf(context),
-    devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
-  );
+  return 1.0;
 }
 
 MobileUiMetrics mobileUiMetricsFor(MediaQueryData mediaQuery) {
@@ -162,7 +188,7 @@ MediaQueryData adaptMobileMediaQuery(MediaQueryData mediaQuery) {
 }
 
 VisualDensity mobileVisualDensityFor(MediaQueryData mediaQuery) {
-  return mobileUiMetricsFor(mediaQuery).visualDensity;
+  return VisualDensity.standard;
 }
 
 class OpenSettingsNotification extends Notification {

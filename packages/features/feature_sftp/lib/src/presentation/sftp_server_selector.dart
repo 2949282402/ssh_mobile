@@ -217,8 +217,8 @@ class _ServerSelectorHeader extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
       child: Row(
         children: [
-          AppIconBadge(icon: icon, size: 36, iconSize: 18),
-          const SizedBox(width: 10),
+          Icon(icon, size: 20, color: colorScheme.primary),
+          const SizedBox(width: 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -229,7 +229,8 @@ class _ServerSelectorHeader extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: colorScheme.onSurface,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
                   ),
                 ),
                 Text(
@@ -238,7 +239,7 @@ class _ServerSelectorHeader extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: colorScheme.onSurfaceVariant,
-                    fontSize: 12,
+                    fontSize: 11,
                   ),
                 ),
               ],

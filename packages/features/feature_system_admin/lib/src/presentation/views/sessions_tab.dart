@@ -61,14 +61,31 @@ class _SessionsTabState extends State<_SessionsTab>
         itemCount: sessions.length,
         itemBuilder: (context, index) {
           final s = sessions[index];
-          return Card(
+          return Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            decoration: BoxDecoration(
+              color: widget.colorScheme.surface,
+              borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+              border: Border.all(
+                color: widget.colorScheme.outlineVariant.withValues(alpha: 0.8),
+                width: 1,
+              ),
+            ),
             child: ListTile(
-              leading: const CircleAvatar(child: Icon(Icons.computer)),
+              leading: CircleAvatar(
+                radius: 18,
+                backgroundColor: widget.colorScheme.surfaceContainerHighest,
+                child: Icon(
+                  Icons.computer,
+                  size: 18,
+                  color: widget.colorScheme.primary,
+                ),
+              ),
               title: Row(
                 children: [
                   Text(
                     s.username,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
+                    style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(width: 12),
                   Container(
@@ -78,13 +95,14 @@ class _SessionsTabState extends State<_SessionsTab>
                     ),
                     decoration: BoxDecoration(
                       color: widget.colorScheme.secondaryContainer,
-                      borderRadius: BorderRadius.circular(4),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusXs),
                     ),
                     child: Text(
                       s.tty,
                       style: TextStyle(
                         color: widget.colorScheme.onSecondaryContainer,
                         fontSize: 11,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),

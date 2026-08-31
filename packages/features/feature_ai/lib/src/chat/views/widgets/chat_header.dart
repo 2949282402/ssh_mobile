@@ -92,9 +92,9 @@ class _ChatHeader extends StatelessWidget {
                         selectable: false,
                         maxLines: 1,
                         style: const TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -0.2,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: -0.1,
                         ),
                       ),
                       OverflowScrollText(

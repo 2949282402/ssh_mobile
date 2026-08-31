@@ -9,84 +9,84 @@ class _AppThemeComponentBuilders {
     return TextTheme(
       displaySmall: TextStyle(
         color: color,
-        fontSize: 36,
-        height: 1.12,
-        fontWeight: FontWeight.w700,
-        letterSpacing: -1.1,
+        fontSize: 30,
+        height: 1.15,
+        fontWeight: FontWeight.w600,
+        letterSpacing: -0.8,
       ),
       headlineLarge: TextStyle(
         color: color,
-        fontSize: 30,
-        height: 1.18,
-        fontWeight: FontWeight.w700,
-        letterSpacing: -0.9,
+        fontSize: 24,
+        height: 1.2,
+        fontWeight: FontWeight.w600,
+        letterSpacing: -0.6,
       ),
       headlineMedium: TextStyle(
         color: color,
-        fontSize: 26,
-        height: 1.2,
-        fontWeight: FontWeight.w700,
-        letterSpacing: -0.7,
+        fontSize: 20,
+        height: 1.25,
+        fontWeight: FontWeight.w600,
+        letterSpacing: -0.4,
       ),
       headlineSmall: TextStyle(
         color: color,
-        fontSize: 22,
-        height: 1.24,
-        fontWeight: FontWeight.w700,
-        letterSpacing: -0.5,
+        fontSize: 18,
+        height: 1.3,
+        fontWeight: FontWeight.w600,
+        letterSpacing: -0.2,
       ),
       titleLarge: TextStyle(
-        color: color,
-        fontSize: 20,
-        height: 1.25,
-        fontWeight: FontWeight.w700,
-        letterSpacing: -0.35,
-      ),
-      titleMedium: TextStyle(
         color: color,
         fontSize: 16,
         height: 1.3,
         fontWeight: FontWeight.w600,
         letterSpacing: -0.1,
       ),
-      titleSmall: TextStyle(
+      titleMedium: TextStyle(
         color: color,
         fontSize: 14,
         height: 1.35,
         fontWeight: FontWeight.w600,
-      ),
-      bodyLarge: TextStyle(
-        color: color,
-        fontSize: 16,
-        height: 1.5,
         letterSpacing: 0,
       ),
-      bodyMedium: TextStyle(
+      titleSmall: TextStyle(
+        color: color,
+        fontSize: 13,
+        height: 1.4,
+        fontWeight: FontWeight.w600,
+      ),
+      bodyLarge: TextStyle(
         color: color,
         fontSize: 14,
         height: 1.45,
         letterSpacing: 0,
       ),
+      bodyMedium: TextStyle(
+        color: color,
+        fontSize: 13,
+        height: 1.4,
+        letterSpacing: 0,
+      ),
       bodySmall: TextStyle(
         color: color,
         fontSize: 12,
-        height: 1.4,
-        letterSpacing: 0.1,
+        height: 1.35,
+        letterSpacing: 0,
       ),
       labelLarge: const TextStyle(
-        fontSize: 14,
-        fontWeight: FontWeight.w700,
+        fontSize: 13,
+        fontWeight: FontWeight.w600,
         letterSpacing: 0,
       ),
       labelMedium: const TextStyle(
         fontSize: 12,
-        fontWeight: FontWeight.w600,
+        fontWeight: FontWeight.w500,
         letterSpacing: 0.1,
       ),
       labelSmall: const TextStyle(
         fontSize: 11,
-        fontWeight: FontWeight.w600,
-        letterSpacing: 0.2,
+        fontWeight: FontWeight.w500,
+        letterSpacing: 0.1,
       ),
     );
   }
@@ -105,9 +105,9 @@ class _AppThemeComponentBuilders {
       shadowColor: Colors.transparent,
       titleTextStyle: TextStyle(
         color: foreground,
-        fontSize: 21,
-        fontWeight: FontWeight.w700,
-        letterSpacing: -0.4,
+        fontSize: 16,
+        fontWeight: FontWeight.w600,
+        letterSpacing: -0.2,
       ),
     );
   }
@@ -135,21 +135,21 @@ class _AppThemeComponentBuilders {
   }) {
     return NavigationBarThemeData(
       backgroundColor: surface,
-      indicatorColor: primary.withValues(alpha: 0.12),
-      height: 72,
+      indicatorColor: primary.withValues(alpha: 0.10),
+      height: 56,
       elevation: 0,
       surfaceTintColor: Colors.transparent,
       indicatorShape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppTheme.radiusPill),
+        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
       ),
       labelTextStyle: WidgetStateProperty.resolveWith(
         (states) => TextStyle(
           color: states.contains(WidgetState.selected)
               ? primary
               : onSurfaceVariant,
-          fontSize: 12,
+          fontSize: 11,
           fontWeight: states.contains(WidgetState.selected)
-              ? FontWeight.w700
+              ? FontWeight.w600
               : FontWeight.w500,
           letterSpacing: 0,
         ),
@@ -159,7 +159,7 @@ class _AppThemeComponentBuilders {
           color: states.contains(WidgetState.selected)
               ? primary
               : onSurfaceVariant,
-          size: 22,
+          size: 20,
         ),
       ),
     );
@@ -172,25 +172,27 @@ class _AppThemeComponentBuilders {
   }) {
     return NavigationRailThemeData(
       backgroundColor: surface,
-      indicatorColor: primary.withValues(alpha: 0.12),
+      indicatorColor: primary.withValues(alpha: 0.10),
       useIndicator: true,
-      minWidth: 82,
-      minExtendedWidth: 224,
-      groupAlignment: -0.72,
+      minWidth: 60,
+      minExtendedWidth: 200,
+      groupAlignment: -1.0,
       elevation: 0,
       indicatorShape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
       ),
-      selectedIconTheme: IconThemeData(color: primary),
-      unselectedIconTheme: IconThemeData(color: onSurfaceVariant),
+      selectedIconTheme: IconThemeData(color: primary, size: 20),
+      unselectedIconTheme: IconThemeData(color: onSurfaceVariant, size: 20),
       selectedLabelTextStyle: TextStyle(
         color: primary,
-        fontWeight: FontWeight.w700,
+        fontWeight: FontWeight.w600,
+        fontSize: 13,
         letterSpacing: 0,
       ),
       unselectedLabelTextStyle: TextStyle(
         color: onSurfaceVariant,
         fontWeight: FontWeight.w500,
+        fontSize: 13,
         letterSpacing: 0,
       ),
     );
@@ -204,24 +206,26 @@ class _AppThemeComponentBuilders {
       iconColor: iconColor,
       textColor: textColor,
       selectedColor: textColor,
-      selectedTileColor: iconColor.withValues(alpha: 0.08),
+      selectedTileColor: iconColor.withValues(alpha: 0.06),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
       ),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      visualDensity: VisualDensity.compact,
     );
   }
 
   static FilledButtonThemeData _filledButtonTheme() {
     return FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        minimumSize: const Size(46, 46),
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        minimumSize: const Size(36, 36),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
         ),
         textStyle: const TextStyle(
-          fontWeight: FontWeight.w600,
+          fontSize: 13,
+          fontWeight: FontWeight.w500,
           letterSpacing: 0,
         ),
         elevation: 0,
@@ -232,16 +236,18 @@ class _AppThemeComponentBuilders {
   static OutlinedButtonThemeData _outlinedButtonTheme(Color outline) {
     return OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
-        minimumSize: const Size(46, 46),
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        minimumSize: const Size(36, 36),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         side: BorderSide(color: outline),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
         ),
         textStyle: const TextStyle(
-          fontWeight: FontWeight.w600,
+          fontSize: 13,
+          fontWeight: FontWeight.w500,
           letterSpacing: 0,
         ),
+        elevation: 0,
       ),
     );
   }
@@ -250,11 +256,14 @@ class _AppThemeComponentBuilders {
     return TextButtonThemeData(
       style: TextButton.styleFrom(
         foregroundColor: foreground,
+        minimumSize: const Size(36, 36),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
         ),
         textStyle: const TextStyle(
-          fontWeight: FontWeight.w600,
+          fontSize: 13,
+          fontWeight: FontWeight.w500,
           letterSpacing: 0,
         ),
       ),
@@ -265,7 +274,7 @@ class _AppThemeComponentBuilders {
     return IconButtonThemeData(
       style: IconButton.styleFrom(
         foregroundColor: foreground,
-        minimumSize: const Size(42, 42),
+        minimumSize: const Size(36, 36),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
         ),
@@ -281,7 +290,7 @@ class _AppThemeComponentBuilders {
   }) {
     return ChipThemeData(
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppTheme.radiusPill),
+        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
       ),
       side: BorderSide(color: outline),
       backgroundColor: background,
@@ -289,9 +298,9 @@ class _AppThemeComponentBuilders {
       labelStyle: TextStyle(
         color: label,
         fontWeight: FontWeight.w500,
-        fontSize: 13,
+        fontSize: 12,
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
     );
   }
 
@@ -305,11 +314,16 @@ class _AppThemeComponentBuilders {
       filled: true,
       fillColor: fill,
       isDense: true,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 15),
-      labelStyle: TextStyle(color: label, fontWeight: FontWeight.w500),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      labelStyle: TextStyle(
+        color: label,
+        fontSize: 13,
+        fontWeight: FontWeight.w400,
+      ),
       floatingLabelStyle: TextStyle(
         color: focused,
-        fontWeight: FontWeight.w600,
+        fontSize: 12,
+        fontWeight: FontWeight.w500,
       ),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
@@ -342,12 +356,14 @@ class _AppThemeComponentBuilders {
       backgroundColor: background,
       contentTextStyle: TextStyle(
         color: foreground,
+        fontSize: 13,
         fontWeight: FontWeight.w500,
       ),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
       ),
       behavior: SnackBarBehavior.floating,
+      elevation: 2,
     );
   }
 
@@ -357,7 +373,7 @@ class _AppThemeComponentBuilders {
       surfaceTintColor: Colors.transparent,
       elevation: 0,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
+        borderRadius: BorderRadius.circular(AppTheme.radiusDialog),
       ),
     );
   }
@@ -366,7 +382,7 @@ class _AppThemeComponentBuilders {
     return PopupMenuThemeData(
       color: background,
       surfaceTintColor: Colors.transparent,
-      elevation: 4,
+      elevation: 2,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
       ),
@@ -379,9 +395,7 @@ class _AppThemeComponentBuilders {
       surfaceTintColor: Colors.transparent,
       elevation: 0,
       shape: RoundedRectangleBorder(
-        borderRadius: const BorderRadius.horizontal(
-          right: Radius.circular(AppTheme.radiusMedium),
-        ),
+        borderRadius: BorderRadius.zero,
         side: BorderSide(color: outline),
       ),
     );
@@ -414,9 +428,9 @@ class _AppThemeComponentBuilders {
   }) {
     return SegmentedButtonThemeData(
       style: ButtonStyle(
-        minimumSize: const WidgetStatePropertyAll(Size(44, 38)),
+        minimumSize: const WidgetStatePropertyAll(Size(36, 32)),
         padding: const WidgetStatePropertyAll(
-          EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         ),
         backgroundColor: WidgetStateProperty.resolveWith(
           (states) => states.contains(WidgetState.selected)
@@ -438,7 +452,11 @@ class _AppThemeComponentBuilders {
           ),
         ),
         textStyle: const WidgetStatePropertyAll(
-          TextStyle(fontWeight: FontWeight.w600, letterSpacing: 0),
+          TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+            letterSpacing: 0,
+          ),
         ),
       ),
     );
@@ -453,8 +471,8 @@ class _AppThemeComponentBuilders {
       collapsedIconColor: muted,
       textColor: foreground,
       collapsedTextColor: foreground,
-      tilePadding: const EdgeInsets.symmetric(horizontal: 16),
-      childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+      childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
       ),

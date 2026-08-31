@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 import 'dart:ui' show SemanticsAction;
 
 import 'package:connection_core/connection_core.dart';

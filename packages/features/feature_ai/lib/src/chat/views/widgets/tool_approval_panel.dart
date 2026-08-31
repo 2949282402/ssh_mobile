@@ -89,7 +89,7 @@ class ToolApprovalPanel extends StatelessWidget {
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
           color: colorScheme.surface.withValues(alpha: surfaceAlpha),
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
           border: Border.all(color: colorScheme.outlineVariant),
         ),
         child: SelectableText(
@@ -114,7 +114,7 @@ class ToolApprovalPanel extends StatelessWidget {
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
       decoration: BoxDecoration(
         color: colorScheme.errorContainer.withValues(alpha: 0.34),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
         border: Border.all(color: colorScheme.error.withValues(alpha: 0.42)),
       ),
       clipBehavior: Clip.antiAlias,
@@ -137,7 +137,7 @@ class ToolApprovalPanel extends StatelessWidget {
                     title,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w800),
+                    style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
                 ),
               ],
@@ -169,7 +169,9 @@ class ToolApprovalPanel extends StatelessWidget {
                       ),
                       decoration: BoxDecoration(
                         color: colorScheme.error.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(10),
+                        borderRadius: BorderRadius.circular(
+                          AppTheme.radiusSmall,
+                        ),
                       ),
                       child: Row(
                         children: [

@@ -13,13 +13,24 @@ part 'app_theme_variants.dart';
 
 /// 提供浅色、深色和调色板主题，以及跨 Feature 使用的视觉常量。
 class AppTheme {
-  static const radiusSmall = 12.0;
-  static const radiusMedium = 18.0;
-  static const radiusLarge = 28.0;
+  static const radiusXs = 4.0;
+  static const radiusSmall = 6.0;
+  static const radiusMedium = 8.0;
+  static const radiusLarge = 12.0;
+  static const radiusDialog = 16.0;
   static const radiusPill = 999.0;
 
+  static const space2 = 2.0;
+  static const space4 = 4.0;
+  static const space8 = 8.0;
+  static const space12 = 12.0;
+  static const space16 = 16.0;
+  static const space20 = 20.0;
+  static const space24 = 24.0;
+  static const space32 = 32.0;
+
   static const pagePadding = 20.0;
-  static const compactPagePadding = 14.0;
+  static const compactPagePadding = 12.0;
 
   // 终端配色静态常量，用于保持与其他已有组件的向后兼容性
   static const terminalBg = Color(0xFF0F172A);
@@ -159,11 +170,11 @@ class AppTheme {
       floatingActionButtonTheme: FloatingActionButtonThemeData(
         backgroundColor: colors.primary,
         foregroundColor: colors.onPrimary,
-        elevation: 2,
-        focusElevation: 3,
-        hoverElevation: 4,
+        elevation: 0,
+        focusElevation: 1,
+        hoverElevation: 1,
         shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.all(Radius.circular(radiusMedium)),
+          borderRadius: BorderRadius.all(Radius.circular(radiusSmall)),
         ),
       ),
       textButtonTheme: _AppThemeComponentBuilders._textButtonTheme(

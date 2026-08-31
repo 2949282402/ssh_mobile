@@ -332,7 +332,18 @@ class _PortsTabState extends State<_PortsTab>
             itemCount: snapshot.ports.length,
             itemBuilder: (context, index) {
               final p = snapshot.ports[index];
-              return Card(
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: widget.colorScheme.surface,
+                  borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+                  border: Border.all(
+                    color: widget.colorScheme.outlineVariant.withValues(
+                      alpha: 0.8,
+                    ),
+                    width: 1,
+                  ),
+                ),
                 child: ListTile(
                   leading: Icon(
                     p.protocol.contains('udp')
@@ -344,7 +355,7 @@ class _PortsTabState extends State<_PortsTab>
                     children: [
                       Text(
                         '${p.protocol.toUpperCase()}  :${p.localPort}',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
+                        style: const TextStyle(fontWeight: FontWeight.w600),
                       ),
                       const SizedBox(width: 8),
                       Expanded(
@@ -357,7 +368,9 @@ class _PortsTabState extends State<_PortsTab>
                             ),
                             decoration: BoxDecoration(
                               color: widget.colorScheme.surfaceContainerHighest,
-                              borderRadius: BorderRadius.circular(4),
+                              borderRadius: BorderRadius.circular(
+                                AppTheme.radiusXs,
+                              ),
                             ),
                             child: OverflowScrollText(
                               p.processName,
@@ -371,7 +384,7 @@ class _PortsTabState extends State<_PortsTab>
                                   'PingFang SC',
                                   'sans-serif',
                                 ],
-                                fontWeight: FontWeight.bold,
+                                fontWeight: FontWeight.w600,
                                 fontSize: 12,
                               ),
                             ),

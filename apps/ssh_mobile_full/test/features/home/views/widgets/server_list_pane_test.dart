@@ -229,7 +229,7 @@ void main() {
           find.byType(ReorderableListView),
         );
         final padding = list.padding!;
-        expect(padding.bottom, greaterThan(80));
+        expect(padding.bottom, greaterThan(70));
         expect(tester.takeException(), isNull);
       },
     );

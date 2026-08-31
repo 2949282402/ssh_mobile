@@ -34,67 +34,56 @@ void main() {
     expect(settingsDrawerWidthFor(viewportWidth: 1600, desktop: true), 560);
   });
 
+  group('WindowSizeClass', () {
+    test('classifies window widths into correct size classes', () {
+      expect(WindowSizeClass.fromWidth(320), WindowSizeClass.compact);
+      expect(WindowSizeClass.fromWidth(599), WindowSizeClass.compact);
+      expect(WindowSizeClass.fromWidth(600), WindowSizeClass.medium);
+      expect(WindowSizeClass.fromWidth(839), WindowSizeClass.medium);
+      expect(WindowSizeClass.fromWidth(840), WindowSizeClass.expanded);
+      expect(WindowSizeClass.fromWidth(1279), WindowSizeClass.expanded);
+      expect(WindowSizeClass.fromWidth(1280), WindowSizeClass.large);
+      expect(WindowSizeClass.fromWidth(1920), WindowSizeClass.large);
+    });
+
+    test('isExpandedOrLarger returns true for expanded and large', () {
+      expect(WindowSizeClass.compact.isExpandedOrLarger, isFalse);
+      expect(WindowSizeClass.medium.isExpandedOrLarger, isFalse);
+      expect(WindowSizeClass.expanded.isExpandedOrLarger, isTrue);
+      expect(WindowSizeClass.large.isExpandedOrLarger, isTrue);
+    });
+  });
+
   group('MobileUiMetrics', () {
-    test('keeps desktop metrics unchanged', () {
+    test('keeps standard metrics consistent', () {
       final metrics = MobileUiMetrics.fromMetrics(
         size: const Size(1280 / 3, 2856 / 3),
         devicePixelRatio: 3,
         mobileTargetOverride: false,
       );
 
-      expect(metrics.controlScale, 1);
-      expect(metrics.chromeScale, 1);
+      expect(metrics.controlScale, 1.0);
+      expect(metrics.chromeScale, 1.0);
       expect(metrics.visualDensity, VisualDensity.standard);
+      expect(metrics.navigationHeight, 56.0);
+      expect(metrics.navigationHorizontalInset, 0.0);
+      expect(metrics.navigationBottomInset, 0.0);
     });
 
-    test('applies the narrow 1.5K correction', () {
-      final metrics = MobileUiMetrics.fromMetrics(
-        size: const Size(1280 / 3, 2856 / 3),
-        devicePixelRatio: 3,
-        mobileTargetOverride: true,
-      );
+    test(
+      'mobile target returns standard metrics without resolution interpolation',
+      () {
+        final metrics = MobileUiMetrics.fromMetrics(
+          size: const Size(1280 / 3, 2856 / 3),
+          devicePixelRatio: 3,
+          mobileTargetOverride: true,
+        );
 
-      expect(metrics.controlScale, closeTo(0.84, 0.0001));
-      expect(metrics.chromeScale, closeTo(0.952, 0.0001));
-      expect(metrics.navigationHeight, closeTo(64.736, 0.001));
-      expect(metrics.visualDensity.horizontal, closeTo(-0.4, 0.0001));
-      expect(metrics.visualDensity.vertical, closeTo(-0.4, 0.0001));
-    });
-
-    test('uses standard chrome at the 2K boundary', () {
-      final metrics = MobileUiMetrics.fromMetrics(
-        size: const Size(1440 / 3.5, 3120 / 3.5),
-        devicePixelRatio: 3.5,
-        mobileTargetOverride: true,
-      );
-
-      expect(metrics.controlScale, closeTo(0.92, 0.0001));
-      expect(metrics.chromeScale, 1);
-      expect(metrics.navigationHeight, 68);
-      expect(metrics.visualDensity, VisualDensity.standard);
-    });
-
-    test('interpolates monotonically between density classes', () {
-      final low = MobileUiMetrics.fromMetrics(
-        size: const Size(1240 / 3, 2700 / 3),
-        devicePixelRatio: 3,
-        mobileTargetOverride: true,
-      );
-      final middle = MobileUiMetrics.fromMetrics(
-        size: const Size(1340 / 3.2, 2900 / 3.2),
-        devicePixelRatio: 3.2,
-        mobileTargetOverride: true,
-      );
-      final high = MobileUiMetrics.fromMetrics(
-        size: const Size(1440 / 3.5, 3120 / 3.5),
-        devicePixelRatio: 3.5,
-        mobileTargetOverride: true,
-      );
-
-      expect(low.controlScale, lessThan(middle.controlScale));
-      expect(middle.controlScale, lessThan(high.controlScale));
-      expect(low.chromeScale, lessThan(middle.chromeScale));
-      expect(middle.chromeScale, lessThan(high.chromeScale));
-    });
+        expect(metrics.controlScale, 1.0);
+        expect(metrics.chromeScale, 1.0);
+        expect(metrics.navigationHeight, 56.0);
+        expect(metrics.visualDensity, VisualDensity.standard);
+      },
+    );
   });
 }
