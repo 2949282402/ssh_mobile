@@ -4,9 +4,40 @@ package telemetry
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sort"
 	"time"
 )
+
+const (
+	// MinPolicyVersion and MaxPolicyVersion are the cross-platform bounds for
+	// the monotonic policy concurrency token. Keep these values in sync with
+	// contracts/telemetry/policy.schema.json and the Dart/TypeScript clients.
+	MinPolicyVersion = 1
+	MaxPolicyVersion = 2147483647
+)
+
+// ErrInvalidPolicyVersion identifies an incoming policy version outside the
+// shared contract range. It is intentionally distinct from
+// ErrPolicyVersionConflict: an invalid value is a malformed request, not a
+// stale but otherwise valid writer.
+var ErrInvalidPolicyVersion = errors.New("invalid telemetry policy version")
+
+// IsValidPolicyVersion reports whether version is within the shared contract
+// range. Policy versions are never clamped because they provide concurrency
+// and ordering semantics.
+func IsValidPolicyVersion(version int) bool {
+	return version >= MinPolicyVersion && version <= MaxPolicyVersion
+}
+
+// ValidatePolicyVersion returns a typed error for an out-of-range version.
+func ValidatePolicyVersion(version int) error {
+	if IsValidPolicyVersion(version) {
+		return nil
+	}
+	return fmt.Errorf("%w: must be between %d and %d", ErrInvalidPolicyVersion, MinPolicyVersion, MaxPolicyVersion)
+}
 
 // TelemetryEnrollmentRequest is the public request used to bootstrap a
 // telemetry credential from the existing Relay device identity. All proof
@@ -214,10 +245,11 @@ var allowedTelemetryTriggers = map[string]struct{}{
 	"appForegroundWithBacklog": {},
 }
 
-// SanitizeSettings validates and clamps configuration values to the bounds
-// shared by the JSON, Dart, TypeScript, and relay contracts. In particular,
-// maxBatchSize never exceeds MaxIngestBatchSize, which prevents a policy from
-// instructing clients to send a request the relay must reject with 413.
+// SanitizeSettings normalizes non-version configuration values to the safe
+// bounds shared by the JSON, Dart, TypeScript, and relay contracts. Policy
+// versions are deliberately not changed here: callers must validate them with
+// ValidatePolicyVersion before persistence so ordering semantics are never
+// silently rewritten.
 func SanitizeSettings(s *TelemetrySettings) {
 	if s == nil {
 		return
@@ -261,9 +293,6 @@ func SanitizeSettings(s *TelemetrySettings) {
 		sort.Strings(triggers)
 	}
 	s.Policy.SpecialTriggers = triggers
-	if s.Policy.PolicyVersion < 1 {
-		s.Policy.PolicyVersion = 1
-	}
 	if s.RetentionDays < 1 {
 		s.RetentionDays = 30
 	} else if s.RetentionDays > maxTelemetryRetentionDays {

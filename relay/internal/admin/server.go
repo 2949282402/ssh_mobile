@@ -5,6 +5,7 @@ package admin
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,11 +19,16 @@ type Server struct {
 	sessionStore     SessionStore
 	relayClient      RelayManagementClient
 	telemetryService *telemetry.Service
-	telemetryHandler *telemetry.Handler
-	telemetryWorker  *telemetry.RetentionWorker
-	logger           *slog.Logger
-	startedAt        time.Time
-	closeOnce        sync.Once
+	// telemetryConfigured is independent from the current Store health. A
+	// configured deployment must fail closed when its credential store is
+	// unavailable, while a deployment with Telemetry intentionally omitted may
+	// still revoke Relay enrollments.
+	telemetryConfigured bool
+	telemetryHandler    *telemetry.Handler
+	telemetryWorker     *telemetry.RetentionWorker
+	logger              *slog.Logger
+	startedAt           time.Time
+	closeOnce           sync.Once
 }
 
 // NewServer creates a new Admin backend server with the supplied configuration.
@@ -49,6 +55,10 @@ func NewServerWithLogger(config Config, logger *slog.Logger) *Server {
 
 func newServer(config Config, client RelayManagementClient, telemetryService *telemetry.Service, logger *slog.Logger) *Server {
 	config = withConfigDefaults(config)
+	// An injected service is an explicit opt-in to the Telemetry lifecycle. For
+	// internally constructed services, the DSN is the deployment-level switch;
+	// this remains true even when opening that configured store fails.
+	telemetryConfigured := telemetryService != nil || strings.TrimSpace(config.TelemetryMySQLDSN) != ""
 	if len(config.AuthKey) == 0 {
 		config.AuthKey = randomBytes(32)
 	}
@@ -68,9 +78,9 @@ func newServer(config Config, client RelayManagementClient, telemetryService *te
 	if telemetryService == nil {
 		catalog := telemetry.DefaultCatalog()
 		var store telemetry.Store
-		if config.TelemetryMySQLDSN != "" {
+		if strings.TrimSpace(config.TelemetryMySQLDSN) != "" {
 			var err error
-			store, err = telemetry.NewMySQLStoreFromDSN(config.TelemetryMySQLDSN, catalog)
+			store, err = telemetry.NewMySQLStoreFromDSN(strings.TrimSpace(config.TelemetryMySQLDSN), catalog)
 			if err != nil {
 				// Fail-closed: never fall back to an in-memory store in production.
 				// The telemetry service stays unavailable and its endpoints return 503.
@@ -116,13 +126,14 @@ func newServer(config Config, client RelayManagementClient, telemetryService *te
 			configured:    adminConfigured,
 			loginAttempts: make(map[string]adminLoginAttempt),
 		},
-		sessionStore:     newMemorySessionStore(config.MaxSessions),
-		relayClient:      client,
-		telemetryService: telemetryService,
-		telemetryHandler: telemetryHandler,
-		telemetryWorker:  telemetryWorker,
-		logger:           logger,
-		startedAt:        time.Now(),
+		sessionStore:        newMemorySessionStore(config.MaxSessions),
+		relayClient:         client,
+		telemetryService:    telemetryService,
+		telemetryConfigured: telemetryConfigured,
+		telemetryHandler:    telemetryHandler,
+		telemetryWorker:     telemetryWorker,
+		logger:              logger,
+		startedAt:           time.Now(),
 	}
 }
 

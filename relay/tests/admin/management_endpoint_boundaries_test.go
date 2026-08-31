@@ -23,6 +23,8 @@ type managementClientStub struct {
 	tokenErr     error
 	rotateErr    error
 	revokeErr    error
+	revokeCalls  int
+	revokeHook   func()
 	token        EnrollmentTokenInfo
 	rotatedToken EnrollmentTokenInfo
 }
@@ -36,6 +38,10 @@ func (c *managementClientStub) Devices(_ context.Context) (RelayDevices, error) 
 }
 
 func (c *managementClientStub) RevokeDevice(_ context.Context, _ string) error {
+	c.revokeCalls++
+	if c.revokeHook != nil {
+		c.revokeHook()
+	}
 	return c.revokeErr
 }
 

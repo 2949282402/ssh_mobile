@@ -41,10 +41,15 @@ func (s *Server) revokeHandler(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	// Invalidate the telemetry bearer credential before revoking the Relay
-	// enrollment. This ordering fails closed: if telemetry persistence is
-	// unavailable, Relay is left untouched instead of leaving an active token
-	// behind. A device without telemetry enrollment is safe to continue.
-	if s.telemetryService != nil && s.telemetryService.StoreAvailable() {
+	// enrollment. This ordering fails closed: when Telemetry participates in
+	// this deployment, an unavailable service/store leaves Relay untouched
+	// instead of leaving an active token behind. A deployment that intentionally
+	// omits Telemetry, or a device without a telemetry credential, may continue.
+	if s.telemetryConfigured {
+		if s.telemetryService == nil || !s.telemetryService.StoreAvailable() {
+			writeAdminError(w, http.StatusServiceUnavailable, adminErrorInternal, "Telemetry credential store is unavailable; device was not revoked.")
+			return
+		}
 		if err := s.telemetryService.RevokeDeviceCredential(ctx, deviceID); err != nil && !errors.Is(err, telemetry.ErrDeviceCredentialNotFound) {
 			writeAdminError(w, http.StatusServiceUnavailable, adminErrorInternal, "Telemetry credential store is unavailable; device was not revoked.")
 			return

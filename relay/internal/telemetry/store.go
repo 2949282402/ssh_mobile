@@ -350,6 +350,9 @@ func (m *MemoryStore) GetSettings(ctx context.Context) (*TelemetrySettings, erro
 func (m *MemoryStore) SaveSettings(ctx context.Context, settings TelemetrySettings) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := ValidatePolicyVersion(settings.Policy.PolicyVersion); err != nil {
+		return err
+	}
 	SanitizeSettings(&settings)
 	if m.settingsInitialized && settings.Policy.PolicyVersion <= m.settings.Policy.PolicyVersion {
 		return fmt.Errorf("%w: current=%d incoming=%d", ErrPolicyVersionConflict, m.settings.Policy.PolicyVersion, settings.Policy.PolicyVersion)

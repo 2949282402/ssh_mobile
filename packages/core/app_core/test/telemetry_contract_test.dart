@@ -135,5 +135,44 @@ void main() {
       expect(customPolicy.batchSizeThreshold, 20);
       expect(customPolicy.policyVersion, 2);
     });
+
+    test('policyVersion uses the shared range and is never clamped', () {
+      expect(TelemetryUploadPolicy.minPolicyVersion, 1);
+      expect(TelemetryUploadPolicy.maxPolicyVersion, 2147483647);
+      expect(
+        TelemetryUploadPolicy.isValidPolicyVersion(
+          TelemetryUploadPolicy.minPolicyVersion,
+        ),
+        isTrue,
+      );
+      expect(
+        TelemetryUploadPolicy.isValidPolicyVersion(
+          TelemetryUploadPolicy.maxPolicyVersion,
+        ),
+        isTrue,
+      );
+      expect(TelemetryUploadPolicy.isValidPolicyVersion(0), isFalse);
+      expect(
+        TelemetryUploadPolicy.isValidPolicyVersion(
+          TelemetryUploadPolicy.maxPolicyVersion + 1,
+        ),
+        isFalse,
+      );
+
+      final overflow = TelemetryUploadPolicy.fromJson({
+        'uploadEnabled': true,
+        'batchSizeThreshold': 50,
+        'timeIntervalSeconds': 60,
+        'maxBatchSize': 100,
+        'clientMaxLocalRecords': 10000,
+        'specialTriggers': ['highPriorityError'],
+        'policyVersion': TelemetryUploadPolicy.maxPolicyVersion + 1,
+      });
+      expect(overflow.policyVersion, 2147483648);
+      expect(
+        TelemetryUploadPolicy.isValidPolicyVersion(overflow.policyVersion),
+        isFalse,
+      );
+    });
   });
 }

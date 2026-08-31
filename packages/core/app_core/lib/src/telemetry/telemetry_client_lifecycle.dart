@@ -65,8 +65,9 @@ mixin _TelemetryClientLifecycle on _TelemetryClientBase {
   }
 
   /// Restored and remote policies must stay within the client safety envelope.
-  /// The server parser may clamp untrusted JSON, but typed policy instances
-  /// still need this boundary before they reach timers or storage.
+  /// Ordinary scheduling fields are parsed with safety clamps, while the
+  /// policy version remains raw and is rejected when it is outside the shared
+  /// contract range before timers or storage observe it.
   bool _isValidPolicy(TelemetryUploadPolicy policy) {
     const supportedTriggers = {
       'highPriorityError',
@@ -74,8 +75,7 @@ mixin _TelemetryClientLifecycle on _TelemetryClientBase {
       'networkRecovered',
       'appForegroundWithBacklog',
     };
-    return policy.policyVersion > 0 &&
-        policy.policyVersion <= 0x7fffffff &&
+    return TelemetryUploadPolicy.isValidPolicyVersion(policy.policyVersion) &&
         policy.batchSizeThreshold >=
             TelemetryUploadPolicy.minBatchSizeThreshold &&
         policy.batchSizeThreshold <=

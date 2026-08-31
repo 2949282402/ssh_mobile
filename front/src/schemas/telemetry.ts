@@ -26,6 +26,12 @@ export const TelemetryTriggerSchema = z.enum([
   'appForegroundWithBacklog',
 ]);
 
+// policyVersion is a cross-platform monotonic concurrency token. Keep the
+// bounds identical to contracts/telemetry/policy.schema.json and the Dart/Go
+// implementations; unlike ordinary policy fields it must never be clamped.
+export const MIN_POLICY_VERSION = 1;
+export const MAX_POLICY_VERSION = 2147483647;
+
 export const TelemetryErrorSchema = z.object({
   errorCode: z.string().min(1).max(64),
   category: z.string().min(1).max(64),
@@ -86,7 +92,7 @@ export const TelemetryUploadPolicySchema = z.object({
   maxBatchSize: z.number().int().min(1).max(100),
   clientMaxLocalRecords: z.number().int().min(100).max(1000000),
   specialTriggers: z.array(TelemetryTriggerSchema),
-  policyVersion: z.number().int().min(1),
+  policyVersion: z.number().int().min(MIN_POLICY_VERSION).max(MAX_POLICY_VERSION),
 });
 export type TelemetryUploadPolicy = z.infer<typeof TelemetryUploadPolicySchema>;
 

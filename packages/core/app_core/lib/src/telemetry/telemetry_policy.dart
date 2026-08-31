@@ -34,6 +34,10 @@ class TelemetryUploadPolicy {
   static const int maxMaxBatchSize = 100;
   static const int minClientMaxLocalRecords = 100;
   static const int maxClientMaxLocalRecords = 1000000;
+  // Shared with the JSON Schema, Go server, and TypeScript contract. Policy
+  // versions are concurrency tokens and must be rejected, never clamped.
+  static const int minPolicyVersion = 1;
+  static const int maxPolicyVersion = 0x7fffffff;
   static const List<String> allowedTriggers = [
     'highPriorityError',
     'appBackground',
@@ -82,7 +86,9 @@ class TelemetryUploadPolicy {
       }
     }
 
-    // Apply safety clamps
+    // Apply safety clamps to ordinary scheduling/capacity fields. Keep the
+    // policy version raw so the lifecycle validator can reject an invalid
+    // concurrency token instead of silently changing its meaning.
     final clampedBatchThreshold = rawBatchThreshold.clamp(
       minBatchSizeThreshold,
       maxBatchSizeThreshold,
@@ -106,9 +112,12 @@ class TelemetryUploadPolicy {
       specialTriggers: filteredTriggers.isEmpty
           ? allowedTriggers
           : filteredTriggers,
-      policyVersion: rawVersion > 0 ? rawVersion : 1,
+      policyVersion: rawVersion,
     );
   }
+
+  static bool isValidPolicyVersion(int version) =>
+      version >= minPolicyVersion && version <= maxPolicyVersion;
 
   Map<String, dynamic> toJson() => {
     'uploadEnabled': uploadEnabled,

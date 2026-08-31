@@ -463,6 +463,10 @@ func (h *Handler) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := h.service.UpdateSettings(r.Context(), settings); err != nil {
+			if errors.Is(err, ErrInvalidPolicyVersion) {
+				h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "policyVersion must be between 1 and 2147483647")
+				return
+			}
 			if errors.Is(err, ErrPolicyVersionConflict) {
 				h.writeError(w, http.StatusConflict, "POLICY_VERSION_CONFLICT", "telemetry policy is newer; reload settings before updating")
 				return

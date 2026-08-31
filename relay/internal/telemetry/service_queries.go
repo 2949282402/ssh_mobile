@@ -45,6 +45,9 @@ func (s *Service) UpdateSettings(ctx context.Context, settings TelemetrySettings
 	if s.store == nil {
 		return ErrServiceUnavailable
 	}
+	if err := ValidatePolicyVersion(settings.Policy.PolicyVersion); err != nil {
+		return err
+	}
 	return s.store.SaveSettings(ctx, settings)
 }
 

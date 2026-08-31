@@ -214,6 +214,9 @@ func (s *MySQLStore) GetSettings(ctx context.Context) (*TelemetrySettings, error
 }
 
 func (s *MySQLStore) SaveSettings(ctx context.Context, settings TelemetrySettings) error {
+	if err := ValidatePolicyVersion(settings.Policy.PolicyVersion); err != nil {
+		return err
+	}
 	SanitizeSettings(&settings)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

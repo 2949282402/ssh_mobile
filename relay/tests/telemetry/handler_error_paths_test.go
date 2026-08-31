@@ -214,7 +214,7 @@ func TestAdminHandlersReportStoreFailuresAndNormalizeFilters(t *testing.T) {
 		{"events", PathAdminEvents, ""},
 		{"diagnostics", PathAdminDiagnostics, ""},
 		{"settings get", PathAdminSettings, ""},
-		{"settings put", PathAdminSettings, `{"retentionDays":30}`},
+		{"settings put", PathAdminSettings, `{"policy":{"policyVersion":1},"retentionDays":30}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			method := http.MethodGet
@@ -274,7 +274,7 @@ func TestTelemetryHTTPErrorsUseGenericPublicMessages(t *testing.T) {
 			wantMessage: "telemetry overview query failed",
 		},
 		{
-			name: "settings put", method: http.MethodPut, path: PathAdminSettings, body: `{"retentionDays":30}`,
+			name: "settings put", method: http.MethodPut, path: PathAdminSettings, body: `{"policy":{"policyVersion":1},"retentionDays":30}`,
 			wantStatus: http.StatusInternalServerError, wantCode: "UPDATE_SETTINGS_ERROR",
 			wantMessage: "telemetry settings update failed",
 		},
@@ -311,7 +311,7 @@ func TestTelemetryHandlerLogsInternalErrorDetail(t *testing.T) {
 	mux := handlerMux(NewHandler(service).WithLogger(logger))
 
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, PathAdminSettings, strings.NewReader(`{}`)))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, PathAdminSettings, strings.NewReader(`{"policy":{"policyVersion":1}}`)))
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("settings failure status = %d, want 500: %s", rec.Code, rec.Body.String())
 	}
@@ -326,7 +326,7 @@ func TestTelemetryHTTPErrorsRedactInternalDetailsAndAreNotCacheable(t *testing.T
 	mux := handlerMux(NewHandler(service))
 
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, PathAdminSettings, strings.NewReader(`{}`)))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, PathAdminSettings, strings.NewReader(`{"policy":{"policyVersion":1}}`)))
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("settings failure status = %d, want 500: %s", rec.Code, rec.Body.String())
 	}

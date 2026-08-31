@@ -113,6 +113,7 @@ export function TelemetryDiagnosticsPage() {
   const pageSize = data?.pageSize ?? 20;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const source = data?.source ?? 'redis_cache';
+  const usingRedisCache = source === 'redis_cache';
 
   return (
     <div className="page">
@@ -122,8 +123,8 @@ export function TelemetryDiagnosticsPage() {
         description="全端异常报错堆栈、链路诊断日志与故障分析（每 5 秒轮询更新）。"
         action={(
           <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-            <Badge tone={source === 'redis_cache' ? 'online' : 'warning'} dot>
-              {source === 'redis_cache' ? 'REDIS CACHE' : 'MYSQL FALLBACK'}
+            <Badge tone={usingRedisCache ? 'online' : 'neutral'} dot>
+              {usingRedisCache ? 'REDIS CACHE' : 'MYSQL'}
             </Badge>
             <Button
               variant="outline"
@@ -140,9 +141,9 @@ export function TelemetryDiagnosticsPage() {
       <div className="snapshot-meta">
         <Badge tone="neutral">每 5 秒自动轮询更新</Badge>
         <span>
-          {source === 'redis_cache'
+          {usingRedisCache
             ? '从 Redis 诊断热缓存读取最近诊断记录'
-            : 'Redis 暂未启用或降级，直接查询 MySQL 持久层'}
+            : '从 MySQL 权威持久层读取诊断记录'}
         </span>
       </div>
 

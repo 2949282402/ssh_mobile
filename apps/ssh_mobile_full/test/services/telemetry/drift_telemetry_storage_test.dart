@@ -129,6 +129,46 @@ void main() {
     );
 
     test(
+      'accepts policyVersion boundaries and rejects overflow without persistence',
+      () async {
+        TelemetryUploadPolicy policy(int version) => TelemetryUploadPolicy(
+          uploadEnabled: true,
+          batchSizeThreshold: 7,
+          timeIntervalSeconds: 60,
+          maxBatchSize: 25,
+          clientMaxLocalRecords: 100,
+          specialTriggers: const ['networkRecovered'],
+          policyVersion: version,
+        );
+
+        await storage.saveLastKnownGoodPolicy(
+          policy(TelemetryUploadPolicy.minPolicyVersion),
+        );
+        await storage.saveLastKnownGoodPolicy(
+          policy(TelemetryUploadPolicy.maxPolicyVersion),
+        );
+        expect(
+          (await storage.loadLastKnownGoodPolicy())!.policyVersion,
+          TelemetryUploadPolicy.maxPolicyVersion,
+        );
+
+        for (final invalidVersion in [
+          0,
+          TelemetryUploadPolicy.maxPolicyVersion + 1,
+        ]) {
+          await expectLater(
+            storage.saveLastKnownGoodPolicy(policy(invalidVersion)),
+            throwsArgumentError,
+          );
+          expect(
+            (await storage.loadLastKnownGoodPolicy())!.policyVersion,
+            TelemetryUploadPolicy.maxPolicyVersion,
+          );
+        }
+      },
+    );
+
+    test(
       'ignores a policy row whose denormalized version does not match',
       () async {
         const policy = TelemetryUploadPolicy(

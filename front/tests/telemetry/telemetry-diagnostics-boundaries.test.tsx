@@ -139,8 +139,10 @@ describe('TelemetryDiagnosticsPage boundary behavior', () => {
 
     renderWithProviders(<TelemetryDiagnosticsPage />);
 
-    await waitFor(() => expect(screen.getByText('MYSQL FALLBACK')).toBeInTheDocument());
-    expect(screen.getByText('Redis 暂未启用或降级，直接查询 MySQL 持久层')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('MYSQL')).toBeInTheDocument());
+    expect(screen.getByText('MYSQL')).toHaveClass('badge--neutral');
+    expect(screen.getByText('MYSQL')).not.toHaveClass('badge--warning');
+    expect(screen.getByText('从 MySQL 权威持久层读取诊断记录')).toBeInTheDocument();
     expect(screen.getByText('critical_event')).toBeInTheDocument();
     expect(screen.getByText('warning_event')).toBeInTheDocument();
     expect(screen.getByText('error_event')).toBeInTheDocument();
@@ -224,7 +226,7 @@ describe('TelemetryDiagnosticsPage boundary behavior', () => {
     await waitFor(() =>
       expect(screen.getByText('未检索到诊断日志')).toBeInTheDocument(),
     );
-    expect(screen.getByText('Redis 暂未启用或降级，直接查询 MySQL 持久层')).toBeInTheDocument();
+    expect(screen.getByText('从 MySQL 权威持久层读取诊断记录')).toBeInTheDocument();
   });
 
   it('recovers from an API error through the retry action', async () => {

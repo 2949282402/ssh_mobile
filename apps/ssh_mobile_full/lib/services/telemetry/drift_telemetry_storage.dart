@@ -74,9 +74,10 @@ class DriftTelemetryStorage
     }
   }
 
-  /// Persists only complete, in-range policy JSON. [fromJson] intentionally
-  /// clamps remote input, but a durable row must not silently turn tampered
-  /// values into a different policy during restart recovery.
+  /// Persists only complete, in-range policy JSON. Remote input is parsed
+  /// permissively and validated before application; a durable row must not
+  /// silently turn tampered values into a different policy during restart
+  /// recovery.
   TelemetryUploadPolicy? _decodePersistedPolicy(Map<String, dynamic> json) {
     const allowedKeys = {
       'uploadEnabled',
@@ -104,8 +105,7 @@ class DriftTelemetryStorage
         triggers is! List<dynamic> ||
         triggers.any((trigger) => trigger is! String) ||
         version is! int ||
-        version <= 0 ||
-        version > 0x7fffffff) {
+        !TelemetryUploadPolicy.isValidPolicyVersion(version)) {
       return null;
     }
     final typedTriggers = triggers.cast<String>();
@@ -450,8 +450,7 @@ class DriftTelemetryStorage
   };
 
   static bool _isValidPolicy(TelemetryUploadPolicy policy) {
-    return policy.policyVersion > 0 &&
-        policy.policyVersion <= 0x7fffffff &&
+    return TelemetryUploadPolicy.isValidPolicyVersion(policy.policyVersion) &&
         policy.batchSizeThreshold >=
             TelemetryUploadPolicy.minBatchSizeThreshold &&
         policy.batchSizeThreshold <=

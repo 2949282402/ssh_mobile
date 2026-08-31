@@ -11,6 +11,8 @@ import {
   TelemetryBatchUploadResponseSchema,
   TelemetryFilterSchema,
   TelemetryOverviewResponseSchema,
+  MAX_POLICY_VERSION,
+  MIN_POLICY_VERSION,
   validateEventCatalogRecord,
 } from '../../src/schemas/telemetry';
 
@@ -19,6 +21,8 @@ describe('Telemetry Contract & Schemas', () => {
     expect(TelemetryEvents.all.length).toBeGreaterThan(0);
     expect(TelemetryErrorCodes.all.length).toBeGreaterThan(0);
     expect(policySchemaJson.properties.uploadEnabled).toBeDefined();
+    expect(policySchemaJson.properties.policyVersion.minimum).toBe(MIN_POLICY_VERSION);
+    expect(policySchemaJson.properties.policyVersion.maximum).toBe(MAX_POLICY_VERSION);
   });
 
   it('exposes operation metadata and precise failure definitions', () => {
@@ -64,6 +68,27 @@ describe('Telemetry Contract & Schemas', () => {
     };
 
     expect(() => TelemetryUploadPolicySchema.parse(invalidPolicy)).toThrow();
+  });
+
+  it('accepts both policy version boundaries and rejects overflow without clamping', () => {
+    const basePolicy = {
+      uploadEnabled: true,
+      batchSizeThreshold: 50,
+      timeIntervalSeconds: 60,
+      maxBatchSize: 100,
+      clientMaxLocalRecords: 10000,
+      specialTriggers: ['highPriorityError'],
+    };
+
+    expect(
+      TelemetryUploadPolicySchema.parse({ ...basePolicy, policyVersion: MIN_POLICY_VERSION }).policyVersion,
+    ).toBe(MIN_POLICY_VERSION);
+    expect(
+      TelemetryUploadPolicySchema.parse({ ...basePolicy, policyVersion: MAX_POLICY_VERSION }).policyVersion,
+    ).toBe(MAX_POLICY_VERSION);
+    expect(() =>
+      TelemetryUploadPolicySchema.parse({ ...basePolicy, policyVersion: MAX_POLICY_VERSION + 1 }),
+    ).toThrow();
   });
 
   it('validates a well-formed telemetry record against schema and catalog', () => {
