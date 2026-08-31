@@ -23,6 +23,28 @@ void main() {
       expect(semantics.label, isNot(contains('Loading servers...')));
     });
 
+    testWidgets('uses shimmer effect when animations are enabled', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: AppSkeletonizer(
+              enabled: true,
+              semanticsLabel: 'Loading servers...',
+              child: Text('Server Content'),
+            ),
+          ),
+        ),
+      );
+
+      final skeletonizer = tester.widget<Skeletonizer>(
+        find.byWidgetPredicate((widget) => widget is Skeletonizer),
+      );
+      expect(skeletonizer.effect, isA<ShimmerEffect>());
+      expect(skeletonizer.enableSwitchAnimation, isTrue);
+    });
+
     testWidgets(
       'exposes semantics label and blocks click when enabled is true',
       (tester) async {
@@ -122,6 +144,10 @@ void main() {
         find.byWidgetPredicate((widget) => widget is Bone),
         findsNWidgets(4),
       );
+      final skeletonizer = tester.widget<Skeletonizer>(
+        find.byWidgetPredicate((widget) => widget is Skeletonizer),
+      );
+      expect(skeletonizer.effect, isA<ShimmerEffect>());
       expect(tester.takeException(), isNull);
     });
 

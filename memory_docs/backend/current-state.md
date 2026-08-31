@@ -1,4 +1,4 @@
-> Last updated: 2026-08-30
+> Last updated: 2026-08-31
 
 # Backend Current State
 
@@ -40,10 +40,11 @@ endpoints live in an independent one-shot Relay Data registry.
   consume; active proof windows survive enroll/revoke and empty historical
   buckets converge without a whole-cache scan ([ADR-031](../../docs/adr/ADR-031-relay-refresh-proof-freshness.md)).
 - Admin uses a separate versioned API and HttpOnly cookie session. Memory uses
-  process-local Cache; MySQL composition uses Redis. Forwarded IP and
-  `X-Forwarded-Proto` are trusted only from an immediate peer in
-  `RELAY_TRUSTED_PROXY_CIDRS`; otherwise
-  RemoteAddr/direct TLS govern login limiting, Cookie `Secure`, and Origin scheme.
+  process-local Cache; MySQL composition uses Redis. Relay accepts
+  `X-Relay-Client-Addr` only from an immediate peer in
+  `RELAY_TRUSTED_PROXY_CIDRS`; Admin's forwarded client-IP and
+  `X-Forwarded-Proto` headers use its own `ADMIN_TRUSTED_PROXY_CIDRS`.
+  Untrusted requests use their direct socket address and TLS state.
   Online statistics come from Cache presence.
 
 ## Presence, discovery, and Relay data

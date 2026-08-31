@@ -104,12 +104,17 @@ type peer struct {
 	connectionID         string
 	enrollmentGeneration int64
 	socket               *websocket.Conn
-	outbound             chan outboundFrame
-	done                 chan struct{}
-	once                 sync.Once
-	activation           chan struct{}
-	activationOnce       sync.Once
-	admissionActive      atomic.Bool
+	// remoteAddr is the client endpoint observed before the WebSocket upgrade.
+	// Behind a trusted reverse proxy it is populated from the proxy's
+	// authenticated forwarding header; direct connections fall back to the
+	// socket's RemoteAddr.
+	remoteAddr      string
+	outbound        chan outboundFrame
+	done            chan struct{}
+	once            sync.Once
+	activation      chan struct{}
+	activationOnce  sync.Once
+	admissionActive atomic.Bool
 	// writeMutex 串行化对 socket 的写：正常路径只有 hub.write 写，但 /v2/control 的
 	// 协议违规路径需要先同步冲刷一帧 ProtocolError 再关连接，两者不能并发写 WebSocket。
 	writeMutex         sync.Mutex
@@ -543,7 +548,9 @@ func (h *hub) monitorHeartbeats() {
 // fail (empty != real connID) and self-close every connection.
 func (h *hub) presenceFor(peer *peer) Presence {
 	value := Presence{InstanceID: h.instanceID, ConnectionID: peer.connectionID, LastSeen: time.Now()}
-	if peer.socket != nil && peer.socket.RemoteAddr() != nil {
+	if peer.remoteAddr != "" {
+		value.RemoteAddr = peer.remoteAddr
+	} else if peer.socket != nil && peer.socket.RemoteAddr() != nil {
 		value.RemoteAddr = peer.socket.RemoteAddr().String()
 	}
 	return value

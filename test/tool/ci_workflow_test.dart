@@ -195,6 +195,26 @@ void main() {
     'Full App job 不应重复执行 Native Dart SDK 测试',
   );
 
+  for (final jobName in const [
+    'lan-network-v2-targeted',
+    'terminal-smoke-build',
+    'app-unit-tests',
+    'android-build',
+    'windows-build',
+    'macos-build',
+    'ios-build',
+  ]) {
+    final job = _jobSection(workflow, jobName);
+    _expect(
+      job.contains('swatinem/rust-cache@v2') &&
+          job.contains('workspaces: "native/network_core -> target"') &&
+          job.contains(
+            r'shared-key: "network-sdk-${{ runner.os }}-${{ runner.arch }}"',
+          ),
+      '$jobName 必须复用按平台架构隔离的 Rust target 缓存',
+    );
+  }
+
   final appCoverage = _jobSection(workflow, 'app-coverage');
   _expect(
     appCoverage.contains('dart run tool/check_coverage.dart'),
@@ -202,7 +222,9 @@ void main() {
   );
   _expect(
     appCoverage.contains('--minimum=90') &&
-        appCoverage.contains(r'--base-ref="${{ needs.change_scope.outputs.base_sha }}"') &&
+        appCoverage.contains(
+          r'--base-ref="${{ needs.change_scope.outputs.base_sha }}"',
+        ) &&
         appCoverage.contains('--source-root=lib') &&
         !appCoverage.contains('--minimum=35') &&
         !appCoverage.contains('--all-sources'),

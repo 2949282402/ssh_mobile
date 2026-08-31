@@ -216,6 +216,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "native/network_core -> target"
+          shared-key: "network-sdk-${{ runner.os }}-${{ runner.arch }}"
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -562,6 +566,10 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: x86_64-pc-windows-msvc
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "native/network_core -> target"
+          shared-key: "network-sdk-${{ runner.os }}-${{ runner.arch }}"
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -638,6 +646,10 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: aarch64-linux-android, x86_64-linux-android, armv7-linux-androideabi
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "native/network_core -> target"
+          shared-key: "network-sdk-${{ runner.os }}-${{ runner.arch }}"
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -950,6 +962,10 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: aarch64-linux-android, x86_64-linux-android, armv7-linux-androideabi
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "native/network_core -> target"
+          shared-key: "network-sdk-${{ runner.os }}-${{ runner.arch }}"
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -984,6 +1000,10 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: x86_64-pc-windows-msvc
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "native/network_core -> target"
+          shared-key: "network-sdk-${{ runner.os }}-${{ runner.arch }}"
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -1016,6 +1036,10 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "native/network_core -> target"
+          shared-key: "network-sdk-${{ runner.os }}-${{ runner.arch }}"
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -1050,6 +1074,10 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "native/network_core -> target"
+          shared-key: "network-sdk-${{ runner.os }}-${{ runner.arch }}"
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}

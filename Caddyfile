@@ -34,7 +34,11 @@
 
     # Relay V2 Bootstrap, Control, and Data plane -> relay service
     @relay_api path /v2 /v2/*
-    reverse_proxy @relay_api relay:{$RELAY_INTERNAL_PORT}
+    reverse_proxy @relay_api relay:{$RELAY_INTERNAL_PORT} {
+      # Preserve the device's public IP:port for the Relay presence snapshot.
+      # Relay accepts this header only from its configured trusted proxy CIDR.
+      header_up X-Relay-Client-Addr {http.request.remote}
+    }
 
     # Front SPA catch-all
     reverse_proxy front:{$FRONT_INTERNAL_PORT}
