@@ -108,6 +108,11 @@ class DriftTelemetryStorage
         version > 0x7fffffff) {
       return null;
     }
+    final typedTriggers = triggers.cast<String>();
+    if (typedTriggers.length != typedTriggers.toSet().length ||
+        !typedTriggers.every(TelemetryUploadPolicy.allowedTriggers.contains)) {
+      return null;
+    }
     if (batchThreshold < TelemetryUploadPolicy.minBatchSizeThreshold ||
         batchThreshold > TelemetryUploadPolicy.maxBatchSizeThreshold ||
         interval < TelemetryUploadPolicy.minTimeIntervalSeconds ||
@@ -118,7 +123,17 @@ class DriftTelemetryStorage
         maxLocal > TelemetryUploadPolicy.maxClientMaxLocalRecords) {
       return null;
     }
-    final policy = TelemetryUploadPolicy.fromJson(json);
+    // Construct directly after validating every field so durable state is
+    // never silently clamped or rewritten by the permissive JSON parser.
+    final policy = TelemetryUploadPolicy(
+      uploadEnabled: uploadEnabled,
+      batchSizeThreshold: batchThreshold,
+      timeIntervalSeconds: interval,
+      maxBatchSize: maxBatch,
+      clientMaxLocalRecords: maxLocal,
+      specialTriggers: List<String>.unmodifiable(typedTriggers),
+      policyVersion: version,
+    );
     return _isValidPolicy(policy) ? policy : null;
   }
 
