@@ -47,8 +47,13 @@ class _SessionsTabState extends State<_SessionsTab>
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
           children: const [
-            SizedBox(height: 100),
-            Center(child: Text('No active sessions.')),
+            SizedBox(height: 60),
+            AppEmptyState(
+              icon: Icons.people_outline_rounded,
+              title: 'No active sessions.',
+              message: 'No active user sessions detected on the host.',
+              compact: true,
+            ),
           ],
         ),
       );
@@ -126,28 +131,17 @@ class _SessionsTabState extends State<_SessionsTab>
 
   Future<void> _confirmKillSession(ActiveSession session) async {
     final strings = context.read<AppSettings>().strings;
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(strings.actionConfirm),
-        content: Text(
-          strings.killSessionConfirm(session.username, session.tty),
-        ),
-        actions: [
-          TextButton(
-            child: Text(strings.cancel),
-            onPressed: () => Navigator.pop(context, false),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(strings.killAction),
-          ),
-        ],
-      ),
+    final confirm = await AppConfirmDialog.show(
+      context,
+      title: strings.actionConfirm,
+      content: strings.killSessionConfirm(session.username, session.tty),
+      cancelLabel: strings.cancel,
+      confirmLabel: strings.killAction,
+      isDestructive: true,
     );
 
     if (!mounted) return;
-    if (confirm == true) {
+    if (confirm) {
       try {
         await widget.viewModel.killActiveSession(session.tty);
       } catch (e) {

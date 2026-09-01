@@ -318,8 +318,13 @@ class _PortsTabState extends State<_PortsTab>
             child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
               children: const [
-                SizedBox(height: 100),
-                Center(child: Text('No listening ports found.')),
+                SizedBox(height: 60),
+                AppEmptyState(
+                  icon: Icons.lan_outlined,
+                  title: 'No listening ports found.',
+                  message: 'No open or listening ports reported by the host.',
+                  compact: true,
+                ),
               ],
             ),
           );

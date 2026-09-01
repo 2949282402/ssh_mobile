@@ -421,8 +421,13 @@ class _ServicesTabState extends State<_ServicesTab>
                     ? ListView(
                         physics: const AlwaysScrollableScrollPhysics(),
                         children: const [
-                          SizedBox(height: 100),
-                          Center(child: Text('No services found.')),
+                          SizedBox(height: 60),
+                          AppEmptyState(
+                            icon: Icons.miscellaneous_services_outlined,
+                            title: 'No services found.',
+                            message: 'No matching services found.',
+                            compact: true,
+                          ),
                         ],
                       )
                     : Padding(

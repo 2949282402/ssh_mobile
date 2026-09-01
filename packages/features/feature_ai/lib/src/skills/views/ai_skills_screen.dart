@@ -55,17 +55,12 @@ class _AiSkillsScreenState extends State<AiSkillsScreen> {
               semanticsLabel: strings.loadingSkills,
               child: ListView.separated(
                 physics: const NeverScrollableScrollPhysics(),
-                padding: const EdgeInsets.all(8),
+                padding: const EdgeInsets.all(AppSpacing.sm),
                 itemCount: 4,
-                separatorBuilder: (_, _) => const SizedBox(height: 4),
+                separatorBuilder: (_, _) =>
+                    const SizedBox(height: AppSpacing.xs),
                 itemBuilder: (context, index) {
-                  return Card(
-                    child: ListTile(
-                      leading: const Bone.circle(size: 32),
-                      title: const Bone(width: 140, height: 16),
-                      subtitle: const Bone(width: 220, height: 12),
-                    ),
-                  );
+                  return const AppSkeletonRow();
                 },
               ),
             )
@@ -87,53 +82,46 @@ class _AiSkillsScreenState extends State<AiSkillsScreen> {
     final skills = viewModel.skills;
 
     if (skills.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              strings.emptyTitle,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              strings.emptyHint,
-              style: TextStyle(color: colorScheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: () {
-                viewModel.newSkill();
-                _navigateToEdit(context, viewModel);
-              },
-              icon: const Icon(Icons.add_rounded),
-              label: Text(strings.newSkill),
-            ),
-          ],
+      return AppEmptyState(
+        icon: Icons.psychology_outlined,
+        title: strings.emptyTitle,
+        message: strings.emptyHint,
+        action: FilledButton.icon(
+          onPressed: () {
+            viewModel.newSkill();
+            _navigateToEdit(context, viewModel);
+          },
+          icon: const Icon(Icons.add_rounded),
+          label: Text(strings.newSkill),
         ),
       );
     }
 
     return ListView.separated(
-      padding: const EdgeInsets.all(8),
+      padding: const EdgeInsets.all(AppSpacing.sm),
       itemCount: skills.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 4),
+      separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.xs),
       itemBuilder: (context, index) {
         final skill = skills[index];
         final selected = skill.id == viewModel.selectedId;
         return ListTile(
           selected: selected,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+          ),
           leading: Icon(
             skill.enabled
                 ? (selected ? Icons.auto_awesome : Icons.auto_awesome_outlined)
                 : Icons.visibility_off_outlined,
+            color: skill.enabled
+                ? colorScheme.primary
+                : colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
           ),
           title: OverflowScrollText(
             skill.displayName,
             selectable: false,
             maxLines: 1,
+            style: const TextStyle(fontWeight: FontWeight.w600),
           ),
           subtitle: Text(
             '${skill.enabled ? strings.enabled : strings.disabled} · ${skill.displayDescription.isEmpty ? strings.noDescription : skill.displayDescription}',

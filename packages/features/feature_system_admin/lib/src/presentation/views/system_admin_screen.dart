@@ -776,59 +776,25 @@ class _MonitorResponsiveEmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return LayoutBuilder(
       builder: (context, constraints) {
-        final compact = constraints.maxHeight < 180;
-        final showIcon = constraints.maxHeight >= 150;
-        return Center(
-          child: SingleChildScrollView(
-            padding: EdgeInsets.all(compact ? 12 : 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (showIcon) ...[
-                  AppIconBadge(
-                    icon: Icons.monitor_heart_outlined,
-                    size: compact ? 36 : 48,
-                    iconSize: compact ? 20 : 24,
-                  ),
-                  SizedBox(height: compact ? 8 : 14),
-                ],
-                Text(
-                  _monitorText(
-                    strings,
-                    'Select servers to monitor',
-                    '选择要监控的服务器',
-                  ),
-                  textAlign: TextAlign.center,
-                  maxLines: compact ? 1 : 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: colorScheme.onSurface,
-                    fontWeight: FontWeight.w600,
-                    fontSize: compact ? 14 : 16,
-                  ),
-                ),
-                SizedBox(height: compact ? 4 : 6),
-                Text(
-                  message ??
-                      _monitorText(
-                        strings,
-                        'Select one or more servers, then start monitoring. Sampling stays silent until started.',
-                        '可多选服务器，点击开始监控后才采样；未开始前保持静默。',
-                      ),
-                  textAlign: TextAlign.center,
-                  maxLines: compact ? 2 : null,
-                  overflow: compact ? TextOverflow.ellipsis : null,
-                  style: TextStyle(
-                    color: colorScheme.onSurfaceVariant,
-                    fontSize: compact ? 12 : 13,
-                  ),
-                ),
-              ],
-            ),
+        final compact =
+            constraints.maxHeight < 220 || constraints.maxWidth < 420;
+        return AppEmptyState(
+          icon: Icons.monitor_heart_outlined,
+          title: _monitorText(
+            strings,
+            'Select servers to monitor',
+            '选择要监控的服务器',
           ),
+          message:
+              message ??
+              _monitorText(
+                strings,
+                'Select one or more servers, then start monitoring. Sampling stays silent until started.',
+                '可多选服务器，点击开始监控后才采样；未开始前保持静默。',
+              ),
+          compact: compact,
         );
       },
     );
