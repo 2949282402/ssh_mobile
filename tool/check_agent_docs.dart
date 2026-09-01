@@ -1057,6 +1057,11 @@ String _basename(String path) => path.split(RegExp(r'[\\/]')).last;
 const _ignoredDirectoryNames = <String>{
   '.git',
   '.dart_tool',
+  '.gradle-user-home',
+  '.gradle',
+  '.idea',
+  '.vscode',
+  '.claude',
   'build',
   'coverage',
   'node_modules',
