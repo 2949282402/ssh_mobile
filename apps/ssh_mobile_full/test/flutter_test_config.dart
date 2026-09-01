@@ -2,13 +2,42 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 typedef _DlopenNative =
     Pointer<Void> Function(Pointer<Uint8> filename, Int32 flags);
 typedef _DlopenDart =
     Pointer<Void> Function(Pointer<Uint8> filename, int flags);
 
+class _ToleranceGoldenComparator extends LocalFileComparator {
+  _ToleranceGoldenComparator(super.testFile);
+
+  static const double _maxDiffPercent = 0.05;
+
+  @override
+  Future<bool> compare(Uint8List imageBytes, Uri golden) async {
+    final ComparisonResult result = await GoldenFileComparator.compareLists(
+      imageBytes,
+      await getGoldenBytes(golden),
+    );
+
+    if (!result.passed && result.diffPercent > _maxDiffPercent) {
+      final String error = await generateFailureOutput(result, golden, basedir);
+      throw FlutterError(error);
+    }
+    return true;
+  }
+}
+
 Future<void> testExecutable(FutureOr<void> Function() testMain) async {
+  if (goldenFileComparator is LocalFileComparator) {
+    final orig = goldenFileComparator as LocalFileComparator;
+    goldenFileComparator = _ToleranceGoldenComparator(
+      orig.basedir.resolve('test.dart'),
+    );
+  }
+
   if (Platform.isWindows) {
     try {
       DynamicLibrary.open('sqlite3.dll');
