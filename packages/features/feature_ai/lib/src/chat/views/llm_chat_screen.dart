@@ -244,8 +244,8 @@ class LlmChatScreen extends StatelessWidget {
             storageService: storage,
             sshService: context.read<SshService>(),
             sftpService: context.read<SftpService>(),
-            performanceMonitorService:
-                context.read<PerformanceMonitorService>(),
+            performanceMonitorService: context
+                .read<PerformanceMonitorService>(),
             playbookService: context.read<PlaybookAutomationPort>(),
             ragService: context.read<app_core.RagCapability>(),
             appSettings: appSettings,

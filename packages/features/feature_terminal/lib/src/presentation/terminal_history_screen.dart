@@ -88,10 +88,7 @@ class TerminalHistoryPage extends StatelessWidget {
             future: viewModel.recordsFuture,
             builder: (context, snapshot) {
               if (snapshot.connectionState != ConnectionState.done) {
-                return _HistoryLoading(
-                  strings: strings,
-                  viewModel: viewModel,
-                );
+                return _HistoryLoading(strings: strings, viewModel: viewModel);
               }
               if (snapshot.hasError) {
                 return _HistoryStateView(

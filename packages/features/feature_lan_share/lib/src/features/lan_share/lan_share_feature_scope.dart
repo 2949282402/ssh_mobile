@@ -104,9 +104,7 @@ class _LanShareFeatureScopeState extends State<LanShareFeatureScope> {
             ),
           );
         }
-        return Scaffold(
-          body: _LanShareScreenSkeleton(strings: strings),
-        );
+        return Scaffold(body: _LanShareScreenSkeleton(strings: strings));
       },
     );
   }

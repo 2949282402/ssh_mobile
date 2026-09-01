@@ -152,7 +152,9 @@ class _HistoryPanelState extends State<HistoryPanel> {
                           maxLines: 1,
                           style: TextStyle(
                             fontSize: 12,
-                            color: colorScheme.onSurface.withValues(alpha: 0.58),
+                            color: colorScheme.onSurface.withValues(
+                              alpha: 0.58,
+                            ),
                           ),
                         ),
                         trailing: const Icon(Icons.delete_outline),

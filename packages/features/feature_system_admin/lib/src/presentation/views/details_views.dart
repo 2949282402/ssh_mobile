@@ -791,11 +791,7 @@ class _ServerSnapshotLoadingSkeleton extends StatelessWidget {
 
     return AppSkeletonizer.zone(
       enabled: true,
-      semanticsLabel: _monitorText(
-        strings,
-        'Loading snapshot',
-        '正在加载快照',
-      ),
+      semanticsLabel: _monitorText(strings, 'Loading snapshot', '正在加载快照'),
       child: ListView(
         physics: const NeverScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
@@ -892,10 +888,10 @@ class _ServerSnapshotLoadingSkeleton extends StatelessWidget {
                           i == 0
                               ? 'nginx.service'
                               : (i == 1
-                                  ? 'docker.service'
-                                  : (i == 2
-                                      ? 'postgres.service'
-                                      : 'redis.service')),
+                                    ? 'docker.service'
+                                    : (i == 2
+                                          ? 'postgres.service'
+                                          : 'redis.service')),
                           style: const TextStyle(
                             fontWeight: FontWeight.w700,
                             fontSize: 13,

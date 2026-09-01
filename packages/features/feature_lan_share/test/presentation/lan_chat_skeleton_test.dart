@@ -6,30 +6,31 @@ import 'package:flutter_test/flutter_test.dart';
 import '../fakes/lan_share_test_fakes.dart';
 
 void main() {
-  testWidgets('LanChat conversation skeleton renders correctly with AppSkeletonizer', (
-    tester,
-  ) async {
-    final settings = FakeLanShareSettings();
-    final strings = settings.strings;
+  testWidgets(
+    'LanChat conversation skeleton renders correctly with AppSkeletonizer',
+    (tester) async {
+      final settings = FakeLanShareSettings();
+      final strings = settings.strings;
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: _LanChatConversationSkeletonTestWrapper(
-            strings: strings,
-            deviceAlias: 'Remote Desktop',
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: _LanChatConversationSkeletonTestWrapper(
+              strings: strings,
+              deviceAlias: 'Remote Desktop',
+            ),
           ),
         ),
-      ),
-    );
+      );
 
-    expect(find.byType(AppSkeletonizer), findsOneWidget);
-    expect(find.byType(BackButton), findsOneWidget);
-    expect(find.byType(AppIconBadge), findsOneWidget);
-    expect(find.text('Remote Desktop'), findsOneWidget);
-    expect(find.byIcon(Icons.add_circle_outline_rounded), findsOneWidget);
-    expect(find.byIcon(Icons.send_rounded), findsOneWidget);
-  });
+      expect(find.byType(AppSkeletonizer), findsOneWidget);
+      expect(find.byType(BackButton), findsOneWidget);
+      expect(find.byType(AppIconBadge), findsOneWidget);
+      expect(find.text('Remote Desktop'), findsOneWidget);
+      expect(find.byIcon(Icons.add_circle_outline_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.send_rounded), findsOneWidget);
+    },
+  );
 }
 
 class _LanChatConversationSkeletonTestWrapper extends StatelessWidget {
@@ -109,16 +110,12 @@ class _LanChatConversationSkeletonTestWrapper extends StatelessWidget {
                 horizontal: 16.0,
                 vertical: 12.0,
               ),
-              children: const [
-                Bone(width: 200, height: 48),
-              ],
+              children: const [Bone(width: 200, height: 48)],
             ),
           ),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 8.0),
-            decoration: BoxDecoration(
-              color: Theme.of(context).cardColor,
-            ),
+            decoration: BoxDecoration(color: Theme.of(context).cardColor),
             child: SafeArea(
               top: false,
               child: Row(

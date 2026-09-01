@@ -507,9 +507,7 @@ final class _AppSystemAdminModuleScopeState
         if (snapshot.connectionState != ConnectionState.done) {
           final isEn = settings.language == admin.SystemAdminLanguage.en;
           final strings = AppStrings(isEn ? AppLanguage.en : AppLanguage.zh);
-          return Scaffold(
-            body: _SystemAdminScopeSkeleton(strings: strings),
-          );
+          return Scaffold(body: _SystemAdminScopeSkeleton(strings: strings));
         }
         return admin.SystemAdminFeatureScope(
           module: module,

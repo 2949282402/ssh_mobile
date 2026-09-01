@@ -40,9 +40,7 @@ class _SessionsTabState extends State<_SessionsTab>
       (vm) => vm.loadingSessions,
     );
     final rawSessions = context
-        .select<SystemAdminViewModel, List<ActiveSession>>(
-          (vm) => vm.sessions,
-        );
+        .select<SystemAdminViewModel, List<ActiveSession>>((vm) => vm.sessions);
     final sessions = loadingSessions ? _kPlaceholderSessions : rawSessions;
 
     final id = context.select<SystemAdminViewModel, String?>(
@@ -108,7 +106,9 @@ class _SessionsTabState extends State<_SessionsTab>
                         ),
                         decoration: BoxDecoration(
                           color: widget.colorScheme.secondaryContainer,
-                          borderRadius: BorderRadius.circular(AppTheme.radiusXs),
+                          borderRadius: BorderRadius.circular(
+                            AppTheme.radiusXs,
+                          ),
                         ),
                         child: Text(
                           s.tty,
@@ -127,7 +127,9 @@ class _SessionsTabState extends State<_SessionsTab>
                     maxLines: 1,
                     style: TextStyle(
                       fontSize: 12,
-                      color: widget.colorScheme.onSurface.withValues(alpha: 0.58),
+                      color: widget.colorScheme.onSurface.withValues(
+                        alpha: 0.58,
+                      ),
                     ),
                   ),
                   trailing: IconButton(

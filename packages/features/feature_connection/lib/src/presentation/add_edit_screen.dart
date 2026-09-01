@@ -302,150 +302,148 @@ class _AddEditScreenState extends State<AddEditScreen> {
                     outerPadding,
                     24 * layoutScale,
                   ),
-                      children: [
-                        // 顶部 Header Banner
-                        Padding(
-                          padding: EdgeInsets.only(bottom: sectionGap + 2),
-                          child: ConnectionPageHeader(
-                            title: isEditing
-                                ? strings.editConnection
-                                : strings.addConnection,
-                            subtitle: isEditing
-                                ? strings.editSubtitle
-                                : strings.addSubtitle,
-                            icon: isEditing
-                                ? Icons.edit_note_rounded
-                                : Icons.dns_rounded,
-                          ),
-                        ),
-
-                        // 基础信息分组
-                        Padding(
-                          padding: EdgeInsets.only(bottom: sectionGap),
-                          child: ConnectionSectionCard(
-                            title: strings.basicInfo,
-                            icon: Icons.badge_outlined,
-                            padding: cardPadding,
-                            contentGap: 12 * layoutScale,
-                            child: _buildNameField(strings),
-                          ),
-                        ),
-
-                        // 连接信息分组
-                        Padding(
-                          padding: EdgeInsets.only(bottom: sectionGap),
-                          child: ConnectionSectionCard(
-                            title: strings.connectionInfo,
-                            icon: Icons.lan_outlined,
-                            padding: cardPadding,
-                            contentGap: 12 * layoutScale,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _buildHostField(strings),
-                                const SizedBox(height: 12),
-                                portAndUserRow,
-                              ],
-                            ),
-                          ),
-                        ),
-
-                        // 认证信息分组
-                        Padding(
-                          padding: EdgeInsets.only(bottom: sectionGap),
-                          child: ConnectionSectionCard(
-                            title: strings.authMethod,
-                            icon: Icons.shield_outlined,
-                            padding: cardPadding,
-                            contentGap: 12 * layoutScale,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _buildAuthMethodSelector(strings, colorScheme),
-                                const SizedBox(height: 12),
-                                if (_authMethod == AuthMethod.password ||
-                                    _authMethod == AuthMethod.both) ...[
-                                  _buildPasswordField(strings),
-                                  const SizedBox(height: 12),
-                                ],
-                                if (_authMethod == AuthMethod.privateKey ||
-                                    _authMethod == AuthMethod.both) ...[
-                                  _buildPrivateKeyField(strings),
-                                  const SizedBox(height: 12),
-                                ],
-                              ],
-                            ),
-                          ),
-                        ),
-
-                        // 跳板机分组（默认折叠）
-                        Padding(
-                          padding: EdgeInsets.only(bottom: sectionGap),
-                          child: ConnectionSectionCard(
-                            title: strings.jumpHostOptional,
-                            subtitle: jumpHostSubtitle,
-                            icon: Icons.hub_outlined,
-                            padding: cardPadding,
-                            contentGap: 12 * layoutScale,
-                            expanded: _jumpHostExpanded,
-                            onHeaderTap: () => setState(
-                              () => _jumpHostExpanded = !_jumpHostExpanded,
-                            ),
-                            child: _jumpHostExpanded
-                                ? Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      _buildJumpHostField(strings),
-                                      const SizedBox(height: 12),
-                                      jumpPortAndUserRow,
-                                    ],
-                                  )
-                                : null,
-                          ),
-                        ),
-
-                        // 高级选项分组（默认折叠）
-                        Padding(
-                          padding: EdgeInsets.only(bottom: sectionGap),
-                          child: ConnectionSectionCard(
-                            title: strings.advancedOptions,
-                            subtitle: advancedOptionsSubtitle,
-                            icon: Icons.tune_rounded,
-                            padding: cardPadding,
-                            contentGap: 12 * layoutScale,
-                            expanded: _advancedOptionsExpanded,
-                            onHeaderTap: () => setState(
-                              () => _advancedOptionsExpanded =
-                                  !_advancedOptionsExpanded,
-                            ),
-                            child: _advancedOptionsExpanded
-                                ? Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      _buildServerPlatformSelector(strings),
-                                      const SizedBox(height: 16),
-                                      _buildLaunchModeSelector(strings),
-                                      if (_launchMode ==
-                                          TerminalLaunchMode.tmux) ...[
-                                        const SizedBox(height: 12),
-                                        _buildTmuxAutoDeleteField(strings),
-                                      ],
-                                      const SizedBox(height: 12),
-                                      _buildKeepAliveSwitch(strings),
-                                    ],
-                                  )
-                                : null,
-                          ),
-                        ),
-                      ],
+                  children: [
+                    // 顶部 Header Banner
+                    Padding(
+                      padding: EdgeInsets.only(bottom: sectionGap + 2),
+                      child: ConnectionPageHeader(
+                        title: isEditing
+                            ? strings.editConnection
+                            : strings.addConnection,
+                        subtitle: isEditing
+                            ? strings.editSubtitle
+                            : strings.addSubtitle,
+                        icon: isEditing
+                            ? Icons.edit_note_rounded
+                            : Icons.dns_rounded,
+                      ),
                     ),
-                  ),
+
+                    // 基础信息分组
+                    Padding(
+                      padding: EdgeInsets.only(bottom: sectionGap),
+                      child: ConnectionSectionCard(
+                        title: strings.basicInfo,
+                        icon: Icons.badge_outlined,
+                        padding: cardPadding,
+                        contentGap: 12 * layoutScale,
+                        child: _buildNameField(strings),
+                      ),
+                    ),
+
+                    // 连接信息分组
+                    Padding(
+                      padding: EdgeInsets.only(bottom: sectionGap),
+                      child: ConnectionSectionCard(
+                        title: strings.connectionInfo,
+                        icon: Icons.lan_outlined,
+                        padding: cardPadding,
+                        contentGap: 12 * layoutScale,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildHostField(strings),
+                            const SizedBox(height: 12),
+                            portAndUserRow,
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    // 认证信息分组
+                    Padding(
+                      padding: EdgeInsets.only(bottom: sectionGap),
+                      child: ConnectionSectionCard(
+                        title: strings.authMethod,
+                        icon: Icons.shield_outlined,
+                        padding: cardPadding,
+                        contentGap: 12 * layoutScale,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildAuthMethodSelector(strings, colorScheme),
+                            const SizedBox(height: 12),
+                            if (_authMethod == AuthMethod.password ||
+                                _authMethod == AuthMethod.both) ...[
+                              _buildPasswordField(strings),
+                              const SizedBox(height: 12),
+                            ],
+                            if (_authMethod == AuthMethod.privateKey ||
+                                _authMethod == AuthMethod.both) ...[
+                              _buildPrivateKeyField(strings),
+                              const SizedBox(height: 12),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    // 跳板机分组（默认折叠）
+                    Padding(
+                      padding: EdgeInsets.only(bottom: sectionGap),
+                      child: ConnectionSectionCard(
+                        title: strings.jumpHostOptional,
+                        subtitle: jumpHostSubtitle,
+                        icon: Icons.hub_outlined,
+                        padding: cardPadding,
+                        contentGap: 12 * layoutScale,
+                        expanded: _jumpHostExpanded,
+                        onHeaderTap: () => setState(
+                          () => _jumpHostExpanded = !_jumpHostExpanded,
+                        ),
+                        child: _jumpHostExpanded
+                            ? Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _buildJumpHostField(strings),
+                                  const SizedBox(height: 12),
+                                  jumpPortAndUserRow,
+                                ],
+                              )
+                            : null,
+                      ),
+                    ),
+
+                    // 高级选项分组（默认折叠）
+                    Padding(
+                      padding: EdgeInsets.only(bottom: sectionGap),
+                      child: ConnectionSectionCard(
+                        title: strings.advancedOptions,
+                        subtitle: advancedOptionsSubtitle,
+                        icon: Icons.tune_rounded,
+                        padding: cardPadding,
+                        contentGap: 12 * layoutScale,
+                        expanded: _advancedOptionsExpanded,
+                        onHeaderTap: () => setState(
+                          () => _advancedOptionsExpanded =
+                              !_advancedOptionsExpanded,
+                        ),
+                        child: _advancedOptionsExpanded
+                            ? Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _buildServerPlatformSelector(strings),
+                                  const SizedBox(height: 16),
+                                  _buildLaunchModeSelector(strings),
+                                  if (_launchMode ==
+                                      TerminalLaunchMode.tmux) ...[
+                                    const SizedBox(height: 12),
+                                    _buildTmuxAutoDeleteField(strings),
+                                  ],
+                                  const SizedBox(height: 12),
+                                  _buildKeepAliveSwitch(strings),
+                                ],
+                              )
+                            : null,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
           ),
+        ),
+      ),
     );
   }
 }

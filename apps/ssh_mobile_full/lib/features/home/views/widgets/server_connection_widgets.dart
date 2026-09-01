@@ -430,10 +430,9 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
                       >(
                         selector: (_, monitor) =>
                             monitor?.healthFor(widget.conn.id),
-                        builder: (context, health, _) =>
-                            health == null
-                                ? const SizedBox.shrink()
-                                : _buildHealthChip(context, health, widget.strings),
+                        builder: (context, health, _) => health == null
+                            ? const SizedBox.shrink()
+                            : _buildHealthChip(context, health, widget.strings),
                       ),
                 ),
                 SizedBox(height: 12 * scale),
@@ -563,19 +562,16 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
                           >(
                             selector: (_, monitor) =>
                                 monitor?.healthFor(widget.conn.id),
-                            builder: (context, health, _) =>
-                                health == null
-                                    ? const SizedBox.shrink()
-                                    : Padding(
-                                        padding: EdgeInsets.only(
-                                          left: 8 * scale,
-                                        ),
-                                        child: _buildHealthChip(
-                                          context,
-                                          health,
-                                          widget.strings,
-                                        ),
-                                      ),
+                            builder: (context, health, _) => health == null
+                                ? const SizedBox.shrink()
+                                : Padding(
+                                    padding: EdgeInsets.only(left: 8 * scale),
+                                    child: _buildHealthChip(
+                                      context,
+                                      health,
+                                      widget.strings,
+                                    ),
+                                  ),
                           ),
                           if (sessionCount > 0) ...[
                             Padding(

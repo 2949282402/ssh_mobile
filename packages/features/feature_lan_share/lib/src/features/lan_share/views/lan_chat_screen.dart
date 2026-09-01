@@ -1293,7 +1293,9 @@ class _LanChatConversationSkeleton extends StatelessWidget {
                             bottomRight: Radius.circular(16),
                           ),
                         ),
-                        child: const Text('Sounds good, let me know when it arrives.'),
+                        child: const Text(
+                          'Sounds good, let me know when it arrives.',
+                        ),
                       ),
                       const SizedBox(height: 2),
                       Padding(

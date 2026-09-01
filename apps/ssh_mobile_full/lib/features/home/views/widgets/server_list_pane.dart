@@ -76,9 +76,7 @@ class _ServerListPaneState extends State<ServerListPane> {
               ),
               child: _buildOverviewHeader(context, connections, strings),
             ),
-            Expanded(
-              child: _ServerEmptyState(strings: strings),
-            ),
+            Expanded(child: _ServerEmptyState(strings: strings)),
           ],
         );
       },

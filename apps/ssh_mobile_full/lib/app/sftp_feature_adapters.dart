@@ -686,9 +686,7 @@ final class _AppSftpModuleScopeState extends State<AppSftpModuleScope> {
         if (snapshot.connectionState != ConnectionState.done) {
           final isEn = _settings.language == feature_sftp.SftpLanguage.english;
           final strings = AppStrings(isEn ? AppLanguage.en : AppLanguage.zh);
-          return Scaffold(
-            body: _SftpModuleScopeSkeleton(strings: strings),
-          );
+          return Scaffold(body: _SftpModuleScopeSkeleton(strings: strings));
         }
         return MultiProvider(
           providers: [

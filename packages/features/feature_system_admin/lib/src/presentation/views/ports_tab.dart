@@ -385,8 +385,9 @@ class _PortsTabState extends State<_PortsTab>
                                   vertical: 4,
                                 ),
                                 decoration: BoxDecoration(
-                                  color:
-                                      widget.colorScheme.surfaceContainerHighest,
+                                  color: widget
+                                      .colorScheme
+                                      .surfaceContainerHighest,
                                   borderRadius: BorderRadius.circular(
                                     AppTheme.radiusXs,
                                   ),

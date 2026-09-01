@@ -268,7 +268,9 @@ class _SftpDirectoryLoadingState extends StatelessWidget {
           return _SftpEntryTile(
             strings: strings,
             entry: entry,
-            meta: entry.isDirectory ? 'Directory · 4 KB' : '12.4 KB · 2026-09-01',
+            meta: entry.isDirectory
+                ? 'Directory · 4 KB'
+                : '12.4 KB · 2026-09-01',
             busy: true,
             useHero: false,
             onTap: null,

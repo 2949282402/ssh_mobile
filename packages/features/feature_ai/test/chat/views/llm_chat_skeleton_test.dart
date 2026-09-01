@@ -5,27 +5,28 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('Chat conversation skeleton renders correctly with AppSkeletonizer', (
-    tester,
-  ) async {
-    const strings = AiStrings(AppLanguage.en);
+  testWidgets(
+    'Chat conversation skeleton renders correctly with AppSkeletonizer',
+    (tester) async {
+      const strings = AiStrings(AppLanguage.en);
 
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: Scaffold(
-          body: _ChatConversationSkeletonTestWrapper(strings: strings),
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: _ChatConversationSkeletonTestWrapper(strings: strings),
+          ),
         ),
-      ),
-    );
+      );
 
-    expect(find.byType(AppSkeletonizer), findsOneWidget);
-    expect(find.byIcon(Icons.menu_rounded), findsOneWidget);
-    expect(find.byIcon(Icons.add_comment_outlined), findsOneWidget);
-    expect(find.byIcon(Icons.tune_rounded), findsOneWidget);
-    expect(find.byType(AppEmptyState), findsOneWidget);
-    expect(find.byIcon(Icons.add_rounded), findsOneWidget);
-    expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
-  });
+      expect(find.byType(AppSkeletonizer), findsOneWidget);
+      expect(find.byIcon(Icons.menu_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.add_comment_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.tune_rounded), findsOneWidget);
+      expect(find.byType(AppEmptyState), findsOneWidget);
+      expect(find.byIcon(Icons.add_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
+    },
+  );
 }
 
 class _ChatConversationSkeletonTestWrapper extends StatelessWidget {

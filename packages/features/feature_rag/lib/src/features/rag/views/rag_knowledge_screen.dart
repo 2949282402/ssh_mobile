@@ -106,7 +106,10 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(strings.aliyunHint, style: const TextStyle(fontSize: 12)),
+                  Text(
+                    strings.aliyunHint,
+                    style: const TextStyle(fontSize: 12),
+                  ),
                   const SizedBox(height: 14),
                   TextField(
                     controller: controller,

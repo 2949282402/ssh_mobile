@@ -341,9 +341,7 @@ final class _AppTerminalModuleScopeState extends State<AppTerminalModuleScope> {
           final appSettings = context.read<AppSettings?>();
           final language = appSettings?.language ?? AppLanguage.en;
           final strings = AppStrings(language);
-          return Scaffold(
-            body: _TerminalModuleScopeSkeleton(strings: strings),
-          );
+          return Scaffold(body: _TerminalModuleScopeSkeleton(strings: strings));
         }
         return Provider<feature_terminal.TerminalHistoryRepository>.value(
           value: _historyRepository!,
