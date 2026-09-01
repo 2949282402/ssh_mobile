@@ -516,9 +516,14 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final language = context.select<AppSettings, AppLanguage>(
-      (settings) => settings.language,
-    );
+    final language =
+        context.select<AiChatViewModel, AppLanguage?>(
+          (vm) => vm.appSettings.language,
+        ) ??
+        context.select<AppSettings?, AppLanguage?>(
+          (settings) => settings?.language,
+        ) ??
+        AppLanguage.zh;
     final strings = AiStrings(language);
     final mediaQuery = MediaQuery.of(context);
     final compactKeyboardLayout = usesCompactKeyboardLayoutFor(

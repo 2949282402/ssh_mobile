@@ -689,11 +689,12 @@ class _DeferredNavPage extends StatefulWidget {
 
 class _DeferredNavPageState extends State<_DeferredNavPage> {
   bool _ready = false;
+  bool _activationScheduled = false;
 
   @override
   void initState() {
     super.initState();
-    if (widget.active) _ready = true;
+    if (widget.active) _scheduleActivation();
   }
 
   @override
@@ -701,12 +702,27 @@ class _DeferredNavPageState extends State<_DeferredNavPage> {
     super.didUpdateWidget(oldWidget);
     if (!widget.active) {
       if (widget.keepAliveAfterFirstBuild && _ready) return;
-      _ready = false;
+      if (_ready || _activationScheduled) {
+        _ready = false;
+        _activationScheduled = false;
+      }
       return;
     }
-    if (!_ready) {
-      _ready = true;
+    if (!oldWidget.active || !_ready) {
+      _scheduleActivation();
     }
+  }
+
+  void _scheduleActivation() {
+    if (_ready || _activationScheduled) return;
+    _activationScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !widget.active) return;
+      setState(() {
+        _activationScheduled = false;
+        _ready = true;
+      });
+    });
   }
 
   @override
@@ -726,6 +742,10 @@ class _DeferredNavPageState extends State<_DeferredNavPage> {
 
     if (!widget.active) {
       return const SizedBox.expand();
+    }
+    if (!_ready) {
+      _scheduleActivation();
+      return widget.loading;
     }
     return _AnimatedPageFadeIn(active: true, child: widget.builder(context));
   }
