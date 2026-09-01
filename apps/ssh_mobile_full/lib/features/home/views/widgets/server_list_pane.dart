@@ -333,33 +333,21 @@ class _ServerListPaneState extends State<ServerListPane> {
     });
   }
 
-  void _confirmDelete(BuildContext context, ConnectionConfig conn) {
+  void _confirmDelete(BuildContext context, ConnectionConfig conn) async {
     final strings = AppStrings(context.read<AppSettings>().language);
     final storage = context.read<ConnectionViewModel>();
 
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(strings.deleteConnectionTitle),
-        content: Text(strings.deleteConnectionContent(conn.name)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(strings.cancel),
-          ),
-          TextButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              await storage.deleteConnectionWithCleanup(conn.id);
-            },
-            style: TextButton.styleFrom(
-              foregroundColor: Theme.of(context).colorScheme.error,
-            ),
-            child: Text(strings.delete),
-          ),
-        ],
-      ),
+    final confirmed = await AppConfirmDialog.show(
+      context,
+      title: strings.deleteConnectionTitle,
+      content: strings.deleteConnectionContent(conn.name),
+      cancelLabel: strings.cancel,
+      confirmLabel: strings.delete,
+      isDestructive: true,
     );
+    if (confirmed) {
+      await storage.deleteConnectionWithCleanup(conn.id);
+    }
   }
 
   void _toggleServerSelection(String id) {
@@ -381,29 +369,15 @@ class _ServerListPaneState extends State<ServerListPane> {
   ) async {
     final ids = _selectedServerIds.toList(growable: false);
     if (ids.isEmpty) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(strings.deleteConnectionTitle),
-        content: Text(
-          strings.language == AppLanguage.en
-              ? 'Delete ${ids.length} selected server${ids.length == 1 ? '' : 's'}? Passwords and private keys will also be removed.'
-              : '确定删除选中的 ${ids.length} 台服务器吗？密码和私钥也会一并清除。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(strings.cancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(
-              foregroundColor: Theme.of(context).colorScheme.error,
-            ),
-            child: Text(strings.delete),
-          ),
-        ],
-      ),
+    final confirmed = await AppConfirmDialog.show(
+      context,
+      title: strings.deleteConnectionTitle,
+      content: strings.language == AppLanguage.en
+          ? 'Delete ${ids.length} selected server${ids.length == 1 ? '' : 's'}? Passwords and private keys will also be removed.'
+          : '确定删除选中的 ${ids.length} 台服务器吗？密码和私钥也会一并清除。',
+      cancelLabel: strings.cancel,
+      confirmLabel: strings.delete,
+      isDestructive: true,
     );
     if (confirmed != true || !context.mounted) return;
     final storage = context.read<ConnectionViewModel>();

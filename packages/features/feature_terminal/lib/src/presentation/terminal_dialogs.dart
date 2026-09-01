@@ -145,42 +145,24 @@ extension _TerminalDialogs on _TerminalScreenState {
                     ? AppTheme.terminalGreen
                     : Theme.of(context).colorScheme.error,
               ),
-              title: OverflowScrollText(
-                session.displayName,
-                selectable: false,
-                maxLines: 1,
+              title: Text(session.displayName),
+              subtitle: Text(
+                session.isConnected
+                    ? strings.connected
+                    : (session.errorMessage ?? strings.disconnected),
               ),
-              subtitle: OverflowScrollText(
-                current
-                    ? strings.currentWindow
-                    : '${session.connectionName} - '
-                          '${session.isConnected ? strings.connected : session.errorMessage ?? strings.disconnected}',
-                selectable: false,
-                maxLines: 1,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.onSurface.withValues(alpha: 0.58),
-                ),
-              ),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (current) const Icon(Icons.check),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    color: Theme.of(context).colorScheme.error,
-                    tooltip: session.isConnected
-                        ? strings.disconnect
-                        : strings.closeDisconnected,
-                    onPressed: () => Navigator.pop(
-                      ctx,
-                      _SessionSwitcherAction.close(session.id),
+              trailing: current
+                  ? const Icon(Icons.check, color: AppTheme.terminalGreen)
+                  : IconButton(
+                      icon: const Icon(Icons.close),
+                      tooltip: session.isConnected
+                          ? strings.disconnect
+                          : strings.closeDisconnected,
+                      onPressed: () => Navigator.pop(
+                        ctx,
+                        _SessionSwitcherAction.close(session.id),
+                      ),
                     ),
-                  ),
-                ],
-              ),
               onTap: () => Navigator.pop(
                 ctx,
                 _SessionSwitcherAction.switchTo(session.id),
@@ -194,11 +176,10 @@ extension _TerminalDialogs on _TerminalScreenState {
     if (!context.mounted || action == null) return;
 
     if (action.close) {
-      final closingCurrent = action.sessionId == widget.sessionId;
       await ssh?.disconnectSession(action.sessionId);
       if (!context.mounted) return;
 
-      if (closingCurrent) {
+      if (action.sessionId == widget.sessionId) {
         final nextSession = _nextSessionAfterClose(ssh);
         if (nextSession != null) {
           _replaceWithTerminalSession(nextSession, animated: true);
@@ -310,7 +291,7 @@ extension _TerminalDialogs on _TerminalScreenState {
     _requestWindowsAwareTerminalFocus(viewModel);
   }
 
-  void _confirmDisconnect(BuildContext context) {
+  Future<void> _confirmDisconnect(BuildContext context) async {
     final strings = _strings(context);
     final ssh = context.read<SshSessionManager>().terminalCapability;
     final session = ssh?.getSession(widget.sessionId);
@@ -318,43 +299,30 @@ extension _TerminalDialogs on _TerminalScreenState {
         session?.displayName ?? _serverName ?? strings.defaultTerminal;
     final isConnected = session?.isConnected == true;
 
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(
-          isConnected ? strings.disconnect : strings.closeDisconnectedTitle,
-        ),
-        content: Text(
-          isConnected
-              ? strings.disconnectContent(windowName)
-              : strings.closeDisconnectedContent(windowName),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(strings.cancel),
-          ),
-          TextButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              await ssh?.disconnectSession(widget.sessionId);
-              if (!context.mounted) return;
-
-              final nextSession = _nextSessionAfterClose(ssh);
-              if (nextSession != null) {
-                _replaceWithTerminalSession(nextSession, animated: true);
-              } else {
-                Navigator.of(context).popUntil((route) => route.isFirst);
-              }
-            },
-            style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
-            child: Text(
-              isConnected ? strings.disconnect : strings.closeDisconnected,
-            ),
-          ),
-        ],
-      ),
+    final confirmed = await AppConfirmDialog.show(
+      context,
+      title: isConnected ? strings.disconnect : strings.closeDisconnectedTitle,
+      content: isConnected
+          ? strings.disconnectContent(windowName)
+          : strings.closeDisconnectedContent(windowName),
+      cancelLabel: strings.cancel,
+      confirmLabel: isConnected
+          ? strings.disconnect
+          : strings.closeDisconnected,
+      isDestructive: true,
     );
+
+    if (confirmed && context.mounted) {
+      await ssh?.disconnectSession(widget.sessionId);
+      if (!context.mounted) return;
+
+      final nextSession = _nextSessionAfterClose(ssh);
+      if (nextSession != null) {
+        _replaceWithTerminalSession(nextSession, animated: true);
+      } else {
+        Navigator.of(context).popUntil((route) => route.isFirst);
+      }
+    }
   }
 
   String _selectAllLabel(BuildContext context) {

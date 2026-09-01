@@ -616,7 +616,12 @@ class _HomeDirectoryExplorerDialogState
     }
 
     if (_entries.isEmpty) {
-      return const Center(child: Text('This directory is empty.'));
+      return const AppEmptyState(
+        icon: Icons.folder_open_outlined,
+        title: 'This directory is empty.',
+        message: 'No files or subdirectories found.',
+        compact: true,
+      );
     }
 
     return ListView.builder(
@@ -775,7 +780,13 @@ class _UserProcessesDialogState extends State<_UserProcessesDialog> {
                   const SizedBox(height: 8),
                   Expanded(
                     child: _processes.isEmpty
-                        ? const Center(child: Text('No active processes.'))
+                        ? const AppEmptyState(
+                            icon: Icons.memory_outlined,
+                            title: 'No active processes.',
+                            message:
+                                'No running processes detected for this session.',
+                            compact: true,
+                          )
                         : ListView.builder(
                             itemCount: _processes.length,
                             itemBuilder: (context, index) {

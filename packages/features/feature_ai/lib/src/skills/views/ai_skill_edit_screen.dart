@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'package:app_ui/app_ui.dart';
 import 'package:feature_ai/src/skills/viewmodels/ai_skills_viewmodel.dart';
 import 'package:feature_ai/src/domain/ai_compat.dart';
 import 'widgets/skill_editor_form.dart';
@@ -57,7 +58,7 @@ class AiSkillEditScreen extends StatelessWidget {
 
             if (wide) {
               return const Padding(
-                padding: EdgeInsets.all(24),
+                padding: EdgeInsets.all(AppSpacing.xl),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -65,7 +66,7 @@ class AiSkillEditScreen extends StatelessWidget {
                       flex: 3,
                       child: SingleChildScrollView(child: editor),
                     ),
-                    SizedBox(width: 24),
+                    SizedBox(width: AppSpacing.xl),
                     Expanded(
                       flex: 2,
                       child: SingleChildScrollView(child: references),
@@ -76,14 +77,14 @@ class AiSkillEditScreen extends StatelessWidget {
             }
 
             return const SingleChildScrollView(
-              padding: EdgeInsets.all(16),
+              padding: EdgeInsets.all(AppSpacing.lg),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   editor,
-                  SizedBox(height: 16),
+                  SizedBox(height: AppSpacing.lg),
                   references,
-                  SizedBox(height: 32),
+                  SizedBox(height: AppSpacing.xxl),
                 ],
               ),
             );
@@ -94,22 +95,13 @@ class AiSkillEditScreen extends StatelessWidget {
   }
 
   Future<bool?> _confirmDiscard(BuildContext context, _EditStrings strings) {
-    return showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(strings.discardTitle),
-        content: Text(strings.discardContent),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(strings.cancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(strings.discard),
-          ),
-        ],
-      ),
+    return AppConfirmDialog.show(
+      context,
+      title: strings.discardTitle,
+      content: strings.discardContent,
+      cancelLabel: strings.cancel,
+      confirmLabel: strings.discard,
+      isDestructive: true,
     );
   }
 
@@ -120,22 +112,13 @@ class AiSkillEditScreen extends StatelessWidget {
   ) async {
     final skill = viewModel.selectedSkill;
     if (skill == null) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(strings.deleteSkill),
-        content: Text(strings.deleteSkillContent(skill.displayName)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(strings.cancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(strings.delete),
-          ),
-        ],
-      ),
+    final confirmed = await AppConfirmDialog.show(
+      context,
+      title: strings.deleteSkill,
+      content: strings.deleteSkillContent(skill.displayName),
+      cancelLabel: strings.cancel,
+      confirmLabel: strings.delete,
+      isDestructive: true,
     );
     if (confirmed == true) {
       await viewModel.deleteSkill();

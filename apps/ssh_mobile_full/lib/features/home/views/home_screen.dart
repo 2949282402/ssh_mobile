@@ -625,24 +625,15 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _importAppData(BuildContext context, AppStrings strings) async {
     final messenger = ScaffoldMessenger.of(context);
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(strings.importAppData),
-        content: Text(strings.importAppDataWarning),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(strings.cancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(strings.importAction),
-          ),
-        ],
-      ),
+    final confirmed = await AppConfirmDialog.show(
+      context,
+      title: strings.importAppData,
+      content: strings.importAppDataWarning,
+      cancelLabel: strings.cancel,
+      confirmLabel: strings.importAction,
+      isDestructive: false,
     );
-    if (confirmed != true || !context.mounted) return;
+    if (!confirmed || !context.mounted) return;
     final settingsVm = context.read<SettingsViewModel>();
     try {
       final success = await settingsVm.importAppData(() async {
