@@ -516,11 +516,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _selectedIndex = index;
       _settledIndex = index;
     });
-    _pageController.animateToPage(
-      index,
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeOutCubic,
-    );
+    _pageController.jumpToPage(index);
     _onPageActive(index);
   }
 

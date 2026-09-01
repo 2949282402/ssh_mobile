@@ -164,11 +164,10 @@ void main() {
         matching: find.byIcon(Icons.folder_open_outlined),
       ),
     );
-    await tester.pump(const Duration(milliseconds: 20));
     await tester.tap(
       find.descendant(
         of: find.byType(NavigationRail),
-        matching: find.byIcon(Icons.dns_outlined),
+        matching: find.byIcon(Icons.dns_rounded),
       ),
     );
     await tester.pump(const Duration(milliseconds: 100));
@@ -282,7 +281,6 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     await tester.tap(find.byKey(const ValueKey('home-nav-1')));
-    await tester.pump(const Duration(milliseconds: 250));
     await tester.tap(find.byKey(const ValueKey('home-nav-0')));
     await tester.pump(const Duration(milliseconds: 100));
     expect(tester.takeException(), isNull);
