@@ -137,6 +137,9 @@ final class LanReceiverCoordinator extends ChangeNotifier {
   /// 接收器当前是否正在监听和广播。
   bool get receiverActive => _receiverActive;
 
+  /// 共享的页面 ViewModel（已就绪时返回）。
+  LanShareViewModel? get viewModel => _viewModel;
+
   /// 初始化完成后返回共享发现服务。
   LanDiscoveryService? get discoveryService => _discoveryService;
 

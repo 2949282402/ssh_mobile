@@ -281,31 +281,27 @@ class _AddEditScreenState extends State<AddEditScreen> {
         child: stickyActionBar,
       ),
       body: ConnectionPageSurface(
-        child: _isLoadingSecrets
-            ? AppSkeletonizer.zone(
-                enabled: true,
-                semanticsLabel: isEditing
-                    ? strings.editConnection
-                    : strings.addConnection,
-                child: const AppSkeletonList(
-                  hasLeading: false,
-                  itemCount: 6,
-                  padding: EdgeInsets.all(16),
-                ),
-              )
-            : Align(
-                alignment: Alignment.topCenter,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 800),
-                  child: Form(
-                    key: _formKey,
-                    child: ListView(
-                      padding: EdgeInsets.fromLTRB(
-                        outerPadding,
-                        14 * layoutScale,
-                        outerPadding,
-                        24 * layoutScale,
-                      ),
+        child: AppSkeletonizer(
+          enabled: _isLoadingSecrets,
+          semanticsLabel: isEditing
+              ? strings.editConnection
+              : strings.addConnection,
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 800),
+              child: Form(
+                key: _formKey,
+                child: ListView(
+                  physics: _isLoadingSecrets
+                      ? const NeverScrollableScrollPhysics()
+                      : null,
+                  padding: EdgeInsets.fromLTRB(
+                    outerPadding,
+                    14 * layoutScale,
+                    outerPadding,
+                    24 * layoutScale,
+                  ),
                       children: [
                         // 顶部 Header Banner
                         Padding(
@@ -448,7 +444,8 @@ class _AddEditScreenState extends State<AddEditScreen> {
                   ),
                 ),
               ),
-      ),
+            ),
+          ),
     );
   }
 }

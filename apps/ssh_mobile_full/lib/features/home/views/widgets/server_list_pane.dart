@@ -1,5 +1,17 @@
 part of '../home_screen.dart';
 
+final _kPlaceholderConnections = List.generate(
+  3,
+  (i) => ConnectionConfig(
+    id: 'placeholder-server-$i',
+    name: 'Production Server ${i + 1}',
+    host: '192.168.1.${100 + i}',
+    port: 22,
+    username: 'admin',
+    group: 'Default',
+  ),
+);
+
 class ServerListPane extends StatefulWidget {
   const ServerListPane({super.key});
 
@@ -30,6 +42,19 @@ class _ServerListPaneState extends State<ServerListPane> {
           (vm) => vm.connections,
         );
 
+    if (!storageReady) {
+      return AppSkeletonizer(
+        enabled: true,
+        semanticsLabel: strings.loadingServers,
+        child: _buildConnectionList(
+          context,
+          _kPlaceholderConnections,
+          strings,
+          isSkeleton: true,
+        ),
+      );
+    }
+
     if (connections.isNotEmpty) {
       return _buildConnectionList(context, connections, strings);
     }
@@ -52,13 +77,7 @@ class _ServerListPaneState extends State<ServerListPane> {
               child: _buildOverviewHeader(context, connections, strings),
             ),
             Expanded(
-              child: storageReady
-                  ? _ServerEmptyState(strings: strings)
-                  : AppSkeletonizer.zone(
-                      enabled: true,
-                      semanticsLabel: strings.loadingServers,
-                      child: const _ServerSkeletonList(),
-                    ),
+              child: _ServerEmptyState(strings: strings),
             ),
           ],
         );
@@ -69,8 +88,9 @@ class _ServerListPaneState extends State<ServerListPane> {
   Widget _buildConnectionList(
     BuildContext context,
     List<ConnectionConfig> connections,
-    AppStrings strings,
-  ) {
+    AppStrings strings, {
+    bool isSkeleton = false,
+  }) {
     final layoutMode = context.select<AppSettings, String>(
       (settings) => settings.serverListLayoutMode,
     );
@@ -138,6 +158,25 @@ class _ServerListPaneState extends State<ServerListPane> {
                           strings,
                           connIndex: index,
                           isGrid: true,
+                          isSkeleton: isSkeleton,
+                        ),
+                      )
+                    : isSkeleton
+                    ? ListView.builder(
+                        padding: EdgeInsets.fromLTRB(
+                          horizontalPadding,
+                          0,
+                          horizontalPadding,
+                          scrollBottomPadding,
+                        ),
+                        itemCount: connections.length,
+                        itemBuilder: (context, index) => _buildConnectionCard(
+                          context,
+                          connections[index],
+                          strings,
+                          connIndex: index,
+                          isGrid: false,
+                          isSkeleton: isSkeleton,
                         ),
                       )
                     : ReorderableListView.builder(
@@ -158,6 +197,7 @@ class _ServerListPaneState extends State<ServerListPane> {
                           strings,
                           connIndex: index,
                           isGrid: false,
+                          isSkeleton: isSkeleton,
                         ),
                         onReorderItem: (oldIndex, newIndex) {
                           context
@@ -198,6 +238,7 @@ class _ServerListPaneState extends State<ServerListPane> {
     AppStrings strings, {
     int connIndex = 0,
     required bool isGrid,
+    bool isSkeleton = false,
   }) {
     final windowsExpanded = _expandedConnectionWindowIds.contains(conn.id);
     final isSelected = _selectedServerIds.contains(conn.id);
@@ -205,7 +246,9 @@ class _ServerListPaneState extends State<ServerListPane> {
       key: ValueKey('server-card-${conn.id}'),
       child: Selector<SshService, SshConnectionOverview>(
         key: ValueKey(conn.id),
-        selector: (_, ssh) => ssh.serverOverviewSnapshot.forConnection(conn.id),
+        selector: (_, ssh) => isSkeleton
+            ? SshConnectionOverview.empty
+            : ssh.serverOverviewSnapshot.forConnection(conn.id),
         builder: (context, sessionSummary, _) => _ServerConnectionCard(
           conn: conn,
           sessionSummary: sessionSummary,

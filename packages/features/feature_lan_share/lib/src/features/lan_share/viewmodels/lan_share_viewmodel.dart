@@ -480,6 +480,11 @@ class LanShareViewModel extends ChangeNotifier {
     }
   }
 
+  NetworkError? _lastScanError;
+
+  /// 最近一次扫描失败的错误信息（成功或正在扫描时为 null）。
+  NetworkError? get lastScanError => _lastScanError;
+
   /// 启动 LAN 发现并刷新 UI 状态。
   Future<NetworkResult<void>> startScanning() async {
     if (_disposed) {
@@ -489,13 +494,18 @@ class LanShareViewModel extends ChangeNotifier {
         operation: NetworkOperation.startDiscovery,
       );
     }
+    _lastScanError = null;
     final result = await discoveryService.startDiscovery();
+    if (result is NetworkFailure<void>) {
+      _lastScanError = result.error;
+    }
     if (!_disposed) notifyListeners();
     return result;
   }
 
   /// 停止 LAN 发现并刷新 UI 状态。
   Future<NetworkResult<void>> stopScanning() async {
+    _lastScanError = null;
     final result = await discoveryService.stopDiscovery();
     if (!_disposed) notifyListeners();
     return result;

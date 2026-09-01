@@ -230,22 +230,36 @@ class LlmChatScreen extends StatelessWidget {
     // within the LlmChatScreen subtree. The parent HomeScreen keeps this tab's
     // state alive using keepAliveAfterFirstBuild, ensuring it behaves as a
     // single instance while the app is running.
-    return ChangeNotifierProvider<AiChatViewModel>(
-      create: (context) {
-        final viewModel =
-            viewModelFactory?.call(context) ??
-            AiChatViewModel(
-              storageService: context.read<AiStoragePort>(),
-              sshService: context.read<SshService>(),
-              sftpService: context.read<SftpService>(),
-              performanceMonitorService: context
-                  .read<PerformanceMonitorService>(),
-              playbookService: context.read<PlaybookAutomationPort>(),
-              ragService: context.read<app_core.RagCapability>(),
-              appSettings: context.read<AppSettings>(),
-            );
-        return viewModel..loadInitialDraft();
-      },
+    AiChatViewModel? viewModel;
+    try {
+      viewModel = viewModelFactory?.call(context);
+    } catch (_) {}
+
+    if (viewModel == null) {
+      try {
+        final storage = context.read<AiStoragePort?>();
+        final appSettings = context.read<AppSettings?>();
+        if (storage != null && appSettings != null) {
+          viewModel = AiChatViewModel(
+            storageService: storage,
+            sshService: context.read<SshService>(),
+            sftpService: context.read<SftpService>(),
+            performanceMonitorService:
+                context.read<PerformanceMonitorService>(),
+            playbookService: context.read<PlaybookAutomationPort>(),
+            ragService: context.read<app_core.RagCapability>(),
+            appSettings: appSettings,
+          );
+        }
+      } catch (_) {}
+    }
+
+    if (viewModel == null) {
+      return const Scaffold(body: Center(child: SizedBox.shrink()));
+    }
+
+    return ChangeNotifierProvider<AiChatViewModel>.value(
+      value: viewModel..loadInitialDraft(),
       child: _LlmChatScreenBody(
         active: active,
         onHistoryVisibilityChanged: onHistoryVisibilityChanged,
@@ -540,11 +554,7 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
           if (snapshot.loading) {
             return Scaffold(
               body: AppPageSurface(
-                child: AppSkeletonizer.zone(
-                  enabled: true,
-                  semanticsLabel: strings.title,
-                  child: const AppSkeletonList(hasLeading: true, itemCount: 6),
-                ),
+                child: _ChatConversationSkeleton(strings: strings),
               ),
             );
           }
@@ -1013,4 +1023,190 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
 
   @override
   bool get wantKeepAlive => true;
+}
+
+class _ChatConversationSkeleton extends StatelessWidget {
+  const _ChatConversationSkeleton({required this.strings});
+
+  final AiStrings strings;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return AppSkeletonizer(
+      enabled: true,
+      semanticsLabel: strings.title,
+      child: Column(
+        children: [
+          // 1. Header Bar (1:1 with _ChatHeader)
+          Container(
+            padding: const EdgeInsets.fromLTRB(14, 9, 12, 9),
+            child: Row(
+              children: [
+                IconButton(
+                  tooltip: strings.history,
+                  icon: const Icon(Icons.menu_rounded),
+                  style: IconButton.styleFrom(
+                    foregroundColor: colorScheme.primary,
+                    backgroundColor: colorScheme.primary.withValues(alpha: 0.1),
+                  ),
+                  onPressed: null,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        strings.newChat,
+                        maxLines: 1,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: -0.1,
+                        ),
+                      ),
+                      Text(
+                        '0 / 128K (0.0%)',
+                        maxLines: 1,
+                        style: TextStyle(
+                          color: colorScheme.onSurfaceVariant,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  tooltip: strings.newChat,
+                  icon: const Icon(Icons.add_comment_outlined),
+                  onPressed: null,
+                ),
+                SizedBox.square(
+                  dimension: 48,
+                  child: IconButton(
+                    tooltip: strings.settings,
+                    icon: const Icon(Icons.tune_rounded),
+                    onPressed: null,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // 2. Message / Welcome Area (1:1 with _ChatMessageList empty state)
+          Expanded(
+            child: ListView(
+              physics: const NeverScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
+              children: [
+                ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 280),
+                  child: AppEmptyState(
+                    icon: Icons.auto_awesome_rounded,
+                    title: strings.welcomeTitle,
+                    message: strings.welcome,
+                    compact: true,
+                    contained: false,
+                    action: _ChatStarterSuggestions(
+                      strings: strings,
+                      onSelected: (_) {},
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // 3. Bottom Composer (1:1 with _ChatComposer)
+          SafeArea(
+            top: false,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: colorScheme.surface.withValues(alpha: 0.96),
+                border: Border(
+                  top: BorderSide(
+                    color: colorScheme.outline.withValues(alpha: 0.56),
+                  ),
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 9,
+                ),
+                child: Align(
+                  alignment: Alignment.bottomCenter,
+                  heightFactor: 1,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 960),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.transparent,
+                        borderRadius: BorderRadius.circular(
+                          AppTheme.radiusMedium,
+                        ),
+                        border: Border.all(
+                          color: colorScheme.outline.withValues(alpha: 0.62),
+                        ),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          IconButton(
+                            tooltip: strings.tools,
+                            style: IconButton.styleFrom(
+                              minimumSize: const Size.square(48),
+                              foregroundColor: colorScheme.primary,
+                            ),
+                            icon: const Icon(Icons.add_rounded),
+                            onPressed: null,
+                          ),
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              child: Text(
+                                strings.composerHint,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.only(
+                              right: 8,
+                              top: 6,
+                              bottom: 6,
+                              left: 4,
+                            ),
+                            child: IconButton(
+                              tooltip: strings.send,
+                              style: IconButton.styleFrom(
+                                minimumSize: const Size.square(38),
+                                padding: EdgeInsets.zero,
+                                foregroundColor: colorScheme.onPrimary,
+                                backgroundColor: colorScheme.primary,
+                              ),
+                              icon: const Icon(Icons.arrow_upward_rounded),
+                              onPressed: null,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

@@ -11,6 +11,21 @@ import '../domain/terminal_strings.dart';
 
 final _historySecretPolicy = TerminalSecretPolicy();
 
+final _kPlaceholderRecords = List.generate(
+  4,
+  (i) => TerminalHistoryRecord(
+    sessionId: 'placeholder-session-$i',
+    connectionId: 'placeholder-conn-$i',
+    connectionName: 'Production Server ${i + 1}',
+    displayName: 'Terminal Window ${i + 1}',
+    tmuxSessionName: 'ssh_mobile_${i + 1}',
+    state: 'connected',
+    errorMessage: null,
+    createdAt: DateTime(2026, 9, 1),
+    updatedAt: DateTime(2026, 9, 1),
+  ),
+);
+
 class TerminalHistoryScreen extends StatelessWidget {
   const TerminalHistoryScreen({super.key, this.viewModel});
 
@@ -73,7 +88,10 @@ class TerminalHistoryPage extends StatelessWidget {
             future: viewModel.recordsFuture,
             builder: (context, snapshot) {
               if (snapshot.connectionState != ConnectionState.done) {
-                return _HistoryLoading(strings: strings);
+                return _HistoryLoading(
+                  strings: strings,
+                  viewModel: viewModel,
+                );
               }
               if (snapshot.hasError) {
                 return _HistoryStateView(
@@ -120,20 +138,22 @@ class TerminalHistoryPage extends StatelessWidget {
 }
 
 class _HistoryLoading extends StatelessWidget {
-  const _HistoryLoading({required this.strings});
+  const _HistoryLoading({required this.strings, required this.viewModel});
 
   final TerminalStrings strings;
+  final TerminalHistoryViewModel viewModel;
 
   @override
   Widget build(BuildContext context) {
-    return AppSkeletonizer.zone(
+    return AppSkeletonizer(
       key: const ValueKey('terminal-history-loading'),
       enabled: true,
       semanticsLabel: strings.loadingConnectionHistory,
-      child: const AppSkeletonList(
-        hasLeading: true,
-        itemCount: 6,
-        padding: EdgeInsets.all(AppTheme.pagePadding),
+      child: _HistoryList(
+        records: _kPlaceholderRecords,
+        strings: strings,
+        viewModel: viewModel,
+        isSkeleton: true,
       ),
     );
   }
@@ -176,11 +196,13 @@ class _HistoryList extends StatelessWidget {
     required this.records,
     required this.strings,
     required this.viewModel,
+    this.isSkeleton = false,
   });
 
   final List<TerminalHistoryRecord> records;
   final TerminalStrings strings;
   final TerminalHistoryViewModel viewModel;
+  final bool isSkeleton;
 
   @override
   Widget build(BuildContext context) {
@@ -194,6 +216,9 @@ class _HistoryList extends StatelessWidget {
 
         return ListView.separated(
           key: const ValueKey('terminal-history-scroll'),
+          physics: isSkeleton
+              ? const NeverScrollableScrollPhysics()
+              : const AlwaysScrollableScrollPhysics(),
           padding: EdgeInsets.fromLTRB(
             horizontalPadding,
             compact ? 12 : 20,
@@ -213,6 +238,7 @@ class _HistoryList extends StatelessWidget {
                     record: records[index - 1],
                     strings: strings,
                     viewModel: viewModel,
+                    isSkeleton: isSkeleton,
                   );
 
             return Center(
@@ -290,11 +316,13 @@ class _HistoryItem extends StatelessWidget {
     required this.record,
     required this.strings,
     required this.viewModel,
+    this.isSkeleton = false,
   });
 
   final TerminalHistoryRecord record;
   final TerminalStrings strings;
   final TerminalHistoryViewModel viewModel;
+  final bool isSkeleton;
 
   @override
   Widget build(BuildContext context) {
@@ -362,7 +390,9 @@ class _HistoryItem extends StatelessWidget {
                             color: colors.error,
                           )
                         : const Icon(Icons.delete_outline_rounded),
-                    onPressed: isDeleting ? null : () => _deleteRecord(context),
+                    onPressed: (isSkeleton || isDeleting)
+                        ? null
+                        : () => _deleteRecord(context),
                   ),
                 ],
               ),

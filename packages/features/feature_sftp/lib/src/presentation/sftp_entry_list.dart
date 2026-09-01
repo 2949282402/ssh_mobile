@@ -1,5 +1,74 @@
 part of 'sftp_screen.dart';
 
+final _kPlaceholderSftpEntries = [
+  const SftpEntry(
+    connectionId: 'placeholder',
+    targetFingerprint: 'placeholder',
+    path: '/documents',
+    name: 'documents',
+    lowerName: 'documents',
+    sizeLabel: '4 KB',
+    size: 4096,
+    isDirectory: true,
+    isLink: false,
+  ),
+  const SftpEntry(
+    connectionId: 'placeholder',
+    targetFingerprint: 'placeholder',
+    path: '/downloads',
+    name: 'downloads',
+    lowerName: 'downloads',
+    sizeLabel: '4 KB',
+    size: 4096,
+    isDirectory: true,
+    isLink: false,
+  ),
+  const SftpEntry(
+    connectionId: 'placeholder',
+    targetFingerprint: 'placeholder',
+    path: '/server_config.yaml',
+    name: 'server_config.yaml',
+    lowerName: 'server_config.yaml',
+    sizeLabel: '12.4 KB',
+    size: 12400,
+    isDirectory: false,
+    isLink: false,
+  ),
+  const SftpEntry(
+    connectionId: 'placeholder',
+    targetFingerprint: 'placeholder',
+    path: '/docker-compose.yml',
+    name: 'docker-compose.yml',
+    lowerName: 'docker-compose.yml',
+    sizeLabel: '3.2 KB',
+    size: 3200,
+    isDirectory: false,
+    isLink: false,
+  ),
+  const SftpEntry(
+    connectionId: 'placeholder',
+    targetFingerprint: 'placeholder',
+    path: '/deploy.sh',
+    name: 'deploy.sh',
+    lowerName: 'deploy.sh',
+    sizeLabel: '1.8 KB',
+    size: 1820,
+    isDirectory: false,
+    isLink: false,
+  ),
+  const SftpEntry(
+    connectionId: 'placeholder',
+    targetFingerprint: 'placeholder',
+    path: '/app.log',
+    name: 'app.log',
+    lowerName: 'app.log',
+    sizeLabel: '1.0 MB',
+    size: 1048576,
+    isDirectory: false,
+    isLink: false,
+  ),
+];
+
 class _SftpEntryList extends StatelessWidget {
   final SftpStrings strings;
   final SftpViewModel sftp;
@@ -180,33 +249,32 @@ class _SftpDirectoryLoadingState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AppSkeletonizer.zone(
+    final scale = mobileUiScaleOf(context);
+    return AppSkeletonizer(
       key: const ValueKey('sftp-directory-loading'),
       enabled: true,
       semanticsLabel: strings.loadingDirectory,
       child: ListView.builder(
         physics: const NeverScrollableScrollPhysics(),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        itemCount: 7,
+        padding: EdgeInsets.fromLTRB(
+          12 * scale,
+          12 * scale,
+          12 * scale,
+          28 * scale + MediaQuery.viewPaddingOf(context).bottom,
+        ),
+        itemCount: _kPlaceholderSftpEntries.length,
         itemBuilder: (context, index) {
-          return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 6),
-            child: Row(
-              children: [
-                Bone.square(size: 36, borderRadius: BorderRadius.circular(8)),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Bone(width: index.isEven ? 160 : 220, height: 16),
-                      const SizedBox(height: 6),
-                      const Bone(width: 90, height: 12),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+          final entry = _kPlaceholderSftpEntries[index];
+          return _SftpEntryTile(
+            strings: strings,
+            entry: entry,
+            meta: entry.isDirectory ? 'Directory · 4 KB' : '12.4 KB · 2026-09-01',
+            busy: true,
+            useHero: false,
+            onTap: null,
+            onLongPress: null,
+            onSelected: (_) {},
+            menuBuilder: (_) => const [],
           );
         },
       ),

@@ -23,6 +23,7 @@
 5. **`AppEmptyState`**：列表、会话或详情无数据时统一使用 `AppEmptyState`（信息优先、24~28dp 紧凑图标、克制操作）。
 6. **`AppLoading`**：数据加载与耗时等待统一使用 `AppLoadingIndicator` / `AppInlineProgress` / `AppSkeletonizer`，禁止在 Feature 中直接使用裸 `CircularProgressIndicator`。
 7. **`AppDialog`**：对话框交互统一使用 `AppDialog` / `AppConfirmDialog` / `AppErrorDialog`，禁止在 Feature 中直接使用 Material `showDialog` + `AlertDialog`。
+8. **`AppSkeletonizer` 1:1 结构一致性**：编写骨架屏必须与真实数据加载就绪后的 UI 保持 1:1 严格的几何结构、内外边距、圆角与响应式断点对齐，优先通过注入 `_kPlaceholder` 假数据复用真实 Widget 树，杜绝页面加载完成后的任何布局抖动（Layout Shift）。
 
 ## 生命周期
 

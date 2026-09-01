@@ -36,20 +36,26 @@ class _LanShareScreenState extends State<LanShareScreen>
   String? _activeDeleteDeviceId;
   late Future<Map<String, String>> _localIpsFuture;
   bool _isRefreshingIps = false;
+  bool _scanningInitialized = false;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _localIpsFuture = LanDiscoveryService.getLocalIpInterfaces();
+    unawaited(_initShareHandler());
+  }
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_scanningInitialized) {
+      _scanningInitialized = true;
       final vm = context.read<LanShareViewModel>();
-
-      unawaited(vm.startScanning());
-      unawaited(_initShareHandler());
-    });
+      if (!vm.isScanning) {
+        unawaited(vm.startScanning());
+      }
+    }
   }
 
   Future<void> _initShareHandler() async {
@@ -509,7 +515,7 @@ class _LanShareScreenState extends State<LanShareScreen>
           title: strings.lanShareNoDevices,
           message: strings.lanShareRadarHint,
         );
-      } else {
+      } else if (vm.lastScanError != null) {
         return Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 360),
@@ -574,13 +580,19 @@ class _LanShareScreenState extends State<LanShareScreen>
                     child: ElevatedButton.icon(
                       onPressed: () => vm.startScanning(),
                       icon: const Icon(Icons.refresh_rounded, size: 18),
-                      label: const Text('重新搜索'),
+                      label: Text(strings.isEnglish ? 'Rescan' : '重新搜索'),
                     ),
                   ),
                 ],
               ),
             ),
           ),
+        );
+      } else {
+        return AppEmptyState(
+          icon: Icons.radar_rounded,
+          title: strings.lanShareNoDevices,
+          message: strings.lanShareRadarStoppedHint,
         );
       }
     }

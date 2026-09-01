@@ -10,6 +10,20 @@ import '../../../domain/rag_models.dart';
 import '../../../domain/rag_ports.dart';
 import '../viewmodels/rag_knowledge_viewmodel.dart';
 
+final _kPlaceholderRagDocuments = List.generate(
+  4,
+  (i) => RagDocumentMetadata(
+    id: 'placeholder-doc-$i',
+    name: i.isEven
+        ? 'system_architecture_${i + 1}.pdf'
+        : 'deployment_guide_${i + 1}.md',
+    mimeType: i.isEven ? 'application/pdf' : 'text/markdown',
+    sizeBytes: 1024 * 1024 * (i + 1),
+    uploadedAt: DateTime(2026, 9, 1),
+    chunkCount: 12 + i * 4,
+  ),
+);
+
 class _RagStrings {
   final bool isEn;
   const _RagStrings(this.isEn);
@@ -289,40 +303,16 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
     ThemeData theme,
   ) {
     if (viewModel.isInitialLoading) {
-      return AppSkeletonizer.zone(
+      return AppSkeletonizer(
         enabled: true,
         semanticsLabel: strings.loadingKnowledge,
-        child: ListView.builder(
-          physics: const NeverScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(12),
-          itemCount: 4,
-          itemBuilder: (context, index) {
-            return Card(
-              margin: const EdgeInsets.only(bottom: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: ListTile(
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-                leading: const Bone.circle(size: 40),
-                title: Bone(width: index.isEven ? 160 : 220, height: 16),
-                subtitle: Padding(
-                  padding: const EdgeInsets.only(top: 6.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: const [
-                      Bone(width: 120, height: 12),
-                      SizedBox(height: 4),
-                      Bone(width: 180, height: 12),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
+        child: _buildDocumentList(
+          context,
+          viewModel,
+          strings,
+          theme,
+          documents: _kPlaceholderRagDocuments,
+          isSkeleton: true,
         ),
       );
     }
@@ -391,11 +381,31 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
       );
     }
 
+    return _buildDocumentList(
+      context,
+      viewModel,
+      strings,
+      theme,
+      documents: viewModel.documents,
+    );
+  }
+
+  Widget _buildDocumentList(
+    BuildContext context,
+    RagKnowledgeViewModel viewModel,
+    _RagStrings strings,
+    ThemeData theme, {
+    required List<RagDocumentMetadata> documents,
+    bool isSkeleton = false,
+  }) {
     return ListView.builder(
+      physics: isSkeleton
+          ? const NeverScrollableScrollPhysics()
+          : const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.all(12),
-      itemCount: viewModel.documents.length,
+      itemCount: documents.length,
       itemBuilder: (context, index) {
-        final doc = viewModel.documents[index];
+        final doc = documents[index];
         final isPdf = doc.name.toLowerCase().endsWith('.pdf');
         final dateStr = DateFormat('yyyy-MM-dd HH:mm').format(doc.uploadedAt);
 
@@ -466,7 +476,9 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
             trailing: IconButton(
               icon: const Icon(Icons.delete_outline),
               color: theme.colorScheme.error,
-              onPressed: () => _handleDelete(context, strings, viewModel, doc),
+              onPressed: isSkeleton
+                  ? null
+                  : () => _handleDelete(context, strings, viewModel, doc),
             ),
           ),
         );

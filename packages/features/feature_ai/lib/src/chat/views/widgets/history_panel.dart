@@ -1,5 +1,17 @@
 part of '../llm_chat_screen.dart';
 
+final _kPlaceholderChatRecords = List.generate(
+  4,
+  (i) => AiChatRecord(
+    id: 'placeholder-chat-$i',
+    title: 'Chat Session Title Placeholder ${i + 1}',
+    model: 'gpt-4o',
+    messages: const [],
+    createdAt: DateTime(2026, 9, 1),
+    updatedAt: DateTime(2026, 9, 1),
+  ),
+);
+
 class HistoryPanel extends StatefulWidget {
   final List<AiChatRecord> chats;
   final String? activeChatId;
@@ -118,21 +130,32 @@ class _HistoryPanelState extends State<HistoryPanel> {
         ),
         Expanded(
           child: widget.loading
-              ? AppSkeletonizer.zone(
+              ? AppSkeletonizer(
                   enabled: true,
                   semanticsLabel: widget.strings.loading,
                   child: ListView.separated(
                     physics: const NeverScrollableScrollPhysics(),
-                    itemCount: 4,
+                    itemCount: _kPlaceholderChatRecords.length,
                     separatorBuilder: (_, _) => const Divider(height: 1),
                     itemBuilder: (context, index) {
+                      final chat = _kPlaceholderChatRecords[index];
                       return ListTile(
-                        leading: const Bone.circle(size: 24),
-                        title: Bone(
-                          width: index.isEven ? 160 : 200,
-                          height: 16,
+                        leading: const Icon(Icons.chat_bubble_outline_rounded),
+                        title: OverflowScrollText(
+                          chat.title,
+                          selectable: false,
+                          maxLines: 1,
                         ),
-                        subtitle: const Bone(width: 80, height: 12),
+                        subtitle: OverflowScrollText(
+                          widget.formatTime(chat.updatedAt),
+                          selectable: false,
+                          maxLines: 1,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colorScheme.onSurface.withValues(alpha: 0.58),
+                          ),
+                        ),
+                        trailing: const Icon(Icons.delete_outline),
                       );
                     },
                   ),

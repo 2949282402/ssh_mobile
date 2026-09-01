@@ -2,6 +2,16 @@
 
 part of 'system_admin_screen.dart';
 
+final _kPlaceholderSessions = List.generate(
+  4,
+  (i) => ActiveSession(
+    username: 'user_${i + 1}',
+    tty: 'pts/$i',
+    ipAddress: '192.168.1.${50 + i}',
+    loginTime: '2026-09-01 10:00:00',
+  ),
+);
+
 class _SessionsTab extends StatefulWidget {
   final AppStrings strings;
   final ColorScheme colorScheme;
@@ -29,23 +39,18 @@ class _SessionsTabState extends State<_SessionsTab>
     final loadingSessions = context.select<SystemAdminViewModel, bool>(
       (vm) => vm.loadingSessions,
     );
-    final sessions = context.select<SystemAdminViewModel, List<ActiveSession>>(
-      (vm) => vm.sessions,
-    );
-    if (loadingSessions) {
-      return AppSkeletonizer.zone(
-        enabled: true,
-        semanticsLabel: widget.strings.activeSessions,
-        child: const AppSkeletonList(hasLeading: true),
-      );
-    }
+    final rawSessions = context
+        .select<SystemAdminViewModel, List<ActiveSession>>(
+          (vm) => vm.sessions,
+        );
+    final sessions = loadingSessions ? _kPlaceholderSessions : rawSessions;
 
     final id = context.select<SystemAdminViewModel, String?>(
       (vm) => vm.selectedConnectionId,
     );
     if (id == null) return const SizedBox.shrink();
 
-    if (sessions.isEmpty) {
+    if (!loadingSessions && sessions.isEmpty) {
       return RefreshIndicator(
         onRefresh: () => viewModel.fetchSessions(id, force: true),
         child: ListView(
@@ -68,65 +73,74 @@ class _SessionsTabState extends State<_SessionsTab>
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: _AdminListSurface(
-          child: ListView.separated(
-            itemCount: sessions.length,
-            separatorBuilder: (_, _) => Divider(
-              height: 1,
-              thickness: 1,
-              color: widget.colorScheme.outlineVariant.withValues(alpha: 0.5),
-            ),
-            itemBuilder: (context, index) {
-              final s = sessions[index];
-              return ListTile(
-                leading: Icon(
-                  Icons.terminal_rounded,
-                  size: 20,
-                  color: widget.colorScheme.primary,
-                ),
-                title: Row(
-                  children: [
-                    Text(
-                      s.username,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    const SizedBox(width: 12),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
+          child: AppSkeletonizer(
+            enabled: loadingSessions,
+            semanticsLabel: widget.strings.activeSessions,
+            child: ListView.separated(
+              physics: loadingSessions
+                  ? const NeverScrollableScrollPhysics()
+                  : const AlwaysScrollableScrollPhysics(),
+              itemCount: sessions.length,
+              separatorBuilder: (_, _) => Divider(
+                height: 1,
+                thickness: 1,
+                color: widget.colorScheme.outlineVariant.withValues(alpha: 0.5),
+              ),
+              itemBuilder: (context, index) {
+                final s = sessions[index];
+                return ListTile(
+                  leading: Icon(
+                    Icons.terminal_rounded,
+                    size: 20,
+                    color: widget.colorScheme.primary,
+                  ),
+                  title: Row(
+                    children: [
+                      Text(
+                        s.username,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
                       ),
-                      decoration: BoxDecoration(
-                        color: widget.colorScheme.secondaryContainer,
-                        borderRadius: BorderRadius.circular(AppTheme.radiusXs),
-                      ),
-                      child: Text(
-                        s.tty,
-                        style: TextStyle(
-                          color: widget.colorScheme.onSecondaryContainer,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
+                      const SizedBox(width: 12),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: widget.colorScheme.secondaryContainer,
+                          borderRadius: BorderRadius.circular(AppTheme.radiusXs),
+                        ),
+                        child: Text(
+                          s.tty,
+                          style: TextStyle(
+                            color: widget.colorScheme.onSecondaryContainer,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
-                ),
-                subtitle: OverflowScrollText(
-                  '${s.loginTime} ${s.ipAddress.isNotEmpty ? '(${s.ipAddress})' : ''}',
-                  selectable: false,
-                  maxLines: 1,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: widget.colorScheme.onSurface.withValues(alpha: 0.58),
+                    ],
                   ),
-                ),
-                trailing: IconButton(
-                  icon: const Icon(Icons.login_outlined),
-                  color: widget.colorScheme.error,
-                  tooltip: widget.strings.killSession,
-                  onPressed: () => _confirmKillSession(s),
-                ),
-              );
-            },
+                  subtitle: OverflowScrollText(
+                    '${s.loginTime} ${s.ipAddress.isNotEmpty ? '(${s.ipAddress})' : ''}',
+                    selectable: false,
+                    maxLines: 1,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: widget.colorScheme.onSurface.withValues(alpha: 0.58),
+                    ),
+                  ),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.login_outlined),
+                    color: widget.colorScheme.error,
+                    tooltip: widget.strings.killSession,
+                    onPressed: loadingSessions
+                        ? null
+                        : () => _confirmKillSession(s),
+                  ),
+                );
+              },
+            ),
           ),
         ),
       ),

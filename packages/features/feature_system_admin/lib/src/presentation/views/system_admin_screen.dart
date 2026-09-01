@@ -668,18 +668,42 @@ class _RootRequiredTabWrapper extends StatelessWidget {
 
     if (isConnecting) {
       return Center(
-        child: AppSectionCard(
-          title: strings.adminRootAccess,
-          subtitle: strings.verifyingPrivilege,
-          icon: Icons.admin_panel_settings_outlined,
-          padding: const EdgeInsets.all(22),
-          child: AppSkeletonizer.zone(
-            enabled: true,
-            semanticsLabel: strings.verifyingPrivilege,
-            child: const AppSkeletonList(
-              hasLeading: true,
-              itemCount: 2,
-              padding: EdgeInsets.zero,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 480),
+          child: AppSectionCard(
+            title: strings.adminRootAccess,
+            subtitle: strings.verifyingPrivilege,
+            icon: Icons.admin_panel_settings_outlined,
+            padding: const EdgeInsets.all(22),
+            child: AppSkeletonizer.zone(
+              enabled: true,
+              semanticsLabel: strings.verifyingPrivilege,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const AppIconBadge(
+                      icon: Icons.security_rounded,
+                      size: 36,
+                      iconSize: 18,
+                    ),
+                    title: const Text('Verifying root & sudo privileges'),
+                    subtitle: const Text(
+                      'Checking execution permissions on remote host...',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: FilledButton.tonal(
+                      onPressed: null,
+                      child: Text(strings.verifyingPrivilege),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),

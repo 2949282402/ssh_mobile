@@ -38,7 +38,12 @@ class _LanShareFeatureScopeState extends State<LanShareFeatureScope> {
     final coordinator = context.read<LanReceiverCoordinator>();
     if (!identical(_coordinator, coordinator)) {
       _coordinator = coordinator;
-      _viewModelFuture = coordinator.ensureViewModel();
+      final existing = coordinator.viewModel;
+      if (existing != null) {
+        _inheritedViewModel = existing;
+      } else {
+        _viewModelFuture = coordinator.ensureViewModel();
+      }
     }
   }
 
@@ -50,13 +55,20 @@ class _LanShareFeatureScopeState extends State<LanShareFeatureScope> {
 
   @override
   Widget build(BuildContext context) {
-    if (_inheritedViewModel != null) return widget.child;
+    final currentVm = _inheritedViewModel ?? _coordinator?.viewModel;
+    if (currentVm != null) {
+      return ChangeNotifierProvider<LanShareViewModel>.value(
+        value: currentVm,
+        child: widget.child,
+      );
+    }
     final strings = context.select<LanShareSettingsPort, LanShareStrings>(
       (settings) => settings.strings,
     );
 
     return FutureBuilder<LanShareViewModel>(
       future: _viewModelFuture,
+      initialData: _coordinator?.viewModel,
       builder: (context, snapshot) {
         final viewModel = snapshot.data;
         if (viewModel != null) {
@@ -93,13 +105,134 @@ class _LanShareFeatureScopeState extends State<LanShareFeatureScope> {
           );
         }
         return Scaffold(
-          body: AppSkeletonizer.zone(
-            enabled: true,
-            semanticsLabel: strings.lanShare,
-            child: const AppSkeletonList(hasLeading: true, itemCount: 6),
-          ),
+          body: _LanShareScreenSkeleton(strings: strings),
         );
       },
+    );
+  }
+}
+
+class _LanShareScreenSkeleton extends StatelessWidget {
+  const _LanShareScreenSkeleton({required this.strings});
+
+  final LanShareStrings strings;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final label = strings.isEnglish ? 'This Device: ' : '本机设备：';
+
+    return AppSkeletonizer.zone(
+      enabled: true,
+      semanticsLabel: strings.lanShare,
+      child: AppPageSurface(
+        child: SafeArea(
+          child: Column(
+            children: [
+              // Page Header
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: AppPageHeader(
+                  title: strings.lanShare,
+                  subtitleWidget: Text(
+                    strings.lanShareRadarHint,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  icon: Icons.radar_rounded,
+                  trailing: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.qr_code_scanner_rounded, size: 22),
+                      SizedBox(width: 14),
+                      Icon(Icons.qr_code_outlined, size: 22),
+                      SizedBox(width: 14),
+                      Icon(Icons.sync_rounded, size: 22),
+                      SizedBox(width: 14),
+                      Icon(Icons.more_vert_rounded, size: 22),
+                    ],
+                  ),
+                ),
+              ),
+
+              // Self info bar
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 6, 16, 4),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: colorScheme.primaryContainer.withValues(alpha: 0.28),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: colorScheme.primary.withValues(alpha: 0.18),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.perm_device_info_rounded,
+                        size: 16,
+                        color: colorScheme.primary.withValues(alpha: 0.75),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Row(
+                          children: [
+                            Text(
+                              label,
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13,
+                              ),
+                            ),
+                            Text(
+                              'Local Device',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(
+                        Icons.arrow_drop_down_rounded,
+                        size: 18,
+                        color: colorScheme.primary.withValues(alpha: 0.8),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              // Tabs
+              DefaultTabController(
+                length: 2,
+                child: TabBar(
+                  tabs: [
+                    Tab(text: strings.lanShareDeviceList),
+                    Tab(text: strings.lanShareTransferHistory),
+                  ],
+                ),
+              ),
+
+              // Body: Radar Scanning state
+              Expanded(
+                child: AppEmptyState(
+                  icon: Icons.radar_rounded,
+                  title: strings.lanShareNoDevices,
+                  message: strings.lanShareRadarHint,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

@@ -85,3 +85,8 @@ front/coverage/
 
 # Agent worktree scratch directories.
 /.claude/worktrees/
+
+# Test artifacts and temporary codegen scratch directories
+**/test/**/failures/
+ssh_mobile_telemetry_codegen_*/
+

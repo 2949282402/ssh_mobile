@@ -133,6 +133,19 @@
 - **Platform / Input Capability** 负责交互能力（鼠标 Hover、右键菜单、键盘快捷键、触控手势）。
 - 移动端 touch target 严格满足 >= 44~48 logical px。
 
+### 13. Skeleton Architecture & Parity Policy（光流骨架屏与真实 UI 1:1 一致性约束）
+- **1:1 几何重心与容器层级对齐 (1:1 Layout & Geometry Parity)**：
+  - 骨架屏必须与真实数据加载就绪后的 UI 保持 1:1 严格的几何结构、内外边距（Padding/Margin）、圆角（BorderRadius）、分割线（Divider）与层级对齐。
+  - 严禁在骨架屏中引入真实 UI 不存在的装饰（如虚假的 `Divider`、不存在的浮岛容器、不匹配的头像组件等），严禁骨架消失进入真实 UI 时产生任何由于尺寸/位置差异引起的布局跳变（Layout Shift）。
+- **优先同源复用模式 (Prefer Component Reuse with Dummy Data)**：
+  - 当列表/卡片/视图支持数据绑定时，优先通过传入 `_kPlaceholder` 假数据调用真实界面的构建函数或 Widget（如 `_buildConnectionList`、`_SftpEntryTile`、`_TraceDebugBody`），直接由 `AppSkeletonizer(enabled: true, ...)` 将其转为微光，从根源上杜绝结构偏差。
+- **响应式与断点一致性 (Responsive Breakpoint Parity)**：
+  - 骨架屏必须与真实 UI 采用相同的 `LayoutBuilder` / `WindowSizeClass` 响应式断点（如宽屏桌面端双列并排、移动端纵向堆叠），严禁骨架屏在宽屏下退化为固定单列。
+- **组件与操作区占位对齐 (Component & Action Parity)**：
+  - **顶栏（Header / Toolbar）**：左侧导航按钮、中间标题与上下文统计、右侧操作按钮的数量与位置必须严格一致。
+  - **底栏（Composer / Action Bar）**：必须包裹与真实 UI 相同的 `SafeArea(top: false)`、边框与操作按钮（如工具箱加号、发送按钮），严禁图标类型与交互语义漂移。
+  - **气泡与列表卡片**：必须遵循与真实 UI 相同的非对称圆角、时间戳外置/内置规则与间距规范。
+
 ## 验证（代码变更）
 
 `flutter analyze --no-pub`、`flutter test --no-pub` 及受影响的 Full App 回归；

@@ -2,6 +2,17 @@
 
 part of 'system_admin_screen.dart';
 
+final _kPlaceholderPorts = List.generate(
+  6,
+  (i) => ListeningPort(
+    protocol: i.isEven ? 'tcp' : 'udp',
+    localAddress: '0.0.0.0',
+    localPort: 8080 + i,
+    processName: 'process-${i + 1}',
+    pid: 1000 + i,
+  ),
+);
+
 class _PortsManageSnapshot {
   final bool isConnecting;
   final bool isManageModeAvailable;
@@ -297,15 +308,7 @@ class _PortsTabState extends State<_PortsTab>
     return Selector<SystemAdminViewModel, _PortsManageSnapshot>(
       selector: (_, vm) => _PortsManageSnapshot.from(vm),
       builder: (context, snapshot, _) {
-        if (snapshot.isConnecting) {
-          return AppSkeletonizer.zone(
-            enabled: true,
-            semanticsLabel: widget.strings.listeningPorts,
-            child: const AppSkeletonList(hasLeading: true),
-          );
-        }
-
-        if (!snapshot.isManageModeAvailable) {
+        if (!snapshot.isConnecting && !snapshot.isManageModeAvailable) {
           return _RootRequiredView(
             strings: widget.strings,
             errorMessage: snapshot.errorMessage,
@@ -316,15 +319,10 @@ class _PortsTabState extends State<_PortsTab>
           );
         }
 
-        if (snapshot.loadingPorts) {
-          return AppSkeletonizer.zone(
-            enabled: true,
-            semanticsLabel: widget.strings.listeningPorts,
-            child: const AppSkeletonList(hasLeading: true),
-          );
-        }
+        final isLoading = snapshot.isConnecting || snapshot.loadingPorts;
+        final ports = isLoading ? _kPlaceholderPorts : snapshot.ports;
 
-        if (snapshot.ports.isEmpty) {
+        if (!isLoading && ports.isEmpty) {
           return RefreshIndicator(
             onRefresh: () => widget.viewModel.fetchPorts(id, force: true),
             child: ListView(
@@ -347,80 +345,87 @@ class _PortsTabState extends State<_PortsTab>
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: _AdminListSurface(
-              child: ListView.separated(
-                itemCount: snapshot.ports.length,
-                separatorBuilder: (_, _) => Divider(
-                  height: 1,
-                  thickness: 1,
-                  color: widget.colorScheme.outlineVariant.withValues(
-                    alpha: 0.5,
-                  ),
-                ),
-                itemBuilder: (context, index) {
-                  final p = snapshot.ports[index];
-                  return ListTile(
-                    leading: Icon(
-                      p.protocol.contains('udp')
-                          ? Icons.radio_button_checked
-                          : Icons.swap_horizontal_circle,
-                      color: widget.colorScheme.secondary,
+              child: AppSkeletonizer(
+                enabled: isLoading,
+                semanticsLabel: widget.strings.listeningPorts,
+                child: ListView.separated(
+                  physics: isLoading
+                      ? const NeverScrollableScrollPhysics()
+                      : const AlwaysScrollableScrollPhysics(),
+                  itemCount: ports.length,
+                  separatorBuilder: (_, _) => Divider(
+                    height: 1,
+                    thickness: 1,
+                    color: widget.colorScheme.outlineVariant.withValues(
+                      alpha: 0.5,
                     ),
-                    title: Row(
-                      children: [
-                        Text(
-                          '${p.protocol.toUpperCase()}  :${p.localPort}',
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Align(
-                            alignment: Alignment.centerRight,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color:
-                                    widget.colorScheme.surfaceContainerHighest,
-                                borderRadius: BorderRadius.circular(
-                                  AppTheme.radiusXs,
+                  ),
+                  itemBuilder: (context, index) {
+                    final p = ports[index];
+                    return ListTile(
+                      leading: Icon(
+                        p.protocol.contains('udp')
+                            ? Icons.radio_button_checked
+                            : Icons.swap_horizontal_circle,
+                        color: widget.colorScheme.secondary,
+                      ),
+                      title: Row(
+                        children: [
+                          Text(
+                            '${p.protocol.toUpperCase()}  :${p.localPort}',
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Align(
+                              alignment: Alignment.centerRight,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
                                 ),
-                              ),
-                              child: OverflowScrollText(
-                                p.processName,
-                                selectable: false,
-                                maxLines: 1,
-                                style: const TextStyle(
-                                  fontFamily: 'monospace',
-                                  fontFamilyFallback: [
-                                    'Consolas',
-                                    'Microsoft YaHei',
-                                    'PingFang SC',
-                                    'sans-serif',
-                                  ],
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 12,
+                                decoration: BoxDecoration(
+                                  color:
+                                      widget.colorScheme.surfaceContainerHighest,
+                                  borderRadius: BorderRadius.circular(
+                                    AppTheme.radiusXs,
+                                  ),
+                                ),
+                                child: OverflowScrollText(
+                                  p.processName,
+                                  selectable: false,
+                                  maxLines: 1,
+                                  style: const TextStyle(
+                                    fontFamily: 'monospace',
+                                    fontFamilyFallback: [
+                                      'Consolas',
+                                      'Microsoft YaHei',
+                                      'PingFang SC',
+                                      'sans-serif',
+                                    ],
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 12,
+                                  ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                    subtitle: OverflowScrollText(
-                      'Address: ${p.localAddress} ${p.pid != null ? '• PID: ${p.pid}' : ''}',
-                      selectable: false,
-                      maxLines: 1,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: widget.colorScheme.onSurface.withValues(
-                          alpha: 0.58,
+                        ],
+                      ),
+                      subtitle: OverflowScrollText(
+                        'Address: ${p.localAddress} ${p.pid != null ? '• PID: ${p.pid}' : ''}',
+                        selectable: false,
+                        maxLines: 1,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: widget.colorScheme.onSurface.withValues(
+                            alpha: 0.58,
+                          ),
                         ),
                       ),
-                    ),
-                  );
-                },
+                    );
+                  },
+                ),
               ),
             ),
           ),

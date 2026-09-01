@@ -323,14 +323,9 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
             children: [
               if (widget.showRefresh) _buildHeader(context, isRefreshing: true),
               Expanded(
-                child: AppSkeletonizer.zone(
-                  enabled: true,
-                  semanticsLabel: _monitorText(
-                    strings,
-                    'Loading snapshot',
-                    '正在加载快照',
-                  ),
-                  child: const AppSkeletonList(hasLeading: true),
+                child: _ServerSnapshotLoadingSkeleton(
+                  strings: strings,
+                  connections: connections,
                 ),
               ),
             ],
@@ -765,6 +760,179 @@ class _ServiceDetailLine extends StatelessWidget {
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ServerSnapshotLoadingSkeleton extends StatelessWidget {
+  const _ServerSnapshotLoadingSkeleton({
+    required this.strings,
+    required this.connections,
+  });
+
+  final AppStrings strings;
+  final List<ConnectionConfig> connections;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final borderSide = BorderSide(color: colorScheme.outlineVariant);
+    final connection = connections.isNotEmpty
+        ? connections.first
+        : ConnectionConfig(
+            id: 'placeholder',
+            name: 'Production-Primary-Node',
+            host: '10.0.0.12',
+            port: 22,
+            username: 'root',
+          );
+
+    return AppSkeletonizer.zone(
+      enabled: true,
+      semanticsLabel: _monitorText(
+        strings,
+        'Loading snapshot',
+        '正在加载快照',
+      ),
+      child: ListView(
+        physics: const NeverScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+        children: [
+          // Connection Header Card
+          Container(
+            margin: const EdgeInsets.only(top: 12.0),
+            decoration: BoxDecoration(
+              color: colorScheme.surface,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(AppTheme.radiusSmall),
+              ),
+              border: Border(
+                left: borderSide,
+                right: borderSide,
+                top: borderSide,
+              ),
+            ),
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+            child: Row(
+              children: [
+                const AppIconBadge(
+                  icon: Icons.dns_outlined,
+                  size: 32,
+                  iconSize: 16,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        connection.name,
+                        maxLines: 1,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 14,
+                        ),
+                      ),
+                      Text(
+                        '${connection.username}@${connection.host}',
+                        maxLines: 1,
+                        style: TextStyle(
+                          color: colorScheme.onSurfaceVariant,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Snapshot rows
+          for (int i = 0; i < 4; i++)
+            Container(
+              decoration: BoxDecoration(
+                color: colorScheme.surface,
+                borderRadius: i == 3
+                    ? const BorderRadius.vertical(
+                        bottom: Radius.circular(AppTheme.radiusSmall),
+                      )
+                    : BorderRadius.zero,
+                border: Border(
+                  left: borderSide,
+                  right: borderSide,
+                  bottom: i == 3
+                      ? borderSide
+                      : BorderSide(
+                          color: colorScheme.outlineVariant.withValues(
+                            alpha: 0.4,
+                          ),
+                        ),
+                ),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              child: Row(
+                children: [
+                  AppIconBadge(
+                    icon: i % 2 == 0
+                        ? Icons.tune_rounded
+                        : Icons.terminal_rounded,
+                    size: 32,
+                    iconSize: 16,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          i == 0
+                              ? 'nginx.service'
+                              : (i == 1
+                                  ? 'docker.service'
+                                  : (i == 2
+                                      ? 'postgres.service'
+                                      : 'redis.service')),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'PID: ${1000 + i * 142} · Active (running)',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: colorScheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(AppTheme.radiusPill),
+                    ),
+                    child: Text(
+                      'ACTIVE',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        color: colorScheme.onPrimaryContainer,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
     );

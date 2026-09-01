@@ -2,6 +2,17 @@
 
 part of 'system_admin_screen.dart';
 
+final _kPlaceholderServices = List.generate(
+  6,
+  (i) => SystemdService(
+    name: 'systemd-service-${i + 1}.service',
+    description: 'System Service Description Mock for Skeleton Placement',
+    loadState: 'loaded',
+    activeState: 'active',
+    subState: 'running',
+  ),
+);
+
 class _ServicesManageSnapshot {
   final bool isConnecting;
   final bool isManageModeAvailable;
@@ -383,15 +394,7 @@ class _ServicesTabState extends State<_ServicesTab>
     return Selector<SystemAdminViewModel, _ServicesManageSnapshot>(
       selector: (_, vm) => _ServicesManageSnapshot.from(vm),
       builder: (context, snapshot, _) {
-        if (snapshot.isConnecting) {
-          return AppSkeletonizer.zone(
-            enabled: true,
-            semanticsLabel: widget.strings.systemServices,
-            child: const AppSkeletonList(hasLeading: true),
-          );
-        }
-
-        if (!snapshot.isManageModeAvailable) {
+        if (!snapshot.isConnecting && !snapshot.isManageModeAvailable) {
           return _RootRequiredView(
             strings: widget.strings,
             errorMessage: snapshot.errorMessage,
@@ -402,15 +405,10 @@ class _ServicesTabState extends State<_ServicesTab>
           );
         }
 
-        if (snapshot.loadingServices) {
-          return AppSkeletonizer.zone(
-            enabled: true,
-            semanticsLabel: widget.strings.systemServices,
-            child: const AppSkeletonList(hasLeading: true),
-          );
-        }
-
-        final visibleServices = _visibleManageServices(snapshot.services);
+        final isLoading = snapshot.isConnecting || snapshot.loadingServices;
+        final services = isLoading
+            ? _kPlaceholderServices
+            : _visibleManageServices(snapshot.services);
 
         return RefreshIndicator(
           onRefresh: () => widget.viewModel.fetchServices(id, force: true),
@@ -420,6 +418,7 @@ class _ServicesTabState extends State<_ServicesTab>
                 padding: const EdgeInsets.all(12),
                 child: TextField(
                   controller: _serviceSearchController,
+                  enabled: !isLoading,
                   decoration: InputDecoration(
                     hintText: widget.strings.searchService,
                     prefixIcon: const Icon(Icons.search),
@@ -429,7 +428,56 @@ class _ServicesTabState extends State<_ServicesTab>
                 ),
               ),
               Expanded(
-                child: visibleServices.isEmpty
+                child: isLoading
+                    ? AppSkeletonizer(
+                        enabled: true,
+                        semanticsLabel: widget.strings.systemServices,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: _AdminListSurface(
+                            child: ListView.separated(
+                              physics: const NeverScrollableScrollPhysics(),
+                              itemCount: services.length,
+                              separatorBuilder: (_, _) => Divider(
+                                height: 1,
+                                thickness: 1,
+                                color: widget.colorScheme.outlineVariant
+                                    .withValues(alpha: 0.5),
+                              ),
+                              itemBuilder: (context, index) {
+                                final service = services[index];
+                                return ListTile(
+                                  leading: Icon(
+                                    Icons.play_circle_filled_rounded,
+                                    size: 20,
+                                    color: AppStatusColors.of(context).success,
+                                  ),
+                                  title: OverflowScrollText(
+                                    service.name,
+                                    selectable: false,
+                                    maxLines: 1,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  subtitle: OverflowScrollText(
+                                    '${service.activeState} (${service.subState}) • ${service.description}',
+                                    selectable: false,
+                                    maxLines: 1,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: widget.colorScheme.onSurface
+                                          .withValues(alpha: 0.58),
+                                    ),
+                                  ),
+                                  trailing: const Icon(Icons.more_vert),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                      )
+                    : services.isEmpty
                     ? ListView(
                         physics: const AlwaysScrollableScrollPhysics(),
                         children: const [
@@ -446,7 +494,7 @@ class _ServicesTabState extends State<_ServicesTab>
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                         child: _AdminListSurface(
                           child: ListView.separated(
-                            itemCount: visibleServices.length,
+                            itemCount: services.length,
                             separatorBuilder: (_, _) => Divider(
                               height: 1,
                               thickness: 1,
@@ -454,7 +502,7 @@ class _ServicesTabState extends State<_ServicesTab>
                                   .withValues(alpha: 0.5),
                             ),
                             itemBuilder: (context, index) {
-                              final service = visibleServices[index];
+                              final service = services[index];
                               return ListTile(
                                 leading: Icon(
                                   service.isRunning

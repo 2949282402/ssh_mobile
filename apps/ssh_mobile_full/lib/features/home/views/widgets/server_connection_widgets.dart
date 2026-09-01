@@ -82,55 +82,6 @@ class _ServerEmptyState extends StatelessWidget {
   }
 }
 
-class _ServerSkeletonList extends StatelessWidget {
-  const _ServerSkeletonList();
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return ListView.builder(
-      physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      itemCount: 3,
-      itemBuilder: (context, index) {
-        return Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceContainerHighest.withValues(
-              alpha: 0.3,
-            ),
-            borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-            border: Border.all(
-              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-              width: 1,
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Bone.square(
-                    size: 36,
-                    borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-                  ),
-                  const SizedBox(width: 12),
-                  const Bone(width: 140, height: 18),
-                ],
-              ),
-              const SizedBox(height: 14),
-              const Bone(width: 220, height: 12),
-              const SizedBox(height: 8),
-              const Bone(width: 100, height: 12),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
 class _ServerSelectionBar extends StatelessWidget {
   final AppStrings strings;
   final Set<String> selectedServerIds;
@@ -423,7 +374,7 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
                     ),
                 ],
               ),
-              if (!compactMobileCard) ...[
+              if (widget.isGrid) ...[
                 SizedBox(height: 8 * scale),
                 Row(
                   children: [
@@ -469,30 +420,27 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
                     ],
                   ],
                 ),
-              ],
-              if (!compactMobileCard) ...[
                 SizedBox(height: 6 * scale),
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child:
                       Selector<
-                        monitoring.MonitoringService,
-                        monitoring.ServerHealthSnapshot
+                        monitoring.MonitoringService?,
+                        monitoring.ServerHealthSnapshot?
                       >(
                         selector: (_, monitor) =>
-                            monitor.healthFor(widget.conn.id),
+                            monitor?.healthFor(widget.conn.id),
                         builder: (context, health, _) =>
-                            _buildHealthChip(context, health, widget.strings),
+                            health == null
+                                ? const SizedBox.shrink()
+                                : _buildHealthChip(context, health, widget.strings),
                       ),
                 ),
                 SizedBox(height: 12 * scale),
                 Divider(height: 1, color: colorScheme.outlineVariant),
                 SizedBox(height: 8 * scale),
-              ] else
-                SizedBox(height: 2 * scale),
-              Row(
-                children: [
-                  if (widget.isGrid) ...[
+                Row(
+                  children: [
                     IconButton(
                       visualDensity: VisualDensity.standard,
                       constraints: const BoxConstraints(
@@ -524,32 +472,16 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
                       ),
                     ],
                     const Spacer(),
-                  ] else
+                  ],
+                ),
+              ] else if (compactMobileCard) ...[
+                SizedBox(height: 2 * scale),
+                Row(
+                  children: [
                     Expanded(
                       child: Row(
                         children: [
-                          Flexible(
-                            child: TextButton.icon(
-                              onPressed: widget.onOpenNewTerminal,
-                              icon: Icon(
-                                Icons.add_to_photos_outlined,
-                                size: 16 * scale,
-                              ),
-                              label: Text(
-                                widget.strings.newWindow,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              style: TextButton.styleFrom(
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: 8 * scale,
-                                  vertical: 4 * scale,
-                                ),
-                              ),
-                            ),
-                          ),
                           if (sessionCount > 0) ...[
-                            SizedBox(width: 8 * scale),
                             Flexible(
                               child: TextButton.icon(
                                 onPressed: widget.onToggleConnectionWindows,
@@ -574,13 +506,161 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
                                 ),
                               ),
                             ),
+                            SizedBox(width: 8 * scale),
+                          ],
+                          Flexible(
+                            child: TextButton.icon(
+                              onPressed: widget.onOpenNewTerminal,
+                              icon: Icon(
+                                Icons.add_to_photos_outlined,
+                                size: 16 * scale,
+                              ),
+                              label: Text(
+                                widget.strings.newWindow,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              style: TextButton.styleFrom(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 8 * scale,
+                                  vertical: 4 * scale,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ] else ...[
+                SizedBox(height: 8 * scale),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.dns_outlined,
+                            size: 13 * scale,
+                            color: mutedTextColor.withValues(alpha: 0.72),
+                          ),
+                          SizedBox(width: 5 * scale),
+                          Flexible(
+                            child: Text(
+                              '${widget.conn.username}@${widget.conn.host}:${widget.conn.port}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: mutedTextColor,
+                              ),
+                            ),
+                          ),
+                          Selector<
+                            monitoring.MonitoringService?,
+                            monitoring.ServerHealthSnapshot?
+                          >(
+                            selector: (_, monitor) =>
+                                monitor?.healthFor(widget.conn.id),
+                            builder: (context, health, _) =>
+                                health == null
+                                    ? const SizedBox.shrink()
+                                    : Padding(
+                                        padding: EdgeInsets.only(
+                                          left: 8 * scale,
+                                        ),
+                                        child: _buildHealthChip(
+                                          context,
+                                          health,
+                                          widget.strings,
+                                        ),
+                                      ),
+                          ),
+                          if (sessionCount > 0) ...[
+                            Padding(
+                              padding: EdgeInsets.only(left: 8 * scale),
+                              child: Container(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 6 * scale,
+                                  vertical: 2 * scale,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: success.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(
+                                    AppTheme.radiusPill,
+                                  ),
+                                ),
+                                child: Text(
+                                  widget.strings.language == AppLanguage.en
+                                      ? '$sessionCount window${sessionCount == 1 ? "" : "s"}'
+                                      : '$sessionCount 个窗口',
+                                  style: TextStyle(
+                                    color: success,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ),
                           ],
                         ],
                       ),
                     ),
-                ],
-              ),
-              if (actualWindowsExpanded)
+                    if (!widget.serverSelectionMode) ...[
+                      SizedBox(width: 12 * scale),
+                      if (sessionCount > 0) ...[
+                        TextButton.icon(
+                          onPressed: widget.onToggleConnectionWindows,
+                          icon: Icon(
+                            widget.windowsExpanded
+                                ? Icons.expand_less_rounded
+                                : Icons.expand_more_rounded,
+                            size: 16 * scale,
+                          ),
+                          label: Text(
+                            widget.strings.language == AppLanguage.en
+                                ? 'Window List · $sessionCount'
+                                : '窗口列表 · $sessionCount',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          style: TextButton.styleFrom(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 8 * scale,
+                              vertical: 4 * scale,
+                            ),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ),
+                        SizedBox(width: 8 * scale),
+                      ],
+                      TextButton.icon(
+                        onPressed: widget.onOpenNewTerminal,
+                        icon: Icon(
+                          Icons.add_to_photos_outlined,
+                          size: 16 * scale,
+                        ),
+                        label: Text(
+                          widget.strings.newWindow,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        style: TextButton.styleFrom(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 8 * scale,
+                            vertical: 4 * scale,
+                          ),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+              if (actualWindowsExpanded) ...[
+                SizedBox(height: 8 * scale),
+                Divider(height: 1, color: colorScheme.outlineVariant),
                 TerminalWindowsPage(
                   key: PageStorageKey<String>(
                     'server-windows-${widget.conn.id}',
@@ -589,6 +669,7 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
                   showHeader: false,
                   embedded: true,
                 ),
+              ],
             ],
           ),
         ),
@@ -619,16 +700,14 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
         children: [
           Icon(_healthIcon(health.level), size: 13, color: color),
           const SizedBox(width: 5),
-          Flexible(
-            child: Text(
-              text,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: color,
-                fontSize: 12,
-                fontWeight: FontWeight.w800,
-              ),
+          Text(
+            text,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: color,
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
             ),
           ),
         ],

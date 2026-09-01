@@ -338,14 +338,11 @@ final class _AppTerminalModuleScopeState extends State<AppTerminalModuleScope> {
         }
         if (snapshot.connectionState != ConnectionState.done ||
             _historyRepository == null) {
-          final language = context.read<AppSettings>().language;
+          final appSettings = context.read<AppSettings?>();
+          final language = appSettings?.language ?? AppLanguage.en;
           final strings = AppStrings(language);
           return Scaffold(
-            body: AppSkeletonizer.zone(
-              enabled: true,
-              semanticsLabel: strings.terminalWindows,
-              child: const AppSkeletonList(hasLeading: true, itemCount: 6),
-            ),
+            body: _TerminalModuleScopeSkeleton(strings: strings),
           );
         }
         return Provider<feature_terminal.TerminalHistoryRepository>.value(
@@ -353,6 +350,220 @@ final class _AppTerminalModuleScopeState extends State<AppTerminalModuleScope> {
           child: widget.child,
         );
       },
+    );
+  }
+}
+
+class _TerminalModuleScopeSkeleton extends StatelessWidget {
+  const _TerminalModuleScopeSkeleton({required this.strings});
+
+  final AppStrings strings;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return AppSkeletonizer.zone(
+      enabled: true,
+      semanticsLabel: strings.terminalWindows,
+      child: AppPageSurface(
+        child: SafeArea(
+          child: Column(
+            children: [
+              // Session Tabs Bar
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(
+                          AppTheme.radiusSmall,
+                        ),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.terminal_rounded, size: 16),
+                          SizedBox(width: 8),
+                          Text(
+                            'Session 1: bash',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          SizedBox(width: 6),
+                          Icon(Icons.close_rounded, size: 14),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: colorScheme.surfaceContainerLowest,
+                        borderRadius: BorderRadius.circular(
+                          AppTheme.radiusSmall,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.terminal_outlined,
+                            size: 16,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Session 2',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Spacer(),
+                    const Icon(Icons.add_rounded, size: 22),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+
+              // Terminal Screen Viewport
+              Expanded(
+                child: Container(
+                  width: double.infinity,
+                  color: Colors.black,
+                  padding: const EdgeInsets.all(14),
+                  child: const Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Connecting to production-host.internal:22...',
+                        style: TextStyle(
+                          color: Colors.white70,
+                          fontFamily: 'monospace',
+                          fontSize: 12,
+                        ),
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        'Linux prod-node-01 6.8.0-generic #42-Ubuntu SMP x86_64',
+                        style: TextStyle(
+                          color: Colors.white70,
+                          fontFamily: 'monospace',
+                          fontSize: 12,
+                        ),
+                      ),
+                      SizedBox(height: 8),
+                      Text(
+                        'admin@prod-node-01:~\$ systemctl status worker-pool',
+                        style: TextStyle(
+                          color: Colors.greenAccent,
+                          fontFamily: 'monospace',
+                          fontSize: 12,
+                        ),
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        '● worker-pool.service - Background Task Dispatcher',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontFamily: 'monospace',
+                          fontSize: 12,
+                        ),
+                      ),
+                      SizedBox(height: 2),
+                      Text(
+                        '     Loaded: loaded (/lib/systemd/system/worker-pool.service; enabled)',
+                        style: TextStyle(
+                          color: Colors.white60,
+                          fontFamily: 'monospace',
+                          fontSize: 12,
+                        ),
+                      ),
+                      SizedBox(height: 2),
+                      Text(
+                        '     Active: active (running) since Tue 2026-09-01 08:30:12 UTC',
+                        style: TextStyle(
+                          color: Colors.greenAccent,
+                          fontFamily: 'monospace',
+                          fontSize: 12,
+                        ),
+                      ),
+                      SizedBox(height: 8),
+                      Text(
+                        'admin@prod-node-01:~\$ █',
+                        style: TextStyle(
+                          color: Colors.greenAccent,
+                          fontFamily: 'monospace',
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              // Bottom Accessory Bar
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: colorScheme.surfaceContainerHighest,
+                  border: Border(
+                    top: BorderSide(color: colorScheme.outlineVariant),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    _buildAccessoryKey('ESC'),
+                    _buildAccessoryKey('TAB'),
+                    _buildAccessoryKey('CTRL'),
+                    _buildAccessoryKey('ALT'),
+                    const Spacer(),
+                    const Icon(Icons.keyboard_arrow_up_rounded, size: 20),
+                    const SizedBox(width: 8),
+                    const Icon(Icons.keyboard_arrow_down_rounded, size: 20),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAccessoryKey(String label) {
+    return Container(
+      margin: const EdgeInsets.only(right: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.black26,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
+      ),
     );
   }
 }
