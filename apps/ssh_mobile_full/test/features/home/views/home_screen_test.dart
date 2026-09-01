@@ -509,6 +509,40 @@ void main() {
 
     await disposeHome(tester);
   });
+
+  testWidgets('handles settings notification and state updates', (
+    tester,
+  ) async {
+    await pumpHome(tester, settle: const Duration(milliseconds: 100));
+    expect(find.byType(HomeScreen), findsOneWidget);
+
+    final innerContext = tester.element(find.byType(ServerListPane));
+    const OpenSettingsNotification().dispatch(innerContext);
+    await tester.pumpAndSettle();
+    expect(find.byType(Drawer), findsOneWidget);
+
+    // Close drawer
+    await tester.tap(find.byTooltip('Close'));
+    await tester.pumpAndSettle();
+
+    final dynamic state = tester.state(find.byType(HomeScreen));
+    state.updateState(() {});
+    expect(state.settingsLabelAi(innerContext), 'AI');
+
+    const SwitchToAiTabNotification().dispatch(innerContext);
+    await tester.pump(const Duration(milliseconds: 100));
+
+    const feature_playbook.PlaybookAiNavigationNotification().dispatch(
+      innerContext,
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final pageView = tester.widget<PageView>(find.byType(PageView));
+    pageView.onPageChanged?.call(1);
+    pageView.onPageChanged?.call(0);
+
+    await disposeHome(tester);
+  });
 }
 
 final class _HomeFilePicker extends FilePickerPlatform {
