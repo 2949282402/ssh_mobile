@@ -9,6 +9,7 @@ import 'package:feature_terminal/feature_terminal.dart' as feature_terminal;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
+import 'package:app_ui/app_ui.dart';
 import 'package:ssh_core/ssh_core.dart' as ssh_core;
 import 'package:ssh_mobile/app/sftp_feature_adapters.dart';
 import 'package:ssh_mobile/app/system_admin_feature_adapters.dart';
@@ -46,7 +47,7 @@ void main() {
         ),
       ),
     );
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byType(AppSkeletonizer), findsOneWidget);
     await _pumpFrames(tester);
     expect(find.text('terminal-ready'), findsOneWidget);
 
@@ -72,7 +73,7 @@ void main() {
         ),
       ),
     );
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byType(AppSkeletonizer), findsOneWidget);
     await _pumpFrames(tester);
     expect(find.text('sftp-ready'), findsOneWidget);
   });

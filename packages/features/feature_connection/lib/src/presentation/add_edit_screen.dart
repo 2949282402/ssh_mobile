@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
+import 'package:app_ui/app_ui.dart';
 import 'package:connection_core/connection_core.dart';
 
 import '../application/connection_ports.dart';
@@ -238,13 +239,10 @@ class _AddEditScreenState extends State<AddEditScreen> {
                   ),
                   onPressed: isSaving || _isLoadingSecrets ? null : _save,
                   icon: isSaving
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
+                      ? const AppLoadingIndicator(
+                          size: 18,
+                          strokeWidth: 2,
+                          color: Colors.white,
                         )
                       : const Icon(Icons.verified_outlined, size: 20),
                   label: Text(
@@ -284,11 +282,15 @@ class _AddEditScreenState extends State<AddEditScreen> {
       ),
       body: ConnectionPageSurface(
         child: _isLoadingSecrets
-            ? const Center(
-                child: SizedBox(
-                  width: 28,
-                  height: 28,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+            ? AppSkeletonizer.zone(
+                enabled: true,
+                semanticsLabel: isEditing
+                    ? strings.editConnection
+                    : strings.addConnection,
+                child: const AppSkeletonList(
+                  hasLeading: false,
+                  itemCount: 6,
+                  padding: EdgeInsets.all(16),
                 ),
               )
             : Align(

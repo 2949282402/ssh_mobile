@@ -6,6 +6,7 @@
 import 'dart:async';
 
 import 'package:app_core/app_core.dart';
+import 'package:app_ui/app_ui.dart';
 import 'package:feature_terminal/feature_terminal.dart' as feature_terminal;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -337,8 +338,14 @@ final class _AppTerminalModuleScopeState extends State<AppTerminalModuleScope> {
         }
         if (snapshot.connectionState != ConnectionState.done ||
             _historyRepository == null) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
+          final language = context.read<AppSettings>().language;
+          final strings = AppStrings(language);
+          return Scaffold(
+            body: AppSkeletonizer.zone(
+              enabled: true,
+              semanticsLabel: strings.terminalWindows,
+              child: const AppSkeletonList(hasLeading: true, itemCount: 6),
+            ),
           );
         }
         return Provider<feature_terminal.TerminalHistoryRepository>.value(

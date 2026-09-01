@@ -56,15 +56,7 @@ class _StartupLoadingScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const Scaffold(
-      body: Center(
-        child: RepaintBoundary(
-          child: SizedBox(
-            width: 28,
-            height: 28,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-        ),
-      ),
+      body: Center(child: AppLoadingIndicator(size: 28, strokeWidth: 2)),
     );
   }
 }

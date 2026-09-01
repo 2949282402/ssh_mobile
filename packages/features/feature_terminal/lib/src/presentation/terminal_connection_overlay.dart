@@ -82,16 +82,12 @@ class TerminalConnectionOverlay extends StatelessWidget {
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 if (isWaiting)
-                                  RepaintBoundary(
-                                    child: SizedBox.square(
-                                      dimension: compact ? 48 : 58,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 3,
-                                        color: presentation.color,
-                                        backgroundColor: presentation.color
-                                            .withValues(alpha: 0.14),
-                                      ),
-                                    ),
+                                  AppLoadingIndicator(
+                                    size: compact ? 48 : 58,
+                                    strokeWidth: 3,
+                                    color: presentation.color,
+                                    backgroundColor: presentation.color
+                                        .withValues(alpha: 0.14),
                                   )
                                 else
                                   AppIconBadge(
@@ -312,12 +308,7 @@ class TerminalBufferedOutputIndicator extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const RepaintBoundary(
-                    child: SizedBox.square(
-                      dimension: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  ),
+                  const AppLoadingIndicator(size: 18, strokeWidth: 2),
                   const SizedBox(width: 10),
                   Text(
                     strings.restoringTerminalOutput,

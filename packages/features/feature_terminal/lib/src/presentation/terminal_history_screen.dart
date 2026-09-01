@@ -126,42 +126,14 @@ class _HistoryLoading extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) => SingleChildScrollView(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(minHeight: constraints.maxHeight),
-          child: Center(
-            child: Semantics(
-              key: const ValueKey('terminal-history-loading'),
-              container: true,
-              liveRegion: true,
-              label: strings.loadingConnectionHistory,
-              child: ExcludeSemantics(
-                child: Padding(
-                  padding: const EdgeInsets.all(AppTheme.pagePadding),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const SizedBox(
-                        width: 28,
-                        height: 28,
-                        child: CircularProgressIndicator(strokeWidth: 2.4),
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        strings.loadingConnectionHistory,
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
+    return AppSkeletonizer.zone(
+      key: const ValueKey('terminal-history-loading'),
+      enabled: true,
+      semanticsLabel: strings.loadingConnectionHistory,
+      child: const AppSkeletonList(
+        hasLeading: true,
+        itemCount: 6,
+        padding: EdgeInsets.all(AppTheme.pagePadding),
       ),
     );
   }
@@ -381,15 +353,13 @@ class _HistoryItem extends StatelessWidget {
                     tooltip: strings.deleteHistoryRecord,
                     color: colors.error,
                     icon: isDeleting
-                        ? SizedBox(
+                        ? AppLoadingIndicator(
                             key: ValueKey(
                               'terminal-history-delete-progress-${record.sessionId}',
                             ),
-                            width: 20,
-                            height: 20,
-                            child: const CircularProgressIndicator(
-                              strokeWidth: 2.2,
-                            ),
+                            size: 18,
+                            strokeWidth: 2,
+                            color: colors.error,
                           )
                         : const Icon(Icons.delete_outline_rounded),
                     onPressed: isDeleting ? null : () => _deleteRecord(context),

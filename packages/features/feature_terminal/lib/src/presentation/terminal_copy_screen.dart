@@ -161,11 +161,7 @@ class _TerminalCopyScreenState extends State<TerminalCopyScreen> {
                   ),
                   onPressed: actionLocked ? null : () => _copyAll(strings),
                   icon: actionLocked
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2.2),
-                        )
+                      ? const AppLoadingIndicator(size: 18, strokeWidth: 2)
                       : const Icon(Icons.copy_all_rounded),
                 ),
               ),
