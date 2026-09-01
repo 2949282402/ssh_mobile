@@ -12,6 +12,18 @@
 - `AppPageSurface`、`AppContentSurface`、`AppToolbar`、`AppDialog`、`AppConfirmDialog`、`AppErrorDialog`、`AppBottomSheet`、`AppEmptyState`、`AppLoadingIndicator`、`AppInlineProgress`、`AppSkeletonizer`、`AppTypography`、`AppSpacing`、`AppStatusColors`、`AppTheme` 和响应式工具在此包统一维护。
 - `AppTheme` 的主题组合入口与控件级构建器分文件维护；两者仍属于同一个私有 library，公共主题 API 不变。
 
+## New UI Page Checklist（新建 UI 页面规范检查清单）
+
+创建或重构页面时，必须依次遵循以下 Design System 构件与令牌：
+
+1. **`AppPageSurface`**：页面统一使用纯色中性底色作为工作区基底，消除渐变、毛玻璃或装饰性噪点。
+2. **`AppToolbar`**：统一使用标准工具栏（40~48dp 高度），操作项必须使用 `AppToolbarAction`（支持移动端 >=44dp 响应式热区与桌面端 32dp 紧凑尺寸）与 `AppToolbarGroup`。
+3. **`AppTypography`**：排版文本统一使用 `AppTypography.of(context)` / `context.typography`，禁止在 Feature 内散落硬编码 `fontSize:` 魔法数字。
+4. **`AppSpacing`**：内外边距与间隙统一使用 `context.spacing` / `AppSpacing.*` 预设间距（`insetsSm`, `insetsMd`, `vGapSm`, `hGapSm` 等），禁止硬编码 `EdgeInsets.all(13)` 或 `SizedBox(height: 17)`。
+5. **`AppEmptyState`**：列表、会话或详情无数据时统一使用 `AppEmptyState`（信息优先、24~28dp 紧凑图标、克制操作）。
+6. **`AppLoading`**：数据加载与耗时等待统一使用 `AppLoadingIndicator` / `AppInlineProgress` / `AppSkeletonizer`，禁止在 Feature 中直接使用裸 `CircularProgressIndicator`。
+7. **`AppDialog`**：对话框交互统一使用 `AppDialog` / `AppConfirmDialog` / `AppErrorDialog`，禁止在 Feature 中直接使用 Material `showDialog` + `AlertDialog`。
+
 ## 生命周期
 
 本包只创建 Flutter Widget 自己拥有的 Controller/AnimationController，并在对应 State 的 `dispose` 中释放；不持有 App Scope 或后台资源。
