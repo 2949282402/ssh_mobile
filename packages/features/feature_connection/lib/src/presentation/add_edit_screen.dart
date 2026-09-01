@@ -281,17 +281,17 @@ class _AddEditScreenState extends State<AddEditScreen> {
         child: stickyActionBar,
       ),
       body: ConnectionPageSurface(
-        child: AppSkeletonizer(
-          enabled: _isLoadingSecrets,
-          semanticsLabel: isEditing
-              ? strings.editConnection
-              : strings.addConnection,
-          child: Align(
-            alignment: Alignment.topCenter,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 800),
-              child: Form(
-                key: _formKey,
+        child: Form(
+          key: _formKey,
+          child: AppSkeletonizer(
+            enabled: _isLoadingSecrets,
+            semanticsLabel: isEditing
+                ? strings.editConnection
+                : strings.addConnection,
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 800),
                 child: ListView(
                   physics: _isLoadingSecrets
                       ? const NeverScrollableScrollPhysics()

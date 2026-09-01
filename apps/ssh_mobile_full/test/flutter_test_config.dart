@@ -9,6 +9,11 @@ typedef _DlopenDart =
     Pointer<Void> Function(Pointer<Uint8> filename, int flags);
 
 Future<void> testExecutable(FutureOr<void> Function() testMain) async {
+  if (Platform.isWindows) {
+    try {
+      DynamicLibrary.open('sqlite3.dll');
+    } catch (_) {}
+  }
   if (Platform.isLinux) {
     try {
       const rtldNow = 2;
