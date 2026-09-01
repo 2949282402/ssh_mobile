@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 import 'dart:ui' show SemanticsAction;
 
 import 'package:connection_core/connection_core.dart';
@@ -291,6 +290,121 @@ void main() {
     await disposeHome(tester);
   });
 
+  group('Shell Behavior Matrix', () {
+    for (final size in [
+      const Size(600, 800),
+      const Size(800, 700),
+      const Size(1024, 768),
+    ]) {
+      testWidgets(
+        'Windows ${size.width.toInt()}px uses desktop navigation shell and no bottom bar',
+        (tester) async {
+          tester.view.physicalSize = size;
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+
+          debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+          await pumpHome(tester, settle: const Duration(milliseconds: 100));
+
+          expect(find.byType(NavigationRail), findsOneWidget);
+          for (var index = 0; index < 5; index++) {
+            expect(find.byKey(ValueKey('home-nav-$index')), findsNothing);
+          }
+
+          await disposeHome(tester);
+        },
+      );
+    }
+
+    for (final size in [
+      const Size(390, 844),
+      const Size(600, 900),
+      const Size(800, 600),
+    ]) {
+      testWidgets(
+        'Android ${size.width.toInt()}px uses mobile bottom navigation and no rail',
+        (tester) async {
+          tester.view.physicalSize = size;
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+
+          debugDefaultTargetPlatformOverride = TargetPlatform.android;
+          await pumpHome(tester, settle: const Duration(milliseconds: 100));
+
+          expect(find.byType(NavigationRail), findsNothing);
+          expect(find.byKey(const ValueKey('home-nav-0')), findsOneWidget);
+
+          await disposeHome(tester);
+        },
+      );
+    }
+
+    testWidgets(
+      'Android 1000px tablet uses navigation rail and no mobile bottom bar',
+      (tester) async {
+        tester.view.physicalSize = const Size(1000, 700);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        await pumpHome(tester, settle: const Duration(milliseconds: 100));
+
+        expect(find.byType(NavigationRail), findsOneWidget);
+        for (var index = 0; index < 5; index++) {
+          expect(find.byKey(ValueKey('home-nav-$index')), findsNothing);
+        }
+
+        await disposeHome(tester);
+      },
+    );
+
+    testWidgets(
+      'Mobile navigation items maintain minimum 44 logical px touch hit area',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        await pumpHome(tester, settle: const Duration(milliseconds: 100));
+
+        for (var index = 0; index < 5; index++) {
+          final navItemFinder = find.byKey(ValueKey('home-nav-$index'));
+          expect(navItemFinder, findsOneWidget);
+          final size = tester.getSize(navItemFinder);
+          expect(size.height, greaterThanOrEqualTo(44.0));
+          expect(size.width, greaterThanOrEqualTo(44.0));
+        }
+
+        await disposeHome(tester);
+      },
+    );
+
+    testWidgets(
+      'Shell with textScale 1.3 renders cleanly without RenderFlex overflows',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1;
+        tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        await pumpHome(tester, settle: const Duration(milliseconds: 100));
+
+        expect(tester.takeException(), isNull);
+        expect(find.byKey(const ValueKey('home-nav-0')), findsOneWidget);
+
+        await disposeHome(tester);
+      },
+    );
+  });
+
   testWidgets('initial index is clamped while compact keyboard content loads', (
     tester,
   ) async {
@@ -392,6 +506,40 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
     expect(backupViewModel.importCalls, 2);
     expect(find.byType(SnackBar), findsOneWidget);
+
+    await disposeHome(tester);
+  });
+
+  testWidgets('handles settings notification and state updates', (
+    tester,
+  ) async {
+    await pumpHome(tester, settle: const Duration(milliseconds: 100));
+    expect(find.byType(HomeScreen), findsOneWidget);
+
+    final innerContext = tester.element(find.byType(ServerListPane));
+    const OpenSettingsNotification().dispatch(innerContext);
+    await tester.pumpAndSettle();
+    expect(find.byType(Drawer), findsOneWidget);
+
+    // Close drawer
+    await tester.tap(find.byTooltip('Close'));
+    await tester.pumpAndSettle();
+
+    final dynamic state = tester.state(find.byType(HomeScreen));
+    state.updateState(() {});
+    expect(state.settingsLabelAi(innerContext), 'AI');
+
+    const SwitchToAiTabNotification().dispatch(innerContext);
+    await tester.pump(const Duration(milliseconds: 100));
+
+    const feature_playbook.PlaybookAiNavigationNotification().dispatch(
+      innerContext,
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final pageView = tester.widget<PageView>(find.byType(PageView));
+    pageView.onPageChanged?.call(1);
+    pageView.onPageChanged?.call(0);
 
     await disposeHome(tester);
   });

@@ -34,67 +34,91 @@ void main() {
     expect(settingsDrawerWidthFor(viewportWidth: 1600, desktop: true), 560);
   });
 
+  group('WindowSizeClass', () {
+    test('classifies window widths into correct size classes', () {
+      expect(WindowSizeClass.fromWidth(320), WindowSizeClass.compact);
+      expect(WindowSizeClass.fromWidth(599), WindowSizeClass.compact);
+      expect(WindowSizeClass.fromWidth(600), WindowSizeClass.medium);
+      expect(WindowSizeClass.fromWidth(839), WindowSizeClass.medium);
+      expect(WindowSizeClass.fromWidth(840), WindowSizeClass.expanded);
+      expect(WindowSizeClass.fromWidth(1279), WindowSizeClass.expanded);
+      expect(WindowSizeClass.fromWidth(1280), WindowSizeClass.large);
+      expect(WindowSizeClass.fromWidth(1920), WindowSizeClass.large);
+    });
+
+    test('isExpandedOrLarger returns true for expanded and large', () {
+      expect(WindowSizeClass.compact.isExpandedOrLarger, isFalse);
+      expect(WindowSizeClass.medium.isExpandedOrLarger, isFalse);
+      expect(WindowSizeClass.expanded.isExpandedOrLarger, isTrue);
+      expect(WindowSizeClass.large.isExpandedOrLarger, isTrue);
+    });
+
+    test('isMediumOrLarger returns true for medium, expanded and large', () {
+      expect(WindowSizeClass.compact.isMediumOrLarger, isFalse);
+      expect(WindowSizeClass.medium.isMediumOrLarger, isTrue);
+      expect(WindowSizeClass.expanded.isMediumOrLarger, isTrue);
+      expect(WindowSizeClass.large.isMediumOrLarger, isTrue);
+    });
+  });
+
+  group('Platform and Input Capabilities', () {
+    test('isDesktopTargetPlatform correctly identifies desktop platforms', () {
+      expect(isDesktopTargetPlatform(TargetPlatform.windows), isTrue);
+      expect(isDesktopTargetPlatform(TargetPlatform.macOS), isTrue);
+      expect(isDesktopTargetPlatform(TargetPlatform.linux), isTrue);
+      expect(isDesktopTargetPlatform(TargetPlatform.android), isFalse);
+      expect(isDesktopTargetPlatform(TargetPlatform.iOS), isFalse);
+    });
+
+    test('isMobileTargetPlatform correctly identifies mobile platforms', () {
+      expect(isMobileTargetPlatform(TargetPlatform.android), isTrue);
+      expect(isMobileTargetPlatform(TargetPlatform.iOS), isTrue);
+      expect(isMobileTargetPlatform(TargetPlatform.windows), isFalse);
+      expect(isMobileTargetPlatform(TargetPlatform.macOS), isFalse);
+      expect(isMobileTargetPlatform(TargetPlatform.linux), isFalse);
+    });
+
+    test('isDesktopInputPlatform matches desktop target platforms', () {
+      expect(isDesktopInputPlatform(TargetPlatform.windows), isTrue);
+      expect(isDesktopInputPlatform(TargetPlatform.android), isFalse);
+    });
+
+    test('isTouchPlatform matches mobile target platforms', () {
+      expect(isTouchPlatform(TargetPlatform.android), isTrue);
+      expect(isTouchPlatform(TargetPlatform.windows), isFalse);
+    });
+  });
+
   group('MobileUiMetrics', () {
-    test('keeps desktop metrics unchanged', () {
+    test('keeps standard metrics consistent', () {
       final metrics = MobileUiMetrics.fromMetrics(
         size: const Size(1280 / 3, 2856 / 3),
         devicePixelRatio: 3,
         mobileTargetOverride: false,
       );
 
-      expect(metrics.controlScale, 1);
-      expect(metrics.chromeScale, 1);
+      expect(metrics.controlScale, 1.0);
+      expect(metrics.chromeScale, 1.0);
       expect(metrics.visualDensity, VisualDensity.standard);
+      expect(metrics.navigationHeight, 56.0);
+      expect(metrics.navigationHorizontalInset, 0.0);
+      expect(metrics.navigationBottomInset, 0.0);
     });
 
-    test('applies the narrow 1.5K correction', () {
-      final metrics = MobileUiMetrics.fromMetrics(
-        size: const Size(1280 / 3, 2856 / 3),
-        devicePixelRatio: 3,
-        mobileTargetOverride: true,
-      );
+    test(
+      'mobile target returns standard metrics without resolution interpolation',
+      () {
+        final metrics = MobileUiMetrics.fromMetrics(
+          size: const Size(1280 / 3, 2856 / 3),
+          devicePixelRatio: 3,
+          mobileTargetOverride: true,
+        );
 
-      expect(metrics.controlScale, closeTo(0.84, 0.0001));
-      expect(metrics.chromeScale, closeTo(0.952, 0.0001));
-      expect(metrics.navigationHeight, closeTo(64.736, 0.001));
-      expect(metrics.visualDensity.horizontal, closeTo(-0.4, 0.0001));
-      expect(metrics.visualDensity.vertical, closeTo(-0.4, 0.0001));
-    });
-
-    test('uses standard chrome at the 2K boundary', () {
-      final metrics = MobileUiMetrics.fromMetrics(
-        size: const Size(1440 / 3.5, 3120 / 3.5),
-        devicePixelRatio: 3.5,
-        mobileTargetOverride: true,
-      );
-
-      expect(metrics.controlScale, closeTo(0.92, 0.0001));
-      expect(metrics.chromeScale, 1);
-      expect(metrics.navigationHeight, 68);
-      expect(metrics.visualDensity, VisualDensity.standard);
-    });
-
-    test('interpolates monotonically between density classes', () {
-      final low = MobileUiMetrics.fromMetrics(
-        size: const Size(1240 / 3, 2700 / 3),
-        devicePixelRatio: 3,
-        mobileTargetOverride: true,
-      );
-      final middle = MobileUiMetrics.fromMetrics(
-        size: const Size(1340 / 3.2, 2900 / 3.2),
-        devicePixelRatio: 3.2,
-        mobileTargetOverride: true,
-      );
-      final high = MobileUiMetrics.fromMetrics(
-        size: const Size(1440 / 3.5, 3120 / 3.5),
-        devicePixelRatio: 3.5,
-        mobileTargetOverride: true,
-      );
-
-      expect(low.controlScale, lessThan(middle.controlScale));
-      expect(middle.controlScale, lessThan(high.controlScale));
-      expect(low.chromeScale, lessThan(middle.chromeScale));
-      expect(middle.chromeScale, lessThan(high.chromeScale));
-    });
+        expect(metrics.controlScale, 1.0);
+        expect(metrics.chromeScale, 1.0);
+        expect(metrics.navigationHeight, 56.0);
+        expect(metrics.visualDensity, VisualDensity.standard);
+      },
+    );
   });
 }

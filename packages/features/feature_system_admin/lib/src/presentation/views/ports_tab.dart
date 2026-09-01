@@ -327,73 +327,85 @@ class _PortsTabState extends State<_PortsTab>
 
         return RefreshIndicator(
           onRefresh: () => widget.viewModel.fetchPorts(id, force: true),
-          child: ListView.builder(
+          child: Padding(
             padding: const EdgeInsets.all(12),
-            itemCount: snapshot.ports.length,
-            itemBuilder: (context, index) {
-              final p = snapshot.ports[index];
-              return Card(
-                child: ListTile(
-                  leading: Icon(
-                    p.protocol.contains('udp')
-                        ? Icons.radio_button_checked
-                        : Icons.swap_horizontal_circle,
-                    color: widget.colorScheme.secondary,
+            child: _AdminListSurface(
+              child: ListView.separated(
+                itemCount: snapshot.ports.length,
+                separatorBuilder: (_, _) => Divider(
+                  height: 1,
+                  thickness: 1,
+                  color: widget.colorScheme.outlineVariant.withValues(
+                    alpha: 0.5,
                   ),
-                  title: Row(
-                    children: [
-                      Text(
-                        '${p.protocol.toUpperCase()}  :${p.localPort}',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Align(
-                          alignment: Alignment.centerRight,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: widget.colorScheme.surfaceContainerHighest,
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: OverflowScrollText(
-                              p.processName,
-                              selectable: false,
-                              maxLines: 1,
-                              style: const TextStyle(
-                                fontFamily: 'monospace',
-                                fontFamilyFallback: [
-                                  'Consolas',
-                                  'Microsoft YaHei',
-                                  'PingFang SC',
-                                  'sans-serif',
-                                ],
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12,
+                ),
+                itemBuilder: (context, index) {
+                  final p = snapshot.ports[index];
+                  return ListTile(
+                    leading: Icon(
+                      p.protocol.contains('udp')
+                          ? Icons.radio_button_checked
+                          : Icons.swap_horizontal_circle,
+                      color: widget.colorScheme.secondary,
+                    ),
+                    title: Row(
+                      children: [
+                        Text(
+                          '${p.protocol.toUpperCase()}  :${p.localPort}',
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color:
+                                    widget.colorScheme.surfaceContainerHighest,
+                                borderRadius: BorderRadius.circular(
+                                  AppTheme.radiusXs,
+                                ),
+                              ),
+                              child: OverflowScrollText(
+                                p.processName,
+                                selectable: false,
+                                maxLines: 1,
+                                style: const TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontFamilyFallback: [
+                                    'Consolas',
+                                    'Microsoft YaHei',
+                                    'PingFang SC',
+                                    'sans-serif',
+                                  ],
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 12,
+                                ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                  subtitle: OverflowScrollText(
-                    'Address: ${p.localAddress} ${p.pid != null ? '• PID: ${p.pid}' : ''}',
-                    selectable: false,
-                    maxLines: 1,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: widget.colorScheme.onSurface.withValues(
-                        alpha: 0.58,
+                      ],
+                    ),
+                    subtitle: OverflowScrollText(
+                      'Address: ${p.localAddress} ${p.pid != null ? '• PID: ${p.pid}' : ''}',
+                      selectable: false,
+                      maxLines: 1,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: widget.colorScheme.onSurface.withValues(
+                          alpha: 0.58,
+                        ),
                       ),
                     ),
-                  ),
-                ),
-              );
-            },
+                  );
+                },
+              ),
+            ),
           ),
         );
       },

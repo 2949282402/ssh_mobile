@@ -243,7 +243,9 @@ extension _LanShareDialogActions on _LanShareScreenState {
     LanShareViewModel vm,
   ) {
     final isEn = vm.appSettings.isEnglish;
-    final desktop = isDesktopLayout(context);
+    final desktop =
+        isDesktopTargetPlatform() ||
+        WindowSizeClass.of(context).isExpandedOrLarger;
     Map<String, String> currentIpMap = Map<String, String>.from(ipMap);
     bool isRefreshing = false;
 

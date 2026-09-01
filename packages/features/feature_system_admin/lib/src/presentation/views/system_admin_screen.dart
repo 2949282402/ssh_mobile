@@ -161,14 +161,16 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
           );
         }
 
-        final desktop = isDesktopLayout(context);
+        final isTwoColumn =
+            isDesktopTargetPlatform() ||
+            WindowSizeClass.of(context).isExpandedOrLarger;
         final colorScheme = Theme.of(context).colorScheme;
 
         final bodyContent = _buildMainContent(
           strings,
           colorScheme,
           _activeTabIndex,
-          reserveTopRightRefreshSpace: desktop,
+          reserveTopRightRefreshSpace: isTwoColumn,
         );
 
         return Scaffold(
@@ -185,7 +187,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                     72.0 + (textScale - 1.0) * 38.0;
                 final collapsedMobileServerHeight =
                     48.0 + (textScale - 1.0) * 22.0;
-                return desktop
+                return isTwoColumn
                     ? Row(
                         children: [
                           AnimatedContainer(
@@ -781,15 +783,15 @@ class _MonitorResponsiveEmptyState extends StatelessWidget {
         final showIcon = constraints.maxHeight >= 150;
         return Center(
           child: SingleChildScrollView(
-            padding: EdgeInsets.all(compact ? 12 : 28),
+            padding: EdgeInsets.all(compact ? 12 : 24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (showIcon) ...[
                   AppIconBadge(
                     icon: Icons.monitor_heart_outlined,
-                    size: compact ? 44 : 72,
-                    iconSize: compact ? 24 : 34,
+                    size: compact ? 36 : 48,
+                    iconSize: compact ? 20 : 24,
                   ),
                   SizedBox(height: compact ? 8 : 14),
                 ],
@@ -804,7 +806,7 @@ class _MonitorResponsiveEmptyState extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: colorScheme.onSurface,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w600,
                     fontSize: compact ? 14 : 16,
                   ),
                 ),
@@ -862,7 +864,9 @@ String _selectServerHint(
   required String targetEn,
   required String targetZh,
 }) {
-  final desktop = isDesktopLayout(context);
+  final isDesktopPlatform = isDesktopTargetPlatform();
+  final desktop =
+      isDesktopPlatform || WindowSizeClass.of(context).isExpandedOrLarger;
   final isEnglish = language == SystemAdminLanguage.en;
 
   if (isEnglish) {
@@ -872,6 +876,30 @@ String _selectServerHint(
   }
 
   return desktop ? '请先在左侧选择要查看的$targetZh。' : '请先在上方选择要查看的$targetZh。';
+}
+
+/// 统一的系统管理列表容器，提供一致的 1px 微边框与表面底色。
+class _AdminListSurface extends StatelessWidget {
+  final Widget child;
+
+  const _AdminListSurface({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Material(
+      color: colorScheme.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+        side: BorderSide(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.8),
+          width: 1,
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: child,
+    );
+  }
 }
 
 String _durationLabel(Duration duration) {

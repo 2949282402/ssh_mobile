@@ -17,7 +17,7 @@ void main() {
     );
 
     expect(find.text('workspace'), findsOneWidget);
-    expect(find.byType(DecoratedBox), findsWidgets);
+    expect(find.byType(Material), findsWidgets);
   });
 
   testWidgets('compact empty state keeps content and action visible', (

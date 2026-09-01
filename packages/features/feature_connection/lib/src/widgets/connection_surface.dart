@@ -11,30 +11,9 @@ final class ConnectionPageSurface extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
     final background = theme.scaffoldBackgroundColor;
-    final topTint = Color.alphaBlend(
-      colors.primary.withValues(alpha: isDark ? 0.045 : 0.022),
-      background,
-    );
-    final bottomTint = Color.alphaBlend(
-      colors.tertiary.withValues(alpha: isDark ? 0.025 : 0.012),
-      background,
-    );
 
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: background,
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          stops: const [0, 0.5, 1],
-          colors: [topTint, background, bottomTint],
-        ),
-      ),
-      child: child,
-    );
+    return Material(color: background, type: MaterialType.canvas, child: child);
   }
 }
 
@@ -43,8 +22,8 @@ final class ConnectionIconBadge extends StatelessWidget {
   const ConnectionIconBadge({
     super.key,
     required this.icon,
-    this.size = 48,
-    this.iconSize = 24,
+    this.size = 32,
+    this.iconSize = 16,
   });
 
   final IconData icon;
@@ -58,16 +37,12 @@ final class ConnectionIconBadge extends StatelessWidget {
       width: size,
       height: size,
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            colors.primary.withValues(alpha: 0.18),
-            colors.tertiary.withValues(alpha: 0.10),
-          ],
+        color: colors.primary.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(ConnectionUiTokens.radiusSmall),
+        border: Border.all(
+          color: colors.primary.withValues(alpha: 0.14),
+          width: 1,
         ),
-        borderRadius: BorderRadius.circular(size * 0.3),
-        border: Border.all(color: colors.primary.withValues(alpha: 0.18)),
       ),
       alignment: Alignment.center,
       child: Icon(icon, size: iconSize, color: colors.primary),
@@ -164,8 +139,8 @@ final class ConnectionSectionCard extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         if (icon != null) ...[
-          ConnectionIconBadge(icon: icon!, size: 36, iconSize: 18),
-          const SizedBox(width: 12),
+          Icon(icon!, size: 18, color: colors.primary),
+          const SizedBox(width: 10),
         ],
         Expanded(
           child: Column(
@@ -176,9 +151,9 @@ final class ConnectionSectionCard extends StatelessWidget {
                 title,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.titleMedium?.copyWith(
-                  color: colors.primary,
-                  fontWeight: FontWeight.w700,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  color: colors.onSurface,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
               if (subtitle != null && subtitle!.isNotEmpty) ...[
@@ -220,7 +195,7 @@ final class ConnectionSectionCard extends StatelessWidget {
                   ConnectionUiTokens.radiusSmall,
                 ),
                 child: ConstrainedBox(
-                  constraints: const BoxConstraints(minHeight: 48),
+                  constraints: const BoxConstraints(minHeight: 44),
                   child: headerContent,
                 ),
               ),
@@ -229,6 +204,15 @@ final class ConnectionSectionCard extends StatelessWidget {
 
     return Card(
       clipBehavior: Clip.antiAlias,
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(ConnectionUiTokens.radiusMedium),
+        side: BorderSide(
+          color: colors.outlineVariant.withValues(alpha: 0.8),
+          width: 1,
+        ),
+      ),
       child: Padding(
         padding: effectivePadding,
         child: Column(

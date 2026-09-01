@@ -51,8 +51,10 @@ class ChatPlanModeBanner extends StatelessWidget {
         key: const ValueKey<String>('plan-mode-banner'),
         color: colorScheme.surfaceContainerHigh,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-          side: BorderSide(color: colorScheme.outlineVariant),
+          borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+          side: BorderSide(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.8),
+          ),
         ),
         child: Padding(
           padding: const EdgeInsets.only(left: 12),

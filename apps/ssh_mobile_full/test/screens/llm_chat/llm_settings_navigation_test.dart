@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
+import 'package:app_ui/app_ui.dart';
 import 'package:feature_ai/ai_chat.dart';
 import 'package:feature_ai/feature_ai.dart' as ai;
 import 'package:ssh_mobile/services/app_settings.dart';
@@ -144,7 +145,10 @@ void main() {
       expect(tester.takeException(), isNull, reason: 'initial 2K layout');
 
       final form = find.byKey(const ValueKey<String>('llm-settings-form'));
-      expect(tester.getSize(form).width, closeTo(411.43 - 28, 0.1));
+      expect(
+        tester.getSize(form).width,
+        closeTo(411.43 - AppTheme.compactPagePadding * 2, 0.1),
+      );
 
       await tester.ensureVisible(find.text('高级模型选项'));
       await tester.tap(find.text('高级模型选项'));
@@ -168,7 +172,10 @@ void main() {
       tester.view.physicalSize = const Size(1280, 2856);
       tester.view.devicePixelRatio = 3;
       await tester.pumpAndSettle();
-      expect(tester.getSize(form).width, closeTo(426.67 - 28, 0.1));
+      expect(
+        tester.getSize(form).width,
+        closeTo(426.67 - AppTheme.compactPagePadding * 2, 0.1),
+      );
       expect(tester.takeException(), isNull, reason: '1.5K layout');
 
       tester.view.physicalSize = const Size(1200, 900);

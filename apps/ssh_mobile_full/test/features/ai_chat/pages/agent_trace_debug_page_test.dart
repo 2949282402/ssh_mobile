@@ -128,14 +128,10 @@ void main() {
     expect(initiallyBuilt, lessThan(agentTraceEventsPerRunLimit));
     expect(tester.takeException(), isNull);
 
-    final traceScroll = find
-        .descendant(
-          of: find.byKey(const ValueKey('agent-trace-scroll')),
-          matching: find.byType(Scrollable),
-        )
-        .first;
+    final traceScroll = find.byType(Scrollable).first;
     final allFilter = find.byKey(const ValueKey('trace-filter-all'));
     await tester.scrollUntilVisible(allFilter, 300, scrollable: traceScroll);
+    await tester.pumpAndSettle();
     expect(tester.getSize(allFilter).height, greaterThanOrEqualTo(48));
 
     final firstEvent = find.byKey(const ValueKey('trace-event-event-0'));
@@ -363,12 +359,7 @@ void main() {
     expect(find.text('已拦截'), findsOneWidget);
     expect(find.text('错误'), findsOneWidget);
 
-    final traceScroll = find
-        .descendant(
-          of: find.byKey(const ValueKey('agent-trace-scroll')),
-          matching: find.byType(Scrollable),
-        )
-        .first;
+    final traceScroll = find.byType(Scrollable).first;
     final eventTitle = find.text('0. Agent run summary');
     await tester.scrollUntilVisible(eventTitle, 300, scrollable: traceScroll);
     await tester.tap(eventTitle);

@@ -74,11 +74,11 @@ class _AppThemeThemeVariants {
     floatingActionButtonTheme: const FloatingActionButtonThemeData(
       backgroundColor: Color(0xFF4F46E5),
       foregroundColor: Colors.white,
-      elevation: 2,
-      focusElevation: 3,
-      hoverElevation: 4,
+      elevation: 0,
+      focusElevation: 1,
+      hoverElevation: 1,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.all(Radius.circular(AppTheme.radiusMedium)),
+        borderRadius: BorderRadius.all(Radius.circular(AppTheme.radiusSmall)),
       ),
     ),
     filledButtonTheme: _AppThemeComponentBuilders._filledButtonTheme(),
@@ -233,13 +233,11 @@ class _AppThemeThemeVariants {
       floatingActionButtonTheme: const FloatingActionButtonThemeData(
         backgroundColor: Color(0xFF8B87FF),
         foregroundColor: Color(0xFF11102E),
-        elevation: 2,
-        focusElevation: 3,
-        hoverElevation: 4,
+        elevation: 0,
+        focusElevation: 1,
+        hoverElevation: 1,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.all(
-            Radius.circular(AppTheme.radiusMedium),
-          ),
+          borderRadius: BorderRadius.all(Radius.circular(AppTheme.radiusSmall)),
         ),
       ),
       filledButtonTheme: _AppThemeComponentBuilders._filledButtonTheme(),

@@ -231,7 +231,7 @@ class TerminalScreenAppBar extends StatelessWidget
   }
 
   @override
-  Size get preferredSize => const Size.fromHeight(76);
+  Size get preferredSize => const Size.fromHeight(56);
 }
 
 class _TerminalAppBarTitle extends StatelessWidget {
@@ -250,83 +250,56 @@ class _TerminalAppBarTitle extends StatelessWidget {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final showBadge = constraints.maxWidth >= 190;
-        return Row(
-          children: [
-            if (showBadge) ...[
-              const AppIconBadge(
-                icon: Icons.terminal_rounded,
-                size: 40,
-                iconSize: 21,
-              ),
-              const SizedBox(width: 11),
-            ],
-            Expanded(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -0.15,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Row(
-                    children: [
-                      Semantics(
-                        key: const ValueKey('terminal-connection-status'),
-                        label: status.label,
-                        liveRegion: true,
-                        child: ExcludeSemantics(
-                          child: Container(
-                            width: 18,
-                            height: 18,
-                            decoration: BoxDecoration(
-                              color: status.color,
-                              shape: BoxShape.circle,
-                            ),
-                            child: Center(
-                              child: Icon(
-                                status.icon,
-                                size: 12,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      if (endpoint != null && endpoint!.isNotEmpty) ...[
-                        const SizedBox(width: 7),
-                        Expanded(
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: Text(
-                              endpoint!,
-                              maxLines: 1,
-                              style: theme.textTheme.labelSmall?.copyWith(
-                                color: colors.onSurfaceVariant,
-                                fontFamily: 'monospace',
-                                fontFamilyFallback: AppTheme.monospaceFallback,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ],
+    return Row(
+      children: [
+        Semantics(
+          key: const ValueKey('terminal-connection-status'),
+          label: status.label,
+          liveRegion: true,
+          child: ExcludeSemantics(
+            child: Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(
+                color: status.color,
+                shape: BoxShape.circle,
               ),
             ),
-          ],
-        );
-      },
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
+              if (endpoint != null && endpoint!.isNotEmpty)
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Text(
+                    endpoint!,
+                    maxLines: 1,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: colors.onSurfaceVariant,
+                      fontFamily: 'monospace',
+                      fontFamilyFallback: AppTheme.monospaceFallback,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

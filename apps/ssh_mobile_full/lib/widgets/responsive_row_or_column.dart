@@ -15,8 +15,8 @@ class ResponsiveRowOrColumn extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final desktop = isDesktopLayout(context);
-    if (desktop) {
+    final useRow = WindowSizeClass.of(context).isExpandedOrLarger;
+    if (useRow) {
       return Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

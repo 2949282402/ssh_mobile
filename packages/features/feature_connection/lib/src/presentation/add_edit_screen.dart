@@ -202,19 +202,13 @@ class _AddEditScreenState extends State<AddEditScreen> {
 
     final stickyActionBar = Container(
       decoration: BoxDecoration(
-        color: colorScheme.surface.withValues(alpha: 0.96),
+        color: colorScheme.surface,
         border: Border(
           top: BorderSide(
-            color: colorScheme.outlineVariant.withValues(alpha: 0.72),
+            color: colorScheme.outlineVariant.withValues(alpha: 0.8),
+            width: 1,
           ),
         ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 8,
-            offset: const Offset(0, -2),
-          ),
-        ],
       ),
       child: SafeArea(
         top: false,
@@ -237,10 +231,10 @@ class _AddEditScreenState extends State<AddEditScreen> {
                   style: FilledButton.styleFrom(
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(
-                        ConnectionUiTokens.radiusMedium,
+                        ConnectionUiTokens.radiusSmall,
                       ),
                     ),
-                    elevation: 1,
+                    elevation: 0,
                   ),
                   onPressed: isSaving || _isLoadingSecrets ? null : _save,
                   icon: isSaving

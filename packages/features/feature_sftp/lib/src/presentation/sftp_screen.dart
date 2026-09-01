@@ -67,12 +67,17 @@ class _SftpScreenState extends State<SftpScreen> {
     final selectedConnectionId = context.select<SftpViewModel, String?>(
       (vm) => vm.connectionId,
     );
-    final desktop = isDesktopLayout(context);
+    final windowClass = WindowSizeClass.of(context);
+    final isDesktopPlatform = isDesktopTargetPlatform();
+    final useTwoColumnWorkspace =
+        isDesktopPlatform || windowClass.isExpandedOrLarger;
     final selectedConnection = _selectedConnection(
       connections,
       selectedConnectionId,
     );
-    final serversCollapsed = _serversCollapsed && connections.isNotEmpty;
+    final isNarrowDesktop = isDesktopPlatform && windowClass.isCompact;
+    final serversCollapsed =
+        (_serversCollapsed || isNarrowDesktop) && connections.isNotEmpty;
 
     if (!storageReady) {
       return AppPageSurface(
@@ -123,7 +128,7 @@ class _SftpScreenState extends State<SftpScreen> {
     }
 
     return AppPageSurface(
-      child: desktop
+      child: useTwoColumnWorkspace
           ? Row(
               children: [
                 AnimatedSize(
@@ -132,7 +137,9 @@ class _SftpScreenState extends State<SftpScreen> {
                   alignment: Alignment.centerLeft,
                   clipBehavior: Clip.hardEdge,
                   child: SizedBox(
-                    width: serversCollapsed ? 64 : 320,
+                    width: serversCollapsed
+                        ? (isDesktopPlatform ? 56 : 64)
+                        : (windowClass.isMedium ? 240 : 300),
                     child: serversCollapsed
                         ? Selector<
                             SftpViewModel,
