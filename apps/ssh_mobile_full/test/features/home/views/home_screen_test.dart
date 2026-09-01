@@ -290,6 +290,46 @@ void main() {
     await disposeHome(tester);
   });
 
+  testWidgets(
+    'mobile bottom navigation background wraps safe area to prevent color layering',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      tester.view.padding = const FakeViewPadding(bottom: 34);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPadding);
+
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      await pumpHome(tester, settle: const Duration(milliseconds: 100));
+
+      final navItemFinder = find.byKey(const ValueKey('home-nav-0'));
+      expect(navItemFinder, findsOneWidget);
+
+      final safeAreaFinder = find.ancestor(
+        of: navItemFinder,
+        matching: find.byType(SafeArea),
+      );
+      expect(safeAreaFinder, findsOneWidget);
+
+      // The background Container with decoration must be an ancestor of SafeArea
+      // so the surface background color fills the bottom inset without stratification.
+      final containerAncestor = find.ancestor(
+        of: safeAreaFinder,
+        matching: find.byType(Container),
+      );
+      expect(containerAncestor, findsWidgets);
+
+      final materialAncestor = find.ancestor(
+        of: safeAreaFinder,
+        matching: find.byType(Material),
+      );
+      expect(materialAncestor, findsWidgets);
+
+      await disposeHome(tester);
+    },
+  );
+
   group('Shell Behavior Matrix', () {
     for (final size in [
       const Size(600, 800),
