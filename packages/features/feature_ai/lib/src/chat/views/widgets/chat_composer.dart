@@ -436,7 +436,7 @@ class _ChatComposerState extends State<_ChatComposer> {
       key: const ValueKey<String>('chat-composer-surface'),
       decoration: BoxDecoration(
         color: Colors.transparent,
-        borderRadius: BorderRadius.circular(26),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
         border: Border.all(color: colorScheme.outline.withValues(alpha: 0.62)),
       ),
       child: Row(

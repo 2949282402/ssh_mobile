@@ -47,8 +47,7 @@ class TerminalScreenAppBar extends StatelessWidget
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final extendedColors = Theme.of(context).extension<ExtendedColors>();
-    final status = _statusPresentation(colorScheme, extendedColors);
+    final status = _statusPresentation(context, colorScheme);
     final closeColor = colorScheme.error;
 
     return AppBar(
@@ -196,36 +195,37 @@ class TerminalScreenAppBar extends StatelessWidget
   }
 
   _TerminalStatusPresentation _statusPresentation(
+    BuildContext context,
     ColorScheme colors,
-    ExtendedColors? extendedColors,
   ) {
+    final statusColors = AppStatusColors.of(context);
     if (reconnectInProgress) {
       return _TerminalStatusPresentation(
         label: strings.reconnecting,
         icon: Icons.sync_rounded,
-        color: extendedColors?.warning ?? AppTheme.terminalAmber,
+        color: statusColors.warning,
       );
     }
     return switch (connectionState) {
       SshConnectionState.connected => _TerminalStatusPresentation(
         label: strings.connected,
         icon: Icons.check_rounded,
-        color: extendedColors?.success ?? colors.secondary,
+        color: statusColors.success,
       ),
       SshConnectionState.connecting => _TerminalStatusPresentation(
         label: strings.connecting,
         icon: Icons.sync_rounded,
-        color: extendedColors?.warning ?? AppTheme.terminalAmber,
+        color: statusColors.warning,
       ),
       SshConnectionState.error => _TerminalStatusPresentation(
         label: strings.terminalConnectionErrorStatus,
         icon: Icons.close_rounded,
-        color: colors.error,
+        color: statusColors.error,
       ),
       SshConnectionState.disconnected => _TerminalStatusPresentation(
         label: strings.disconnected,
         icon: Icons.close_rounded,
-        color: colors.error,
+        color: statusColors.neutral,
       ),
     };
   }

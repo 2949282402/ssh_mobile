@@ -921,12 +921,12 @@ String _runDurationLabel(DateTime? startedAt) {
 }
 
 Color _healthColor(BuildContext context, ServerHealthLevel level) {
-  final colorScheme = Theme.of(context).colorScheme;
+  final status = AppStatusColors.of(context);
   return switch (level) {
-    ServerHealthLevel.healthy => colorScheme.secondary,
-    ServerHealthLevel.warning => Colors.orangeAccent.shade700,
-    ServerHealthLevel.critical => colorScheme.error,
-    ServerHealthLevel.unknown => colorScheme.onSurfaceVariant,
+    ServerHealthLevel.healthy => status.success,
+    ServerHealthLevel.warning => status.warning,
+    ServerHealthLevel.critical => status.error,
+    ServerHealthLevel.unknown => status.neutral,
   };
 }
 

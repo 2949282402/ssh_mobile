@@ -73,16 +73,10 @@ class _ChatHeader extends StatelessWidget {
                 child: TweenAnimationBuilder<double>(
                   key: ValueKey('chat-title-${snapshot.chatId}'),
                   tween: Tween(begin: 0, end: 1),
-                  duration: const Duration(milliseconds: 220),
+                  duration: const Duration(milliseconds: 150),
                   curve: Curves.easeOutCubic,
                   builder: (context, value, child) {
-                    return Opacity(
-                      opacity: value,
-                      child: Transform.translate(
-                        offset: Offset(12 * (1 - value), 0),
-                        child: child,
-                      ),
-                    );
+                    return Opacity(opacity: value, child: child);
                   },
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,

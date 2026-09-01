@@ -49,16 +49,10 @@ class _ChatMessageList extends StatelessWidget {
         return TweenAnimationBuilder<double>(
           key: ValueKey('chat-body-${snapshot.chatId}'),
           tween: Tween(begin: 0, end: 1),
-          duration: const Duration(milliseconds: 260),
+          duration: const Duration(milliseconds: 150),
           curve: Curves.easeOutCubic,
           builder: (context, value, child) {
-            return Opacity(
-              opacity: value,
-              child: Transform.translate(
-                offset: Offset(0, 18 * (1 - value)),
-                child: child,
-              ),
-            );
+            return Opacity(opacity: value, child: child);
           },
           child: NotificationListener<ScrollNotification>(
             onNotification: (notification) {

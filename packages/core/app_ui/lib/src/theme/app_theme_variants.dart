@@ -27,7 +27,7 @@ class _AppThemeThemeVariants {
       surfaceContainerHighest: Color(0xFFE6E9F1),
       outline: Color(0xFFDDE1EB),
       outlineVariant: Color(0xFFC9CEDA),
-      error: Color(0xFFD92D4B),
+      error: Color(0xFFEF4444),
       onPrimary: Colors.white,
       onSecondary: Colors.white,
       onTertiary: Colors.white,
@@ -43,6 +43,9 @@ class _AppThemeThemeVariants {
         terminalCyan: Color(0xFF06B6D4),
         success: Color(0xFF10B981),
         warning: Color(0xFFF59E0B),
+        error: Color(0xFFEF4444),
+        info: Color(0xFF3B82F6),
+        neutral: Color(0xFF6B7280),
         glassBg: Color(0xD9FEFEFF),
         glassBorder: Color(0x66FFFFFF),
         cardHoverBorder: Color(0x664F46E5),
@@ -132,7 +135,7 @@ class _AppThemeThemeVariants {
       track: const Color(0xFFDDE1EB),
     ),
     scrollbarTheme: _AppThemeComponentBuilders._scrollbarTheme(
-      thumb: const Color(0xFF8C93A5),
+      thumb: const Color(0xFF94A3B8),
       track: const Color(0xFFDDE1EB),
     ),
     dividerTheme: const DividerThemeData(
@@ -143,25 +146,19 @@ class _AppThemeThemeVariants {
   );
 
   static ThemeData buildDarkTheme({bool oledDark = false}) {
-    final bgColor = oledDark
-        ? const Color(0xFF000000)
-        : const Color(0xFF090B11);
-    final surfaceColor = oledDark
-        ? const Color(0xFF000000)
-        : const Color(0xFF11141C);
+    final bgColor = oledDark ? Colors.black : const Color(0xFF0F1219);
+    final surfaceColor = oledDark ? Colors.black : const Color(0xFF161B26);
     final surfaceContainerColor = oledDark
-        ? const Color(0xFF050505)
-        : const Color(0xFF171B25);
+        ? const Color(0xFF0C0C0C)
+        : const Color(0xFF1B2230);
     final outlineColor = oledDark
-        ? const Color(0xFF111111)
-        : const Color(0xFF282E3A);
+        ? const Color(0xFF1A1A1A)
+        : const Color(0xFF283040);
 
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
       scaffoldBackgroundColor: bgColor,
-      canvasColor: bgColor,
-      cardColor: surfaceColor,
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: {
           TargetPlatform.android: FadeThroughPageTransitionsBuilder(),
@@ -200,6 +197,9 @@ class _AppThemeThemeVariants {
           terminalCyan: const Color(0xFF22D3EE),
           success: const Color(0xFF34D399),
           warning: const Color(0xFFFBBF24),
+          error: const Color(0xFFF87171),
+          info: const Color(0xFF60A5FA),
+          neutral: const Color(0xFF9CA3AF),
           glassBg: oledDark ? const Color(0xD9000000) : const Color(0xD911141C),
           glassBorder: oledDark
               ? const Color(0x26111111)

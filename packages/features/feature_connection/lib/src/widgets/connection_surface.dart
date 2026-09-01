@@ -71,8 +71,8 @@ final class ConnectionPageHeader extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         if (icon != null) ...[
-          ConnectionIconBadge(icon: icon!, size: 44, iconSize: 22),
-          const SizedBox(width: 13),
+          ConnectionIconBadge(icon: icon!, size: 32, iconSize: 16),
+          const SizedBox(width: 10),
         ],
         Expanded(
           child: Column(
@@ -83,16 +83,21 @@ final class ConnectionPageHeader extends StatelessWidget {
                 title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.headlineSmall,
+                style: theme.textTheme.headlineMedium?.copyWith(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: -0.2,
+                ),
               ),
               if (subtitle != null && subtitle!.isNotEmpty) ...[
-                const SizedBox(height: 3),
+                const SizedBox(height: 2),
                 Text(
                   subtitle!,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: colors.onSurfaceVariant,
+                    fontSize: 12,
                   ),
                 ),
               ],
@@ -115,7 +120,7 @@ final class ConnectionSectionCard extends StatelessWidget {
     this.onHeaderTap,
     this.expanded,
     this.padding,
-    this.contentGap = 14,
+    this.contentGap = 12,
   }) : assert(
          onHeaderTap == null || expanded != null,
          'expanded must be provided when the header is interactive',
@@ -134,7 +139,7 @@ final class ConnectionSectionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final effectivePadding = padding ?? const EdgeInsets.all(20);
+    final effectivePadding = padding ?? const EdgeInsets.all(16);
     final headerContent = Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
@@ -154,6 +159,7 @@ final class ConnectionSectionCard extends StatelessWidget {
                 style: theme.textTheme.titleSmall?.copyWith(
                   color: colors.onSurface,
                   fontWeight: FontWeight.w600,
+                  fontSize: 14,
                 ),
               ),
               if (subtitle != null && subtitle!.isNotEmpty) ...[
@@ -164,6 +170,7 @@ final class ConnectionSectionCard extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: colors.onSurfaceVariant,
+                    fontSize: 12,
                   ),
                 ),
               ],
@@ -195,7 +202,7 @@ final class ConnectionSectionCard extends StatelessWidget {
                   ConnectionUiTokens.radiusSmall,
                 ),
                 child: ConstrainedBox(
-                  constraints: const BoxConstraints(minHeight: 44),
+                  constraints: const BoxConstraints(minHeight: 40),
                   child: headerContent,
                 ),
               ),

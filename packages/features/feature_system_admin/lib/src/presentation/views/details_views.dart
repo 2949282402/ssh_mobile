@@ -627,7 +627,9 @@ class _ServiceStatusTileState extends State<_ServiceStatusTile> {
     final isRunning =
         service.status.toLowerCase() == 'running' ||
         service.activeState.toLowerCase() == 'active';
-    final statusColor = isRunning ? colorScheme.secondary : colorScheme.error;
+    final statusColor = isRunning
+        ? AppStatusColors.of(context).success
+        : AppStatusColors.of(context).error;
 
     return Column(
       children: [
