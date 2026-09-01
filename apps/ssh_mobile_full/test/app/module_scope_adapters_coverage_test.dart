@@ -348,7 +348,6 @@ void main() {
     await _pumpFrames(tester);
 
     // Terminal scope skeleton
-    final termSettingsEn = FakeAppSettings()..language = AppLanguage.en;
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.lightThemeFor(),
