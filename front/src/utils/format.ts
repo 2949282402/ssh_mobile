@@ -8,7 +8,7 @@ export function formatDate(value: string) {
 }
 
 export function formatLastUpdated(timestamp: number) {
-  if (!timestamp) return '尚未同步';
+  if (!timestamp || !Number.isFinite(timestamp)) return '尚未同步';
   return new Intl.DateTimeFormat('zh-CN', {
     hour: '2-digit',
     minute: '2-digit',
@@ -17,7 +17,7 @@ export function formatLastUpdated(timestamp: number) {
 }
 
 export function formatDuration(seconds: number) {
-  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const safeSeconds = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
   const days = Math.floor(safeSeconds / 86400);
   const hours = Math.floor(safeSeconds / 3600) % 24;
   const minutes = Math.floor(safeSeconds / 60) % 60;

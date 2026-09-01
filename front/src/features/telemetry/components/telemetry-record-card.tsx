@@ -10,6 +10,14 @@ const SEVERITY_TONES: Record<Severity, 'online' | 'warning' | 'danger'> = {
   critical: 'danger',
 };
 
+function formatRecordTime(occurredAt: string, isDiagnostic: boolean): string {
+  const date = new Date(occurredAt);
+  if (Number.isNaN(date.getTime())) {
+    return occurredAt || '未知时间';
+  }
+  return isDiagnostic ? date.toLocaleTimeString() : date.toLocaleString();
+}
+
 export function TelemetryRecordCard({
   record,
   expanded,
@@ -24,9 +32,7 @@ export function TelemetryRecordCard({
   const tone = SEVERITY_TONES[record.severity] ?? 'online';
   const isDiagnostic = variant === 'diagnostic';
 
-  const timeFormatted = isDiagnostic
-    ? new Date(record.occurredAt).toLocaleTimeString()
-    : new Date(record.occurredAt).toLocaleString();
+  const timeFormatted = formatRecordTime(record.occurredAt, isDiagnostic);
 
   const buttonAriaLabel = isDiagnostic
     ? `查看日志详情 ${record.eventName}`
