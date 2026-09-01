@@ -230,36 +230,22 @@ class LlmChatScreen extends StatelessWidget {
     // within the LlmChatScreen subtree. The parent HomeScreen keeps this tab's
     // state alive using keepAliveAfterFirstBuild, ensuring it behaves as a
     // single instance while the app is running.
-    AiChatViewModel? viewModel;
-    try {
-      viewModel = viewModelFactory?.call(context);
-    } catch (_) {}
-
-    if (viewModel == null) {
-      try {
-        final storage = context.read<AiStoragePort?>();
-        final appSettings = context.read<AppSettings?>();
-        if (storage != null && appSettings != null) {
-          viewModel = AiChatViewModel(
-            storageService: storage,
-            sshService: context.read<SshService>(),
-            sftpService: context.read<SftpService>(),
-            performanceMonitorService: context
-                .read<PerformanceMonitorService>(),
-            playbookService: context.read<PlaybookAutomationPort>(),
-            ragService: context.read<app_core.RagCapability>(),
-            appSettings: appSettings,
-          );
-        }
-      } catch (_) {}
-    }
-
-    if (viewModel == null) {
-      return const Scaffold(body: Center(child: SizedBox.shrink()));
-    }
-
-    return ChangeNotifierProvider<AiChatViewModel>.value(
-      value: viewModel..loadInitialDraft(),
+    return ChangeNotifierProvider<AiChatViewModel>(
+      create: (context) {
+        final viewModel =
+            viewModelFactory?.call(context) ??
+            AiChatViewModel(
+              storageService: context.read<AiStoragePort>(),
+              sshService: context.read<SshService>(),
+              sftpService: context.read<SftpService>(),
+              performanceMonitorService: context
+                  .read<PerformanceMonitorService>(),
+              playbookService: context.read<PlaybookAutomationPort>(),
+              ragService: context.read<app_core.RagCapability>(),
+              appSettings: context.read<AppSettings>(),
+            );
+        return viewModel..loadInitialDraft();
+      },
       child: _LlmChatScreenBody(
         active: active,
         onHistoryVisibilityChanged: onHistoryVisibilityChanged,

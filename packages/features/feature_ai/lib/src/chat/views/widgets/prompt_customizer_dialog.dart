@@ -775,24 +775,29 @@ class _PromptCustomizerSkeleton extends StatelessWidget {
                 borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                 border: Border.all(color: colorScheme.outlineVariant),
               ),
-              child: const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'You are an expert DevOps and System Administration AI assistant.',
-                    style: TextStyle(fontFamily: 'monospace', fontSize: 13),
+              child: const ClipRect(
+                child: SingleChildScrollView(
+                  physics: NeverScrollableScrollPhysics(),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'You are an expert DevOps and System Administration AI assistant.',
+                        style: TextStyle(fontFamily: 'monospace', fontSize: 13),
+                      ),
+                      SizedBox(height: 8),
+                      Text(
+                        'Always provide safe, verified terminal commands and clear diagnosis steps.',
+                        style: TextStyle(fontFamily: 'monospace', fontSize: 13),
+                      ),
+                      SizedBox(height: 8),
+                      Text(
+                        'When modifying server configurations, explain potential impacts and prerequisites.',
+                        style: TextStyle(fontFamily: 'monospace', fontSize: 13),
+                      ),
+                    ],
                   ),
-                  SizedBox(height: 8),
-                  Text(
-                    'Always provide safe, verified terminal commands and clear diagnosis steps.',
-                    style: TextStyle(fontFamily: 'monospace', fontSize: 13),
-                  ),
-                  SizedBox(height: 8),
-                  Text(
-                    'When modifying server configurations, explain potential impacts and prerequisites.',
-                    style: TextStyle(fontFamily: 'monospace', fontSize: 13),
-                  ),
-                ],
+                ),
               ),
             ),
           ),
