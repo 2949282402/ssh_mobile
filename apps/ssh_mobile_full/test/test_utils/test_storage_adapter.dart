@@ -7,6 +7,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ffi';
 import 'dart:io';
 
 import 'package:app_core/app_core.dart';
@@ -42,12 +43,29 @@ part 'test_storage_adapter_repositories.dart';
 /// Shared construction state for the test storage facade.
 abstract class _TestStorageAdapterBase extends ChangeNotifier
     implements playbook.PlaybookRepository {
+  static bool _sqliteInitialized = false;
+
+  static void _ensureSqliteInitialized() {
+    if (_sqliteInitialized) return;
+    _sqliteInitialized = true;
+    if (Platform.isLinux) {
+      try {
+        DynamicLibrary.open('libsqlite3.so.0');
+      } catch (_) {
+        try {
+          DynamicLibrary.open('libsqlite3.so');
+        } catch (_) {}
+      }
+    }
+  }
+
   /// Creates isolated in-memory repositories for one test fixture.
   _TestStorageAdapterBase({
     Object? database,
     Object Function()? databaseFactory,
     Future<void> Function()? initializationCheckpoint,
   }) {
+    _ensureSqliteInitialized();
     assert(database == null || databaseFactory == null);
     final connections = _TestConnectionRepository();
     final credentials = _TestCredentialRepository();

@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_spacing.dart';
 import '../theme/app_theme.dart';
+import '../utils/responsive.dart';
+
+/// 工具栏子项契约，表示该组件是符合 Design System 规范的工具栏元素。
+abstract interface class AppToolbarItem implements Widget {}
 
 /// 统一的工具栏组件，符合现代专业开发者工具工作区标准。
 ///
@@ -90,8 +94,11 @@ class AppToolbar extends StatelessWidget implements PreferredSizeWidget {
   }
 }
 
-/// 工具栏中的紧凑操作按钮。
-class AppToolbarAction extends StatelessWidget {
+enum _AppToolbarActionVariant { adaptive, compact, touch }
+
+/// 工具栏中的操作按钮，支持响应式 Touch Target（移动端 >=44dp，桌面端 32~36dp）。
+class AppToolbarAction extends StatelessWidget implements AppToolbarItem {
+  /// 默认自适应构造函数：在移动触控平台上保证 >=44dp 触控热区，在桌面端保持 32dp 紧凑布局。
   const AppToolbarAction({
     super.key,
     required this.icon,
@@ -102,7 +109,39 @@ class AppToolbarAction extends StatelessWidget {
     this.isDestructive = false,
     this.iconSize = 16.0,
     this.badge,
-  });
+    this.minWidth,
+    this.minHeight,
+  }) : _variant = _AppToolbarActionVariant.adaptive;
+
+  /// 显式紧凑模式构造函数：固定 32dp 紧凑尺寸。
+  const AppToolbarAction.compact({
+    super.key,
+    required this.icon,
+    this.label,
+    this.tooltip,
+    this.onPressed,
+    this.isSelected = false,
+    this.isDestructive = false,
+    this.iconSize = 16.0,
+    this.badge,
+    this.minWidth,
+    this.minHeight,
+  }) : _variant = _AppToolbarActionVariant.compact;
+
+  /// 显式触控友好模式构造函数：固定 >=44dp 触控尺寸。
+  const AppToolbarAction.touch({
+    super.key,
+    required this.icon,
+    this.label,
+    this.tooltip,
+    this.onPressed,
+    this.isSelected = false,
+    this.isDestructive = false,
+    this.iconSize = 16.0,
+    this.badge,
+    this.minWidth,
+    this.minHeight,
+  }) : _variant = _AppToolbarActionVariant.touch;
 
   final IconData icon;
   final String? label;
@@ -112,6 +151,21 @@ class AppToolbarAction extends StatelessWidget {
   final bool isDestructive;
   final double iconSize;
   final Widget? badge;
+  final double? minWidth;
+  final double? minHeight;
+  final _AppToolbarActionVariant _variant;
+
+  double _resolveMinDimension(BuildContext context, {required bool isWidth}) {
+    if (isWidth && minWidth != null) return minWidth!;
+    if (!isWidth && minHeight != null) return minHeight!;
+
+    return switch (_variant) {
+      _AppToolbarActionVariant.compact => 32.0,
+      _AppToolbarActionVariant.touch => 44.0,
+      _AppToolbarActionVariant.adaptive =>
+        isTouchPlatform(Theme.of(context).platform) ? 44.0 : 32.0,
+    };
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -162,6 +216,10 @@ class AppToolbarAction extends StatelessWidget {
       );
     }
 
+    final effectiveMinWidth = _resolveMinDimension(context, isWidth: true);
+    final effectiveMinHeight = _resolveMinDimension(context, isWidth: false);
+    final isTouchSized = effectiveMinHeight >= 44.0;
+
     final button = Material(
       color: bg,
       borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
@@ -169,13 +227,20 @@ class AppToolbarAction extends StatelessWidget {
         onTap: onPressed,
         borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          constraints: BoxConstraints(
+            minWidth: effectiveMinWidth,
+            minHeight: effectiveMinHeight,
+          ),
           child: Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.sm,
-              vertical: AppSpacing.xs,
+            padding: EdgeInsets.symmetric(
+              horizontal: isTouchSized ? AppSpacing.md : AppSpacing.sm,
+              vertical: isTouchSized ? AppSpacing.sm : AppSpacing.xs,
             ),
-            child: Center(child: buttonContent),
+            child: Center(
+              widthFactor: 1.0,
+              heightFactor: 1.0,
+              child: buttonContent,
+            ),
           ),
         ),
       ),
@@ -190,7 +255,7 @@ class AppToolbarAction extends StatelessWidget {
 }
 
 /// 工具栏操作分组容器，支持在操作组之间自动渲染克制的垂直分割线。
-class AppToolbarGroup extends StatelessWidget {
+class AppToolbarGroup extends StatelessWidget implements AppToolbarItem {
   const AppToolbarGroup({
     super.key,
     required this.children,
@@ -222,6 +287,34 @@ class AppToolbarGroup extends StatelessWidget {
             color: colors.outlineVariant.withValues(alpha: 0.6),
           ),
           const SizedBox(width: AppSpacing.sm),
+        ],
+      ],
+    );
+  }
+}
+
+/// 工具栏操作列表容器组件。
+///
+/// 统一管理一组工具栏操作或操作组，提供标准间距与对齐。
+class AppToolbarActions extends StatelessWidget implements AppToolbarItem {
+  const AppToolbarActions({
+    super.key,
+    required this.children,
+    this.spacing = AppSpacing.xs,
+  });
+
+  final List<Widget> children;
+  final double spacing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        for (var i = 0; i < children.length; i++) ...[
+          if (i > 0) SizedBox(width: spacing),
+          children[i],
         ],
       ],
     );
