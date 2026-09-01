@@ -281,33 +281,14 @@ class _PreviewLoading extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(
+    return AppSkeletonizer.zone(
       key: const ValueKey('sftp-viewer-loading'),
-      container: true,
-      liveRegion: true,
-      label: strings.loadingFilePreview,
-      child: ExcludeSemantics(
-        child: _StateViewport(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const SizedBox(
-                  width: 30,
-                  height: 30,
-                  child: CircularProgressIndicator(strokeWidth: 2.4),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  strings.loadingFilePreview,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-              ],
-            ),
-          ),
-        ),
+      enabled: true,
+      semanticsLabel: strings.loadingFilePreview,
+      child: const AppSkeletonList(
+        hasLeading: true,
+        itemCount: 6,
+        padding: EdgeInsets.all(24),
       ),
     );
   }
@@ -320,17 +301,11 @@ class _InlineLoading extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(
-      liveRegion: true,
-      label: label,
-      child: const ExcludeSemantics(
-        child: Center(
-          child: SizedBox(
-            width: 28,
-            height: 28,
-            child: CircularProgressIndicator(strokeWidth: 2.2),
-          ),
-        ),
+    return Center(
+      child: AppLoadingIndicator(
+        size: 24,
+        strokeWidth: 2.2,
+        semanticsLabel: label,
       ),
     );
   }

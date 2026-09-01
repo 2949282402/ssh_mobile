@@ -140,11 +140,7 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
             key: const ValueKey('snapshot-tab-refresh'),
             onPressed: isRefreshing ? null : onRefresh,
             icon: isRefreshing
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
+                ? const AppLoadingIndicator(size: 18, strokeWidth: 2)
                 : const Icon(Icons.refresh_rounded),
             tooltip: strings.refresh,
           ),
@@ -323,33 +319,19 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
         final isRefreshing =
             snapshot.connectionState == ConnectionState.waiting;
         if (snapshot.connectionState == ConnectionState.waiting) {
-          final compact = MediaQuery.textScalerOf(context).scale(1) > 1.3;
           return Column(
             children: [
               if (widget.showRefresh) _buildHeader(context, isRefreshing: true),
               Expanded(
-                child: compact
-                    ? Center(
-                        child: SizedBox(
-                          width: 32,
-                          height: 32,
-                          child: CircularProgressIndicator(strokeWidth: 3),
-                        ),
-                      )
-                    : AppEmptyState(
-                        icon: Icons.sync_rounded,
-                        title: _monitorText(
-                          strings,
-                          'Loading snapshot',
-                          '正在加载快照',
-                        ),
-                        message: _monitorText(
-                          strings,
-                          'Reading the latest server state.',
-                          '正在读取服务器最新状态。',
-                        ),
-                        compact: true,
-                      ),
+                child: AppSkeletonizer.zone(
+                  enabled: true,
+                  semanticsLabel: _monitorText(
+                    strings,
+                    'Loading snapshot',
+                    '正在加载快照',
+                  ),
+                  child: const AppSkeletonList(hasLeading: true),
+                ),
               ),
             ],
           );

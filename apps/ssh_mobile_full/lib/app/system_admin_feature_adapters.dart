@@ -6,6 +6,7 @@
 
 import 'dart:async';
 import 'package:app_core/app_core.dart';
+import 'package:app_ui/app_ui.dart';
 import 'package:connection_core/connection_core.dart' as connection_core;
 import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:feature_system_admin/feature_system_admin.dart' as admin;
@@ -504,7 +505,15 @@ final class _AppSystemAdminModuleScopeState
           return Center(child: Text(snapshot.error.toString()));
         }
         if (snapshot.connectionState != ConnectionState.done) {
-          return const Center(child: CircularProgressIndicator());
+          final isEn = settings.language == admin.SystemAdminLanguage.en;
+          final strings = AppStrings(isEn ? AppLanguage.en : AppLanguage.zh);
+          return Scaffold(
+            body: AppSkeletonizer.zone(
+              enabled: true,
+              semanticsLabel: strings.admin,
+              child: const AppSkeletonList(hasLeading: true, itemCount: 6),
+            ),
+          );
         }
         return admin.SystemAdminFeatureScope(
           module: module,

@@ -34,7 +34,11 @@ class _UsersTabState extends State<_UsersTab>
           (vm) => vm.accounts,
         );
     if (loadingAccounts) {
-      return const Center(child: CircularProgressIndicator());
+      return AppSkeletonizer.zone(
+        enabled: true,
+        semanticsLabel: widget.strings.userAccounts,
+        child: const AppSkeletonList(hasLeading: true),
+      );
     }
 
     final id = context.select<SystemAdminViewModel, String?>(
@@ -303,11 +307,7 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               _loadingSudo
-                  ? const SizedBox(
-                      width: 12,
-                      height: 12,
-                      child: CircularProgressIndicator(strokeWidth: 1.5),
-                    )
+                  ? const AppLoadingIndicator(size: 12, strokeWidth: 1.5)
                   : Text(
                       _isAdmin
                           ? widget.strings.administrator
@@ -439,6 +439,12 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
   bool _busy = false;
 
   @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return AlertDialog(
       title: Text('${widget.strings.changePasswordTitle} (${widget.username})'),
@@ -458,11 +464,7 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
         FilledButton(
           onPressed: _busy ? null : _savePassword,
           child: _busy
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
+              ? const AppLoadingIndicator(size: 16, strokeWidth: 2)
               : Text(widget.strings.save),
         ),
       ],
@@ -599,7 +601,15 @@ class _HomeDirectoryExplorerDialogState
   Widget _buildContent() {
     final colorScheme = Theme.of(context).colorScheme;
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return AppSkeletonizer.zone(
+        enabled: true,
+        semanticsLabel: widget.strings.viewHomeDir,
+        child: const AppSkeletonList(
+          hasLeading: true,
+          itemCount: 4,
+          padding: EdgeInsets.zero,
+        ),
+      );
     }
 
     if (_error != null) {
@@ -741,7 +751,15 @@ class _UserProcessesDialogState extends State<_UserProcessesDialog> {
         width: double.maxFinite,
         height: 400,
         child: _loading
-            ? const Center(child: CircularProgressIndicator())
+            ? AppSkeletonizer.zone(
+                enabled: true,
+                semanticsLabel: widget.strings.usageStats,
+                child: const AppSkeletonList(
+                  hasLeading: true,
+                  itemCount: 4,
+                  padding: EdgeInsets.zero,
+                ),
+              )
             : Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -917,11 +935,7 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
         FilledButton(
           onPressed: _busy ? null : _submit,
           child: _busy
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
+              ? const AppLoadingIndicator(size: 16, strokeWidth: 2)
               : Text(widget.strings.save),
         ),
       ],

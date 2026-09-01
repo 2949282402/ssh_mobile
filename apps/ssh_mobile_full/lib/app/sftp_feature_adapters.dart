@@ -7,6 +7,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:app_core/app_core.dart';
+import 'package:app_ui/app_ui.dart';
 import 'package:feature_connection/feature_connection.dart'
     as feature_connection;
 import 'package:feature_sftp/feature_sftp.dart' as feature_sftp;
@@ -683,8 +684,14 @@ final class _AppSftpModuleScopeState extends State<AppSftpModuleScope> {
           );
         }
         if (snapshot.connectionState != ConnectionState.done) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
+          final isEn = _settings.language == feature_sftp.SftpLanguage.english;
+          final strings = AppStrings(isEn ? AppLanguage.en : AppLanguage.zh);
+          return Scaffold(
+            body: AppSkeletonizer.zone(
+              enabled: true,
+              semanticsLabel: strings.sftp,
+              child: const AppSkeletonList(hasLeading: true, itemCount: 6),
+            ),
           );
         }
         return MultiProvider(

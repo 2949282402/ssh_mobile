@@ -157,6 +157,10 @@ class _ServicesTabState extends State<_ServicesTab>
   @override
   void didUpdateWidget(covariant _ServicesTab oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.activeTabIndex != widget.activeTabIndex) {
+      oldWidget.activeTabIndex.removeListener(_onTabChanged);
+      widget.activeTabIndex.addListener(_onTabChanged);
+    }
     final id = widget.viewModel.selectedConnectionId;
     if (id != _lastSelectedConnectionId) {
       _lastSelectedConnectionId = id;
@@ -380,7 +384,11 @@ class _ServicesTabState extends State<_ServicesTab>
       selector: (_, vm) => _ServicesManageSnapshot.from(vm),
       builder: (context, snapshot, _) {
         if (snapshot.isConnecting) {
-          return const Center(child: CircularProgressIndicator());
+          return AppSkeletonizer.zone(
+            enabled: true,
+            semanticsLabel: widget.strings.systemServices,
+            child: const AppSkeletonList(hasLeading: true),
+          );
         }
 
         if (!snapshot.isManageModeAvailable) {
@@ -395,7 +403,11 @@ class _ServicesTabState extends State<_ServicesTab>
         }
 
         if (snapshot.loadingServices) {
-          return const Center(child: CircularProgressIndicator());
+          return AppSkeletonizer.zone(
+            enabled: true,
+            semanticsLabel: widget.strings.systemServices,
+            child: const AppSkeletonList(hasLeading: true),
+          );
         }
 
         final visibleServices = _visibleManageServices(snapshot.services);

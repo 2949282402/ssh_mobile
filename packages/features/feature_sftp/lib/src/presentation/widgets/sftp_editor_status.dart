@@ -7,42 +7,14 @@ class _EditorLoading extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) => SingleChildScrollView(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(minHeight: constraints.maxHeight),
-          child: Center(
-            child: Semantics(
-              key: const ValueKey('sftp-editor-loading'),
-              container: true,
-              liveRegion: true,
-              label: strings.loadingRemoteFile,
-              child: ExcludeSemantics(
-                child: Padding(
-                  padding: const EdgeInsets.all(AppTheme.pagePadding),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const SizedBox(
-                        width: 30,
-                        height: 30,
-                        child: CircularProgressIndicator(strokeWidth: 2.4),
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        strings.loadingRemoteFile,
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
+    return AppSkeletonizer.zone(
+      key: const ValueKey('sftp-editor-loading'),
+      enabled: true,
+      semanticsLabel: strings.loadingRemoteFile,
+      child: const AppSkeletonList(
+        hasLeading: false,
+        itemCount: 8,
+        padding: EdgeInsets.all(AppTheme.pagePadding),
       ),
     );
   }

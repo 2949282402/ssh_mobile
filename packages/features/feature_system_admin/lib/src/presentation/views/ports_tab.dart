@@ -138,6 +138,10 @@ class _PortsTabState extends State<_PortsTab>
   @override
   void didUpdateWidget(covariant _PortsTab oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.activeTabIndex != widget.activeTabIndex) {
+      oldWidget.activeTabIndex.removeListener(_onTabChanged);
+      widget.activeTabIndex.addListener(_onTabChanged);
+    }
     final id = widget.viewModel.selectedConnectionId;
     if (id != _lastSelectedConnectionId) {
       _lastSelectedConnectionId = id;
@@ -294,7 +298,11 @@ class _PortsTabState extends State<_PortsTab>
       selector: (_, vm) => _PortsManageSnapshot.from(vm),
       builder: (context, snapshot, _) {
         if (snapshot.isConnecting) {
-          return const Center(child: CircularProgressIndicator());
+          return AppSkeletonizer.zone(
+            enabled: true,
+            semanticsLabel: widget.strings.listeningPorts,
+            child: const AppSkeletonList(hasLeading: true),
+          );
         }
 
         if (!snapshot.isManageModeAvailable) {
@@ -309,7 +317,11 @@ class _PortsTabState extends State<_PortsTab>
         }
 
         if (snapshot.loadingPorts) {
-          return const Center(child: CircularProgressIndicator());
+          return AppSkeletonizer.zone(
+            enabled: true,
+            semanticsLabel: widget.strings.listeningPorts,
+            child: const AppSkeletonList(hasLeading: true),
+          );
         }
 
         if (snapshot.ports.isEmpty) {

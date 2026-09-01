@@ -142,13 +142,10 @@ class _MonitorConfigPanelV2 extends StatelessWidget {
           if (isSampling)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: colorScheme.primary,
-                ),
+              child: AppLoadingIndicator(
+                size: 16,
+                strokeWidth: 2,
+                color: colorScheme.primary,
               ),
             )
           else if (isRunning)
@@ -360,13 +357,10 @@ class _MonitorConfigPanelV2 extends StatelessWidget {
                         IconButton.outlined(
                           tooltip: strings.refresh,
                           icon: isSampling
-                              ? SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: colorScheme.primary,
-                                  ),
+                              ? AppLoadingIndicator(
+                                  size: 16,
+                                  strokeWidth: 2,
+                                  color: colorScheme.primary,
                                 )
                               : const Icon(Icons.refresh_rounded),
                           onPressed: isSampling ? null : monitor.sampleNow,

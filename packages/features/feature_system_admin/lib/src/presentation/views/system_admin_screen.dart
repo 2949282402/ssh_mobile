@@ -190,28 +190,32 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                 return isTwoColumn
                     ? Row(
                         children: [
-                          AnimatedContainer(
+                          AnimatedSize(
                             duration: const Duration(milliseconds: 180),
                             curve: Curves.easeOutCubic,
-                            width: snapshot.serversCollapsed ? 64 : 320,
-                            child: snapshot.serversCollapsed
-                                ? _AdminCollapsedDesktopServerRail(
-                                    key: const ValueKey(
-                                      'admin-server-rail-collapsed',
+                            alignment: Alignment.centerLeft,
+                            clipBehavior: Clip.hardEdge,
+                            child: SizedBox(
+                              width: snapshot.serversCollapsed ? 64 : 320,
+                              child: snapshot.serversCollapsed
+                                  ? _AdminCollapsedDesktopServerRail(
+                                      key: const ValueKey(
+                                        'admin-server-rail-collapsed',
+                                      ),
+                                      strings: strings,
+                                      isMonitorTab: isMonitorTab,
+                                      onExpand: () => context
+                                          .read<SystemAdminViewModel>()
+                                          .setServersCollapsed(context, false),
+                                    )
+                                  : _AdminServerPane(
+                                      strings: strings,
+                                      isMonitorTab: isMonitorTab,
+                                      onCollapse: () => context
+                                          .read<SystemAdminViewModel>()
+                                          .setServersCollapsed(context, true),
                                     ),
-                                    strings: strings,
-                                    isMonitorTab: isMonitorTab,
-                                    onExpand: () => context
-                                        .read<SystemAdminViewModel>()
-                                        .setServersCollapsed(context, false),
-                                  )
-                                : _AdminServerPane(
-                                    strings: strings,
-                                    isMonitorTab: isMonitorTab,
-                                    onCollapse: () => context
-                                        .read<SystemAdminViewModel>()
-                                        .setServersCollapsed(context, true),
-                                  ),
+                            ),
                           ),
                           VerticalDivider(
                             width: 1,
@@ -669,13 +673,13 @@ class _RootRequiredTabWrapper extends StatelessWidget {
           subtitle: strings.verifyingPrivilege,
           icon: Icons.admin_panel_settings_outlined,
           padding: const EdgeInsets.all(22),
-          child: const Center(
-            child: RepaintBoundary(
-              child: SizedBox(
-                width: 44,
-                height: 44,
-                child: CircularProgressIndicator(strokeWidth: 3),
-              ),
+          child: AppSkeletonizer.zone(
+            enabled: true,
+            semanticsLabel: strings.verifyingPrivilege,
+            child: const AppSkeletonList(
+              hasLeading: true,
+              itemCount: 2,
+              padding: EdgeInsets.zero,
             ),
           ),
         ),

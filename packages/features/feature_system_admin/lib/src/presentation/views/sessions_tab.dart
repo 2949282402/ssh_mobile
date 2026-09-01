@@ -33,7 +33,11 @@ class _SessionsTabState extends State<_SessionsTab>
       (vm) => vm.sessions,
     );
     if (loadingSessions) {
-      return const Center(child: CircularProgressIndicator());
+      return AppSkeletonizer.zone(
+        enabled: true,
+        semanticsLabel: widget.strings.activeSessions,
+        child: const AppSkeletonList(hasLeading: true),
+      );
     }
 
     final id = context.select<SystemAdminViewModel, String?>(

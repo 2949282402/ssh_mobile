@@ -130,16 +130,13 @@ class _SftpPathHistorySheetState extends State<_SftpPathHistorySheet> {
                       Divider(height: 1, color: colorScheme.outlineVariant),
                       if (waiting)
                         Expanded(
-                          child: Semantics(
-                            liveRegion: true,
-                            label: widget.strings.pathHistory,
-                            child: const Center(
-                              child: SizedBox.square(
-                                dimension: 32,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              ),
+                          child: AppSkeletonizer.zone(
+                            enabled: true,
+                            semanticsLabel: widget.strings.pathHistory,
+                            child: const AppSkeletonList(
+                              hasLeading: true,
+                              itemCount: 4,
+                              padding: EdgeInsets.symmetric(vertical: 8),
                             ),
                           ),
                         )
