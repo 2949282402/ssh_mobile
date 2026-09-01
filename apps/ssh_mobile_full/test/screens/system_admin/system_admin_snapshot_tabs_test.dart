@@ -169,7 +169,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('admin-server-collapse-mobile')),
-        matching: find.byIcon(Icons.unfold_less_rounded),
+        matching: find.byIcon(Icons.keyboard_double_arrow_up_rounded),
       ),
       findsOneWidget,
     );
@@ -198,7 +198,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('admin-server-expand-mobile')),
-        matching: find.byIcon(Icons.unfold_more_rounded),
+        matching: find.byIcon(Icons.keyboard_double_arrow_down_rounded),
       ),
       findsOneWidget,
     );

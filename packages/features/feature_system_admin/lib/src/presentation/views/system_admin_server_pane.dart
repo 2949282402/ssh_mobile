@@ -120,9 +120,7 @@ class _AdminServerPane extends StatelessWidget {
       collapseTooltip: strings.collapseServerList,
       reorderTooltip: strings.reorderServer,
       collapseButtonKey: const ValueKey('admin-server-collapse-desktop'),
-      collapseIcon: isMonitorTab
-          ? Icons.unfold_less_rounded
-          : Icons.keyboard_double_arrow_left_rounded,
+      collapseIcon: Icons.keyboard_double_arrow_left_rounded,
       onCollapse: onCollapse,
       onReorder: (oldIndex, newIndex) {
         context.read<SystemAdminConnectionCatalogPort>().reorderConnections(
@@ -166,9 +164,7 @@ class _AdminMobileServerStrip extends StatelessWidget {
       noConnectionsLabel: strings.noConnections,
       collapseTooltip: strings.collapseServerList,
       collapseButtonKey: const ValueKey('admin-server-collapse-mobile'),
-      collapseIcon: isMonitorTab
-          ? Icons.unfold_less_rounded
-          : Icons.keyboard_double_arrow_up_rounded,
+      collapseIcon: Icons.keyboard_double_arrow_up_rounded,
       onCollapse: onCollapse,
       tileBuilder: (context, connection, compact) => _AdminServerTileBinding(
         connection: connection,
@@ -193,12 +189,6 @@ class _AdminCollapsedMobileServerBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textScale = MediaQuery.textScalerOf(
-      context,
-    ).scale(1).clamp(1.0, 2.0).toDouble();
-    final barHeight = 48.0 + (textScale - 1.0) * 22.0;
-
     final selectedConnectionId = context.select<SystemAdminViewModel, String?>(
       (vm) => vm.selectedConnectionId,
     );
@@ -250,57 +240,28 @@ class _AdminCollapsedMobileServerBar extends StatelessWidget {
       connected = adminIsConnected && adminManagementId == selectedConnectionId;
     }
 
-    return Material(
-      color: colorScheme.surface,
-      child: SafeArea(
-        top: false,
-        bottom: false,
-        child: SizedBox(
-          height: barHeight,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Row(
-              children: [
-                SizedBox.square(
-                  dimension: 48,
-                  child: IconButton(
-                    key: const ValueKey('admin-server-expand-mobile'),
-                    tooltip: strings.expandServerList,
-                    icon: Icon(
-                      isMonitorTab
-                          ? Icons.unfold_more_rounded
-                          : Icons.keyboard_double_arrow_down_rounded,
-                    ),
-                    onPressed: onExpand,
-                  ),
-                ),
-                _AdminServerStatusIcon(
-                  busy: busy,
-                  connected: connected,
-                  compact: true,
-                  isMonitorTab: isMonitorTab,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: OverflowScrollText(
-                    isMonitorTab
-                        ? _serverSummary(strings, selectedMonitorConnections)
-                        : (selectedConnection == null
-                              ? strings.omServers
-                              : '${selectedConnection.name}  ${selectedConnection.username}@${selectedConnection.host}'),
-                    selectable: false,
-                    maxLines: 1,
-                    style: TextStyle(
-                      color: colorScheme.onSurface,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
+    final title = isMonitorTab
+        ? _serverSummary(strings, selectedMonitorConnections)
+        : (selectedConnection == null
+              ? strings.omServers
+              : selectedConnection.name);
+    final subtitle = isMonitorTab || selectedConnection == null
+        ? null
+        : '${selectedConnection.username}@${selectedConnection.host}';
+
+    return AppServerSummaryBar(
+      title: title,
+      subtitle: subtitle,
+      statusIcon: _AdminServerStatusIcon(
+        busy: busy,
+        connected: connected,
+        compact: true,
+        isMonitorTab: isMonitorTab,
       ),
+      expandTooltip: strings.expandServerList,
+      expandButtonKey: const ValueKey('admin-server-expand-mobile'),
+      expandIcon: Icons.keyboard_double_arrow_down_rounded,
+      onExpand: onExpand,
     );
   }
 }
@@ -382,11 +343,7 @@ class _AdminCollapsedDesktopServerRail extends StatelessWidget {
             child: IconButton(
               key: const ValueKey('admin-server-expand-desktop'),
               tooltip: strings.expandServerList,
-              icon: Icon(
-                isMonitorTab
-                    ? Icons.unfold_more_rounded
-                    : Icons.keyboard_double_arrow_right_rounded,
-              ),
+              icon: const Icon(Icons.keyboard_double_arrow_right_rounded),
               onPressed: onExpand,
             ),
           ),
@@ -451,7 +408,13 @@ class _AdminServerStatusIcon extends StatelessWidget {
       child: busy
           ? Padding(
               padding: EdgeInsets.all(compact ? 7 * scale : 10 * scale),
-              child: CircularProgressIndicator(strokeWidth: 2 * scale),
+              child: AppLoadingIndicator(
+                size:
+                    (compact ? 36.0 : 44.0) * scale -
+                    (compact ? 14 * scale : 20 * scale),
+                strokeWidth: 2 * scale,
+                color: themeColor,
+              ),
             )
           : Icon(
               isMonitorTab
@@ -491,122 +454,60 @@ class _AdminServerTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     final scale = mobileUiScaleOf(context);
+    final theme = Theme.of(context);
+    final themeColor = seriesColor ?? theme.colorScheme.primary;
     final strings = context.read<AppSettings>().strings;
-    final themeColor = seriesColor ?? colorScheme.primary;
-    final borderColor = selected
-        ? themeColor.withValues(alpha: 0.54)
-        : colorScheme.outlineVariant;
-
     final statusLabel = _adminConnectionStatusLabel(
       strings,
       busy: busy,
       connected: connected,
     );
 
-    return Semantics(
-      key: ValueKey('admin-server-tile-${connection.id}'),
-      button: true,
-      selected: selected,
-      label: '${connection.name}, $statusLabel',
-      child: Padding(
-        padding: EdgeInsets.only(bottom: compact ? 0 : 8 * scale),
-        child: TactileFeedback(
-          onTap: onTap,
-          child: Container(
-            constraints: BoxConstraints(minHeight: compact ? 56 : 72),
-            padding: EdgeInsets.symmetric(
-              horizontal: 10 * scale,
-              vertical: compact ? 3 * scale : 8 * scale,
-            ),
-            decoration: BoxDecoration(
-              color: selected
-                  ? themeColor.withValues(alpha: 0.08)
-                  : colorScheme.surface,
-              borderRadius: BorderRadius.circular(
-                compact ? AppTheme.radiusSmall : AppTheme.radiusMedium,
-              ),
-              border: Border.all(color: borderColor),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 30 * scale,
-                  height: 30 * scale,
-                  alignment: Alignment.center,
-                  child: _AdminServerStatusIcon(
-                    busy: busy,
-                    connected: connected,
-                    selected: selected,
-                    compact: true,
-                    isMonitorTab: isMonitorTab,
-                    seriesColor: seriesColor,
-                  ),
-                ),
-                SizedBox(width: 8 * scale),
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      OverflowScrollText(
-                        connection.name,
-                        selectable: false,
-                        maxLines: 1,
-                        style: TextStyle(
-                          color: colorScheme.onSurface,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      SizedBox(height: 3 * scale),
-                      OverflowScrollText(
-                        '${connection.username}@${connection.host}',
-                        selectable: false,
-                        maxLines: 1,
-                        style: TextStyle(
-                          color: colorScheme.onSurface.withValues(alpha: 0.62),
-                          fontSize: 12,
-                        ),
-                      ),
-                      if (!compact) ...[
-                        SizedBox(height: 4 * scale),
-                        Container(
-                          constraints: const BoxConstraints(minHeight: 22),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 7,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: themeColor.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(
-                              AppTheme.radiusPill,
-                            ),
-                          ),
-                          child: Text(
-                            statusLabel,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: themeColor,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                if (isMonitorTab && selected) ...[
-                  SizedBox(width: 8 * scale),
-                  Icon(Icons.check_rounded, size: 18 * scale),
-                ],
-              ],
-            ),
+    return AppServerTile(
+      title: connection.name,
+      subtitle: '${connection.username}@${connection.host}:${connection.port}',
+      leading: Container(
+        width: 30 * scale,
+        height: 30 * scale,
+        alignment: Alignment.center,
+        child: _AdminServerStatusIcon(
+          busy: busy,
+          connected: connected,
+          selected: selected,
+          compact: true,
+          isMonitorTab: isMonitorTab,
+          seriesColor: seriesColor,
+        ),
+      ),
+      statusWidget: Container(
+        constraints: const BoxConstraints(minHeight: 22),
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        decoration: BoxDecoration(
+          color: themeColor.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(AppTheme.radiusPill),
+        ),
+        child: Text(
+          statusLabel,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: themeColor,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
           ),
         ),
       ),
+      trailing: isMonitorTab && selected
+          ? Icon(Icons.check_rounded, size: 18 * scale)
+          : null,
+      selected: selected,
+      busy: busy,
+      compact: compact,
+      onTap: onTap,
+      accentColor: seriesColor,
+      semanticsKey: ValueKey('admin-server-tile-${connection.id}'),
+      semanticsLabel: '${connection.name}, $statusLabel',
     );
   }
 }

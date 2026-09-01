@@ -17,6 +17,7 @@ migrate_working_dir/
 # Local deployment secrets and test credentials.
 .env
 **/.env
+devtools_options.yaml
 
 # IntelliJ related
 *.iml

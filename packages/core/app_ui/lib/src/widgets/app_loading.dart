@@ -9,15 +9,19 @@ import '../theme/app_theme.dart';
 class AppLoadingIndicator extends StatelessWidget {
   const AppLoadingIndicator({
     super.key,
+    this.value,
     this.size = 24.0,
     this.strokeWidth = 2.0,
     this.color,
+    this.backgroundColor,
     this.semanticsLabel,
   });
 
+  final double? value;
   final double size;
   final double strokeWidth;
   final Color? color;
+  final Color? backgroundColor;
   final String? semanticsLabel;
 
   @override
@@ -32,8 +36,10 @@ class AppLoadingIndicator extends StatelessWidget {
           width: size,
           height: size,
           child: CircularProgressIndicator(
+            value: value,
             strokeWidth: strokeWidth,
             valueColor: AlwaysStoppedAnimation<Color>(indicatorColor),
+            backgroundColor: backgroundColor,
           ),
         ),
       ),
@@ -135,6 +141,47 @@ class AppSkeletonRow extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// 标准的骨架屏列表占位组件。
+class AppSkeletonList extends StatelessWidget {
+  const AppSkeletonList({
+    super.key,
+    this.itemCount = 6,
+    this.hasLeading = true,
+    this.leadingSize = 36.0,
+    this.padding = const EdgeInsets.symmetric(vertical: 8),
+    this.itemPadding = const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+  });
+
+  final int itemCount;
+  final bool hasLeading;
+  final double leadingSize;
+  final EdgeInsetsGeometry padding;
+  final EdgeInsetsGeometry itemPadding;
+
+  @override
+  Widget build(BuildContext context) {
+    const titleWidths = [120.0, 160.0, 140.0, 180.0, 130.0, 150.0];
+    const subWidths = [200.0, 240.0, 180.0, 220.0, 260.0, 190.0];
+
+    return ListView.builder(
+      padding: padding,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: itemCount,
+      itemBuilder: (context, index) {
+        final titleW = titleWidths[index % titleWidths.length];
+        final subW = subWidths[index % subWidths.length];
+        return AppSkeletonRow(
+          hasLeading: hasLeading,
+          leadingSize: leadingSize,
+          titleWidth: titleW,
+          subtitleWidth: subW,
+          padding: itemPadding,
+        );
+      },
     );
   }
 }
