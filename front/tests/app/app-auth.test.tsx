@@ -284,4 +284,67 @@ describe('AuthGate', () => {
     await waitFor(() => expect(screen.getByRole('heading', { name: '数据埋点概览' })).toBeInTheDocument());
     await waitFor(() => expect(screen.getByText('100')).toBeInTheDocument());
   });
+
+  it('highlights only the exact nav link when navigating to a telemetry subroute', async () => {
+    window.history.pushState({}, '', '/telemetry/events');
+    const fetchMock = vi.fn().mockImplementation((path: string) => {
+      if (path.endsWith('/auth/session')) {
+        return Promise.resolve(jsonResponse({ authenticated: true, username: 'admin' }));
+      }
+      if (path.includes('/telemetry/events')) {
+        return Promise.resolve(jsonResponse({ items: [], total: 0, page: 1, pageSize: 50 }));
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderApp();
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: '事件浏览器' })).toBeInTheDocument());
+
+    const telemetryParentLink = screen.getByRole('link', { name: /埋点概览 Telemetry/ });
+    const eventsLink = screen.getByRole('link', { name: /事件检索 Events/ });
+
+    expect(eventsLink).toHaveClass('nav-link--active');
+    expect(telemetryParentLink).not.toHaveClass('nav-link--active');
+  });
+
+  it('clears telemetry queries on logout', async () => {
+    window.history.pushState({}, '', '/overview');
+    let sessionChecks = 0;
+    const fetchMock = vi.fn().mockImplementation((path: string) => {
+      if (path.endsWith('/auth/session')) {
+        sessionChecks += 1;
+        return Promise.resolve(jsonResponse({
+          authenticated: sessionChecks === 1,
+          username: sessionChecks === 1 ? 'admin' : '',
+        }));
+      }
+      if (path.endsWith('/auth/logout')) {
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
+      if (path.endsWith('/overview')) {
+        return Promise.resolve(jsonResponse({
+          server_time: 1_700_000_000,
+          uptime_seconds: 21,
+          devices: { enrolled: 0, online: 0 },
+          relay: { active_transfers: 0 },
+          runtime: { allocated_mem_mb: 12.34, goroutines: 7 },
+          presence_available: true,
+        }));
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    const { queryClient } = renderApp();
+
+    queryClient.setQueryData(['telemetry', 'overview', { timeRange: '24h' }], { totalEvents: 50 });
+    expect(queryClient.getQueryData(['telemetry', 'overview', { timeRange: '24h' }])).toBeDefined();
+
+    const logoutButton = await screen.findByRole('button', { name: '退出登录' });
+    await user.click(logoutButton);
+
+    await waitFor(() => expect(screen.getByText('登录控制台')).toBeInTheDocument());
+    expect(queryClient.getQueryData(['telemetry', 'overview', { timeRange: '24h' }])).toBeUndefined();
+  });
 });

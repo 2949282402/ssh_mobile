@@ -59,8 +59,10 @@ export function AppShell({ username }: { username: string }) {
     mutationFn: () => authApi.logout(),
     onSuccess: () => {
       void queryClient.cancelQueries({ queryKey: ['relay'] });
+      void queryClient.cancelQueries({ queryKey: ['telemetry'] });
       void queryClient.cancelQueries({ queryKey: queryKeys.auth, exact: true });
       queryClient.removeQueries({ queryKey: ['relay'] });
+      queryClient.removeQueries({ queryKey: ['telemetry'] });
       queryClient.setQueryData(queryKeys.auth, {
         authenticated: false,
         username: '',
@@ -160,6 +162,7 @@ export function AppShell({ username }: { username: string }) {
               <NavLink
                 key={item.to}
                 to={item.to}
+                end
                 onClick={closeNav}
                 className={({ isActive }) => `nav-link${isActive ? ' nav-link--active' : ''}`}
               >

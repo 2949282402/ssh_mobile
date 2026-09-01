@@ -26,11 +26,13 @@ describe('format utilities', () => {
 
   it('keeps the never-synced sentinel separate from a real timestamp', () => {
     expect(formatLastUpdated(0)).toBe('尚未同步');
+    expect(formatLastUpdated(NaN)).toBe('尚未同步');
     expect(formatLastUpdated(Date.UTC(2026, 7, 22, 3, 4, 5))).toMatch(/\d{2}:04:05/);
   });
 
   it('clamps negative and fractional durations and carries days', () => {
     expect(formatDuration(-2.8)).toBe('00h 00m 00s');
+    expect(formatDuration(NaN)).toBe('00h 00m 00s');
     expect(formatDuration(3661.9)).toBe('01h 01m 01s');
     expect(formatDuration(2 * 86400 + 3 * 3600 + 4 * 60 + 5)).toBe('2d 03h 04m 05s');
   });

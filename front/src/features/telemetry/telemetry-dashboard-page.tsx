@@ -55,8 +55,8 @@ function formatRate(rate: number, denominator: number, digits: number): string {
 }
 
 function formatThroughput(events: number, seconds: number | null): string {
-  if (events <= 0) return '0/s';
-  if (seconds === null || seconds <= 0) {
+  if (!Number.isFinite(events) || events <= 0) return '0/s';
+  if (!Number.isFinite(seconds) || seconds === null || seconds <= 0) {
     // For "all time" the window span is unknown; report the total count instead.
     return `${events}`;
   }

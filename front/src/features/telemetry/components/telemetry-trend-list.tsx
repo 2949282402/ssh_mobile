@@ -2,9 +2,13 @@ import type { ReactNode } from 'react';
 
 function formatTrendTime(timestamp: string): string {
   try {
-    const isoStr = timestamp.includes('T') ? timestamp : `${timestamp.replace(' ', 'T')}Z`;
+    const trimmed = timestamp.trim();
+    const normalized = trimmed.replace(' ', 'T');
+    const isoStr = normalized.endsWith('Z') || normalized.includes('+') || (normalized.lastIndexOf('-') > 7)
+      ? normalized
+      : `${normalized}Z`;
     const date = new Date(isoStr);
-    if (isNaN(date.getTime())) {
+    if (Number.isNaN(date.getTime())) {
       return timestamp;
     }
     return date.toLocaleDateString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });

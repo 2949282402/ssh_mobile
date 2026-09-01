@@ -70,10 +70,11 @@ export async function request<T>(
     if (!response.ok) {
       const parsedError = parseApiError(body);
       const message = parsedError?.message ?? 'Relay 请求失败。';
+      const pathUrl = path.split('?')[0].replace(/\/$/, '');
       if (
         response.status === 401
-        && !path.endsWith('/auth/login')
-        && !path.endsWith('/auth/session')
+        && !pathUrl.endsWith('/auth/login')
+        && !pathUrl.endsWith('/auth/session')
       ) {
         window.dispatchEvent(new Event('relay:unauthorized'));
       }
