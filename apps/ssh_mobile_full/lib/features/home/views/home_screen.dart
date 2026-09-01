@@ -21,7 +21,6 @@ import 'package:ssh_mobile/features/settings/viewmodels/settings_viewmodel.dart'
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:app_ui/app_ui.dart';
-import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:ssh_mobile/app/sftp_feature_adapters.dart';
 import 'package:ssh_mobile/app/system_admin_feature_adapters.dart';
 import 'package:ssh_mobile/app/connection_route_scope.dart';
@@ -665,13 +664,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildLoadingState() {
-    return const Center(
-      child: SizedBox(
-        width: 28,
-        height: 28,
-        child: CircularProgressIndicator(strokeWidth: 2),
-      ),
-    );
+    return const AppLoadingIndicator(size: 24, strokeWidth: 2);
   }
 }
 

@@ -57,14 +57,14 @@ class _AgentRunInlineSummaryState extends State<AgentRunInlineSummary> {
         if (data == null) return const SizedBox.shrink();
         final theme = Theme.of(context);
         final colorScheme = theme.colorScheme;
-        final extColors = theme.extension<ExtendedColors>();
         final language = context.select<AppSettings, AppLanguage>(
           (settings) => settings.language,
         );
         final strings = AiStrings(language);
+        final statusColors = AppStatusColors.of(context);
         final statusColor = data.success
-            ? (extColors?.success ?? colorScheme.primary)
-            : colorScheme.error;
+            ? statusColors.success
+            : statusColors.error;
         final chips = <Widget>[
           _RunSummaryChip(
             key: const ValueKey('run-summary-status'),

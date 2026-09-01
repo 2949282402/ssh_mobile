@@ -393,19 +393,6 @@ class _ServerTile extends StatelessWidget {
                 compact ? AppTheme.radiusSmall : AppTheme.radiusMedium,
               ),
               border: Border.all(color: borderColor, width: selected ? 1.2 : 1),
-              boxShadow: compact
-                  ? const []
-                  : [
-                      BoxShadow(
-                        color: Colors.black.withValues(
-                          alpha: selected
-                              ? (isDark ? 0.20 : 0.055)
-                              : (isDark ? 0.12 : 0.025),
-                        ),
-                        blurRadius: selected ? 16 : 10,
-                        offset: Offset(0, selected ? 6 : 3),
-                      ),
-                    ],
             ),
             child: Row(
               children: [
@@ -482,24 +469,19 @@ class _SftpServerStatus {
     required bool busy,
     required bool connected,
   }) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    final extended = theme.extension<ExtendedColors>();
+    final status = AppStatusColors.of(context);
     if (busy) {
       return _SftpServerStatus(
         label: strings.connecting,
-        color: extended?.warning ?? colors.primary,
+        color: status.warning,
       );
     }
     if (connected) {
-      return _SftpServerStatus(
-        label: strings.connected,
-        color: extended?.success ?? colors.secondary,
-      );
+      return _SftpServerStatus(label: strings.connected, color: status.success);
     }
     return _SftpServerStatus(
       label: strings.disconnected,
-      color: colors.onSurfaceVariant,
+      color: status.neutral,
     );
   }
 }

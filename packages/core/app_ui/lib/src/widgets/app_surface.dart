@@ -99,7 +99,8 @@ class AppPageHeader extends StatelessWidget {
                 title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.titleLarge?.copyWith(
+                style: theme.textTheme.headlineMedium?.copyWith(
+                  fontSize: 20,
                   fontWeight: FontWeight.w600,
                   letterSpacing: -0.2,
                 ),
@@ -115,6 +116,7 @@ class AppPageHeader extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: colors.onSurfaceVariant,
+                    fontSize: 12,
                   ),
                 ),
               ],
@@ -167,8 +169,9 @@ class AppSection extends StatelessWidget {
                   children: [
                     Text(
                       title,
-                      style: theme.textTheme.titleSmall?.copyWith(
+                      style: theme.textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w600,
+                        fontSize: 15,
                         color: colors.onSurface,
                       ),
                     ),
@@ -178,13 +181,14 @@ class AppSection extends StatelessWidget {
                         subtitle!,
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: colors.onSurfaceVariant,
+                          fontSize: 12,
                         ),
                       ),
                     ],
                   ],
                 ),
               ),
-              ?trailing,
+              if (trailing != null) ...[const SizedBox(width: 8), trailing!],
             ],
           ),
           SizedBox(height: headerGap),
@@ -195,49 +199,7 @@ class AppSection extends StatelessWidget {
   }
 }
 
-/// 独立的内容面板 Surface，用于需要独立层级或边框包裹的工作区面板。
-class AppPanel extends StatelessWidget {
-  const AppPanel({
-    super.key,
-    required this.child,
-    this.padding = const EdgeInsets.all(12),
-    this.margin,
-    this.backgroundColor,
-    this.borderColor,
-    this.borderRadius,
-  });
-
-  final Widget child;
-  final EdgeInsetsGeometry padding;
-  final EdgeInsetsGeometry? margin;
-  final Color? backgroundColor;
-  final Color? borderColor;
-  final BorderRadius? borderRadius;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-
-    return Container(
-      margin: margin,
-      padding: padding,
-      decoration: BoxDecoration(
-        color: backgroundColor ?? colors.surface,
-        borderRadius:
-            borderRadius ?? BorderRadius.circular(AppTheme.radiusMedium),
-        border: Border.all(
-          color: borderColor ?? colors.outlineVariant.withValues(alpha: 0.8),
-          width: 1,
-        ),
-      ),
-      child: child,
-    );
-  }
-}
-
-/// 统一的可选折叠区块卡片；展开状态由调用方持有。
-///
-/// 边框极细、0 elevation、0 shadow，保持紧凑和专业感。
+/// 提供统一的面板分组卡片。
 class AppSectionCard extends StatelessWidget {
   const AppSectionCard({
     super.key,
@@ -249,10 +211,10 @@ class AppSectionCard extends StatelessWidget {
     this.onHeaderTap,
     this.expanded,
     this.padding,
-    this.contentGap = 10,
+    this.contentGap = 12,
   }) : assert(
          onHeaderTap == null || expanded != null,
-         'expanded must be provided when the header is interactive',
+         'expanded must be provided when onHeaderTap is set',
        );
 
   final String title;
@@ -269,14 +231,14 @@ class AppSectionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final effectivePadding = padding ?? const EdgeInsets.all(14);
+    final effectivePadding = padding ?? const EdgeInsets.all(16);
 
     final headerContent = Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         if (icon != null) ...[
-          Icon(icon, size: 18, color: colors.primary),
-          const SizedBox(width: 8),
+          Icon(icon!, size: 18, color: colors.primary),
+          const SizedBox(width: 10),
         ],
         Expanded(
           child: Column(
@@ -288,8 +250,9 @@ class AppSectionCard extends StatelessWidget {
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.titleSmall?.copyWith(
-                  color: colors.onSurface,
                   fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                  color: colors.onSurface,
                 ),
               ),
               if (subtitle != null && subtitle!.isNotEmpty) ...[
@@ -300,6 +263,7 @@ class AppSectionCard extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: colors.onSurfaceVariant,
+                    fontSize: 12,
                   ),
                 ),
               ],
@@ -369,7 +333,7 @@ class AppSectionCard extends StatelessWidget {
 
 /// 展示列表或工作区的空状态，并可提供主次操作。
 ///
-/// 紧凑克制设计，移除 72px 大渐变图标和 28px 阴影。
+/// 采用现代开发者工具标准：信息优先、克制图标（24-28dp）、无大阴影/大圆角装饰。
 class AppEmptyState extends StatelessWidget {
   const AppEmptyState({
     super.key,
@@ -380,6 +344,7 @@ class AppEmptyState extends StatelessWidget {
     this.secondaryAction,
     this.compact = false,
     this.contained = false,
+    this.leftAligned = false,
   });
 
   final IconData icon;
@@ -389,47 +354,59 @@ class AppEmptyState extends StatelessWidget {
   final Widget? secondaryAction;
   final bool compact;
   final bool contained;
+  final bool leftAligned;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final iconSize = compact ? 24.0 : 28.0;
+    final crossAlign = leftAligned
+        ? CrossAxisAlignment.start
+        : CrossAxisAlignment.center;
+    final textAlign = leftAligned ? TextAlign.start : TextAlign.center;
+
     final content = SingleChildScrollView(
       child: Padding(
         padding: EdgeInsets.all(compact ? 16 : 24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: crossAlign,
           children: [
             Icon(
               icon,
-              size: compact ? 28 : 36,
+              size: iconSize,
               color: colors.onSurfaceVariant.withValues(alpha: 0.6),
             ),
-            SizedBox(height: compact ? 12 : 16),
+            SizedBox(height: compact ? 10 : 14),
             Text(
               title,
-              textAlign: TextAlign.center,
+              textAlign: textAlign,
               style: theme.textTheme.titleMedium?.copyWith(
                 fontWeight: FontWeight.w600,
+                fontSize: 15,
                 color: colors.onSurface,
               ),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 4),
             ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 360),
+              constraints: const BoxConstraints(maxWidth: 380),
               child: Text(
                 message,
-                textAlign: TextAlign.center,
+                textAlign: textAlign,
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: colors.onSurfaceVariant,
+                  fontSize: 13,
                   height: 1.4,
                 ),
               ),
             ),
             if (action != null || secondaryAction != null) ...[
-              SizedBox(height: compact ? 14 : 18),
+              SizedBox(height: compact ? 12 : 16),
               Wrap(
-                alignment: WrapAlignment.center,
+                alignment: leftAligned
+                    ? WrapAlignment.start
+                    : WrapAlignment.center,
                 spacing: 8,
                 runSpacing: 8,
                 children: [?action, ?secondaryAction],
@@ -440,6 +417,29 @@ class AppEmptyState extends StatelessWidget {
       ),
     );
 
+    if (leftAligned) {
+      return Align(
+        alignment: Alignment.topLeft,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 480),
+          child: contained
+              ? Container(
+                  margin: const EdgeInsets.all(AppTheme.compactPagePadding),
+                  decoration: BoxDecoration(
+                    color: colors.surfaceContainer.withValues(alpha: 0.35),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+                    border: Border.all(
+                      color: colors.outlineVariant.withValues(alpha: 0.6),
+                      width: 1,
+                    ),
+                  ),
+                  child: content,
+                )
+              : content,
+        ),
+      );
+    }
+
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 480),
@@ -447,7 +447,7 @@ class AppEmptyState extends StatelessWidget {
             ? Container(
                 margin: const EdgeInsets.all(AppTheme.compactPagePadding),
                 decoration: BoxDecoration(
-                  color: colors.surfaceContainer.withValues(alpha: 0.5),
+                  color: colors.surfaceContainer.withValues(alpha: 0.35),
                   borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
                   border: Border.all(
                     color: colors.outlineVariant.withValues(alpha: 0.6),

@@ -28,12 +28,12 @@ IconData _getStatusIcon(ConnectionConfig conn, SshConnectionState? state) {
 }
 
 Color _healthColor(BuildContext context, monitoring.ServerHealthLevel level) {
-  final colorScheme = Theme.of(context).colorScheme;
+  final status = AppStatusColors.of(context);
   return switch (level) {
-    monitoring.ServerHealthLevel.healthy => colorScheme.secondary,
-    monitoring.ServerHealthLevel.warning => Colors.orangeAccent.shade700,
-    monitoring.ServerHealthLevel.critical => colorScheme.error,
-    monitoring.ServerHealthLevel.unknown => colorScheme.onSurfaceVariant,
+    monitoring.ServerHealthLevel.healthy => status.success,
+    monitoring.ServerHealthLevel.warning => status.warning,
+    monitoring.ServerHealthLevel.critical => status.error,
+    monitoring.ServerHealthLevel.unknown => status.neutral,
   };
 }
 
@@ -593,7 +593,7 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
           ),
         ),
       ),
-    ).animate().fade(duration: 150.ms);
+    );
   }
 
   Widget _buildHealthChip(

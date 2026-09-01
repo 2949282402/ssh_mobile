@@ -6,6 +6,8 @@
 export 'src/theme/app_motion.dart';
 export 'src/theme/app_theme.dart';
 export 'src/utils/responsive.dart';
+export 'src/widgets/app_dialog.dart';
+export 'src/widgets/app_loading.dart';
 export 'src/widgets/app_skeletonizer.dart';
 export 'src/widgets/app_surface.dart';
 export 'src/widgets/app_terminal_skeleton.dart';

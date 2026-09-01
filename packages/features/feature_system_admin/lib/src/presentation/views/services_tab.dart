@@ -445,9 +445,10 @@ class _ServicesTabState extends State<_ServicesTab>
                                       : Icons.stop_circle_outlined,
                                   size: 20,
                                   color: service.isRunning
-                                      ? widget.colorScheme.secondary
-                                      : widget.colorScheme.onSurfaceVariant
-                                            .withValues(alpha: 0.5),
+                                      ? AppStatusColors.of(context).success
+                                      : AppStatusColors.of(
+                                          context,
+                                        ).neutral.withValues(alpha: 0.5),
                                 ),
                                 title: OverflowScrollText(
                                   service.name,

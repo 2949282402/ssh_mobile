@@ -763,22 +763,23 @@ extension _TerminalWindowsContent on _TerminalWindowsPageState {
       icon: session.tmuxSessionName == null
           ? Icons.terminal_rounded
           : Icons.layers_outlined,
-      size: 44,
-      iconSize: 22,
+      size: 32,
+      iconSize: 16,
       color: statusColor,
     );
   }
 
   Color _statusColor(BuildContext context, SshTerminalSession session) {
-    final colorScheme = Theme.of(context).colorScheme;
+    final status = AppStatusColors.of(context);
     switch (session.state) {
       case SshConnectionState.connected:
-        return colorScheme.secondary;
+        return status.success;
       case SshConnectionState.connecting:
-        return AppTheme.terminalAmber;
+        return status.warning;
       case SshConnectionState.error:
+        return status.error;
       case SshConnectionState.disconnected:
-        return colorScheme.error;
+        return status.neutral;
     }
   }
 
