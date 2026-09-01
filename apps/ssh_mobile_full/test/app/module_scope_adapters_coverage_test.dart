@@ -281,6 +281,98 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 50));
   });
+
+  testWidgets('module scopes render full skeletons when uninitialized', (
+    tester,
+  ) async {
+    final terminalManager = FakeSshService();
+    final sftpService = FakeSftpService();
+    final sftpLogger = FakeAppLogService();
+    final sftpSettingsEn = FakeAppSettings()..language = AppLanguage.en;
+
+    // SFTP scope skeleton
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightThemeFor(),
+        home: AppSftpModuleScope(
+          dependencies: (
+            sshSessionManager: terminalManager,
+            sftpService: sftpService,
+            settings: sftpSettingsEn,
+            logger: sftpLogger,
+            connectionViewModel: null,
+          ),
+          moduleFactory: () => feature_sftp.SftpModule(
+            databaseFactory: () =>
+                feature_sftp.SftpDatabase.forTesting(_NoopQueryExecutor()),
+          ),
+          child: const Text('sftp-child'),
+        ),
+      ),
+    );
+    expect(find.byType(AppSkeletonizer), findsOneWidget);
+    expect(find.text('Production-Server-01'), findsOneWidget);
+    await _pumpFrames(tester);
+
+    // System Admin scope skeleton
+    final config = ConnectionConfig(
+      id: 'admin-server',
+      name: 'Admin server',
+      host: 'admin.example.test',
+      username: 'root',
+    );
+    final connectionRepository = _AdminConnectionRepository(config);
+    final adminSettingsEn = FakeAppSettings()..language = AppLanguage.en;
+    final monitoringService = _FakeMonitoringService();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightThemeFor(),
+        home: AppSystemAdminModuleScope(
+          dependencies: (
+            connectionRepository: connectionRepository,
+            credentialRepository: _AdminCredentialRepository(),
+            hostKeyRepository: _AdminHostKeyRepository(),
+            logger: sftpLogger,
+            settings: adminSettingsEn,
+            sftpService: sftpService,
+            monitoringService: monitoringService,
+            nativeStreamConnector: null,
+          ),
+          child: const Text('admin-child'),
+        ),
+      ),
+    );
+    expect(find.byType(AppSkeletonizer), findsOneWidget);
+    expect(find.text('nginx.service'), findsOneWidget);
+    await _pumpFrames(tester);
+
+    // Terminal scope skeleton
+    final termSettingsEn = FakeAppSettings()..language = AppLanguage.en;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightThemeFor(),
+        home: InheritedProvider<ssh_core.SshSessionManager>.value(
+          value: terminalManager,
+          child: AppTerminalModuleScope(
+            moduleFactory: () => feature_terminal.TerminalModule(
+              databaseFactory: () =>
+                  feature_terminal.TerminalDatabase.forTesting(
+                    _NoopQueryExecutor(),
+                  ),
+            ),
+            child: const Text('term-child'),
+          ),
+        ),
+      ),
+    );
+    expect(find.byType(AppSkeletonizer), findsOneWidget);
+    expect(find.text('Session 1: bash'), findsOneWidget);
+    await _pumpFrames(tester);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 50));
+  });
 }
 
 Future<void> _pumpFrames(WidgetTester tester) async {
