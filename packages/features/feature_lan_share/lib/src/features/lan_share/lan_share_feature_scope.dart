@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:app_ui/app_ui.dart';
 
 import '../../domain/lan_share_ports.dart';
 import 'services/lan_receiver_coordinator.dart';
@@ -91,7 +92,13 @@ class _LanShareFeatureScopeState extends State<LanShareFeatureScope> {
             ),
           );
         }
-        return const Scaffold(body: Center(child: CircularProgressIndicator()));
+        return Scaffold(
+          body: AppSkeletonizer.zone(
+            enabled: true,
+            semanticsLabel: strings.lanShare,
+            child: const AppSkeletonList(hasLeading: true, itemCount: 6),
+          ),
+        );
       },
     );
   }

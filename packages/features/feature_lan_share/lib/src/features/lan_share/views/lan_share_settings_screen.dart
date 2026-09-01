@@ -487,11 +487,7 @@ class _RelayEditorDialogState extends State<_RelayEditorDialog> {
             FilledButton(
               onPressed: busy ? null : _save,
               child: busy
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
+                  ? const AppLoadingIndicator(size: 18, strokeWidth: 2)
                   : Text(strings.save),
             ),
           ],

@@ -537,11 +537,7 @@ class _LlmSettingsScreenState extends State<LlmSettingsScreen> {
                     child: FilledButton(
                       onPressed: _saving ? null : () => _save(strings),
                       child: _saving
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
+                          ? const AppLoadingIndicator(size: 18, strokeWidth: 2)
                           : Text(strings.save),
                     ),
                   ),

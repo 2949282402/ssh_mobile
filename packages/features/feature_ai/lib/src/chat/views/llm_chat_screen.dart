@@ -538,12 +538,12 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
         ),
         builder: (context, snapshot, child) {
           if (snapshot.loading) {
-            return const Scaffold(
-              body: Center(
-                child: SizedBox(
-                  width: 28,
-                  height: 28,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+            return Scaffold(
+              body: AppPageSurface(
+                child: AppSkeletonizer.zone(
+                  enabled: true,
+                  semanticsLabel: strings.title,
+                  child: const AppSkeletonList(hasLeading: true, itemCount: 6),
                 ),
               ),
             );

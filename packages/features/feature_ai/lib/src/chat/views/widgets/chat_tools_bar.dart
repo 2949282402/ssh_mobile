@@ -191,7 +191,7 @@ class _ChatToolTile extends StatelessWidget {
                   child: isBusy
                       ? const Padding(
                           padding: EdgeInsets.all(9),
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                          child: AppLoadingIndicator(size: 18, strokeWidth: 2),
                         )
                       : Icon(
                           icon,

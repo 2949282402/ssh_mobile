@@ -81,53 +81,57 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
 
     if (!context.mounted) return;
 
-    await showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: Text(strings.aliyunSettings),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(strings.aliyunHint, style: const TextStyle(fontSize: 12)),
-                const SizedBox(height: 14),
-                TextField(
-                  controller: controller,
-                  obscureText: isObscured,
-                  decoration: InputDecoration(
-                    labelText: 'Aliyun DashScope API Key',
-                    hintText: 'apiKey (e.g. sk-...)',
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                        isObscured ? Icons.visibility : Icons.visibility_off,
+    try {
+      await showDialog(
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setState) => AlertDialog(
+            title: Text(strings.aliyunSettings),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(strings.aliyunHint, style: const TextStyle(fontSize: 12)),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: controller,
+                    obscureText: isObscured,
+                    decoration: InputDecoration(
+                      labelText: 'Aliyun DashScope API Key',
+                      hintText: 'apiKey (e.g. sk-...)',
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          isObscured ? Icons.visibility : Icons.visibility_off,
+                        ),
+                        onPressed: () {
+                          setState(() => isObscured = !isObscured);
+                        },
                       ),
-                      onPressed: () {
-                        setState(() => isObscured = !isObscured);
-                      },
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(strings.cancel),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  await viewModel.saveAliyunApiKey(controller.text.trim());
+                  if (context.mounted) Navigator.pop(context);
+                },
+                child: Text(strings.save),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text(strings.cancel),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                await viewModel.saveAliyunApiKey(controller.text.trim());
-                if (context.mounted) Navigator.pop(context);
-              },
-              child: Text(strings.save),
-            ),
-          ],
         ),
-      ),
-    );
+      );
+    } finally {
+      controller.dispose();
+    }
   }
 
   Future<void> _handleUpload(
@@ -250,7 +254,11 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const CircularProgressIndicator(),
+                        AppLoadingIndicator(
+                          size: 32,
+                          strokeWidth: 2.5,
+                          color: theme.colorScheme.primary,
+                        ),
                         const SizedBox(height: 16),
                         Text(
                           strings.uploading,

@@ -347,11 +347,7 @@ class _PromptCustomizerDialogState extends State<PromptCustomizerDialog> {
                       ? null
                       : _saveSettings,
                   child: _saving
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
+                      ? const AppLoadingIndicator(size: 18, strokeWidth: 2)
                       : Text(en ? 'Save' : '保存'),
                 ),
               ),
@@ -371,7 +367,15 @@ class _PromptCustomizerDialogState extends State<PromptCustomizerDialog> {
                       child: Padding(
                         padding: EdgeInsets.all(compactKeyboard ? 8 : 14),
                         child: _loading
-                            ? const Center(child: CircularProgressIndicator())
+                            ? AppSkeletonizer.zone(
+                                enabled: true,
+                                semanticsLabel: widget.strings.loadingPrompts,
+                                child: const AppSkeletonList(
+                                  hasLeading: false,
+                                  itemCount: 4,
+                                  padding: EdgeInsets.zero,
+                                ),
+                              )
                             : loadFailed
                             ? AppEmptyState(
                                 icon: Icons.error_outline_rounded,

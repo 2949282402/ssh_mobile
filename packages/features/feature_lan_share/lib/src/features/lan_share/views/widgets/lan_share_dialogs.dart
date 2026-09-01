@@ -199,41 +199,45 @@ extension _LanShareDialogActions on _LanShareScreenState {
     final cancelLabel = strings.cancel;
     final confirmLabel = isEn ? 'Connect' : '连接';
 
-    return showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(description, style: Theme.of(ctx).textTheme.bodyMedium),
-              const SizedBox(height: 16),
-              TextField(
-                controller: controller,
-                autofocus: true,
-                decoration: InputDecoration(
-                  hintText: hint,
-                  border: const OutlineInputBorder(),
+    try {
+      return await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(title),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(description, style: Theme.of(ctx).textTheme.bodyMedium),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  decoration: InputDecoration(
+                    hintText: hint,
+                    border: const OutlineInputBorder(),
+                  ),
+                  onSubmitted: (val) => Navigator.pop(ctx, val.trim()),
                 ),
-                onSubmitted: (val) => Navigator.pop(ctx, val.trim()),
-              ),
-            ],
+              ],
+            ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(cancelLabel),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+              child: Text(confirmLabel),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(cancelLabel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-            child: Text(confirmLabel),
-          ),
-        ],
-      ),
-    );
+      );
+    } finally {
+      controller.dispose();
+    }
   }
 
   /// 展示本机 LAN 地址选择器并更新 WebShare 地址覆盖值。
@@ -358,13 +362,10 @@ extension _LanShareDialogActions on _LanShareScreenState {
                             ),
                             IconButton(
                               icon: isRefreshing
-                                  ? SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: colors.primary,
-                                      ),
+                                  ? AppLoadingIndicator(
+                                      size: 18,
+                                      strokeWidth: 2,
+                                      color: colors.primary,
                                     )
                                   : const Icon(Icons.refresh_rounded),
                               tooltip: isEn ? 'Refresh' : '刷新网卡',
@@ -483,13 +484,10 @@ extension _LanShareDialogActions on _LanShareScreenState {
                           ),
                           IconButton(
                             icon: isRefreshing
-                                ? SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: colors.primary,
-                                    ),
+                                ? AppLoadingIndicator(
+                                    size: 18,
+                                    strokeWidth: 2,
+                                    color: colors.primary,
                                   )
                                 : const Icon(Icons.refresh_rounded),
                             tooltip: isEn ? 'Refresh' : '刷新网卡',
@@ -860,19 +858,14 @@ class _WebShareDialogContentState extends State<WebShareDialogContent> {
                   Stack(
                     alignment: Alignment.center,
                     children: [
-                      SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(
-                          value: _secondsRemaining / 60.0,
-                          strokeWidth: 2.5,
-                          backgroundColor: Theme.of(
-                            context,
-                          ).colorScheme.primary.withValues(alpha: 0.15),
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Theme.of(context).colorScheme.primary,
-                          ),
-                        ),
+                      AppLoadingIndicator(
+                        value: _secondsRemaining / 60.0,
+                        size: 24,
+                        strokeWidth: 2.5,
+                        backgroundColor: Theme.of(
+                          context,
+                        ).colorScheme.primary.withValues(alpha: 0.15),
+                        color: Theme.of(context).colorScheme.primary,
                       ),
                       Text(
                         '$_secondsRemaining',

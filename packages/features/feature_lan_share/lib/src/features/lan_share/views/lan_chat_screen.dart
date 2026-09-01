@@ -275,7 +275,11 @@ class _LanChatScreenState extends State<LanChatScreen> {
       body: AppPageSurface(
         child: SafeArea(
           child: _isCheckingPairing
-              ? const Center(child: CircularProgressIndicator())
+              ? AppSkeletonizer.zone(
+                  enabled: true,
+                  semanticsLabel: strings.lanRelayConnecting,
+                  child: const AppSkeletonList(hasLeading: true, itemCount: 6),
+                )
               : Column(
                   children: [
                     // Custom Top Header
@@ -995,10 +999,10 @@ class _LanChatScreenState extends State<LanChatScreen> {
       case LanTransferStatus.pending:
       case LanTransferStatus.connecting:
       case LanTransferStatus.transferring:
-        return const SizedBox(
-          width: 8,
-          height: 8,
-          child: CircularProgressIndicator(strokeWidth: 1),
+        return AppLoadingIndicator(
+          size: 8,
+          strokeWidth: 1.2,
+          color: Theme.of(context).colorScheme.primary,
         );
       case LanTransferStatus.completed:
         return Icon(

@@ -478,15 +478,10 @@ class _LanShareScreenState extends State<LanShareScreen>
               child: Padding(
                 padding: const EdgeInsets.all(6),
                 child: _isRefreshingIps
-                    ? SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 1.5,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            colors.primary.withValues(alpha: 0.7),
-                          ),
-                        ),
+                    ? AppLoadingIndicator(
+                        size: 14,
+                        strokeWidth: 1.5,
+                        color: colors.primary.withValues(alpha: 0.7),
                       )
                     : Icon(
                         Icons.refresh_rounded,

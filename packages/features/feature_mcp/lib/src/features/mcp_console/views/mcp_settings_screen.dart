@@ -99,11 +99,9 @@ class _McpSettingsScreenState extends State<McpSettingsScreen> {
                         suffixIcon: _checkingPort
                             ? const Padding(
                                 padding: EdgeInsets.all(12),
-                                child: SizedBox.square(
-                                  dimension: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
+                                child: AppLoadingIndicator(
+                                  size: 18,
+                                  strokeWidth: 2,
                                 ),
                               )
                             : IconButton(

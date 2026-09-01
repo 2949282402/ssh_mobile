@@ -316,11 +316,7 @@ class _LlmApiConfigSection extends StatelessWidget {
                   tooltip: strings.refreshModels,
                   onPressed: loadingModels || saving ? null : onRefreshModels,
                   icon: loadingModels
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
+                      ? const AppLoadingIndicator(size: 18, strokeWidth: 2)
                       : const Icon(Icons.sync_rounded),
                 ),
               ],

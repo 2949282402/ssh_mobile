@@ -73,7 +73,11 @@ class _AgentTraceDebugPageState extends State<AgentTraceDebugPage> {
           future: _future,
           builder: (context, snapshot) {
             if (snapshot.connectionState != ConnectionState.done) {
-              return const Center(child: CircularProgressIndicator());
+              return AppSkeletonizer.zone(
+                enabled: true,
+                semanticsLabel: strings.agentTraceTitle,
+                child: const AppSkeletonList(hasLeading: true, itemCount: 6),
+              );
             }
             final data = snapshot.data;
             if (snapshot.hasError) {

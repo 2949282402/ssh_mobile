@@ -102,10 +102,7 @@ class ChatPlanModeBanner extends StatelessWidget {
                 ),
                 onPressed: busy ? null : onClose,
                 icon: busy
-                    ? const SizedBox.square(
-                        dimension: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
+                    ? const AppLoadingIndicator(size: 18, strokeWidth: 2)
                     : const Icon(Icons.close_rounded, size: 20),
               ),
             ],

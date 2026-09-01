@@ -392,11 +392,14 @@ class _PreviewLoading extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
+    return AppSkeletonizer.zone(
       key: const ValueKey('lan-preview-loading'),
-      child: Semantics(
-        label: strings.loadingFilePreview,
-        child: const CircularProgressIndicator(),
+      enabled: true,
+      semanticsLabel: strings.loadingFilePreview,
+      child: const AppSkeletonList(
+        hasLeading: true,
+        itemCount: 6,
+        padding: EdgeInsets.all(24),
       ),
     );
   }
