@@ -30,6 +30,42 @@ void main() {
       expect(result[1]['content'], 'hi there');
     });
 
+    test('oversized text attachments stay out of the prompt body', () {
+      final attachment = AiChatAttachment(
+        fileName: 'huge.log',
+        mimeType: 'text/plain',
+        sizeBytes: AiAttachmentBudget.maxInlineTextBytes + 1,
+        dataBase64: base64Encode(
+          List<int>.filled(AiAttachmentBudget.maxInlineTextBytes + 1, 65),
+        ),
+      );
+
+      final result = AiChatMessageMapper.buildMultipartContent('question', [
+        attachment,
+      ]);
+
+      expect(result.single['type'], 'text');
+      final text = result.single['text'] as String;
+      expect(text, contains('[Attached file: huge.log'));
+      expect(text, isNot(contains('AAAA')));
+    });
+
+    test('oversized images become bounded placeholders', () {
+      final attachment = AiChatAttachment(
+        fileName: 'huge.png',
+        mimeType: 'image/png',
+        sizeBytes: AiAttachmentBudget.maxSingleAttachmentBytes + 1,
+        dataBase64: 'small-data',
+      );
+
+      final result = AiChatMessageMapper.buildMultipartContent('question', [
+        attachment,
+      ]);
+
+      expect(result, hasLength(1));
+      expect(result.single['text'], contains('[Attached file: huge.png'));
+    });
+
     test('messagesForRequest ignores error role and placeholder assistant', () {
       final placeholder = AiChatMessageRecord(
         role: 'assistant',

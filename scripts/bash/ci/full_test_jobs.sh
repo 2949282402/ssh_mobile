@@ -50,7 +50,7 @@ job_native() {
   COTURN_CONTAINER="ssh-mobile-full-test-coturn-$RUN_ID"
   if ((DOCKER_AVAILABLE)); then
     if docker run -d --rm --name "$COTURN_CONTAINER" --network host \
-      coturn/coturn:4.6.3 -n --log-file=stdout --lt-cred-mech \
+      coturn/coturn:4.6.3@sha256:71c3c990283385567f11794ee692e3a47b66fd9b0bb39e42afbe776e331dd888 -n --log-file=stdout --lt-cred-mech \
       --fingerprint --user test:test --realm=ssh-mobile.test \
       --no-tls --no-dtls --min-port=49160 --max-port=49200 \
       --no-multicast-peers >/dev/null; then
@@ -132,18 +132,18 @@ start_relay_services() {
 
   docker run -d --rm --name "$RELAY_MYSQL_CONTAINER" -p 127.0.0.1::3306 \
     -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=relay \
-    -e MYSQL_USER=relay -e MYSQL_PASSWORD=relay mysql:8.4 >/dev/null || return 1
+    -e MYSQL_USER=relay -e MYSQL_PASSWORD=relay mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb >/dev/null || return 1
   docker run -d --rm --name "$RELAY_REDIS_CONTAINER" -p 127.0.0.1::6379 \
-    redis:7-alpine >/dev/null || return 1
+    redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf >/dev/null || return 1
   ANALYTICS_MYSQL_PASSWORD="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
   ANALYTICS_MYSQL_ROOT_PASSWORD="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
   ANALYTICS_REDIS_PASSWORD="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
   docker run -d --rm --name "$ANALYTICS_MYSQL_CONTAINER" -p 127.0.0.1::3306 \
     -e MYSQL_ROOT_PASSWORD="$ANALYTICS_MYSQL_ROOT_PASSWORD" \
     -e MYSQL_DATABASE=telemetry -e MYSQL_USER=telemetry \
-    -e MYSQL_PASSWORD="$ANALYTICS_MYSQL_PASSWORD" mysql:8.4 >/dev/null || return 1
+    -e MYSQL_PASSWORD="$ANALYTICS_MYSQL_PASSWORD" mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb >/dev/null || return 1
   docker run -d --rm --name "$ANALYTICS_REDIS_CONTAINER" -p 127.0.0.1::6379 \
-    -e ANALYTICS_REDIS_PASSWORD="$ANALYTICS_REDIS_PASSWORD" redis:7-alpine sh -ec \
+    -e ANALYTICS_REDIS_PASSWORD="$ANALYTICS_REDIS_PASSWORD" redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf sh -ec \
     'exec redis-server --maxmemory 64mb --maxmemory-policy noeviction --requirepass "$ANALYTICS_REDIS_PASSWORD"' >/dev/null || return 1
 
   RELAY_MYSQL_PORT="$(docker port "$RELAY_MYSQL_CONTAINER" 3306/tcp | head -n 1 | sed -E 's/.*:([0-9]+)$/\1/')"

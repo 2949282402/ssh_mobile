@@ -190,40 +190,11 @@ extension AiChatMessageActions on AiChatViewModel {
         return const SendTextTargetChanged();
       }
       final userMessage = preparedTurn.userMessage;
-      final ragChunks = const <RagChunk>[];
-
-      // RAG Traces
-      final assistantTraces = List<AiMessageTrace>.from(
-        preparedTurn.assistantMessage.traces,
-      );
-      if (ragChunks.isNotEmpty) {
-        final traceContent = StringBuffer();
-        final isEn = _appSettings.isEnglish;
-        for (final chunk in ragChunks) {
-          traceContent.writeln(
-            isEn
-                ? 'Source: [${chunk.documentName}] (Chunk #${chunk.metadata['chunkIndex'] ?? 0})'
-                : '来源: [${chunk.documentName}] (分块 #${chunk.metadata['chunkIndex'] ?? 0})',
-          );
-          traceContent.writeln('---');
-          traceContent.writeln(chunk.text);
-          traceContent.writeln('========================================\n');
-        }
-        assistantTraces.add(
-          AiMessageTrace(
-            id: 'rag-${now.microsecondsSinceEpoch}',
-            kind: 'rag_context',
-            title: isEn ? 'Knowledge Base Retrieval (RAG)' : '知识库检索 (RAG)',
-            content: traceContent.toString(),
-            createdAt: now,
-          ),
-        );
-      }
 
       final assistantMessage = AiChatMessageRecord(
         role: 'assistant',
         text: '',
-        traces: assistantTraces,
+        traces: preparedTurn.assistantMessage.traces,
         createdAt: now,
       );
       final nextMessages = [...chat.messages, userMessage, assistantMessage];
@@ -468,10 +439,12 @@ extension AiChatMessageActions on AiChatViewModel {
         model: nextModel,
         messages: nextMessages,
         updatedAt: now,
+        clearApprovedPlan: true,
       );
       userRequest = prefix.lastWhere((message) => message.role == 'user').text;
 
       await _storageService.saveAiChat(nextChat);
+      _invalidateHistoryRewriteState(activeChat.id);
       _replaceChat(nextChat, activate: false);
       _sending = true;
       notify();
@@ -508,6 +481,8 @@ extension AiChatMessageActions on AiChatViewModel {
     late String nextModel;
     late _ChatTurnInputSnapshot turnInputSnapshot;
     late AiRuntimeConnectionSnapshot runtimeConnection;
+    late List<String> memorySources;
+    late int ragHits;
     try {
       final activeChat = this.activeChat;
       if (activeChat == null) return;
@@ -538,15 +513,25 @@ extension AiChatMessageActions on AiChatViewModel {
       if (currentTarget.role != 'user') return;
 
       final now = DateTime.now();
-      final editedUser = currentTarget.copyWith(
-        text: trimmedEditedText,
-        createdAt: now,
-      );
-      assistantMessage = AiChatMessageRecord(
-        role: 'assistant',
-        text: '',
-        createdAt: now,
-      );
+      final preparedTurn = await _runtimeFactory
+          .createOrchestrator()
+          .prepareTurn(
+            chat: activeChat,
+            text: trimmedEditedText,
+            createdAt: now,
+            language: turnInputSnapshot.language,
+            attachments: currentTarget.attachments,
+            selectedConnectionIds: turnInputSnapshot.selectedConnectionIds,
+            connectionTargets: turnInputSnapshot.connectionTargets,
+            ragEnabled: turnInputSnapshot.ragEnabled,
+            ragSearchMode: turnInputSnapshot.ragSearchMode,
+            ragLimit: turnInputSnapshot.ragTopN,
+            ragAliyunApiKey: runtimeConnection.aliyunApiKey,
+          );
+      memorySources = preparedTurn.memorySources;
+      ragHits = preparedTurn.ragHits;
+      final editedUser = preparedTurn.userMessage;
+      assistantMessage = preparedTurn.assistantMessage;
       nextMessages = [
         ...activeChat.messages.take(targetIndex),
         editedUser,
@@ -560,9 +545,11 @@ extension AiChatMessageActions on AiChatViewModel {
         model: nextModel,
         messages: nextMessages,
         updatedAt: now,
+        clearApprovedPlan: true,
       );
 
       await _storageService.saveAiChat(nextChat);
+      _invalidateHistoryRewriteState(activeChat.id);
       _replaceChat(nextChat, activate: false);
       _sending = true;
       notify();
@@ -578,14 +565,21 @@ extension AiChatMessageActions on AiChatViewModel {
       model: nextModel,
       requestMessages: nextMessages,
       userRequest: trimmedEditedText,
-      memorySources: const [],
-      ragHits: 0,
+      memorySources: memorySources,
+      ragHits: ragHits,
       selectedConnectionIds: turnInputSnapshot.selectedConnectionIds,
       connectionTargets: turnInputSnapshot.connectionTargets,
       allowedTools: turnInputSnapshot.allowedTools,
       runtimeConnection: runtimeConnection,
       language: turnInputSnapshot.language,
     );
+  }
+
+  void _invalidateHistoryRewriteState(String chatId) {
+    if (_pendingPlanWarningSnapshot?.chat.id == chatId) {
+      _pendingPlanWarningSnapshot = null;
+    }
+    _pendingForceCompressionChats.remove(chatId);
   }
 
   Future<void> branchFromAssistant(int messageIndex) async {

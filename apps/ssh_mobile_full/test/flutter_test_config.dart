@@ -13,7 +13,10 @@ typedef _DlopenDart =
 class _ToleranceGoldenComparator extends LocalFileComparator {
   _ToleranceGoldenComparator(super.testFile);
 
-  static const double _maxDiffPercent = 0.05;
+  // Golden comparisons should catch real layout/style regressions.  Keep the
+  // allowance below one percent for renderer noise without turning a visibly
+  // different screen green.
+  static const double _maxDiffPercent = 0.005;
 
   @override
   Future<bool> compare(Uint8List imageBytes, Uri golden) async {

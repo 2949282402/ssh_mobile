@@ -249,7 +249,7 @@ start_compose() {
     "RELAY_PUBLIC_URL=$BASE_URL" \
     "RELAY_HTTP_PORT=$http_port" \
     "RELAY_HTTPS_PORT=$https_port" \
-    'RELAY_CADDY_IMAGE=caddy:2.8-alpine' \
+    'RELAY_CADDY_IMAGE=caddy:2.8-alpine@sha256:af32e97399febea808609119bb21544d0265c58a02836576e32a2d082c262c17' \
     'CADDY_HTTP_PORT=80' \
     'CADDY_HTTPS_PORT=443' \
     'RELAY_INTERNAL_PORT=8080' \

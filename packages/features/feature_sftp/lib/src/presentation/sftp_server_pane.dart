@@ -25,6 +25,7 @@ class _ServerPane extends StatelessWidget {
       headerIcon: Icons.folder_shared_rounded,
       collapseTooltip: strings.collapseServerList,
       reorderTooltip: strings.reorderServer,
+      itemKeyBuilder: (connection) => ValueKey('sftp-server-${connection.id}'),
       collapseButtonKey: const ValueKey('sftp-server-collapse-desktop'),
       dragHandleKeyBuilder: (connection) =>
           ValueKey('sftp-server-drag-${connection.id}'),

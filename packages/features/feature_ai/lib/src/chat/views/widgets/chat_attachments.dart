@@ -45,11 +45,22 @@ class ChatAttachmentPicker {
       if (result == null || result.files.isEmpty) return;
 
       final settings = await viewModel.loadAiConnectionSettings();
-      final maxBytes = settings.maxImageSizeBytes;
+      final maxBytes =
+          settings.maxImageSizeBytes <
+              AiAttachmentBudget.maxSingleAttachmentBytes
+          ? settings.maxImageSizeBytes
+          : AiAttachmentBudget.maxSingleAttachmentBytes;
+      var remainingBytes = AiAttachmentBudget.remainingBytes(
+        viewModel.pendingAttachments,
+      );
 
       for (final file in result.files) {
+        if (viewModel.pendingAttachments.length >=
+            AiAttachmentBudget.maxAttachmentCount) {
+          break;
+        }
         if (file.size == 0) continue;
-        if (file.size > maxBytes) {
+        if (file.size > maxBytes || file.size > remainingBytes) {
           if (context.mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -65,16 +76,21 @@ class ChatAttachmentPicker {
           continue;
         }
         final bytes = await file.readAsBytes();
-        if (bytes.isEmpty) continue;
+        if (bytes.isEmpty ||
+            bytes.length > maxBytes ||
+            bytes.length > remainingBytes) {
+          continue;
+        }
         final mimeType = _guessMimeType(file.name, fallback: 'image/png');
         viewModel.addAttachment(
           AiChatAttachment(
             fileName: file.name,
             mimeType: mimeType,
-            sizeBytes: file.size,
+            sizeBytes: bytes.length,
             dataBase64: base64Encode(bytes),
           ),
         );
+        remainingBytes -= bytes.length;
       }
     } catch (e, stackTrace) {
       AppLogService.instance.error(
@@ -95,11 +111,22 @@ class ChatAttachmentPicker {
       if (result == null || result.files.isEmpty) return;
 
       final settings = await viewModel.loadAiConnectionSettings();
-      final maxBytes = settings.maxFileSizeBytes;
+      final maxBytes =
+          settings.maxFileSizeBytes <
+              AiAttachmentBudget.maxSingleAttachmentBytes
+          ? settings.maxFileSizeBytes
+          : AiAttachmentBudget.maxSingleAttachmentBytes;
+      var remainingBytes = AiAttachmentBudget.remainingBytes(
+        viewModel.pendingAttachments,
+      );
 
       for (final file in result.files) {
+        if (viewModel.pendingAttachments.length >=
+            AiAttachmentBudget.maxAttachmentCount) {
+          break;
+        }
         if (file.size == 0) continue;
-        if (file.size > maxBytes) {
+        if (file.size > maxBytes || file.size > remainingBytes) {
           if (context.mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -115,16 +142,21 @@ class ChatAttachmentPicker {
           continue;
         }
         final bytes = await file.readAsBytes();
-        if (bytes.isEmpty) continue;
+        if (bytes.isEmpty ||
+            bytes.length > maxBytes ||
+            bytes.length > remainingBytes) {
+          continue;
+        }
         final mimeType = _guessMimeType(file.name);
         viewModel.addAttachment(
           AiChatAttachment(
             fileName: file.name,
             mimeType: mimeType,
-            sizeBytes: file.size,
+            sizeBytes: bytes.length,
             dataBase64: base64Encode(bytes),
           ),
         );
+        remainingBytes -= bytes.length;
       }
     } catch (e, stackTrace) {
       AppLogService.instance.error(

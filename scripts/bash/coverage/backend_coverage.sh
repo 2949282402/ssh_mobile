@@ -61,7 +61,7 @@ if [[ -z "$MYSQL_DSN" || -z "$REDIS_URL" || -z "$TELEMETRY_MYSQL_DSN" || -z "$TE
       -e MYSQL_DATABASE=relay \
       -e MYSQL_USER=relay \
       -e MYSQL_PASSWORD=relay \
-      mysql:8.4 >/dev/null || exit 69
+      mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb >/dev/null || exit 69
     MYSQL_PORT="$(docker port "$MYSQL_CONTAINER" 3306/tcp | head -n 1 | sed -E 's/.*:([0-9]+)$/\1/')"
     if [[ ! "$MYSQL_PORT" =~ ^[0-9]+$ ]]; then
       echo 'Docker did not publish the temporary Relay MySQL port.' >&2
@@ -81,7 +81,7 @@ if [[ -z "$MYSQL_DSN" || -z "$REDIS_URL" || -z "$TELEMETRY_MYSQL_DSN" || -z "$TE
   if [[ -z "$REDIS_URL" ]]; then
     docker run -d --rm --name "$REDIS_CONTAINER" \
       -p 127.0.0.1::6379 \
-      redis:7-alpine >/dev/null || exit 69
+      redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf >/dev/null || exit 69
     REDIS_PORT="$(docker port "$REDIS_CONTAINER" 6379/tcp | head -n 1 | sed -E 's/.*:([0-9]+)$/\1/')"
     if [[ ! "$REDIS_PORT" =~ ^[0-9]+$ ]]; then
       echo 'Docker did not publish the temporary Relay Redis port.' >&2
@@ -108,7 +108,7 @@ if [[ -z "$MYSQL_DSN" || -z "$REDIS_URL" || -z "$TELEMETRY_MYSQL_DSN" || -z "$TE
       -e MYSQL_DATABASE=telemetry \
       -e MYSQL_USER=telemetry \
       -e MYSQL_PASSWORD="$analytics_mysql_password" \
-      mysql:8.4 >/dev/null || exit 69
+      mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb >/dev/null || exit 69
     ANALYTICS_MYSQL_PORT="$(docker port "$ANALYTICS_MYSQL_CONTAINER" 3306/tcp | head -n 1 | sed -E 's/.*:([0-9]+)$/\1/')"
     if [[ ! "$ANALYTICS_MYSQL_PORT" =~ ^[0-9]+$ ]]; then
       echo 'Docker did not publish the temporary Analytics MySQL port.' >&2
@@ -129,7 +129,7 @@ if [[ -z "$MYSQL_DSN" || -z "$REDIS_URL" || -z "$TELEMETRY_MYSQL_DSN" || -z "$TE
     docker run -d --rm --name "$ANALYTICS_REDIS_CONTAINER" \
       -p 127.0.0.1::6379 \
       -e ANALYTICS_REDIS_PASSWORD="$analytics_redis_password" \
-      redis:7-alpine sh -ec 'exec redis-server --maxmemory 64mb --maxmemory-policy noeviction --requirepass "$ANALYTICS_REDIS_PASSWORD"' >/dev/null || exit 69
+      redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf sh -ec 'exec redis-server --maxmemory 64mb --maxmemory-policy noeviction --requirepass "$ANALYTICS_REDIS_PASSWORD"' >/dev/null || exit 69
     ANALYTICS_REDIS_PORT="$(docker port "$ANALYTICS_REDIS_CONTAINER" 6379/tcp | head -n 1 | sed -E 's/.*:([0-9]+)$/\1/')"
     if [[ ! "$ANALYTICS_REDIS_PORT" =~ ^[0-9]+$ ]]; then
       echo 'Docker did not publish the temporary Analytics Redis port.' >&2
