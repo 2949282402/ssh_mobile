@@ -8,6 +8,7 @@ export 'src/llm/provider/llm_api_format.dart';
 export 'src/llm/provider/llm_provider_adapter.dart';
 export 'src/llm/provider/llm_provider_factory.dart';
 export 'src/llm/provider/llm_provider_types.dart';
+export 'src/llm/provider/llm_request_size_guard.dart';
 export 'src/llm/provider/llm_url_utils.dart';
 export 'src/llm/provider/openai_chat_provider.dart';
 export 'src/llm/provider/openai_responses_provider.dart';

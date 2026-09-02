@@ -12,6 +12,8 @@ import 'llm_provider_adapter.dart';
 
 import 'llm_provider_types.dart';
 
+import 'llm_request_size_guard.dart';
+
 import 'llm_url_utils.dart';
 
 class OpenAiChatProvider implements LlmProviderAdapter {
@@ -141,6 +143,8 @@ class OpenAiChatProvider implements LlmProviderAdapter {
 
         request.cancellationToken?.throwIfCancelled();
 
+        final encodedBody = encodeBoundedJsonRequest(requestBody);
+
         final response = await client
             .post(
               endpoint,
@@ -148,7 +152,7 @@ class OpenAiChatProvider implements LlmProviderAdapter {
                 'Authorization': 'Bearer ${request.apiKey}',
                 'Content-Type': 'application/json',
               },
-              body: jsonEncode(requestBody),
+              body: encodedBody,
             )
             .timeout(Duration(seconds: request.timeoutSeconds));
 
@@ -378,7 +382,7 @@ class OpenAiChatProvider implements LlmProviderAdapter {
           requestBody['stream_options'] = {'include_usage': true};
         }
 
-        final bodyBytes = utf8.encode(jsonEncode(requestBody));
+        final encodedBody = encodeBoundedJsonRequest(requestBody);
 
         request.cancellationToken?.throwIfCancelled();
 
@@ -387,7 +391,7 @@ class OpenAiChatProvider implements LlmProviderAdapter {
           'Authorization': 'Bearer ${request.apiKey}',
           'Content-Type': 'application/json',
         });
-        httpRequest.bodyBytes = bodyBytes;
+        httpRequest.body = encodedBody;
 
         final response = await client
             .send(httpRequest)

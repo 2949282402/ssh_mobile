@@ -6,6 +6,7 @@ import 'package:feature_ai/src/domain/ai_compat.dart';
 import 'package:feature_ai/src/llm/runtime/llm_runtime_types.dart';
 import 'llm_provider_adapter.dart';
 import 'llm_provider_types.dart';
+import 'llm_request_size_guard.dart';
 import 'llm_url_utils.dart';
 
 class _StreamingAnthropicToolCall {
@@ -114,6 +115,8 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
 
         request.cancellationToken?.throwIfCancelled();
 
+        final encodedBody = encodeBoundedJsonRequest(requestBody);
+
         final response = await client
             .post(
               endpoint,
@@ -122,7 +125,7 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
                 'anthropic-version': '2023-06-01',
                 'Content-Type': 'application/json',
               },
-              body: jsonEncode(requestBody),
+              body: encodedBody,
             )
             .timeout(Duration(seconds: request.timeoutSeconds));
 
@@ -249,7 +252,7 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
           'stream': true,
         };
 
-        final bodyBytes = utf8.encode(jsonEncode(requestBody));
+        final encodedBody = encodeBoundedJsonRequest(requestBody);
 
         request.cancellationToken?.throwIfCancelled();
 
@@ -259,7 +262,7 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
           'anthropic-version': '2023-06-01',
           'Content-Type': 'application/json',
         });
-        httpRequest.bodyBytes = bodyBytes;
+        httpRequest.body = encodedBody;
 
         final response = await client
             .send(httpRequest)

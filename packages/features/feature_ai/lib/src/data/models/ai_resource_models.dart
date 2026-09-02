@@ -3,6 +3,7 @@ import 'package:uuid/uuid.dart';
 import '../../skills/skill_frontmatter.dart';
 
 const Uuid _traceUuid = Uuid();
+const int _aiMegabyte = 1024 * 1024;
 
 class AiChatAttachment {
   final String fileName;
@@ -89,12 +90,21 @@ class AiChatAttachment {
 /// records are still readable; request mapping applies the same ceilings as a
 /// second line of defence.
 class AiAttachmentBudget {
-  static const int _mb = 1024 * 1024;
-
   static const int maxAttachmentCount = 5;
-  static const int maxSingleAttachmentBytes = 10 * _mb;
-  static const int maxTotalAttachmentBytes = 20 * _mb;
-  static const int maxRequestPayloadBytes = 16 * _mb;
+  static const int maxSingleAttachmentBytes = 10 * _aiMegabyte;
+  static const int maxTotalAttachmentBytes = 20 * _aiMegabyte;
+
+  /// Maximum UTF-8 bytes contributed by one mapped chat turn.
+  ///
+  /// This is intentionally separate from [AiRequestBudget], which limits the
+  /// complete serialized provider request after history, tools, and JSON
+  /// encoding have been assembled.
+  static const int maxTurnPayloadBytes = 16 * _aiMegabyte;
+
+  /// Compatibility alias for callers that used the old turn-level name.
+  @Deprecated('Use maxTurnPayloadBytes; this is not the final HTTP body cap.')
+  static const int maxRequestPayloadBytes = maxTurnPayloadBytes;
+
   static const int maxInlineTextBytes = 512 * 1024;
   static const int maxDecodedTextTokens = 32 * 1024;
 
@@ -128,6 +138,17 @@ class AiAttachmentBudget {
     return totalBytes(existing) + candidate.sizeBytes <=
         maxTotalAttachmentBytes;
   }
+}
+
+/// Safety limit for the complete UTF-8 JSON body sent to an AI provider.
+///
+/// Unlike [AiAttachmentBudget.maxTurnPayloadBytes], this limit includes the
+/// serialized conversation history, system/context messages, tools, provider
+/// parameters, and JSON escaping overhead.
+class AiRequestBudget {
+  static const int maxSerializedRequestBytes = 16 * _aiMegabyte;
+
+  const AiRequestBudget._();
 }
 
 class DeepSeekReasoningEffort {

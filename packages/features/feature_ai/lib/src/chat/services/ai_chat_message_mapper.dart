@@ -16,7 +16,9 @@ class AiChatMessageMapper {
         .where((message) => message != placeholder)
         .map((message) {
           final textContent = contextContentFor(message);
-          if (textContent.trim().isEmpty && message.attachments.isEmpty) {
+          final boundedTextContent = _boundTextContent(textContent);
+          if (boundedTextContent.trim().isEmpty &&
+              message.attachments.isEmpty) {
             return null;
           }
           final role = message.role == 'user' ? 'user' : 'assistant';
@@ -29,7 +31,7 @@ class AiChatMessageMapper {
               ),
             };
           }
-          return <String, dynamic>{'role': role, 'content': textContent};
+          return <String, dynamic>{'role': role, 'content': boundedTextContent};
         })
         .nonNulls
         .toList();
@@ -76,7 +78,7 @@ class AiChatMessageMapper {
         final dataUrl = 'data:${attachment.mimeType};base64,$dataBase64';
         final imageBytes = utf8.encode(dataUrl).length;
         if (payloadBytes + imageBytes >
-            AiAttachmentBudget.maxRequestPayloadBytes) {
+            AiAttachmentBudget.maxTurnPayloadBytes) {
           payloadBytes = _appendAttachmentPlaceholder(
             textWithFiles,
             attachment,
@@ -116,7 +118,7 @@ class AiChatMessageMapper {
           final content = '\n\n[File: ${attachment.fileName}]\n$decoded';
           final contentBytes = utf8.encode(content).length;
           if (payloadBytes + contentBytes >
-              AiAttachmentBudget.maxRequestPayloadBytes) {
+              AiAttachmentBudget.maxTurnPayloadBytes) {
             payloadBytes = _appendAttachmentPlaceholder(
               textWithFiles,
               attachment,
@@ -172,8 +174,7 @@ class AiChatMessageMapper {
       AiAttachmentBudget.maxSingleAttachmentBytes,
     );
     return attachment.dataBase64.length <= maxEncodedChars &&
-        attachment.dataBase64.length <=
-            AiAttachmentBudget.maxRequestPayloadBytes;
+        attachment.dataBase64.length <= AiAttachmentBudget.maxTurnPayloadBytes;
   }
 
   static int _maxBase64CharsForBytes(int bytes) {
@@ -189,20 +190,52 @@ class AiChatMessageMapper {
 
   static String _boundTextContent(String text) {
     final encodedLength = utf8.encode(text).length;
-    if (encodedLength <= AiAttachmentBudget.maxRequestPayloadBytes) {
+    if (encodedLength <= AiAttachmentBudget.maxTurnPayloadBytes) {
       return text;
     }
     const marker = '\n\n[Message text truncated to request budget]';
     final markerBytes = utf8.encode(marker).length;
-    final prefixBudget =
-        AiAttachmentBudget.maxRequestPayloadBytes - markerBytes;
-    var end = text.length < prefixBudget ? text.length : prefixBudget;
-    var prefix = text.substring(0, end);
-    while (prefix.isNotEmpty && utf8.encode(prefix).length > prefixBudget) {
-      end--;
-      prefix = text.substring(0, end);
-    }
+    final prefixBudget = AiAttachmentBudget.maxTurnPayloadBytes - markerBytes;
+    final end = _findUtf8PrefixEnd(text, prefixBudget);
+    final prefix = text.substring(0, end);
     return '$prefix$marker';
+  }
+
+  /// Finds the longest valid Unicode prefix whose UTF-8 representation fits
+  /// [maxBytes]. The search performs O(log n) complete encodings and never
+  /// returns a substring between the two code units of a surrogate pair.
+  static int _findUtf8PrefixEnd(String text, int maxBytes) {
+    if (maxBytes <= 0 || text.isEmpty) return 0;
+
+    var low = 0;
+    var high = text.length;
+    while (low < high) {
+      final midpoint = low + ((high - low + 1) >> 1);
+      final candidate = _safeCodeUnitBoundary(text, midpoint);
+      final candidateBytes = utf8.encode(text.substring(0, candidate)).length;
+      if (candidateBytes <= maxBytes) {
+        // Keep the numeric lower bound at the midpoint. It may be inside a
+        // surrogate pair, but the final boundary is normalized below and the
+        // predicate remains monotonic over code-unit positions.
+        low = midpoint;
+      } else {
+        high = midpoint - 1;
+      }
+    }
+    return _safeCodeUnitBoundary(text, low);
+  }
+
+  static int _safeCodeUnitBoundary(String text, int index) {
+    if (index <= 0) return 0;
+    if (index >= text.length) return text.length;
+    final previous = text.codeUnitAt(index - 1);
+    final current = text.codeUnitAt(index);
+    final splitsSurrogatePair =
+        previous >= 0xD800 &&
+        previous <= 0xDBFF &&
+        current >= 0xDC00 &&
+        current <= 0xDFFF;
+    return splitsSurrogatePair ? index - 1 : index;
   }
 
   static int _appendAttachmentPlaceholder(
@@ -214,7 +247,7 @@ class AiChatMessageMapper {
         '\n\n[Attached file: ${attachment.fileName} (${_formatAttachmentSize(attachment.sizeBytes)})]';
     final placeholderBytes = utf8.encode(placeholder).length;
     if (payloadBytes + placeholderBytes >
-        AiAttachmentBudget.maxRequestPayloadBytes) {
+        AiAttachmentBudget.maxTurnPayloadBytes) {
       return payloadBytes;
     }
     buffer.write(placeholder);
