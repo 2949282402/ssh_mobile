@@ -254,7 +254,10 @@ void main() {
       maskAiApiKey('sk-abcdefghijklmnopqrstuvwxyz'),
       'sk-a***********************yz',
     );
-    expect(maskAiApiKey('abc123'), 'abc123');
+    for (final value in ['a', 'ab', 'abcd', 'abc123']) {
+      expect(maskAiApiKey(value), '••••••');
+    }
+    expect(maskAiApiKey('abcdefg'), 'abcd*fg');
   });
 
   test(

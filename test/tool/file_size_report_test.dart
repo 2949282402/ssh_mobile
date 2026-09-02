@@ -10,6 +10,7 @@ void main() {
   _testGeneratedFilesAreExcludedAndPathsAreSorted();
   _testDartTestsRequireDedicatedRoots();
   _testNumberedSplitFilesAreRejected();
+  _testUnexemptedProductionSizeFailsClosed();
   _testCurrentWorkspaceCanBeScanned();
   stdout.writeln('File size report tests passed.');
 }
@@ -78,6 +79,31 @@ void _testCurrentWorkspaceCanBeScanned() {
     report.files.every((file) => !file.path.contains('third_party')),
     '报告不得包含 vendored 第三方代码',
   );
+  _expect(report.criticalViolations.isEmpty, '当前生产文件应有明确的临时尺寸豁免或已完成拆分');
+  _expect(
+    report.expiredExemptions.isEmpty && report.invalidExemptions.isEmpty,
+    '尺寸豁免必须保持有效的 review/expiry 元数据',
+  );
+}
+
+void _testUnexemptedProductionSizeFailsClosed() {
+  final root = Directory.systemTemp.createTempSync('ssh_mobile_size_gate_');
+  try {
+    _writeLines(
+      root,
+      'packages/demo/lib/oversized.dart',
+      fileSizeCriticalThreshold + 1,
+    );
+    final report = collectDartFileSizeReport(repositoryRoot: root);
+    _expect(
+      report.criticalViolations.any(
+        (file) => file.path == 'packages/demo/lib/oversized.dart',
+      ),
+      '未豁免的生产文件超过 500 行时必须进入失败门禁',
+    );
+  } finally {
+    root.deleteSync(recursive: true);
+  }
 }
 
 void _testNumberedSplitFilesAreRejected() {

@@ -31,6 +31,7 @@ void main() {
               headerIcon: Icons.dns_outlined,
               collapseTooltip: 'Collapse',
               reorderTooltip: 'Reorder',
+              itemKeyBuilder: (item) => ValueKey('server-${item.id}'),
               collapseButtonKey: const ValueKey('collapse_btn'),
               emptyState: const Text('No servers available'),
               onCollapse: () => collapseInvoked = true,
@@ -83,6 +84,7 @@ void main() {
               headerIcon: Icons.dns_outlined,
               collapseTooltip: 'Collapse',
               reorderTooltip: 'Reorder',
+              itemKeyBuilder: (item) => ValueKey('server-${item.id}'),
               collapseButtonKey: const ValueKey('collapse_btn'),
               dragHandleKeyBuilder: (item) => ValueKey('drag_${item.id}'),
               emptyState: const Text('No servers'),
@@ -100,6 +102,8 @@ void main() {
 
       expect(find.text('Tile: Server Alpha'), findsOneWidget);
       expect(find.text('Tile: Server Beta'), findsOneWidget);
+      expect(find.byKey(const ValueKey('server-srv-1')), findsOneWidget);
+      expect(find.byKey(const ValueKey('server-srv-2')), findsOneWidget);
       expect(find.byKey(const ValueKey('drag_srv-1')), findsOneWidget);
       expect(find.byKey(const ValueKey('drag_srv-2')), findsOneWidget);
 
@@ -141,6 +145,7 @@ void main() {
                     headerIcon: Icons.dns_outlined,
                     collapseTooltip: 'Collapse',
                     reorderTooltip: 'Reorder',
+                    itemKeyBuilder: (item) => ValueKey('server-${item.id}'),
                     collapseButtonKey: const ValueKey('collapse_btn'),
                     emptyState: const Text('No servers'),
                     onCollapse: () {},

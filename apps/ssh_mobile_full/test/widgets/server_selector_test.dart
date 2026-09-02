@@ -31,6 +31,8 @@ void main() {
               headerIcon: Icons.storage,
               collapseTooltip: 'Collapse panel',
               reorderTooltip: 'Drag to reorder',
+              itemKeyBuilder: (connection) =>
+                  ValueKey('server-${connection.id}'),
               collapseButtonKey: const ValueKey('collapse_btn'),
               emptyState: const Text('No servers available'),
               onCollapse: () => collapseInvoked = true,
@@ -79,6 +81,8 @@ void main() {
               headerIcon: Icons.dns,
               collapseTooltip: 'Collapse panel',
               reorderTooltip: 'Reorder server',
+              itemKeyBuilder: (connection) =>
+                  ValueKey('server-${connection.id}'),
               collapseButtonKey: const ValueKey('collapse_btn'),
               dragHandleKeyBuilder: (conn) => ValueKey('drag_${conn.id}'),
               collapseIcon: Icons.arrow_back,

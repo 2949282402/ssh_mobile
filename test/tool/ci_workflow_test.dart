@@ -12,10 +12,16 @@ void main() {
   final workflow = File(
     '${root.path}/.github/workflows/flutter.yml',
   ).readAsStringSync();
+  final onlineWorkflow = File(
+    '${root.path}/.github/workflows/online-e2e.yml',
+  ).readAsStringSync();
   final rustToolchain = File(
     '${root.path}/native/network_core/rust-toolchain.toml',
   ).readAsStringSync();
 
+  _testChangeScopePolicy(workflow);
+  _testActionsArePinned(workflow, workflowName: 'flutter.yml');
+  _testActionsArePinned(onlineWorkflow, workflowName: 'online-e2e.yml');
   _verifyScriptTrees(root);
   _verifyFullTestScripts(root);
   _testProtocolV2WorkflowChecker();
@@ -63,8 +69,12 @@ void main() {
 
   final adminApiContract = _jobSection(workflow, 'admin-api-contract');
   _expect(
-    adminApiContract.contains('actions/setup-go@v5') &&
-        adminApiContract.contains('actions/setup-node@v4'),
+    adminApiContract.contains(
+          'actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff',
+        ) &&
+        adminApiContract.contains(
+          'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020',
+        ),
     'admin-api-contract 必须同时安装 Go 与 Node.js',
   );
   _expect(
@@ -81,10 +91,30 @@ void main() {
 
   final telemetryContract = _jobSection(workflow, 'telemetry-contract');
   _expect(
-    telemetryContract.contains('actions/setup-go@v5') &&
-        telemetryContract.contains('actions/setup-node@v4') &&
-        telemetryContract.contains('subosito/flutter-action@v2'),
+    telemetryContract.contains(
+          'actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff',
+        ) &&
+        telemetryContract.contains(
+          'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020',
+        ) &&
+        telemetryContract.contains(
+          'subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2',
+        ),
     'telemetry-contract 必须同时安装 Go、Node.js 与 Flutter',
+  );
+
+  final frontQuality = _jobSection(workflow, 'front-quality');
+  _expect(
+    frontQuality.contains('npm audit --audit-level=high'),
+    'front-quality 必须运行高危级别 Node 依赖漏洞门禁',
+  );
+
+  final nativeNetworkQuality = _jobSection(workflow, 'native-network-quality');
+  _expect(
+    nativeNetworkQuality.contains('cargo audit') &&
+        !nativeNetworkQuality.contains('cargo audit --locked') &&
+        nativeNetworkQuality.contains('cargo-audit --locked --version 0.22.2'),
+    'native-network-quality 必须运行固定版本扫描器的 Rust 依赖漏洞门禁',
   );
   _expect(
     telemetryContract.contains(
@@ -206,7 +236,9 @@ void main() {
   ]) {
     final job = _jobSection(workflow, jobName);
     _expect(
-      job.contains('swatinem/rust-cache@v2') &&
+      job.contains(
+            'swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c',
+          ) &&
           job.contains('workspaces: "native/network_core -> target"') &&
           job.contains(
             r'shared-key: "network-sdk-${{ runner.os }}-${{ runner.arch }}"',
@@ -270,6 +302,93 @@ void main() {
   }
 
   stdout.writeln('CI workflow contract tests passed.');
+}
+
+void _testChangeScopePolicy(String workflow) {
+  _expect(
+    workflow.contains('EVENT_NAME: \${{ github.event_name }}'),
+    'change_scope 必须读取 GitHub event name',
+  );
+  _expect(
+    workflow.contains('EVENT_BEFORE_SHA: \${{ github.event.before }}'),
+    'change_scope 必须使用 push event.before 作为比较基线',
+  );
+  _expect(
+    workflow.contains('if [[ "\$EVENT_NAME" == "push" ]]') &&
+        workflow.contains('base_sha="\$EVENT_BEFORE_SHA"'),
+    'change_scope 必须在 push 事件选择 event.before',
+  );
+  _expect(
+    workflow.contains('git rev-parse "\$CURRENT_SHA^"'),
+    'change_scope 缺少无效/全零基线的 HEAD^ fallback',
+  );
+
+  // Exercise the event policy itself, rather than only checking YAML tokens.
+  _expect(
+    _comparisonBaseForScope(
+          eventName: 'push',
+          eventBefore: 'previous-push',
+          pullRequestBase: 'pull-request-base',
+        ) ==
+        'previous-push',
+    'push scope must use event.before',
+  );
+  _expect(
+    _comparisonBaseForScope(
+          eventName: 'pull_request',
+          eventBefore: 'previous-push',
+          pullRequestBase: 'pull-request-base',
+        ) ==
+        'pull-request-base',
+    'pull request scope must use the PR base',
+  );
+  _expect(
+    _comparisonBaseForScope(
+          eventName: 'push',
+          eventBefore: '0000000000000000000000000000000000000000',
+          pullRequestBase: 'pull-request-base',
+          headParent: 'head-parent',
+        ) ==
+        'head-parent',
+    'zero push base must fall back to HEAD^',
+  );
+  _expect(
+    _comparisonBaseForScope(
+          eventName: 'push',
+          eventBefore: '0000000000000000000000000000000000000000',
+          pullRequestBase: '',
+        ) ==
+        null,
+    'root push without a parent must use the root diff',
+  );
+}
+
+void _testActionsArePinned(String workflow, {required String workflowName}) {
+  final usesPattern = RegExp(
+    r'^\s*(?:-\s+)?uses:\s+([^@\s]+)@([^\s#]+)',
+    multiLine: true,
+  );
+  for (final match in usesPattern.allMatches(workflow)) {
+    final action = match.group(1)!;
+    final reference = match.group(2)!;
+    _expect(
+      RegExp(r'^[0-9a-f]{40}$', caseSensitive: false).hasMatch(reference),
+      '$workflowName 的第三方 action 必须固定到完整 commit SHA：$action@$reference',
+    );
+  }
+}
+
+String? _comparisonBaseForScope({
+  required String eventName,
+  required String eventBefore,
+  required String pullRequestBase,
+  String? headParent,
+}) {
+  final candidate = eventName == 'push' ? eventBefore : pullRequestBase;
+  if (candidate.isNotEmpty && !RegExp(r'^0+$').hasMatch(candidate)) {
+    return candidate;
+  }
+  return headParent;
 }
 
 void _expect(bool condition, String message) {

@@ -2,6 +2,163 @@ part of 'ai_chat_viewmodel_test.dart';
 
 void _registerAiChatViewModelGenerationTests() {
   test(
+    'editing a historical user message rebuilds context and clears stale approval',
+    () async {
+      await storageService.saveAiConnectionSettings(
+        baseUrl: 'https://api.example.com',
+        model: 'demo-model',
+        apiKey: 'dummy-key',
+      );
+      final factory = FakeSuccessRuntimeFactory(
+        storageService: storageService,
+        sshService: sshService,
+        sftpService: sftpService,
+        performanceMonitorService: performanceMonitorService,
+        playbookService: playbookService,
+        ragService: ragService,
+        appSettings: appSettings,
+      );
+      final viewModel = createAiChatViewModel(
+        storageService: storageService,
+        sshService: sshService,
+        sftpService: sftpService,
+        performanceMonitorService: performanceMonitorService,
+        playbookService: playbookService,
+        ragService: ragService,
+        appSettings: appSettings,
+        runtimeFactory: factory,
+      );
+      addTearDown(viewModel.dispose);
+      await viewModel.loadInitialDraft();
+
+      final originalUserAt = DateTime.utc(2026, 8, 1, 10);
+      final approvedAssistantAt = DateTime.utc(2026, 8, 1, 10, 1);
+      final active = viewModel.activeChat!;
+      await viewModel.updateActiveChat(
+        active.copyWith(
+          approvedPlan: AiApprovedPlanRef(
+            assistantCreatedAt: approvedAssistantAt,
+            approvedAt: approvedAssistantAt,
+          ),
+          messages: [
+            AiChatMessageRecord(
+              role: 'user',
+              text: 'delete /var/www/test',
+              contextText:
+                  'Target servers: production\nUser request:\ndelete /var/www/test',
+              createdAt: originalUserAt,
+            ),
+            AiChatMessageRecord(
+              role: 'assistant',
+              text: 'Plan ready',
+              createdAt: approvedAssistantAt,
+              todoSteps: const [
+                AiTodoStep(
+                  id: 'task-1',
+                  name: 'Delete data',
+                  command: 'rm -rf /var/www/test',
+                  description: 'Delete the old test data',
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+
+      await viewModel.editUserMessage(0, 'inspect /var/www/test');
+
+      final edited = viewModel.activeChat!.messages.firstWhere(
+        (message) => message.role == 'user',
+      );
+      expect(edited.text, 'inspect /var/www/test');
+      expect(edited.contextText, contains('inspect /var/www/test'));
+      expect(edited.contextText, isNot(contains('delete /var/www/test')));
+      expect(viewModel.activeChat!.approvedPlan, isNull);
+      expect((await storageService.loadAiChats()).single.approvedPlan, isNull);
+      expect(
+        viewModel.activeChat!.messages.where(
+          (message) => message.role == 'assistant',
+        ),
+        hasLength(1),
+      );
+      expect(factory.lastRequestMessages, isNotNull);
+      final requestText = factory.lastRequestMessages!
+          .map((message) => '${message['content']}')
+          .join('\n');
+      expect(requestText, contains('inspect /var/www/test'));
+      expect(requestText, isNot(contains('delete /var/www/test')));
+    },
+  );
+
+  test(
+    'regenerating history clears an approval tied to the rewritten branch',
+    () async {
+      await storageService.saveAiConnectionSettings(
+        baseUrl: 'https://api.example.com',
+        model: 'demo-model',
+        apiKey: 'dummy-key',
+      );
+      final factory = FakeSuccessRuntimeFactory(
+        storageService: storageService,
+        sshService: sshService,
+        sftpService: sftpService,
+        performanceMonitorService: performanceMonitorService,
+        playbookService: playbookService,
+        ragService: ragService,
+        appSettings: appSettings,
+      );
+      final viewModel = createAiChatViewModel(
+        storageService: storageService,
+        sshService: sshService,
+        sftpService: sftpService,
+        performanceMonitorService: performanceMonitorService,
+        playbookService: playbookService,
+        ragService: ragService,
+        appSettings: appSettings,
+        runtimeFactory: factory,
+      );
+      addTearDown(viewModel.dispose);
+      await viewModel.loadInitialDraft();
+
+      final assistantAt = DateTime.utc(2026, 8, 1, 11);
+      final active = viewModel.activeChat!;
+      await viewModel.updateActiveChat(
+        active.copyWith(
+          approvedPlan: AiApprovedPlanRef(
+            assistantCreatedAt: assistantAt,
+            approvedAt: assistantAt,
+          ),
+          messages: [
+            AiChatMessageRecord(
+              role: 'user',
+              text: 'inspect service',
+              createdAt: assistantAt.subtract(const Duration(minutes: 1)),
+            ),
+            AiChatMessageRecord(
+              role: 'assistant',
+              text: 'Plan ready',
+              createdAt: assistantAt,
+              todoSteps: const [
+                AiTodoStep(
+                  id: 'task-1',
+                  name: 'Inspect service',
+                  command: 'systemctl status nginx',
+                  description: 'Read the service status',
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+
+      await viewModel.regenerateAssistant(1);
+
+      expect(viewModel.activeChat!.approvedPlan, isNull);
+      expect((await storageService.loadAiChats()).single.approvedPlan, isNull);
+    },
+  );
+
+  test(
     'close cancels and joins generation before releasing Route state',
     () async {
       await storageService.saveAiConnectionSettings(

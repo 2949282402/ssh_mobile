@@ -13,7 +13,27 @@ typedef _DlopenDart =
 class _ToleranceGoldenComparator extends LocalFileComparator {
   _ToleranceGoldenComparator(super.testFile);
 
-  static const double _maxDiffPercent = 0.05;
+  // Golden comparisons should catch real layout/style regressions.  Keep the
+  // allowance below one percent for renderer noise without turning a visibly
+  // different screen green.
+  static const double _defaultMaxDiffPercent = 0.005;
+
+  // The mobile snapshots contain platform-font glyphs and are the only
+  // current goldens with measured Linux-vs-Windows renderer deltas just over
+  // the strict default (0.52%-0.56%). Keep those exceptions explicit and
+  // narrowly scoped instead of reopening the previous repository-wide 5%
+  // allowance.
+  static const Map<String, double> _rendererNoiseBudgets = {
+    'ai_mobile.png': 0.0065,
+    'home_mobile.png': 0.0065,
+  };
+
+  double _maxDiffPercentFor(Uri golden) {
+    final fileName = golden.pathSegments.isEmpty
+        ? ''
+        : golden.pathSegments.last;
+    return _rendererNoiseBudgets[fileName] ?? _defaultMaxDiffPercent;
+  }
 
   @override
   Future<bool> compare(Uint8List imageBytes, Uri golden) async {
@@ -22,7 +42,8 @@ class _ToleranceGoldenComparator extends LocalFileComparator {
       await getGoldenBytes(golden),
     );
 
-    if (!result.passed && result.diffPercent > _maxDiffPercent) {
+    final maxDiffPercent = _maxDiffPercentFor(golden);
+    if (!result.passed && result.diffPercent > maxDiffPercent) {
       final String error = await generateFailureOutput(result, golden, basedir);
       throw FlutterError(error);
     }

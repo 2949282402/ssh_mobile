@@ -206,6 +206,9 @@ extension AiChatHistoryActions on AiChatViewModel {
 
   // 附件操作
   void addAttachment(AiChatAttachment attachment) {
+    if (!AiAttachmentBudget.canAdd(_pendingAttachments, attachment)) {
+      return;
+    }
     _pendingAttachments.add(attachment);
     notify();
   }

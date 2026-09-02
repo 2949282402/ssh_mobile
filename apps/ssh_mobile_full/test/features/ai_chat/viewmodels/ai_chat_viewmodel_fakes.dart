@@ -57,10 +57,12 @@ class FailureLlmChatService extends LlmChatService {
 class FakeSuccessLlmChatService extends LlmChatService {
   final String finalOutcome;
   final void Function(Set<String>, Set<String>?)? onStreamStarted;
+  final void Function(List<Map<String, dynamic>>)? onMessages;
 
   FakeSuccessLlmChatService({
     required super.storageService,
     this.finalOutcome = 'success',
+    this.onMessages,
     this.onStreamStarted,
   }) : super(toolService: const _FakeAiToolExecutor());
 
@@ -84,6 +86,7 @@ class FakeSuccessLlmChatService extends LlmChatService {
     bool planMode = false,
     AiChatMessageRecord? approvedPlanMessage,
   }) async* {
+    onMessages?.call(messages);
     onStreamStarted?.call(
       Set<String>.from(selectedConnectionIds),
       allowedTools == null ? null : Set<String>.from(allowedTools),
@@ -285,6 +288,7 @@ class FakeSuccessRuntimeFactory extends LegacyAiChatRuntimeFactory {
   Set<String>? lastSelectedConnectionIds;
   Set<String>? lastAllowedTools;
   AiConnectionSettings? lastSettings;
+  List<Map<String, dynamic>>? lastRequestMessages;
 
   FakeSuccessRuntimeFactory({
     required super.storageService,
@@ -308,6 +312,9 @@ class FakeSuccessRuntimeFactory extends LegacyAiChatRuntimeFactory {
     return FakeSuccessLlmChatService(
       storageService: aiStoragePort(storageService),
       finalOutcome: finalOutcome,
+      onMessages: (messages) {
+        lastRequestMessages = messages;
+      },
       onStreamStarted: (selectedConnectionIds, allowedTools) {
         lastSelectedConnectionIds = selectedConnectionIds;
         lastAllowedTools = allowedTools;

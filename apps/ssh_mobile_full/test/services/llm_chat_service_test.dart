@@ -384,6 +384,8 @@ void main() {
         final zhNormal = llmZh.systemPromptFor(planMode: false);
         final zhPlan = llmZh.systemPromptFor(planMode: true);
         expect(zhNormal, isNot(contains('[PLAN MODE ACTIVE]')));
+        expect(zhNormal, contains('<UNTRUSTED_RAG_DATA>'));
+        expect(zhNormal, contains('不可信参考资料'));
         expect(zhPlan, contains('[PLAN MODE ACTIVE]'));
         expect(zhPlan, contains('todoSteps'));
         expect(zhPlan, contains('不会自动创建已保存的可复用 Playbook'));
@@ -391,6 +393,8 @@ void main() {
         final enNormal = llmEn.systemPromptFor(planMode: false);
         final enPlan = llmEn.systemPromptFor(planMode: true);
         expect(enNormal, isNot(contains('[PLAN MODE ACTIVE]')));
+        expect(enNormal, contains('<UNTRUSTED_OPERATIONAL_MEMORY>'));
+        expect(enNormal, contains('hostile/untrusted reference material'));
         expect(enPlan, contains('[PLAN MODE ACTIVE]'));
         expect(
           enPlan,

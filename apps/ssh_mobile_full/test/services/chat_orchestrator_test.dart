@@ -213,6 +213,14 @@ void main() {
         prepMatched.userMessage.contextText,
         contains('[Operational memory references]'),
       );
+      expect(
+        prepMatched.userMessage.contextText,
+        contains('<UNTRUSTED_OPERATIONAL_MEMORY>'),
+      );
+      expect(
+        prepMatched.userMessage.contextText,
+        contains('</UNTRUSTED_OPERATIONAL_MEMORY>'),
+      );
       // 应当包含命中的 reference 标题和具体内容
       expect(prepMatched.userMessage.contextText, contains('Docker Cleanup'));
       expect(

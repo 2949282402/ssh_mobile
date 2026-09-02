@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:feature_ai/feature_ai.dart'
     show
         AiApprovedPlanRef,
+        AiAttachmentBudget,
         AiChatAttachment,
         AiChatMessageRecord,
         AiChatRecord,
@@ -194,6 +195,45 @@ void main() {
     // Test label helper
     expect(AiUploadSizeLimit.label(5 * 1024 * 1024), '5 MB');
     expect(AiUploadSizeLimit.label(512 * 1024), '512 KB');
+  });
+
+  test('AiAttachmentBudget bounds count, single size, and total size', () {
+    const small = AiChatAttachment(
+      fileName: 'small.txt',
+      mimeType: 'text/plain',
+      sizeBytes: 4 * 1024 * 1024,
+      dataBase64: '',
+    );
+    final attachments = <AiChatAttachment>[small];
+
+    expect(AiAttachmentBudget.canAdd(attachments, small), isTrue);
+    expect(
+      AiAttachmentBudget.canAdd(
+        attachments,
+        const AiChatAttachment(
+          fileName: 'too-large.bin',
+          mimeType: 'application/octet-stream',
+          sizeBytes: AiAttachmentBudget.maxSingleAttachmentBytes + 1,
+          dataBase64: '',
+        ),
+      ),
+      isFalse,
+    );
+    expect(
+      AiAttachmentBudget.canAdd([for (var i = 0; i < 5; i++) small], small),
+      isFalse,
+    );
+    expect(
+      AiAttachmentBudget.totalBytes([
+        const AiChatAttachment(
+          fileName: 'large-a.bin',
+          mimeType: 'application/octet-stream',
+          sizeBytes: AiAttachmentBudget.maxTotalAttachmentBytes,
+          dataBase64: '',
+        ),
+      ]),
+      AiAttachmentBudget.maxTotalAttachmentBytes,
+    );
   });
 
   group('AiChatRecord serialization and planMode', () {

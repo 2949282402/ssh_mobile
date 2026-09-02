@@ -119,6 +119,7 @@ class _AdminServerPane extends StatelessWidget {
           : Icons.dns_outlined,
       collapseTooltip: strings.collapseServerList,
       reorderTooltip: strings.reorderServer,
+      itemKeyBuilder: (connection) => ValueKey('admin-server-${connection.id}'),
       collapseButtonKey: const ValueKey('admin-server-collapse-desktop'),
       collapseIcon: Icons.keyboard_double_arrow_left_rounded,
       onCollapse: onCollapse,

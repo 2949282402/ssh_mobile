@@ -6,6 +6,7 @@ import 'package:feature_ai/src/domain/ai_compat.dart';
 import 'package:feature_ai/src/llm/runtime/llm_runtime_types.dart';
 import 'llm_provider_adapter.dart';
 import 'llm_provider_types.dart';
+import 'llm_request_size_guard.dart';
 import 'llm_url_utils.dart';
 
 class OpenAiResponsesProvider implements LlmProviderAdapter {
@@ -151,6 +152,8 @@ class OpenAiResponsesProvider implements LlmProviderAdapter {
 
         request.cancellationToken?.throwIfCancelled();
 
+        final encodedBody = encodeBoundedJsonRequest(requestBody);
+
         final response = await client
             .post(
               endpoint,
@@ -158,7 +161,7 @@ class OpenAiResponsesProvider implements LlmProviderAdapter {
                 'Authorization': 'Bearer ${request.apiKey}',
                 'Content-Type': 'application/json',
               },
-              body: jsonEncode(requestBody),
+              body: encodedBody,
             )
             .timeout(Duration(seconds: request.timeoutSeconds));
 
@@ -336,7 +339,7 @@ class OpenAiResponsesProvider implements LlmProviderAdapter {
           requestBody['stream_options'] = {'include_usage': true};
         }
 
-        final bodyBytes = utf8.encode(jsonEncode(requestBody));
+        final encodedBody = encodeBoundedJsonRequest(requestBody);
         request.cancellationToken?.throwIfCancelled();
 
         final httpRequest = http.Request('POST', endpoint);
@@ -344,7 +347,7 @@ class OpenAiResponsesProvider implements LlmProviderAdapter {
           'Authorization': 'Bearer ${request.apiKey}',
           'Content-Type': 'application/json',
         });
-        httpRequest.bodyBytes = bodyBytes;
+        httpRequest.body = encodedBody;
 
         final response = await client
             .send(httpRequest)

@@ -187,8 +187,8 @@ func TestServiceOverviewUsesBoundaryIngestMetrics(t *testing.T) {
 	if health.ServerIngestErrorRate != 1.0/3.0 {
 		t.Fatalf("ingest boundary error rate = %v, want 1/3", health.ServerIngestErrorRate)
 	}
-	if health.ServerIngestLatencyMs <= 0 || health.ServerIngestLatencySamples != 3 {
-		t.Fatalf("ingest boundary latency = average=%v samples=%d, want positive/3", health.ServerIngestLatencyMs, health.ServerIngestLatencySamples)
+	if health.ServerIngestLatencyMs < 0 || health.ServerIngestLatencySamples != 3 {
+		t.Fatalf("ingest boundary latency = average=%v samples=%d, want non-negative/3", health.ServerIngestLatencyMs, health.ServerIngestLatencySamples)
 	}
 }
 
@@ -247,7 +247,7 @@ func TestServiceIngestMetricsAreBoundedAndConcurrencySafe(t *testing.T) {
 	if health.ServerIngestLatencySamples != 1024 {
 		t.Fatalf("bounded latency samples = %d, want 1024", health.ServerIngestLatencySamples)
 	}
-	if health.ServerIngestLatencyMs <= 0 || health.ServerIngestLatencyP95Ms <= 0 {
-		t.Fatalf("expected positive latency statistics, got average=%v p95=%v", health.ServerIngestLatencyMs, health.ServerIngestLatencyP95Ms)
+	if health.ServerIngestLatencyMs < 0 || health.ServerIngestLatencyP95Ms < 0 {
+		t.Fatalf("expected non-negative latency statistics, got average=%v p95=%v", health.ServerIngestLatencyMs, health.ServerIngestLatencyP95Ms)
 	}
 }

@@ -120,7 +120,11 @@ class FrozenContractAcceptanceMixin:
                 break
             protocol_job_lines.append(line)
         protocol_job = "\n".join(protocol_job_lines)
-        self.assertIn("subosito/flutter-action@v2", protocol_job)
+        self.assertRegex(
+            protocol_job,
+            r"subosito/flutter-action@[0-9a-f]{40}",
+            "protocol-v2-contract must pin Flutter action to a commit SHA",
+        )
         self.assertIn("flutter pub get", protocol_job)
         self.assertIn("dart run scripts/bash/contracts/check_network_v2_contract.dart --test", protocol_job)
         self.assertIn(

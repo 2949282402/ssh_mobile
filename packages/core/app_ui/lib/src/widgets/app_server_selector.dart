@@ -22,6 +22,7 @@ class AppServerSelectorPane<T> extends StatelessWidget {
     required this.onCollapse,
     required this.onReorder,
     required this.tileBuilder,
+    required this.itemKeyBuilder,
     required this.emptyState,
     this.collapseButtonKey,
     this.dragHandleKeyBuilder,
@@ -37,6 +38,7 @@ class AppServerSelectorPane<T> extends StatelessWidget {
   final VoidCallback? onCollapse;
   final void Function(int oldIndex, int newIndex)? onReorder;
   final AppServerSelectorTileBuilder<T> tileBuilder;
+  final Key Function(T connection) itemKeyBuilder;
   final Widget emptyState;
   final Key? collapseButtonKey;
   final Key Function(T connection)? dragHandleKeyBuilder;
@@ -75,7 +77,7 @@ class AppServerSelectorPane<T> extends StatelessWidget {
                   itemBuilder: (context, index) {
                     final connection = connections[index];
                     return Padding(
-                      key: ValueKey('server-pane-item-$index'),
+                      key: itemKeyBuilder(connection),
                       padding: const EdgeInsets.only(bottom: 8),
                       child: LayoutBuilder(
                         builder: (context, constraints) {

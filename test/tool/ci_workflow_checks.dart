@@ -27,7 +27,9 @@ void _verifyScriptTrees(Directory root) {
           .listSync(recursive: true)
           .whereType<File>()
           .where((file) => file.path.endsWith('.sh'))) {
-    final relative = shellScript.path.substring(bashRoot.path.length + 1);
+    final relative = shellScript.path
+        .substring(bashRoot.path.length + 1)
+        .replaceAll('\\', '/');
     final pair =
         '${powerShellRoot.path}/${relative.replaceFirst(RegExp(r'\.sh$'), '.ps1')}';
     _expect(File(pair).existsSync(), 'Shell 脚本缺少 PowerShell 配对：$relative');
@@ -42,7 +44,9 @@ void _verifyScriptTrees(Directory root) {
           .listSync(recursive: true)
           .whereType<File>()
           .where((file) => file.path.endsWith('.ps1'))) {
-    final relative = script.path.substring(powerShellRoot.path.length + 1);
+    final relative = script.path
+        .substring(powerShellRoot.path.length + 1)
+        .replaceAll('\\', '/');
     if (powerShellOnly.contains(relative)) continue;
     final pair =
         '${bashRoot.path}/${relative.replaceFirst(RegExp(r'\.ps1$'), '.sh')}';
@@ -109,7 +113,9 @@ String _stepSection(String jobSection, String stepName) {
 void _verifyProtocolV2Workflow(String workflow) {
   final protocolV2Contract = _jobSection(workflow, 'protocol-v2-contract');
   _expect(
-    protocolV2Contract.contains('subosito/flutter-action@v2'),
+    protocolV2Contract.contains(
+      'subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2',
+    ),
     'protocol-v2-contract 必须安装 Flutter 后运行 Dart owner tests',
   );
   _expect(
@@ -155,7 +161,7 @@ void _testProtocolV2WorkflowChecker() {
   const validSnippet = '''
   protocol-v2-contract:
     steps:
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
       - run: dart pub get
       - working-directory: packages/infrastructure/ssh_mobile_network_native
         run: flutter pub get
@@ -170,7 +176,7 @@ void _testProtocolV2WorkflowChecker() {
   const missingFormalStep = '''
   protocol-v2-contract:
     steps:
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
       - run: dart pub get
       - working-directory: packages/infrastructure/ssh_mobile_network_native
         run: flutter pub get
@@ -191,7 +197,7 @@ void _testProtocolV2WorkflowChecker() {
   const formalCheckWithTestFlag = '''
   protocol-v2-contract:
     steps:
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
       - run: dart pub get
       - working-directory: packages/infrastructure/ssh_mobile_network_native
         run: flutter pub get

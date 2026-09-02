@@ -3,6 +3,7 @@ import 'package:uuid/uuid.dart';
 import '../../skills/skill_frontmatter.dart';
 
 const Uuid _traceUuid = Uuid();
+const int _aiMegabyte = 1024 * 1024;
 
 class AiChatAttachment {
   final String fileName;
@@ -81,6 +82,75 @@ class AiChatAttachment {
   }
 }
 
+/// Resource limits applied before attachment bytes are read into a chat turn.
+///
+/// The per-provider setting remains a user-facing preference, but these hard
+/// ceilings protect the mobile process and the request body from a single
+/// oversized file or an unbounded collection of files.  Existing persisted
+/// records are still readable; request mapping applies the same ceilings as a
+/// second line of defence.
+class AiAttachmentBudget {
+  static const int maxAttachmentCount = 5;
+  static const int maxSingleAttachmentBytes = 10 * _aiMegabyte;
+  static const int maxTotalAttachmentBytes = 20 * _aiMegabyte;
+
+  /// Maximum UTF-8 bytes contributed by one mapped chat turn.
+  ///
+  /// This is intentionally separate from [AiRequestBudget], which limits the
+  /// complete serialized provider request after history, tools, and JSON
+  /// encoding have been assembled.
+  static const int maxTurnPayloadBytes = 16 * _aiMegabyte;
+
+  /// Compatibility alias for callers that used the old turn-level name.
+  @Deprecated('Use maxTurnPayloadBytes; this is not the final HTTP body cap.')
+  static const int maxRequestPayloadBytes = maxTurnPayloadBytes;
+
+  static const int maxInlineTextBytes = 512 * 1024;
+  static const int maxDecodedTextTokens = 32 * 1024;
+
+  const AiAttachmentBudget._();
+
+  static int totalBytes(Iterable<AiChatAttachment> attachments) {
+    var total = 0;
+    for (final attachment in attachments) {
+      final size = attachment.sizeBytes;
+      if (size <= 0) continue;
+      total += size;
+      if (total >= maxTotalAttachmentBytes) return maxTotalAttachmentBytes;
+    }
+    return total;
+  }
+
+  static int remainingBytes(Iterable<AiChatAttachment> attachments) {
+    return maxTotalAttachmentBytes - totalBytes(attachments);
+  }
+
+  static bool canAdd(
+    Iterable<AiChatAttachment> attachments,
+    AiChatAttachment candidate,
+  ) {
+    final existing = attachments.toList(growable: false);
+    if (existing.length >= maxAttachmentCount) return false;
+    if (candidate.sizeBytes <= 0 ||
+        candidate.sizeBytes > maxSingleAttachmentBytes) {
+      return false;
+    }
+    return totalBytes(existing) + candidate.sizeBytes <=
+        maxTotalAttachmentBytes;
+  }
+}
+
+/// Safety limit for the complete UTF-8 JSON body sent to an AI provider.
+///
+/// Unlike [AiAttachmentBudget.maxTurnPayloadBytes], this limit includes the
+/// serialized conversation history, system/context messages, tools, provider
+/// parameters, and JSON escaping overhead.
+class AiRequestBudget {
+  static const int maxSerializedRequestBytes = 16 * _aiMegabyte;
+
+  const AiRequestBudget._();
+}
+
 class DeepSeekReasoningEffort {
   static const String high = 'high';
   static const String max = 'max';
@@ -140,13 +210,10 @@ bool supportsOpenAiReasoningEffort(String model) {
 String maskAiApiKey(String value) {
   final trimmed = value.trim();
   if (trimmed.isEmpty) return '';
-  if (trimmed.length <= 4) return trimmed;
-  if (trimmed.length <= 6) {
-    final prefix = trimmed.substring(0, 4);
-    final suffix = trimmed.substring(trimmed.length - 2);
-    final hiddenCount = trimmed.length - prefix.length - suffix.length;
-    return '$prefix${'*' * hiddenCount}$suffix';
-  }
+  // Short credentials have too little entropy for a partial preview to be
+  // useful.  Returning a fixed-width mask also prevents leaking the entire
+  // value for keys shorter than the normal prefix/suffix window.
+  if (trimmed.length <= 6) return '••••••';
   final prefix = trimmed.substring(0, 4);
   final suffix = trimmed.substring(trimmed.length - 2);
   return '$prefix${'*' * (trimmed.length - 6)}$suffix';

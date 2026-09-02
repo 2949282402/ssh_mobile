@@ -17,9 +17,8 @@ class ChatContextAssembler {
     List<OperationalMemoryHit> memoryHits = const [],
     AiChatMessageRecord? approvedPlanMessage,
   }) async {
-    final lines = <String>[];
+    final serverInfos = <String>[];
     if (connectionTargets.isNotEmpty || selectedConnectionIds.isNotEmpty) {
-      final serverInfos = <String>[];
       final frozenTargets = connectionTargets.values;
       if (frozenTargets.isNotEmpty) {
         for (final target in frozenTargets) {
@@ -37,55 +36,107 @@ class ChatContextAssembler {
           );
         }
       }
-      if (serverInfos.isNotEmpty) {
-        lines.add('Target servers:\n${serverInfos.join('\n')}');
-      }
+    }
+    return buildUserContextText(
+      userText: userText,
+      isEnglish: language == AppLanguage.en,
+      language: language,
+      serverInfos: serverInfos,
+      ragChunks: ragChunks,
+      memoryHits: memoryHits,
+      approvedPlanMessage: approvedPlanMessage,
+    );
+  }
+
+  /// Canonical user-turn representation shared by live and compatibility
+  /// callers. Retrieved RAG and memory content is always visibly delimited as
+  /// untrusted data before it reaches the provider request.
+  static String buildUserContextText({
+    required String userText,
+    required bool isEnglish,
+    AppLanguage? language,
+    List<String> serverInfos = const [],
+    List<RagChunk> ragChunks = const [],
+    List<OperationalMemoryHit> memoryHits = const [],
+    AiChatMessageRecord? approvedPlanMessage,
+  }) {
+    final lines = <String>[];
+    if (serverInfos.isNotEmpty) {
+      lines.add('Target servers:\n${serverInfos.join('\n')}');
     }
 
     if (ragChunks.isNotEmpty) {
       final ragLines = <String>[
-        language == AppLanguage.en ? '[RAG reference]' : '【RAG 参考】',
+        '<UNTRUSTED_RAG_DATA>',
+        isEnglish
+            ? '[RAG reference]\n【Ops Knowledge Base Reference Information】:'
+            : '【RAG 参考】\n【运维知识库参考信息】：',
       ];
       for (final chunk in ragChunks) {
         ragLines.add('---');
         ragLines.add(
-          language == AppLanguage.en
-              ? 'Source: [${chunk.documentName}] (Chunk #${chunk.metadata['chunkIndex'] ?? 0})'
-              : '来源: [${chunk.documentName}] (分块 #${chunk.metadata['chunkIndex'] ?? 0})',
+          isEnglish
+              ? 'Source: [${_sanitizeUntrustedText(chunk.documentName)}] '
+                    '(Chunk #${chunk.metadata['chunkIndex'] ?? 0})'
+              : '来源: [${_sanitizeUntrustedText(chunk.documentName)}] '
+                    '(分块 #${chunk.metadata['chunkIndex'] ?? 0})',
         );
-        ragLines.add(chunk.text);
+        ragLines.add(
+          '${isEnglish ? 'Content' : '内容'}:\n${_sanitizeUntrustedText(chunk.text)}',
+        );
       }
+      ragLines.add('</UNTRUSTED_RAG_DATA>');
       lines.add(ragLines.join('\n'));
     }
 
     if (memoryHits.isNotEmpty) {
       final memoryLines = <String>[
-        language == AppLanguage.en
-            ? '[Operational memory references]'
-            : '【运维经验记忆】',
+        '<UNTRUSTED_OPERATIONAL_MEMORY>',
+        isEnglish ? '[Operational memory references]' : '【运维经验记忆】',
       ];
       for (final hit in memoryHits) {
         memoryLines
           ..add('---')
-          ..add('${hit.sourceType}: ${hit.title}')
-          ..add(hit.content);
+          ..add(
+            '${_sanitizeUntrustedText(hit.sourceType)}: '
+            '${_sanitizeUntrustedText(hit.title)}',
+          )
+          ..add(_sanitizeUntrustedText(hit.content));
       }
+      memoryLines.add('</UNTRUSTED_OPERATIONAL_MEMORY>');
       lines.add(memoryLines.join('\n'));
     }
 
+    final requestLanguage =
+        language ?? (isEnglish ? AppLanguage.en : AppLanguage.zh);
     final requestBlock =
         approvedPlanMessage != null && approvedPlanMessage.todoSteps.isNotEmpty
         ? buildApprovedPlanExecutionContext(
             userText: userText,
             planMessage: approvedPlanMessage,
-            language: language,
+            language: requestLanguage,
           )
         : 'User request:\n$userText';
     if (lines.isEmpty) return requestBlock;
     return '${lines.join('\n\n')}\n\n$requestBlock';
   }
 
+  static String _sanitizeUntrustedText(String value) {
+    // Keep retrieved content readable while making it impossible for a
+    // document to close or open one of the control delimiters above.
+    return value.replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+  }
+
   String buildAssistantContext(
+    String text, {
+    List<AiMessageTrace> traces = const [],
+  }) {
+    return buildAssistantContextText(text, traces: traces);
+  }
+
+  /// Canonical assistant-history representation used by both the live
+  /// orchestrator and persisted-message mapper.
+  static String buildAssistantContextText(
     String text, {
     List<AiMessageTrace> traces = const [],
   }) {
@@ -112,21 +163,24 @@ class ChatContextAssembler {
     return buffer.toString().trimRight();
   }
 
-  String _traceMemoryContent(AiMessageTrace trace) {
+  static String _traceMemoryContent(AiMessageTrace trace) {
     final trimmed = trace.content.trim();
-    if (trimmed.length <= 2500) return trimmed;
-    final preview = trimmed
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim()
-        .runes
-        .take(900);
-    return '[Large ${trace.kind} output omitted from future context. '
-        'The full trace remains visible in chat history. '
-        'Length: ${trimmed.length} chars. '
-        'Preview: ${String.fromCharCodes(preview)}]';
+    final content = trimmed.length <= 2500
+        ? trimmed
+        : '[Large ${trace.kind} output omitted from future context. '
+              'The full trace remains visible in chat history. '
+              'Length: ${trimmed.length} chars. '
+              'Preview: ${String.fromCharCodes(trimmed.replaceAll(RegExp(r'\s+'), ' ').trim().runes.take(900))}]';
+    final boundary = switch (trace.kind) {
+      'rag_context' => 'UNTRUSTED_RAG_DATA',
+      'memory_context' => 'UNTRUSTED_OPERATIONAL_MEMORY',
+      _ => null,
+    };
+    if (boundary == null) return content;
+    return '<$boundary>\n${_sanitizeUntrustedText(content)}\n</$boundary>';
   }
 
-  String _slimAssistantBody(String trimmed) {
+  static String _slimAssistantBody(String trimmed) {
     final preview = trimmed
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim()
@@ -139,7 +193,7 @@ class ChatContextAssembler {
         'Preview: ${String.fromCharCodes(preview)}]';
   }
 
-  bool _shouldOmitAssistantBody(String text) {
+  static bool _shouldOmitAssistantBody(String text) {
     final lowerText = text.toLowerCase();
     if (text.length > 6000) return true;
     if (text.length > 2500 && _codeFenceCount(text) >= 2) return true;
@@ -151,7 +205,7 @@ class ChatContextAssembler {
     return false;
   }
 
-  String _largeAssistantBodyType(String text) {
+  static String _largeAssistantBodyType(String text) {
     final lowerText = text.toLowerCase();
     if (lowerText.contains('<html') || lowerText.contains('<!doctype')) {
       return 'HTML';
@@ -161,9 +215,10 @@ class ChatContextAssembler {
     return 'document';
   }
 
-  int _codeFenceCount(String text) => RegExp(r'```').allMatches(text).length;
+  static int _codeFenceCount(String text) =>
+      RegExp(r'```').allMatches(text).length;
 
-  int _markdownDocumentScore(String text) {
+  static int _markdownDocumentScore(String text) {
     var score = 0;
     for (final line in text.split('\n')) {
       final trimmed = line.trimLeft();

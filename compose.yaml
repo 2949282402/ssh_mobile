@@ -103,7 +103,7 @@ services:
   # Analytics MySQL storage for the telemetry ingest (admin-api backend).
   # Isolated on analytics_state: admin-api is its only consumer.
   analytics-mysql:
-    image: mysql:8.4
+    image: mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
     profiles: ["storage"]
     restart: unless-stopped
     expose:
@@ -132,7 +132,7 @@ services:
   # Analytics Redis hot cache for recent telemetry diagnostics (admin-api backend).
   # Resource-capped (64mb, noeviction) and isolated on analytics_state.
   analytics-redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
     profiles: ["storage"]
     restart: unless-stopped
     expose:
@@ -168,7 +168,7 @@ services:
   # available to the Relay stack; set RELAY_STORAGE_MODE=memory only for a
   # local process-memory test while retaining the same Compose topology.
   mysql:
-    image: mysql:8.4
+    image: mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
     restart: unless-stopped
     expose:
       - "3306"
@@ -196,7 +196,7 @@ services:
   # Redis state layer (shared presence, nonce, events). This service is always
   # available to the Relay stack and keeps its bounded state on a named volume.
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
     restart: unless-stopped
     expose:
       - "6379"
@@ -241,7 +241,7 @@ services:
       - relay_internal
 
   caddy:
-    image: ${RELAY_CADDY_IMAGE:-caddy:2-alpine}
+    image: ${RELAY_CADDY_IMAGE:-caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648}
     restart: unless-stopped
     depends_on:
       - relay
