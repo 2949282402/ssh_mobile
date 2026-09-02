@@ -158,7 +158,7 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Scan Rust dependencies
         run: |
-          cargo install cargo-audit --locked --version 0.21.2
+          cargo install cargo-audit --locked --version 0.22.2
           cargo audit
       - name: Start local coturn
         run: >-

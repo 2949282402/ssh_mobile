@@ -113,7 +113,7 @@ void main() {
   _expect(
     nativeNetworkQuality.contains('cargo audit') &&
         !nativeNetworkQuality.contains('cargo audit --locked') &&
-        nativeNetworkQuality.contains('cargo-audit --locked --version'),
+        nativeNetworkQuality.contains('cargo-audit --locked --version 0.22.2'),
     'native-network-quality 必须运行固定版本扫描器的 Rust 依赖漏洞门禁',
   );
   _expect(
