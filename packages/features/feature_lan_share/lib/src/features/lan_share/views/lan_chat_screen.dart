@@ -275,7 +275,10 @@ class _LanChatScreenState extends State<LanChatScreen> {
       body: AppPageSurface(
         child: SafeArea(
           child: _isCheckingPairing
-              ? const Center(child: CircularProgressIndicator())
+              ? _LanChatConversationSkeleton(
+                  strings: strings,
+                  deviceAlias: deviceAlias,
+                )
               : Column(
                   children: [
                     // Custom Top Header
@@ -995,10 +998,10 @@ class _LanChatScreenState extends State<LanChatScreen> {
       case LanTransferStatus.pending:
       case LanTransferStatus.connecting:
       case LanTransferStatus.transferring:
-        return const SizedBox(
-          width: 8,
-          height: 8,
-          child: CircularProgressIndicator(strokeWidth: 1),
+        return AppLoadingIndicator(
+          size: 8,
+          strokeWidth: 1.2,
+          color: Theme.of(context).colorScheme.primary,
         );
       case LanTransferStatus.completed:
         return Icon(
@@ -1077,6 +1080,290 @@ class _LanChatScreenState extends State<LanChatScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _LanChatConversationSkeleton extends StatelessWidget {
+  const _LanChatConversationSkeleton({
+    required this.strings,
+    required this.deviceAlias,
+  });
+
+  final LanShareStrings strings;
+  final String deviceAlias;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return AppSkeletonizer.zone(
+      enabled: true,
+      semanticsLabel: strings.lanRelayConnecting,
+      child: Column(
+        children: [
+          // Header
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+            child: Row(
+              children: [
+                const BackButton(),
+                const SizedBox(width: 4),
+                const AppIconBadge(
+                  icon: Icons.smartphone_rounded,
+                  size: 40,
+                  iconSize: 20,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        deviceAlias,
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                        maxLines: 1,
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.shield_rounded,
+                            size: 12,
+                            color: Color(0xFF29B6F6),
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            strings.lanShareOnline,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: colorScheme.primary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const IconButton(
+                  icon: Icon(Icons.more_vert_rounded),
+                  onPressed: null,
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+
+          // Messages
+          Expanded(
+            child: ListView(
+              physics: const NeverScrollableScrollPhysics(),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16.0,
+                vertical: 12.0,
+              ),
+              children: [
+                // Incoming message with file attachment card
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        constraints: const BoxConstraints(maxWidth: 280),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: colorScheme.surfaceContainerHighest,
+                          borderRadius: const BorderRadius.only(
+                            topLeft: Radius.circular(16),
+                            topRight: Radius.circular(16),
+                            bottomLeft: Radius.circular(4),
+                            bottomRight: Radius.circular(16),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.insert_drive_file_rounded,
+                              color: colorScheme.primary,
+                              size: 28,
+                            ),
+                            const SizedBox(width: 8),
+                            const Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'document_archive.tar.gz',
+                                    maxLines: 1,
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  Text(
+                                    '14.8 MB',
+                                    style: TextStyle(fontSize: 11),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Padding(
+                        padding: const EdgeInsets.only(left: 8),
+                        child: Text(
+                          '10:42',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            fontSize: 10,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 6),
+
+                // Outgoing text message
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Container(
+                        constraints: const BoxConstraints(maxWidth: 260),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: colorScheme.primary,
+                          borderRadius: const BorderRadius.only(
+                            topLeft: Radius.circular(16),
+                            topRight: Radius.circular(16),
+                            bottomLeft: Radius.circular(16),
+                            bottomRight: Radius.circular(4),
+                          ),
+                        ),
+                        child: const Text(
+                          'Received, thank you! Sending you the updated configuration file.',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: Text(
+                          '10:43',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            fontSize: 10,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 6),
+
+                // Incoming short text message
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        constraints: const BoxConstraints(maxWidth: 240),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: colorScheme.surfaceContainerHighest,
+                          borderRadius: const BorderRadius.only(
+                            topLeft: Radius.circular(16),
+                            topRight: Radius.circular(16),
+                            bottomLeft: Radius.circular(4),
+                            bottomRight: Radius.circular(16),
+                          ),
+                        ),
+                        child: const Text(
+                          'Sounds good, let me know when it arrives.',
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Padding(
+                        padding: const EdgeInsets.only(left: 8),
+                        child: Text(
+                          '10:44',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            fontSize: 10,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Bottom Input Composer
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 8.0),
+            decoration: BoxDecoration(
+              color: Theme.of(context).cardColor,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.05),
+                  blurRadius: 4,
+                  offset: const Offset(0, -2),
+                ),
+              ],
+            ),
+            child: SafeArea(
+              top: false,
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.add_circle_outline_rounded),
+                    color: colorScheme.primary,
+                    onPressed: null,
+                  ),
+                  Expanded(
+                    child: TextField(
+                      enabled: false,
+                      decoration: InputDecoration(
+                        hintText: strings.lanShareChatInputHint,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(24.0),
+                          borderSide: BorderSide.none,
+                        ),
+                        filled: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16.0,
+                          vertical: 10.0,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  const IconButton(
+                    icon: Icon(Icons.send_rounded),
+                    onPressed: null,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

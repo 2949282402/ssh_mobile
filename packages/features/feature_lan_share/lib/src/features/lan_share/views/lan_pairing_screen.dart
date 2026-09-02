@@ -361,15 +361,14 @@ class _LanPairingScreenState extends State<LanPairingScreen>
                               child: Stack(
                                 alignment: Alignment.center,
                                 children: [
-                                  CircularProgressIndicator(
+                                  AppLoadingIndicator(
                                     value: _pinCountdown / 60.0,
+                                    size: 44,
                                     strokeWidth: 3,
                                     backgroundColor: countdownColor.withValues(
                                       alpha: 0.15,
                                     ),
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                      countdownColor,
-                                    ),
+                                    color: countdownColor,
                                   ),
                                   Text(
                                     '$_pinCountdown',
@@ -464,15 +463,10 @@ class _LanPairingScreenState extends State<LanPairingScreen>
                               ? null
                               : () => _submitPin(vm, strings),
                           child: _isLoading
-                              ? const SizedBox(
-                                  width: 24,
-                                  height: 24,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2.5,
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                      Colors.white,
-                                    ),
-                                  ),
+                              ? const AppLoadingIndicator(
+                                  size: 24,
+                                  strokeWidth: 2.5,
+                                  color: Colors.white,
                                 )
                               : const Text(
                                   '确认配对',

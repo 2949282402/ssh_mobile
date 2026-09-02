@@ -293,10 +293,10 @@ class _PreviewLoading extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const SizedBox(
-                  width: 30,
-                  height: 30,
-                  child: CircularProgressIndicator(strokeWidth: 2.4),
+                AppLoadingIndicator(
+                  size: 30,
+                  strokeWidth: 2.4,
+                  semanticsLabel: strings.loadingFilePreview,
                 ),
                 const SizedBox(height: 16),
                 Text(
@@ -320,17 +320,11 @@ class _InlineLoading extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(
-      liveRegion: true,
-      label: label,
-      child: const ExcludeSemantics(
-        child: Center(
-          child: SizedBox(
-            width: 28,
-            height: 28,
-            child: CircularProgressIndicator(strokeWidth: 2.2),
-          ),
-        ),
+    return Center(
+      child: AppLoadingIndicator(
+        size: 24,
+        strokeWidth: 2.2,
+        semanticsLabel: label,
       ),
     );
   }

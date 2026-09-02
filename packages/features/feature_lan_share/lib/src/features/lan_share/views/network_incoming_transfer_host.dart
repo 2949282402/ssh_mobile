@@ -2,6 +2,7 @@
 
 import 'dart:async';
 
+import 'package:app_ui/app_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -317,13 +318,7 @@ class _IncomingApprovalDialogState extends State<IncomingApprovalDialog> {
           ],
           if (inProgress) ...[
             const SizedBox(height: 12),
-            const Center(
-              child: SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(strokeWidth: 2.5),
-              ),
-            ),
+            const AppLoadingIndicator(size: 24, strokeWidth: 2.5),
           ],
         ],
       ),

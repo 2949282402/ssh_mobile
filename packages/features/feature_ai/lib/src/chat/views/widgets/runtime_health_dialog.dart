@@ -169,11 +169,7 @@ class _RuntimeHealthDialogContentState
                           ? null
                           : _openSystemSettings,
                       icon: _openingSettings
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
+                          ? const AppLoadingIndicator(size: 16, strokeWidth: 2)
                           : const Icon(Icons.settings_outlined, size: 18),
                       label: Text(widget.strings.runtimeSystemSettings),
                     ),

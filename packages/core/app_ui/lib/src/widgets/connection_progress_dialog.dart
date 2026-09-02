@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
+import 'app_loading.dart';
 
 /// 连接准备阶段使用的不可取消进度 UI 和动画时序工具。
 const Duration _connectionProgressAnimationDuration = Duration(
@@ -57,19 +58,14 @@ class ConnectionProgressDialog extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    RepaintBoundary(
-                      child: SizedBox(
-                        width: 42,
-                        height: 42,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 3,
-                          color:
-                              Theme.of(
-                                context,
-                              ).extension<ExtendedColors>()?.success ??
-                              AppTheme.terminalGreen,
-                        ),
-                      ),
+                    AppLoadingIndicator(
+                      size: 42,
+                      strokeWidth: 3,
+                      color:
+                          Theme.of(
+                            context,
+                          ).extension<ExtendedColors>()?.success ??
+                          AppTheme.terminalGreen,
                     ),
                     const SizedBox(height: 18),
                     Text(

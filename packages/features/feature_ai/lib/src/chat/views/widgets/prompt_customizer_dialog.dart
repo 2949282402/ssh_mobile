@@ -347,11 +347,7 @@ class _PromptCustomizerDialogState extends State<PromptCustomizerDialog> {
                       ? null
                       : _saveSettings,
                   child: _saving
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
+                      ? const AppLoadingIndicator(size: 18, strokeWidth: 2)
                       : Text(en ? 'Save' : '保存'),
                 ),
               ),
@@ -371,7 +367,7 @@ class _PromptCustomizerDialogState extends State<PromptCustomizerDialog> {
                       child: Padding(
                         padding: EdgeInsets.all(compactKeyboard ? 8 : 14),
                         child: _loading
-                            ? const Center(child: CircularProgressIndicator())
+                            ? _PromptCustomizerSkeleton(strings: widget.strings)
                             : loadFailed
                             ? AppEmptyState(
                                 icon: Icons.error_outline_rounded,
@@ -723,6 +719,105 @@ class _PromptCustomizerDialogState extends State<PromptCustomizerDialog> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _PromptCustomizerSkeleton extends StatelessWidget {
+  const _PromptCustomizerSkeleton({required this.strings});
+
+  final AiStrings strings;
+
+  @override
+  Widget build(BuildContext context) {
+    final en = strings.language == AppLanguage.en;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return AppSkeletonizer.zone(
+      enabled: true,
+      semanticsLabel: strings.loadingPrompts,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Material(
+            type: MaterialType.transparency,
+            child: SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                en ? 'Enable Custom Prompts' : '启用自定义提示词',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              subtitle: Text(
+                en
+                    ? 'Override default templates with edited custom prompts'
+                    : '启用后，将覆盖系统默认模板并使用修改后的提示词',
+              ),
+              value: true,
+              onChanged: null,
+            ),
+          ),
+          const Divider(height: 24),
+          InputDecorator(
+            decoration: InputDecoration(
+              labelText: en ? 'Prompt type' : '提示词类型',
+            ),
+            child: Text(en ? 'System Persona' : '系统主提示词 (System Persona)'),
+          ),
+          const SizedBox(height: 14),
+          Expanded(
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerLowest,
+                borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                border: Border.all(color: colorScheme.outlineVariant),
+              ),
+              child: const ClipRect(
+                child: SingleChildScrollView(
+                  physics: NeverScrollableScrollPhysics(),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'You are an expert DevOps and System Administration AI assistant.',
+                        style: TextStyle(fontFamily: 'monospace', fontSize: 13),
+                      ),
+                      SizedBox(height: 8),
+                      Text(
+                        'Always provide safe, verified terminal commands and clear diagnosis steps.',
+                        style: TextStyle(fontFamily: 'monospace', fontSize: 13),
+                      ),
+                      SizedBox(height: 8),
+                      Text(
+                        'When modifying server configurations, explain potential impacts and prerequisites.',
+                        style: TextStyle(fontFamily: 'monospace', fontSize: 13),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              OutlinedButton.icon(
+                onPressed: null,
+                icon: const Icon(Icons.restore_page_outlined, size: 18),
+                label: Text(en ? 'Insert default' : '填入默认模板'),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                onPressed: null,
+                icon: const Icon(Icons.restart_alt_rounded, size: 18),
+                label: Text(en ? 'Reset' : '重置'),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

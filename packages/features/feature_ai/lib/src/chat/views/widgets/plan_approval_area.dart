@@ -28,10 +28,7 @@ class ChatPlanApprovalActions extends StatelessWidget {
       key: ValueKey<String>('plan-approve-$actionSuffix'),
       onPressed: busy ? null : onApprove,
       icon: busy
-          ? const SizedBox.square(
-              dimension: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
+          ? const AppLoadingIndicator(size: 18, strokeWidth: 2)
           : const Icon(Icons.play_arrow_rounded, size: 20),
       label: Text(
         strings.approveAndExecutePlan,

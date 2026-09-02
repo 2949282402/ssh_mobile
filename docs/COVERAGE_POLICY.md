@@ -84,6 +84,10 @@ it only mirrors the SFTP API with unsupported-operation stubs and no business
 logic, while the Linux/Windows/macOS/iOS coverage jobs compile the IO
 implementation. Web validation owns that platform branch separately.
 
+`apps/ssh_mobile_full/lib/widgets/server_selector.dart` is also excluded: it
+only contains typedefs and re-exports from `package:app_ui/app_ui.dart` for
+backward compatibility, with no executable statements.
+
 The App Network V2 boundary keeps two native-only status edges precise as well:
 `network_service_support.dart`'s `_networkNativeStatusError` and the
 `NativeOperationStatus.failure` arm in `network_service_runtime_gateway.dart`

@@ -23,10 +23,10 @@ class _EditorLoading extends StatelessWidget {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const SizedBox(
-                        width: 30,
-                        height: 30,
-                        child: CircularProgressIndicator(strokeWidth: 2.4),
+                      AppLoadingIndicator(
+                        size: 30,
+                        strokeWidth: 2.4,
+                        semanticsLabel: strings.loadingRemoteFile,
                       ),
                       const SizedBox(height: 16),
                       Text(

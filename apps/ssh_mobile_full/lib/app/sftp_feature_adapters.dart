@@ -7,6 +7,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:app_core/app_core.dart';
+import 'package:app_ui/app_ui.dart';
 import 'package:feature_connection/feature_connection.dart'
     as feature_connection;
 import 'package:feature_sftp/feature_sftp.dart' as feature_sftp;
@@ -683,9 +684,9 @@ final class _AppSftpModuleScopeState extends State<AppSftpModuleScope> {
           );
         }
         if (snapshot.connectionState != ConnectionState.done) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
+          final isEn = _settings.language == feature_sftp.SftpLanguage.english;
+          final strings = AppStrings(isEn ? AppLanguage.en : AppLanguage.zh);
+          return Scaffold(body: _SftpModuleScopeSkeleton(strings: strings));
         }
         return MultiProvider(
           providers: [
@@ -706,6 +707,233 @@ final class _AppSftpModuleScopeState extends State<AppSftpModuleScope> {
           child: widget.child,
         );
       },
+    );
+  }
+}
+
+class _SftpModuleScopeSkeleton extends StatelessWidget {
+  const _SftpModuleScopeSkeleton({required this.strings});
+
+  final AppStrings strings;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return AppSkeletonizer.zone(
+      enabled: true,
+      semanticsLabel: strings.sftp,
+      child: AppPageSurface(
+        child: SafeArea(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Top Server Selector Strip
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(
+                          AppTheme.radiusSmall,
+                        ),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.dns_outlined, size: 16),
+                          SizedBox(width: 6),
+                          Text(
+                            'Production-Server-01',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: colorScheme.surfaceContainerLowest,
+                        borderRadius: BorderRadius.circular(
+                          AppTheme.radiusSmall,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.dns_outlined,
+                            size: 16,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Staging-Node',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Spacer(),
+                    const Icon(Icons.chevron_left_rounded, size: 20),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+
+              // Path Breadcrumbs Bar
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: colorScheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(
+                            AppTheme.radiusSmall,
+                          ),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(Icons.folder_open_rounded, size: 18),
+                            SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                '/var/www/html/public',
+                                style: TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const Icon(Icons.star_outline_rounded, size: 22),
+                    const SizedBox(width: 10),
+                    const Icon(Icons.refresh_rounded, size: 22),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+
+              // File & Folder Tiles
+              Expanded(
+                child: ListView(
+                  physics: const NeverScrollableScrollPhysics(),
+                  padding: const EdgeInsets.all(12),
+                  children: [
+                    _buildEntryTile(
+                      context,
+                      Icons.folder_rounded,
+                      colorScheme.primary,
+                      'assets',
+                      'Directory · 4 KB',
+                    ),
+                    _buildEntryTile(
+                      context,
+                      Icons.folder_rounded,
+                      colorScheme.primary,
+                      'config',
+                      'Directory · 4 KB',
+                    ),
+                    _buildEntryTile(
+                      context,
+                      Icons.description_outlined,
+                      colorScheme.onSurfaceVariant,
+                      'index.html',
+                      '12.4 KB · 2026-09-01',
+                    ),
+                    _buildEntryTile(
+                      context,
+                      Icons.code_rounded,
+                      colorScheme.onSurfaceVariant,
+                      'server.js',
+                      '45.2 KB · 2026-09-01',
+                    ),
+                    _buildEntryTile(
+                      context,
+                      Icons.text_snippet_outlined,
+                      colorScheme.onSurfaceVariant,
+                      'README.md',
+                      '3.1 KB · 2026-09-01',
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEntryTile(
+    BuildContext context,
+    IconData icon,
+    Color iconColor,
+    String name,
+    String meta,
+  ) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.6),
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: iconColor, size: 24),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 2),
+                Text(
+                  meta,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Icon(Icons.more_horiz_rounded),
+        ],
+      ),
     );
   }
 }

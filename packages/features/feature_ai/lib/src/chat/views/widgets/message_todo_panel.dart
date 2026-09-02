@@ -343,11 +343,7 @@ class _ChatTodoPanelState extends State<ChatTodoPanel> {
           color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
         );
       case StepStatus.running:
-        return const SizedBox(
-          width: 16,
-          height: 16,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        );
+        return const AppLoadingIndicator(size: 16, strokeWidth: 2);
       case StepStatus.success:
         final extColors = Theme.of(context).extension<ExtendedColors>();
         return Icon(

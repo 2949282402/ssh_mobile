@@ -111,10 +111,7 @@ class _ChatHeader extends StatelessWidget {
               IconButton(
                 tooltip: strings.newChat,
                 icon: newChatInFlight
-                    ? const SizedBox.square(
-                        dimension: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
+                    ? const AppLoadingIndicator(size: 18, strokeWidth: 2)
                     : const Icon(Icons.add_comment_outlined),
                 onPressed: snapshot.sending || newChatInFlight
                     ? null

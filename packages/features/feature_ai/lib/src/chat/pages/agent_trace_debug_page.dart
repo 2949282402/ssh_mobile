@@ -10,6 +10,72 @@ import 'package:app_ui/app_ui.dart';
 
 enum _TraceFilter { all, tools, approvals, blocked, errors }
 
+final _kPlaceholderTraceData = _TraceDebugData(
+  metrics: AgentRunMetrics(
+    id: 'placeholder-run-id',
+    startedAt: DateTime(2026, 9, 1, 10, 0),
+    finishedAt: DateTime(2026, 9, 1, 10, 0, 15),
+    model: 'claude-3-5-sonnet',
+    promptTokens: 1240,
+    completionTokens: 380,
+    totalTokens: 1620,
+    elapsedMs: 15400,
+    toolCalls: 4,
+    cacheHits: 1,
+    approvalCount: 1,
+    approvedCount: 1,
+    success: true,
+  ),
+  events: [
+    AgentTraceEvent(
+      runId: 'placeholder-run-id',
+      chatId: 'placeholder-chat-id',
+      createdAt: DateTime(2026, 9, 1, 10, 0, 1),
+      sequence: 1,
+      kind: 'agent_start',
+      title: 'Agent run initiated',
+      content: 'Task: Check memory and running processes on production host',
+      status: 'completed',
+      durationMs: 120,
+    ),
+    AgentTraceEvent(
+      runId: 'placeholder-run-id',
+      chatId: 'placeholder-chat-id',
+      createdAt: DateTime(2026, 9, 1, 10, 0, 3),
+      sequence: 2,
+      kind: 'tool_call',
+      title: 'execute_command(ps aux --sort=-%cpu)',
+      content:
+          'USER PID %CPU %MEM COMMAND\nroot 1024 45.2 2.1 nginx: master\napp 2048 18.4 12.8 node /app/server.js',
+      toolName: 'execute_command',
+      status: 'success',
+      durationMs: 450,
+    ),
+    AgentTraceEvent(
+      runId: 'placeholder-run-id',
+      chatId: 'placeholder-chat-id',
+      createdAt: DateTime(2026, 9, 1, 10, 0, 6),
+      sequence: 3,
+      kind: 'approval_request',
+      title: 'Command Execution Approval Granted',
+      content: 'Action: Restart service unit "worker-pool.service"',
+      status: 'approved',
+      durationMs: 200,
+    ),
+    AgentTraceEvent(
+      runId: 'placeholder-run-id',
+      chatId: 'placeholder-chat-id',
+      createdAt: DateTime(2026, 9, 1, 10, 0, 10),
+      sequence: 4,
+      kind: 'agent_finish',
+      title: 'Task completed successfully',
+      content: 'Generated diagnosis and resolution summary for the operator.',
+      status: 'completed',
+      durationMs: 80,
+    ),
+  ],
+);
+
 class AgentTraceDebugPage extends StatefulWidget {
   final String chatId;
   final String runId;
@@ -73,7 +139,18 @@ class _AgentTraceDebugPageState extends State<AgentTraceDebugPage> {
           future: _future,
           builder: (context, snapshot) {
             if (snapshot.connectionState != ConnectionState.done) {
-              return const Center(child: CircularProgressIndicator());
+              return AppSkeletonizer.zone(
+                enabled: true,
+                semanticsLabel: strings.agentTraceTitle,
+                child: _TraceDebugBody(
+                  runId: widget.runId,
+                  data: _kPlaceholderTraceData,
+                  events: _kPlaceholderTraceData.events,
+                  strings: strings,
+                  selectedFilter: _TraceFilter.all,
+                  onFilterSelected: (_) {},
+                ),
+              );
             }
             final data = snapshot.data;
             if (snapshot.hasError) {

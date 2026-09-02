@@ -159,6 +159,17 @@ class _AiAttachmentImagePreviewPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final screenSize = MediaQuery.sizeOf(context);
+    final pixelRatio = MediaQuery.devicePixelRatioOf(context);
+    final cacheWidth = (screenSize.width * pixelRatio * 2)
+        .round()
+        .clamp(1, 4096)
+        .toInt();
+    final cacheHeight = (screenSize.height * pixelRatio * 2)
+        .round()
+        .clamp(1, 4096)
+        .toInt();
+
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -174,6 +185,8 @@ class _AiAttachmentImagePreviewPage extends StatelessWidget {
             child: Image.memory(
               bytes,
               fit: BoxFit.contain,
+              cacheWidth: cacheWidth,
+              cacheHeight: cacheHeight,
               errorBuilder: (_, _, _) => Semantics(
                 image: true,
                 label: unavailableLabel,

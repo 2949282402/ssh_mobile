@@ -172,6 +172,13 @@ void main() {
       );
 
       expect(find.byKey(const ValueKey('collapse_strip_btn')), findsOneWidget);
+      final alignFinder = find.ancestor(
+        of: find.byKey(const ValueKey('collapse_strip_btn')),
+        matching: find.byType(Align),
+      );
+      expect(alignFinder, findsOneWidget);
+      final align = tester.widget<Align>(alignFinder);
+      expect(align.alignment, Alignment.center);
       expect(find.byIcon(Icons.keyboard_arrow_up), findsOneWidget);
       expect(find.text('Compact: Server Alpha'), findsOneWidget);
       expect(find.text('Compact: Server Beta'), findsOneWidget);

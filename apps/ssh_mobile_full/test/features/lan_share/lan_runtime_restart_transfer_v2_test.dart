@@ -114,6 +114,7 @@ void main() {
       );
       final storageA = LanStorageService(
         sandboxDirectoryProvider: () async => sandboxA,
+        freeDiskSpaceBytesProvider: () async => 1024 * 1024 * 1024,
       );
       final transferServiceA = LanTransferService(
         currentDeviceId: 'device-a',
@@ -149,6 +150,7 @@ void main() {
       );
       final storageB = LanStorageService(
         sandboxDirectoryProvider: () async => sandboxB,
+        freeDiskSpaceBytesProvider: () async => 1024 * 1024 * 1024,
       );
       final transferServiceB1 = LanTransferService(
         currentDeviceId: 'device-b',

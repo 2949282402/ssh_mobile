@@ -189,11 +189,7 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
       case StepStatus.running:
         statusColor = colorScheme.primary;
         statusIcon = Icons.sync_rounded;
-        trailingWidget = const SizedBox(
-          width: 16,
-          height: 16,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        );
+        trailingWidget = const AppLoadingIndicator(size: 16, strokeWidth: 2);
         break;
       case StepStatus.skipped:
         statusColor = colorScheme.onSurfaceVariant.withValues(alpha: 0.5);

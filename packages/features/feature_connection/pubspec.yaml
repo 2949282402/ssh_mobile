@@ -11,6 +11,8 @@ resolution: workspace
 dependencies:
   app_core:
     path: ../../core/app_core
+  app_ui:
+    path: ../../core/app_ui
   connection_core:
     path: ../../core/connection_core
   flutter:

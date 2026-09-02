@@ -103,73 +103,31 @@ class _CollapsedMobileServerBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     final connection = selectedConnection;
-    final textScale = MediaQuery.textScalerOf(
-      context,
-    ).scale(1).clamp(1.0, 2.0).toDouble();
     final status = _SftpServerStatus.of(
       context,
       strings: strings,
       busy: busy,
       connected: connected,
     );
-    final barHeight = 48.0 + (textScale - 1.0) * 22.0;
-    return Material(
-      color: colorScheme.surface,
-      child: SafeArea(
-        top: false,
-        bottom: false,
-        child: SizedBox(
-          height: barHeight,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Row(
-              children: [
-                SizedBox.square(
-                  dimension: 48,
-                  child: IconButton(
-                    key: const ValueKey('sftp-server-expand-mobile'),
-                    tooltip: strings.expandServerList,
-                    icon: const Icon(Icons.keyboard_double_arrow_down_rounded),
-                    onPressed: onExpand,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                _ServerStatusIcon(
-                  busy: busy,
-                  connected: connected,
-                  compact: true,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Semantics(
-                    key: const ValueKey('sftp-collapsed-server-summary'),
-                    container: true,
-                    label: connection == null
-                        ? strings.sftpServers
-                        : '${connection.name}, ${status.label}, '
-                              '${connection.username}@${connection.host}:${connection.port}',
-                    child: ExcludeSemantics(
-                      child: OverflowScrollText(
-                        connection == null
-                            ? strings.sftpServers
-                            : '${connection.name}  ${connection.username}@${connection.host}',
-                        selectable: false,
-                        maxLines: 1,
-                        style: TextStyle(
-                          color: colorScheme.onSurface,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
+    return AppServerSummaryBar(
+      title: connection == null ? strings.sftpServers : connection.name,
+      subtitle: connection == null
+          ? null
+          : '${connection.username}@${connection.host}',
+      statusIcon: _ServerStatusIcon(
+        busy: busy,
+        connected: connected,
+        compact: true,
       ),
+      expandTooltip: strings.expandServerList,
+      expandButtonKey: const ValueKey('sftp-server-expand-mobile'),
+      onExpand: onExpand,
+      semanticsKey: const ValueKey('sftp-collapsed-server-summary'),
+      semanticsLabel: connection == null
+          ? strings.sftpServers
+          : '${connection.name}, ${status.label}, '
+                '${connection.username}@${connection.host}:${connection.port}',
     );
   }
 }
@@ -265,10 +223,11 @@ class _ServerStatusIcon extends StatelessWidget {
       child: busy
           ? Padding(
               padding: EdgeInsets.all(4 * scale),
-              child: CircularProgressIndicator(
+              child: AppLoadingIndicator(
                 key: const ValueKey('sftp-server-status-loading'),
                 color: color,
                 strokeWidth: 1.8 * scale,
+                size: size - 8 * scale,
               ),
             )
           : AppIconBadge(
@@ -305,154 +264,40 @@ class _ServerTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = Theme.of(context).colorScheme;
-    final scale = mobileUiScaleOf(context);
-    final textScale = MediaQuery.textScalerOf(context).scale(1);
-    final stackStatus = !compact && textScale >= 1.5;
-    final isDark = theme.brightness == Brightness.dark;
     final status = _SftpServerStatus.of(
       context,
       strings: strings,
       busy: busy,
       connected: connected,
     );
-    final borderColor = selected
-        ? colorScheme.primary.withValues(alpha: 0.58)
-        : compact
-        ? colorScheme.outlineVariant
-        : colorScheme.outline.withValues(alpha: 0.62);
-    final background = compact
-        ? (selected
-              ? colorScheme.primary.withValues(alpha: 0.08)
-              : colorScheme.surface)
-        : selected
-        ? Color.alphaBlend(
-            colorScheme.primary.withValues(alpha: isDark ? 0.12 : 0.075),
-            colorScheme.surfaceContainerLow,
-          )
-        : colorScheme.surfaceContainerLow.withValues(alpha: 0.76);
-    final title = OverflowScrollText(
-      connection.name,
-      selectable: false,
-      maxLines: 1,
-      style: TextStyle(
-        color: colorScheme.onSurface,
-        fontWeight: FontWeight.w700,
-      ),
-    );
-    final endpoint = Row(
-      children: [
-        Icon(
-          Icons.dns_outlined,
-          size: 13 * scale,
-          color: colorScheme.onSurfaceVariant,
-        ),
-        SizedBox(width: 5 * scale),
-        Expanded(
-          child: OverflowScrollText(
-            '${connection.username}@${connection.host}:${connection.port}',
-            selectable: false,
-            maxLines: 1,
-            style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 12),
-          ),
-        ),
-      ],
-    );
 
-    return Semantics(
-      key: ValueKey('sftp-server-tile-${connection.id}'),
-      container: true,
-      button: true,
-      enabled: !busy,
+    return AppServerTile(
+      title: connection.name,
+      subtitle: '${connection.username}@${connection.host}:${connection.port}',
+      leading: _ServerStatusIcon(
+        busy: busy,
+        connected: connected,
+        compact: true,
+      ),
+      trailing: _SftpServerStatusPill(status: status),
+      statusWidget: Text(
+        status.label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: status.color,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
       selected: selected,
-      label:
+      busy: busy,
+      compact: compact,
+      onTap: onTap,
+      semanticsKey: ValueKey('sftp-server-tile-${connection.id}'),
+      semanticsLabel:
           '${connection.name}, ${status.label}, '
           '${connection.username}@${connection.host}:${connection.port}',
-      onTap: busy ? null : onTap,
-      child: TactileFeedback(
-        onTap: busy ? null : onTap,
-        child: ExcludeSemantics(
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 160),
-            curve: Curves.easeOutCubic,
-            constraints: BoxConstraints(
-              minHeight: compact
-                  ? 56
-                  : stackStatus
-                  ? 112
-                  : 72,
-            ),
-            padding: EdgeInsets.symmetric(
-              horizontal: (compact ? 10 : 14) * scale,
-              vertical: (compact ? 3 : 11) * scale,
-            ),
-            decoration: BoxDecoration(
-              color: background,
-              borderRadius: BorderRadius.circular(
-                compact ? AppTheme.radiusSmall : AppTheme.radiusMedium,
-              ),
-              border: Border.all(color: borderColor, width: selected ? 1.2 : 1),
-            ),
-            child: Row(
-              children: [
-                _ServerStatusIcon(
-                  busy: busy,
-                  connected: connected,
-                  compact: true,
-                ),
-                SizedBox(width: 10 * scale),
-                Expanded(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final showInlinePill =
-                          !compact &&
-                          !stackStatus &&
-                          constraints.maxWidth >= 150;
-                      return Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (compact) ...[
-                            title,
-                            SizedBox(height: 3 * scale),
-                            endpoint,
-                          ] else if (showInlinePill) ...[
-                            Row(
-                              children: [
-                                Expanded(child: title),
-                                SizedBox(width: 8 * scale),
-                                _SftpServerStatusPill(status: status),
-                              ],
-                            ),
-                            SizedBox(height: 5 * scale),
-                            endpoint,
-                          ] else ...[
-                            title,
-                            SizedBox(height: 2 * scale),
-                            Text(
-                              status.label,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: status.color,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            SizedBox(height: 3 * scale),
-                            endpoint,
-                          ],
-                        ],
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
     );
   }
 }

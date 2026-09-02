@@ -285,13 +285,10 @@ class _AiBrowsingBanner extends StatelessWidget {
           ),
           child: Row(
             children: [
-              SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: colorScheme.primary,
-                ),
+              AppLoadingIndicator(
+                size: 18,
+                strokeWidth: 2,
+                color: colorScheme.primary,
               ),
               const SizedBox(width: 10),
               Expanded(

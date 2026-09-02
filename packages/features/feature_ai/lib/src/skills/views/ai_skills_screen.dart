@@ -5,6 +5,20 @@ import 'package:feature_ai/src/skills/viewmodels/ai_skills_viewmodel.dart';
 import 'package:feature_ai/src/domain/ai_compat.dart';
 import 'package:app_ui/app_ui.dart';
 
+final _kPlaceholderSkills = List.generate(
+  4,
+  (i) => AiSkillRecord(
+    id: 'placeholder-skill-$i',
+    name: 'Placeholder Skill ${i + 1}',
+    description:
+        'A mock skill description placeholder to keep skeleton layout aligned with real items.',
+    content: '',
+    enabled: true,
+    createdAt: DateTime(2026, 9, 1),
+    updatedAt: DateTime(2026, 9, 1),
+  ),
+);
+
 class AiSkillsScreen extends StatefulWidget {
   const AiSkillsScreen({super.key});
 
@@ -34,6 +48,7 @@ class _AiSkillsScreenState extends State<AiSkillsScreen> {
     final viewModel = context.watch<AiSkillsViewModel>();
     final strings = _SkillStrings(viewModel.language);
     final colorScheme = Theme.of(context).colorScheme;
+    final isLoading = viewModel.loading && viewModel.skills.isEmpty;
 
     return Scaffold(
       appBar: AppBar(
@@ -42,31 +57,35 @@ class _AiSkillsScreenState extends State<AiSkillsScreen> {
           IconButton(
             tooltip: strings.newSkill,
             icon: const Icon(Icons.add_rounded),
-            onPressed: () {
-              viewModel.newSkill();
-              _navigateToEdit(context, viewModel);
-            },
+            onPressed: isLoading
+                ? null
+                : () {
+                    viewModel.newSkill();
+                    _navigateToEdit(context, viewModel);
+                  },
           ),
         ],
       ),
-      body: viewModel.loading && viewModel.skills.isEmpty
-          ? AppSkeletonizer.zone(
+      body: isLoading
+          ? AppSkeletonizer(
               enabled: true,
               semanticsLabel: strings.loadingSkills,
-              child: ListView.separated(
-                physics: const NeverScrollableScrollPhysics(),
-                padding: const EdgeInsets.all(AppSpacing.sm),
-                itemCount: 4,
-                separatorBuilder: (_, _) =>
-                    const SizedBox(height: AppSpacing.xs),
-                itemBuilder: (context, index) {
-                  return const AppSkeletonRow();
-                },
+              child: _buildSkillList(
+                viewModel,
+                strings,
+                colorScheme,
+                skills: _kPlaceholderSkills,
+                isSkeleton: true,
               ),
             )
           : Stack(
               children: [
-                _buildSkillList(viewModel, strings, colorScheme),
+                _buildSkillList(
+                  viewModel,
+                  strings,
+                  colorScheme,
+                  skills: viewModel.skills,
+                ),
                 if (viewModel.loading && viewModel.skills.isNotEmpty)
                   const LinearProgressIndicator(minHeight: 2),
               ],
@@ -77,11 +96,11 @@ class _AiSkillsScreenState extends State<AiSkillsScreen> {
   Widget _buildSkillList(
     AiSkillsViewModel viewModel,
     _SkillStrings strings,
-    ColorScheme colorScheme,
-  ) {
-    final skills = viewModel.skills;
-
-    if (skills.isEmpty) {
+    ColorScheme colorScheme, {
+    required List<AiSkillRecord> skills,
+    bool isSkeleton = false,
+  }) {
+    if (!isSkeleton && skills.isEmpty) {
       return AppEmptyState(
         icon: Icons.psychology_outlined,
         title: strings.emptyTitle,
@@ -103,7 +122,7 @@ class _AiSkillsScreenState extends State<AiSkillsScreen> {
       separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.xs),
       itemBuilder: (context, index) {
         final skill = skills[index];
-        final selected = skill.id == viewModel.selectedId;
+        final selected = !isSkeleton && skill.id == viewModel.selectedId;
         return ListTile(
           selected: selected,
           shape: RoundedRectangleBorder(
@@ -130,12 +149,16 @@ class _AiSkillsScreenState extends State<AiSkillsScreen> {
           ),
           trailing: Switch(
             value: skill.enabled,
-            onChanged: (value) => viewModel.setSkillEnabled(skill, value),
+            onChanged: isSkeleton
+                ? null
+                : (value) => viewModel.setSkillEnabled(skill, value),
           ),
-          onTap: () {
-            viewModel.selectSkill(skill);
-            _navigateToEdit(context, viewModel);
-          },
+          onTap: isSkeleton
+              ? null
+              : () {
+                  viewModel.selectSkill(skill);
+                  _navigateToEdit(context, viewModel);
+                },
         );
       },
     );

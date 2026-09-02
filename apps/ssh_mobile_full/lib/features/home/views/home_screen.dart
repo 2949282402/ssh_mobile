@@ -368,12 +368,10 @@ class _HomeScreenState extends State<HomeScreen> {
     final colorScheme = theme.colorScheme;
     final mobileMetrics = mobileUiMetricsOf(context);
 
-    return SafeArea(
-      top: false,
+    return Material(
+      color: colorScheme.surface,
       child: Container(
-        height: mobileMetrics.navigationHeight,
         decoration: BoxDecoration(
-          color: colorScheme.surface,
           border: Border(
             top: BorderSide(
               color: colorScheme.outlineVariant.withValues(alpha: 0.8),
@@ -381,50 +379,67 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 4),
-        child: Row(
-          children: [
-            _buildNavItem(
-              context: context,
-              mobileMetrics: mobileMetrics,
-              icon: const Icon(Icons.dns_outlined, size: 20),
-              selectedIcon: const Icon(Icons.dns_rounded, size: 20),
-              label: strings.servers,
-              index: _serverPage,
+        child: SafeArea(
+          top: false,
+          child: SizedBox(
+            height: mobileMetrics.navigationHeight,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Row(
+                children: [
+                  _buildNavItem(
+                    context: context,
+                    mobileMetrics: mobileMetrics,
+                    icon: const Icon(Icons.dns_outlined, size: 20),
+                    selectedIcon: const Icon(Icons.dns_rounded, size: 20),
+                    label: strings.servers,
+                    index: _serverPage,
+                  ),
+                  _buildNavItem(
+                    context: context,
+                    mobileMetrics: mobileMetrics,
+                    icon: const Icon(Icons.folder_open_outlined, size: 20),
+                    selectedIcon: const Icon(
+                      Icons.folder_open_rounded,
+                      size: 20,
+                    ),
+                    label: strings.sftp,
+                    index: _sftpPage,
+                  ),
+                  _buildNavItem(
+                    context: context,
+                    mobileMetrics: mobileMetrics,
+                    icon: const Icon(Icons.psychology_outlined, size: 20),
+                    selectedIcon: const Icon(
+                      Icons.psychology_rounded,
+                      size: 20,
+                    ),
+                    label: 'AI',
+                    index: _aiPage,
+                  ),
+                  _buildNavItem(
+                    context: context,
+                    mobileMetrics: mobileMetrics,
+                    icon: const Icon(Icons.monitor_heart_outlined, size: 20),
+                    selectedIcon: const Icon(
+                      Icons.monitor_heart_rounded,
+                      size: 20,
+                    ),
+                    label: strings.admin,
+                    index: _adminPage,
+                  ),
+                  _buildNavItem(
+                    context: context,
+                    mobileMetrics: mobileMetrics,
+                    icon: const Icon(Icons.radar_outlined, size: 20),
+                    selectedIcon: const Icon(Icons.radar_rounded, size: 20),
+                    label: strings.lanShare,
+                    index: _logPage,
+                  ),
+                ],
+              ),
             ),
-            _buildNavItem(
-              context: context,
-              mobileMetrics: mobileMetrics,
-              icon: const Icon(Icons.folder_open_outlined, size: 20),
-              selectedIcon: const Icon(Icons.folder_open_rounded, size: 20),
-              label: strings.sftp,
-              index: _sftpPage,
-            ),
-            _buildNavItem(
-              context: context,
-              mobileMetrics: mobileMetrics,
-              icon: const Icon(Icons.psychology_outlined, size: 20),
-              selectedIcon: const Icon(Icons.psychology_rounded, size: 20),
-              label: 'AI',
-              index: _aiPage,
-            ),
-            _buildNavItem(
-              context: context,
-              mobileMetrics: mobileMetrics,
-              icon: const Icon(Icons.monitor_heart_outlined, size: 20),
-              selectedIcon: const Icon(Icons.monitor_heart_rounded, size: 20),
-              label: strings.admin,
-              index: _adminPage,
-            ),
-            _buildNavItem(
-              context: context,
-              mobileMetrics: mobileMetrics,
-              icon: const Icon(Icons.radar_outlined, size: 20),
-              selectedIcon: const Icon(Icons.radar_rounded, size: 20),
-              label: strings.lanShare,
-              index: _logPage,
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -501,11 +516,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _selectedIndex = index;
       _settledIndex = index;
     });
-    _pageController.animateToPage(
-      index,
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeOutCubic,
-    );
+    _pageController.jumpToPage(index);
     _onPageActive(index);
   }
 

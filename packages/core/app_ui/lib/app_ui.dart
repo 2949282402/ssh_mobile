@@ -10,6 +10,7 @@ export 'src/theme/app_typography.dart';
 export 'src/utils/responsive.dart';
 export 'src/widgets/app_dialog.dart';
 export 'src/widgets/app_loading.dart';
+export 'src/widgets/app_server_selector.dart';
 export 'src/widgets/app_skeletonizer.dart';
 export 'src/widgets/app_surface.dart';
 export 'src/widgets/app_terminal_skeleton.dart';

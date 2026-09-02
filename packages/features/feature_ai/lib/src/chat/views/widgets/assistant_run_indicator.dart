@@ -22,15 +22,10 @@ class AssistantRunIndicator extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        RepaintBoundary(
-          child: SizedBox(
-            width: compact ? 13 : 15,
-            height: compact ? 13 : 15,
-            child: CircularProgressIndicator(
-              strokeWidth: compact ? 1.8 : 2,
-              color: colorScheme.primary,
-            ),
-          ),
+        AppLoadingIndicator(
+          size: compact ? 13 : 15,
+          strokeWidth: compact ? 1.8 : 2,
+          color: colorScheme.primary,
         ),
         const SizedBox(width: 8),
         Flexible(child: Text(label, style: textStyle)),

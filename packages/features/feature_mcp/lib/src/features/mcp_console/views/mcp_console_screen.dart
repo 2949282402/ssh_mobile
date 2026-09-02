@@ -594,85 +594,120 @@ class _McpConsoleSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return ListView(
-      physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-      children: [
-        Container(
-          height: 140,
-          margin: const EdgeInsets.only(bottom: 12),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceContainerHighest.withValues(
-              alpha: 0.3,
-            ),
-            borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-            border: Border.all(
-              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-            ),
-          ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 900;
+        final statusCard = AppSectionCard(
+          title: 'Server status',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Bone(width: 120, height: 16),
-              const SizedBox(height: 16),
-              Row(
+              const Row(
+                children: [
+                  Bone.circle(size: 12),
+                  SizedBox(width: 8),
+                  Bone(width: 80, height: 16),
+                  Spacer(),
+                  Bone(width: 50, height: 16),
+                ],
+              ),
+              const SizedBox(height: 10),
+              const Bone(width: 220, height: 14),
+              const SizedBox(height: 4),
+              const Bone(width: 180, height: 14),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
                 children: const [
-                  Expanded(child: Bone(width: double.infinity, height: 40)),
-                  SizedBox(width: 12),
-                  Expanded(child: Bone(width: double.infinity, height: 40)),
+                  Bone(width: 72, height: 36),
+                  Bone(width: 72, height: 36),
+                  Bone(width: 84, height: 36),
+                  Bone(width: 96, height: 36),
                 ],
               ),
             ],
           ),
-        ),
-        Container(
-          height: 100,
-          margin: const EdgeInsets.only(bottom: 12),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceContainerHighest.withValues(
-              alpha: 0.3,
-            ),
-            borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-            border: Border.all(
-              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-            ),
-          ),
+        );
+
+        final endpointCard = AppSectionCard(
+          title: 'Client configuration',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: const [
-              Bone(width: 100, height: 16),
-              SizedBox(height: 12),
-              Bone(width: double.infinity, height: 28),
+            children: [
+              const Bone(width: 160, height: 14),
+              const SizedBox(height: 4),
+              const Bone(width: 280, height: 14),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: const [
+                  Bone(width: 90, height: 36),
+                  Bone(width: 120, height: 36),
+                  Bone(width: 110, height: 36),
+                ],
+              ),
             ],
           ),
-        ),
-        Container(
-          height: 180,
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceContainerHighest.withValues(
-              alpha: 0.3,
-            ),
-            borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-            border: Border.all(
-              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-            ),
-          ),
+        );
+
+        final toolsCard = AppSectionCard(
+          title: 'Configured tools',
+          subtitle: 'Granular permissions and safety boundaries for tools',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: const [
-              Bone(width: 140, height: 16),
-              SizedBox(height: 16),
-              Bone(width: double.infinity, height: 32),
-              SizedBox(height: 8),
-              Bone(width: double.infinity, height: 32),
+            children: [
+              for (int i = 0; i < 3; i++) ...[
+                if (i > 0) const Divider(height: 16),
+                const Row(
+                  children: [
+                    Bone.circle(size: 20),
+                    SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Bone(width: 140, height: 16),
+                          SizedBox(height: 4),
+                          Bone(width: 220, height: 12),
+                        ],
+                      ),
+                    ),
+                    SizedBox(width: 8),
+                    Bone(width: 60, height: 28),
+                  ],
+                ),
+              ],
             ],
           ),
-        ),
-      ],
+        );
+
+        return ListView(
+          physics: const NeverScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+          children: [
+            if (wide)
+              IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: statusCard),
+                    const SizedBox(width: 12),
+                    Expanded(child: endpointCard),
+                  ],
+                ),
+              )
+            else ...[
+              statusCard,
+              const SizedBox(height: 12),
+              endpointCard,
+            ],
+            const SizedBox(height: 12),
+            toolsCard,
+          ],
+        );
+      },
     );
   }
 }

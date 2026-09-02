@@ -2,6 +2,39 @@
 
 part of 'system_admin_screen.dart';
 
+final _kPlaceholderAccounts = List.generate(
+  5,
+  (i) => LinuxUserAccount(
+    username: 'user_account_${i + 1}',
+    uid: 1000 + i,
+    gid: 1000 + i,
+    homeDir: '/home/user_${i + 1}',
+    shell: '/bin/bash',
+    status: 'P',
+  ),
+);
+
+final _kPlaceholderHomeEntries = List.generate(
+  5,
+  (i) => SystemAdminFileEntry(
+    path: '/home/user/item_$i',
+    name: i.isEven ? 'folder_$i' : 'file_$i.txt',
+    sizeLabel: '1.2 MB',
+    isDirectory: i.isEven,
+  ),
+);
+
+final _kPlaceholderUserProcesses = List.generate(
+  4,
+  (i) => LinuxUserProcess(
+    pid: 1000 + i,
+    rssBytes: 1024 * 1024 * 32,
+    cpuPercent: 1.5,
+    memPercent: 2.0,
+    command: '/usr/bin/process_${i + 1} --daemon',
+  ),
+);
+
 class _UsersTab extends StatefulWidget {
   final AppStrings strings;
   final ColorScheme colorScheme;
@@ -29,13 +62,11 @@ class _UsersTabState extends State<_UsersTab>
     final loadingAccounts = context.select<SystemAdminViewModel, bool>(
       (vm) => vm.loadingAccounts,
     );
-    final accounts = context
+    final rawAccounts = context
         .select<SystemAdminViewModel, List<LinuxUserAccount>>(
           (vm) => vm.accounts,
         );
-    if (loadingAccounts) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    final accounts = loadingAccounts ? _kPlaceholderAccounts : rawAccounts;
 
     final id = context.select<SystemAdminViewModel, String?>(
       (vm) => vm.selectedConnectionId,
@@ -59,8 +90,9 @@ class _UsersTabState extends State<_UsersTab>
               FilledButton.icon(
                 icon: const Icon(Icons.person_add),
                 label: Text(widget.strings.createUser),
-                onPressed: () =>
-                    _openCreateUserDialog(widget.strings, viewModel),
+                onPressed: loadingAccounts
+                    ? null
+                    : () => _openCreateUserDialog(widget.strings, viewModel),
               ),
             ],
           ),
@@ -68,7 +100,7 @@ class _UsersTabState extends State<_UsersTab>
         Expanded(
           child: RefreshIndicator(
             onRefresh: () => viewModel.fetchAccounts(id, force: true),
-            child: accounts.isEmpty
+            child: !loadingAccounts && accounts.isEmpty
                 ? ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
                     children: [
@@ -87,116 +119,123 @@ class _UsersTabState extends State<_UsersTab>
                 : Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     child: _AdminListSurface(
-                      child: ListView.separated(
-                        itemCount: accounts.length,
-                        separatorBuilder: (_, _) => Divider(
-                          height: 1,
-                          thickness: 1,
-                          color: widget.colorScheme.outlineVariant.withValues(
-                            alpha: 0.5,
+                      child: AppSkeletonizer(
+                        enabled: loadingAccounts,
+                        semanticsLabel: widget.strings.userAccounts,
+                        child: ListView.separated(
+                          physics: loadingAccounts
+                              ? const NeverScrollableScrollPhysics()
+                              : const AlwaysScrollableScrollPhysics(),
+                          itemCount: accounts.length,
+                          separatorBuilder: (_, _) => Divider(
+                            height: 1,
+                            thickness: 1,
+                            color: widget.colorScheme.outlineVariant.withValues(
+                              alpha: 0.5,
+                            ),
                           ),
-                        ),
-                        itemBuilder: (context, index) {
-                          final account = accounts[index];
-                          return Theme(
-                            data: Theme.of(
-                              context,
-                            ).copyWith(dividerColor: Colors.transparent),
-                            child: ExpansionTile(
-                              leading: Icon(
-                                account.uid == 0
-                                    ? Icons.security_rounded
-                                    : Icons.person_outline_rounded,
-                                size: 20,
-                                color: account.uid == 0
-                                    ? widget.colorScheme.error
-                                    : widget.colorScheme.primary,
-                              ),
-                              title: Row(
+                          itemBuilder: (context, index) {
+                            final account = accounts[index];
+                            return Theme(
+                              data: Theme.of(
+                                context,
+                              ).copyWith(dividerColor: Colors.transparent),
+                              child: ExpansionTile(
+                                leading: Icon(
+                                  account.uid == 0
+                                      ? Icons.security_rounded
+                                      : Icons.person_outline_rounded,
+                                  size: 20,
+                                  color: account.uid == 0
+                                      ? widget.colorScheme.error
+                                      : widget.colorScheme.primary,
+                                ),
+                                title: Row(
+                                  children: [
+                                    Text(
+                                      account.username,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      '(${account.uid}/${account.gid})',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color:
+                                            widget.colorScheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                    const Spacer(),
+                                    if (account.isLocked)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                          vertical: 2,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: widget.colorScheme.error
+                                              .withValues(alpha: 0.1),
+                                          borderRadius: BorderRadius.circular(
+                                            AppTheme.radiusXs,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          widget.strings.statusLocked,
+                                          style: TextStyle(
+                                            color: widget.colorScheme.error,
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      )
+                                    else
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                          vertical: 2,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: widget.colorScheme.primary
+                                              .withValues(alpha: 0.1),
+                                          borderRadius: BorderRadius.circular(
+                                            AppTheme.radiusXs,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          widget.strings.unlockUser,
+                                          style: TextStyle(
+                                            color: widget.colorScheme.primary,
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                                subtitle: OverflowScrollText(
+                                  '${account.homeDir}  •  ${account.shell}',
+                                  selectable: false,
+                                  maxLines: 1,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: widget.colorScheme.onSurface
+                                        .withValues(alpha: 0.58),
+                                  ),
+                                ),
                                 children: [
-                                  Text(
-                                    account.username,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                    ),
+                                  _UserDetailActions(
+                                    viewModel: viewModel,
+                                    account: account,
+                                    strings: widget.strings,
+                                    colorScheme: widget.colorScheme,
                                   ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    '(${account.uid}/${account.gid})',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color:
-                                          widget.colorScheme.onSurfaceVariant,
-                                    ),
-                                  ),
-                                  const Spacer(),
-                                  if (account.isLocked)
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 6,
-                                        vertical: 2,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: widget.colorScheme.error
-                                            .withValues(alpha: 0.1),
-                                        borderRadius: BorderRadius.circular(
-                                          AppTheme.radiusXs,
-                                        ),
-                                      ),
-                                      child: Text(
-                                        widget.strings.statusLocked,
-                                        style: TextStyle(
-                                          color: widget.colorScheme.error,
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                    )
-                                  else
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 6,
-                                        vertical: 2,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: widget.colorScheme.primary
-                                            .withValues(alpha: 0.1),
-                                        borderRadius: BorderRadius.circular(
-                                          AppTheme.radiusXs,
-                                        ),
-                                      ),
-                                      child: Text(
-                                        widget.strings.unlockUser,
-                                        style: TextStyle(
-                                          color: widget.colorScheme.primary,
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                    ),
                                 ],
                               ),
-                              subtitle: OverflowScrollText(
-                                '${account.homeDir}  •  ${account.shell}',
-                                selectable: false,
-                                maxLines: 1,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: widget.colorScheme.onSurface
-                                      .withValues(alpha: 0.58),
-                                ),
-                              ),
-                              children: [
-                                _UserDetailActions(
-                                  viewModel: viewModel,
-                                  account: account,
-                                  strings: widget.strings,
-                                  colorScheme: widget.colorScheme,
-                                ),
-                              ],
-                            ),
-                          );
-                        },
+                            );
+                          },
+                        ),
                       ),
                     ),
                   ),
@@ -303,11 +342,7 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               _loadingSudo
-                  ? const SizedBox(
-                      width: 12,
-                      height: 12,
-                      child: CircularProgressIndicator(strokeWidth: 1.5),
-                    )
+                  ? const AppLoadingIndicator(size: 12, strokeWidth: 1.5)
                   : Text(
                       _isAdmin
                           ? widget.strings.administrator
@@ -439,6 +474,12 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
   bool _busy = false;
 
   @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return AlertDialog(
       title: Text('${widget.strings.changePasswordTitle} (${widget.username})'),
@@ -458,11 +499,7 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
         FilledButton(
           onPressed: _busy ? null : _savePassword,
           child: _busy
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
+              ? const AppLoadingIndicator(size: 16, strokeWidth: 2)
               : Text(widget.strings.save),
         ),
       ],
@@ -599,7 +636,28 @@ class _HomeDirectoryExplorerDialogState
   Widget _buildContent() {
     final colorScheme = Theme.of(context).colorScheme;
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return AppSkeletonizer(
+        enabled: true,
+        semanticsLabel: widget.strings.viewHomeDir,
+        child: ListView.builder(
+          itemCount: _kPlaceholderHomeEntries.length,
+          itemBuilder: (context, index) {
+            final entry = _kPlaceholderHomeEntries[index];
+            return ListTile(
+              dense: true,
+              leading: Icon(
+                entry.isDirectory ? Icons.folder : Icons.insert_drive_file,
+                color: entry.isDirectory ? Colors.amber : colorScheme.primary,
+              ),
+              title: Text(
+                entry.name,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              subtitle: entry.isDirectory ? null : Text(entry.sizeLabel),
+            );
+          },
+        ),
+      );
     }
 
     if (_error != null) {
@@ -734,113 +792,124 @@ class _UserProcessesDialogState extends State<_UserProcessesDialog> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final processes = _loading ? _kPlaceholderUserProcesses : _processes;
+    final totalMemoryMB = _loading ? 128.0 : _totalMemoryMB;
 
     return AlertDialog(
       title: Text('${widget.strings.usageStats} (${widget.username})'),
       content: SizedBox(
         width: double.maxFinite,
         height: 400,
-        child: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: colorScheme.secondaryContainer,
-                      borderRadius: BorderRadius.circular(8),
+        child: AppSkeletonizer(
+          enabled: _loading,
+          semanticsLabel: widget.strings.usageStats,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: colorScheme.secondaryContainer,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      '${widget.strings.memoryUsed}:',
+                      style: TextStyle(
+                        color: colorScheme.onSecondaryContainer,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          '${widget.strings.memoryUsed}:',
-                          style: TextStyle(
-                            color: colorScheme.onSecondaryContainer,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Text(
-                          '${_totalMemoryMB.toStringAsFixed(2)} MB',
-                          style: TextStyle(
-                            color: colorScheme.onSecondaryContainer,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ],
+                    Text(
+                      '${totalMemoryMB.toStringAsFixed(2)} MB',
+                      style: TextStyle(
+                        color: colorScheme.onSecondaryContainer,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    '${widget.strings.activeProcesses} (${_processes.length}):',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: _processes.isEmpty
-                        ? const AppEmptyState(
-                            icon: Icons.memory_outlined,
-                            title: 'No active processes.',
-                            message:
-                                'No running processes detected for this session.',
-                            compact: true,
-                          )
-                        : ListView.builder(
-                            itemCount: _processes.length,
-                            itemBuilder: (context, index) {
-                              final p = _processes[index];
-                              final memMB = p.rssBytes / (1024 * 1024);
-                              return Container(
-                                margin: const EdgeInsets.only(bottom: 6),
-                                decoration: BoxDecoration(
-                                  color: colorScheme.surface,
-                                  borderRadius: BorderRadius.circular(
-                                    AppTheme.radiusSmall,
-                                  ),
-                                  border: Border.all(
-                                    color: colorScheme.outlineVariant
-                                        .withValues(alpha: 0.8),
-                                    width: 1,
-                                  ),
-                                ),
-                                child: ListTile(
-                                  dense: true,
-                                  title: OverflowScrollText(
-                                    p.command,
-                                    selectable: false,
-                                    maxLines: 1,
-                                    style: const TextStyle(
-                                      fontFamily: 'monospace',
-                                      fontFamilyFallback: [
-                                        'Consolas',
-                                        'Microsoft YaHei',
-                                        'PingFang SC',
-                                        'sans-serif',
-                                      ],
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                  subtitle: Text(
-                                    'PID: ${p.pid}  •  CPU: ${p.cpuPercent}%  •  RAM: ${p.memPercent}%',
-                                  ),
-                                  trailing: Text(
-                                    '${memMB.toStringAsFixed(1)} M',
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                  ),
-                ],
+                  ],
+                ),
               ),
+              const SizedBox(height: 12),
+              Text(
+                '${widget.strings.activeProcesses} (${processes.length}):',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: !_loading && processes.isEmpty
+                    ? const AppEmptyState(
+                        icon: Icons.memory_outlined,
+                        title: 'No active processes.',
+                        message:
+                            'No running processes detected for this session.',
+                        compact: true,
+                      )
+                    : ListView.builder(
+                        physics: _loading
+                            ? const NeverScrollableScrollPhysics()
+                            : const AlwaysScrollableScrollPhysics(),
+                        itemCount: processes.length,
+                        itemBuilder: (context, index) {
+                          final p = processes[index];
+                          final memMB = p.rssBytes / (1024 * 1024);
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 6),
+                            decoration: BoxDecoration(
+                              color: colorScheme.surface,
+                              borderRadius: BorderRadius.circular(
+                                AppTheme.radiusSmall,
+                              ),
+                              border: Border.all(
+                                color: colorScheme.outlineVariant.withValues(
+                                  alpha: 0.8,
+                                ),
+                                width: 1,
+                              ),
+                            ),
+                            child: ListTile(
+                              dense: true,
+                              title: OverflowScrollText(
+                                p.command,
+                                selectable: false,
+                                maxLines: 1,
+                                style: const TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontFamilyFallback: [
+                                    'Consolas',
+                                    'Microsoft YaHei',
+                                    'PingFang SC',
+                                    'sans-serif',
+                                  ],
+                                  fontSize: 12,
+                                ),
+                              ),
+                              subtitle: Text(
+                                'PID: ${p.pid}  •  CPU: ${p.cpuPercent}%  •  RAM: ${p.memPercent}%',
+                              ),
+                              trailing: Text(
+                                '${memMB.toStringAsFixed(1)} M',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ),
       ),
       actions: [
-        IconButton(icon: const Icon(Icons.refresh), onPressed: _loadProcesses),
+        IconButton(
+          icon: const Icon(Icons.refresh),
+          onPressed: _loading ? null : _loadProcesses,
+        ),
         TextButton(
           child: Text(widget.strings.close),
           onPressed: () => Navigator.pop(context),
@@ -917,11 +986,7 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
         FilledButton(
           onPressed: _busy ? null : _submit,
           child: _busy
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
+              ? const AppLoadingIndicator(size: 16, strokeWidth: 2)
               : Text(widget.strings.save),
         ),
       ],

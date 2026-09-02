@@ -130,16 +130,51 @@ class _SftpPathHistorySheetState extends State<_SftpPathHistorySheet> {
                       Divider(height: 1, color: colorScheme.outlineVariant),
                       if (waiting)
                         Expanded(
-                          child: Semantics(
-                            liveRegion: true,
-                            label: widget.strings.pathHistory,
-                            child: const Center(
-                              child: SizedBox.square(
-                                dimension: 32,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
+                          child: AppSkeletonizer.zone(
+                            enabled: true,
+                            semanticsLabel: widget.strings.pathHistory,
+                            child: ListView(
+                              physics: const NeverScrollableScrollPhysics(),
+                              padding: const EdgeInsets.fromLTRB(12, 8, 12, 20),
+                              children: [
+                                _SftpPathSectionHeader(
+                                  label: widget.strings.favoritePaths,
                                 ),
-                              ),
+                                _PathListTile(
+                                  icon: Icons.star_rounded,
+                                  label: 'Web Root',
+                                  path: '/var/www/html',
+                                  trailing: const SizedBox.square(
+                                    dimension: 48,
+                                    child: Icon(Icons.close_rounded, size: 20),
+                                  ),
+                                  onTap: () {},
+                                ),
+                                const SizedBox(height: 8),
+                                _SftpPathSectionHeader(
+                                  label: widget.strings.recentPaths,
+                                ),
+                                _PathListTile(
+                                  icon: Icons.history_rounded,
+                                  label: '/etc/nginx',
+                                  path: '/etc/nginx',
+                                  trailing: const SizedBox.square(
+                                    dimension: 48,
+                                    child: Icon(Icons.close_rounded, size: 20),
+                                  ),
+                                  onTap: () {},
+                                ),
+                                _PathListTile(
+                                  icon: Icons.history_rounded,
+                                  label: '/var/log/syslog',
+                                  path: '/var/log/syslog',
+                                  trailing: const SizedBox.square(
+                                    dimension: 48,
+                                    child: Icon(Icons.close_rounded, size: 20),
+                                  ),
+                                  onTap: () {},
+                                ),
+                              ],
                             ),
                           ),
                         )

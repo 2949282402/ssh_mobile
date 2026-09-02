@@ -28,7 +28,8 @@ extension LanReceiverCoordinatorLifecycle on LanReceiverCoordinator {
       await ensureInitialized();
       if (_receiverActive) return;
       await _startReceiverRuntime();
-      await _viewModel?.initialize();
+      final vm = await ensureViewModel();
+      await vm.initialize();
       _receiverActive = true;
       _notifyListeners();
     } finally {
