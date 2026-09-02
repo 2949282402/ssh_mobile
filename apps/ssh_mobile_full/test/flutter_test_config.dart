@@ -16,7 +16,22 @@ class _ToleranceGoldenComparator extends LocalFileComparator {
   // Golden comparisons should catch real layout/style regressions.  Keep the
   // allowance below one percent for renderer noise without turning a visibly
   // different screen green.
-  static const double _maxDiffPercent = 0.005;
+  static const double _defaultMaxDiffPercent = 0.005;
+
+  // The AI mobile snapshot contains platform-font glyphs and is the only
+  // current golden with a measured Linux-vs-Windows renderer delta just over
+  // the strict default (0.56%). Keep that exception explicit and narrowly
+  // scoped instead of reopening the previous repository-wide 5% allowance.
+  static const Map<String, double> _rendererNoiseBudgets = {
+    'ai_mobile.png': 0.0065,
+  };
+
+  double _maxDiffPercentFor(Uri golden) {
+    final fileName = golden.pathSegments.isEmpty
+        ? ''
+        : golden.pathSegments.last;
+    return _rendererNoiseBudgets[fileName] ?? _defaultMaxDiffPercent;
+  }
 
   @override
   Future<bool> compare(Uint8List imageBytes, Uri golden) async {
@@ -25,7 +40,8 @@ class _ToleranceGoldenComparator extends LocalFileComparator {
       await getGoldenBytes(golden),
     );
 
-    if (!result.passed && result.diffPercent > _maxDiffPercent) {
+    final maxDiffPercent = _maxDiffPercentFor(golden);
+    if (!result.passed && result.diffPercent > maxDiffPercent) {
       final String error = await generateFailureOutput(result, golden, basedir);
       throw FlutterError(error);
     }
