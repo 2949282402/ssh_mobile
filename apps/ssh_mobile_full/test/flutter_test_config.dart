@@ -18,12 +18,14 @@ class _ToleranceGoldenComparator extends LocalFileComparator {
   // different screen green.
   static const double _defaultMaxDiffPercent = 0.005;
 
-  // The AI mobile snapshot contains platform-font glyphs and is the only
-  // current golden with a measured Linux-vs-Windows renderer delta just over
-  // the strict default (0.56%). Keep that exception explicit and narrowly
-  // scoped instead of reopening the previous repository-wide 5% allowance.
+  // The mobile snapshots contain platform-font glyphs and are the only
+  // current goldens with measured Linux-vs-Windows renderer deltas just over
+  // the strict default (0.52%-0.56%). Keep those exceptions explicit and
+  // narrowly scoped instead of reopening the previous repository-wide 5%
+  // allowance.
   static const Map<String, double> _rendererNoiseBudgets = {
     'ai_mobile.png': 0.0065,
+    'home_mobile.png': 0.0065,
   };
 
   double _maxDiffPercentFor(Uri golden) {
