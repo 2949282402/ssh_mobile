@@ -159,7 +159,7 @@ jobs:
       - name: Scan Rust dependencies
         run: |
           cargo install cargo-audit --locked --version 0.21.2
-          cargo audit --locked
+          cargo audit
       - name: Start local coturn
         run: >-
           docker run -d --rm --name ssh-mobile-coturn --network host

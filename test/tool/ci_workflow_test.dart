@@ -111,9 +111,10 @@ void main() {
 
   final nativeNetworkQuality = _jobSection(workflow, 'native-network-quality');
   _expect(
-    nativeNetworkQuality.contains('cargo audit --locked') &&
+    nativeNetworkQuality.contains('cargo audit') &&
+        !nativeNetworkQuality.contains('cargo audit --locked') &&
         nativeNetworkQuality.contains('cargo-audit --locked --version'),
-    'native-network-quality 必须运行锁定版本的 Rust 依赖漏洞门禁',
+    'native-network-quality 必须运行固定版本扫描器的 Rust 依赖漏洞门禁',
   );
   _expect(
     telemetryContract.contains(
