@@ -14,6 +14,11 @@ Accepted（Phase 0～Phase 7 架构冻结；本 ADR 批准约束，不表示产�
 Accepted 决策。凡本文标为“计划”的内容，必须在对应 Phase 实现并通过该 Phase 的
 契约与验收门禁后，才能称为当前行为。
 
+本 ADR 只冻结 `docs/NETWORK_PLATFORM_IMPLEMENTATION_PLAN.md` 中 M8（RTC）的
+Screen Share slice；M8 中 Voice、Camera/一般 Video 或其他 RTC 工作不在本文范围，
+也不因本文 Accepted 而视为已经交付。它们如需改变既有边界，必须分别提交 ADR 与
+验收门禁。
+
 ## 背景与当前事实
 
 现有基线已经提供以下能力：
@@ -83,7 +88,8 @@ Feature 只负责业务状态、用户授权、用户交互、错误展示以及
 | --- | --- | --- | --- |
 | `NetworkRuntime` / `NetworkFacade` | `AppRuntime` | App | App shutdown；Feature 只释放自己的订阅/lease |
 | `RealtimeManager` | Rust `NetworkRuntime` | App/native | Runtime shutdown 前关闭其 sessions |
-| `WebRtcPeer` / PeerConnection | `network-webrtc`，由该 session 的 `RealtimeIoDriver` 持有 | Realtime Session | session close 或 transport loss 后 terminal close |
+| `RealtimeSession` 注册/终态 | Rust `RealtimeManager` | Realtime Session | 先令 signaling/session terminal，再释放 driver 与 media endpoint |
+| `WebRtcPeer` / PeerConnection | `network-webrtc`；由该 session 的 `RealtimeIoDriver` 持有 | Realtime Session | `RealtimeManager` 请求 terminal close；driver 取消并 join 后释放 |
 | UDP socket / I/O task | `RealtimeIoDriver` | Realtime Session | 取消并 join driver，再释放 socket |
 | `ScreenShareOperation` / ViewModel | `feature_screen_share` / Route Scope（计划） | Business/Route | stop 或 route dispose |
 | Screen source / capture | `realtime_media` platform adapter（计划） | Screen Share Session | 停止产帧后关闭并释放 |
@@ -91,17 +97,27 @@ Feature 只负责业务状态、用户授权、用户交互、错误展示以及
 | Flutter Texture / GPU surface | `realtime_media` renderer（计划） | Viewer Session | 停止解码后释放 surface/texture |
 | `RealtimeMediaEndpointId` | native media bridge/runtime（计划） | Session generation | detach/close 时撤销；Feature 不拥有底层句柄 |
 
-Feature 和 Route 不得调用 `NetworkRuntime.dispose()`、关闭 App-owned native handle
-或关闭别人的 session。正常 Stop 的顺序为：停止产生新帧 → detach 本地 media source
-→ 关闭 capture/encoder → 请求停止 `RealtimeSession` 并等待 native completion →
-发送/处理 `webrtc_close` → 取消 Realtime subscriptions → 释放 decoder/render
-surface → 释放 Feature Route 资源。App shutdown 仍遵循 AppRuntime 的 owner 顺序。
+`RealtimeManager` 是 Realtime session 的注册、终态和 signaling 协调 owner；
+`RealtimeIoDriver` 只拥有该 session 的 `WebRtcPeer`、UDP socket、timer/I/O task，
+并在取消后 join，不能把这些资源转交给 Feature。native media bridge 负责 endpoint
+generation 的绑定与撤销；platform adapter/renderer 分别负责 capture/encoder 与
+decoder/surface。Feature 和 Route 不得调用 `NetworkRuntime.dispose()`、关闭
+App-owned native handle、直接发送 wire `webrtc_close`，或关闭别人的 session。
+
+正常 Stop 的顺序为：停止产生新帧 → 由 native bridge detach 本地 media source →
+platform owner 关闭 capture/encoder → Feature 通过 App Shell 请求停止
+`RealtimeSession` → `RealtimeManager` 发送/处理 `webrtc_close`、等待 correlated
+native completion 与 `closed`，并让 driver 取消/join → 取消 Realtime subscriptions
+→ 由 renderer 释放 decoder/render surface → 释放 Feature Route 资源。App shutdown
+仍遵循 AppRuntime 的 owner 顺序。
 
 ### 3. 窄范围 native encoded-media data-plane ABI
 
-现有 protobuf command/event ABI 继续承载低频控制面：start、stop、state、signaling、
-consent 和 control。它可以报告 media state、surface ready、resolution change、
-stats 和 error，但不得承载逐帧媒体。
+现有 protobuf command/event ABI 继续承载低频控制面：start、stop、state、signaling
+和 control；当前 ABI 尚没有 screen-share business consent 或 media endpoint
+逐步状态。Phase 2/5 计划在 source schema 中增加有界的 endpoint/media-state 与
+typed consent contract；它们可以报告 surface ready、resolution change、stats 和
+error，但任何控制事件都不得承载逐帧媒体。
 
 本 ADR 批准一条只在 native media bridge、平台媒体实现和
 `network-webrtc` 之间使用的窄范围 encoded-media data-plane ABI。其逻辑操作固定为：
@@ -127,6 +143,14 @@ stats 和 error，但不得承载逐帧媒体。
   surface/Flutter Texture。Dart 只观察 surface 和状态，不接收逐帧 decoded RGBA/YUV
   bytes。
 
+`commandId` completion correlation 与 media/session `generation guard` 是两个独立
+机制：前者只把一个 command 的 queue acceptance 与对应 native completion 关联起来；
+后者把 state、signal、endpoint 和 frame 提交绑定到 `(realtime_id, generation)`。
+每次新建 Realtime session 或 Retry 都产生新的 generation；旧 generation 的事件、
+late result、endpoint 输入和 pending frame 一律丢弃。generation 不是
+`commandId`、Relay `revision` 或 Discovery `runtime_epoch` 的别名，任何一个都不能
+替代 generation guard。
+
 因此，以下路径均明确禁止：
 
 ```text
@@ -149,20 +173,73 @@ negotiation 由 native `network-webrtc` 统一负责；Feature 不指定 RTP pay
 
 这是一项未来媒体 contract，不声称当前默认 rtc codec 注册已被改成 H.264-only。
 
+屏幕共享的失败必须保留可行动的类别，不得全部压成 `NetworkError`：
+
+| 来源 | Screen Share/SDK 错误 | UI/业务含义 |
+| --- | --- | --- |
+| capture permission | `PermissionDenied` | 用户拒绝、撤销或系统未授予屏幕授权 |
+| capture source | `CaptureSourceEnded` | source 被关闭、移除或不再可用 |
+| H.264 encoder | `EncoderUnavailable` / `EncoderFailed` | 本机编码器不存在或启动/运行失败 |
+| H.264 decoder | `DecoderUnavailable` / `DecoderFailed` | 本机解码器不存在或启动/运行失败 |
+| SDP capability | `UnsupportedCodec` | 双方没有共同的 H.264 capability |
+| signaling/negotiation | `RealtimeNegotiationFailed` | SDP、版本、信令或 DTLS 协商失败 |
+| ICE/TURN | `IceFailed` / `TurnUnavailable` | 直连、ICE 或 TURN 路径失败 |
+| consent/recovery | `PeerRejected` / `OperationExpired` / `ResumeRejected` | 对端拒绝、intent 过期或恢复被拒绝 |
+| terminal transport | `PeerDisconnected` / `RecoverableTransportLoss` | 对端终止或进入业务 Retry |
+
+Relay wire 的 `PEER_OFFLINE`/`PEER_NOT_READY` 映射为 peer unavailable 的
+`PeerDisconnected` 结果，`CONTROL_UNAVAILABLE`/`RELAY_UNAVAILABLE`/
+`RESOLVE_TIMEOUT` 映射为 `RealtimeNegotiationFailed`，而
+`RESERVATION_FAILED`/`RESERVATION_EXPIRED` 映射为 `TurnUnavailable`。未知或
+未认证的 wire error 必须 fail closed；不得用通用 `RelayError`/`IoError` 覆盖上述
+业务类别。
+
 ### 5. Incoming consent 与 capture gate
 
 现有 authenticated Relay signaling 仍使用 `webrtc_offer`、`webrtc_answer`、
 `webrtc_ice_candidate`、`webrtc_ice_restart` 和 `webrtc_close`。Phase 5 计划在现有
-versioned signaling/business envelope 中增加有界、可关联的 typed intent，至少包含：
+authenticated `/v2/control` 内增加一个有界的 `RealtimeConsentV1` typed control
+payload。它不是 `RelayDataFrame`、不是媒体 payload，也不新增或改写 ADR-020 所
+冻结的五种 `RealtimeSignal` kind；现有 Relay `RealtimeSignal` 仍只有
+`realtime_id`、`target_device_id`、`kind`、`revision`、`payload`，wire 上没有
+`sender_peer_id`。新 payload 的 source schema 和 generated contract 必须在
+Phase 5 一起更新。其最小字段与限制固定为：
 
 ```text
-purpose = SCREEN_SHARE
-intent_id
-sender_peer_id
-realtime_id
-media = SCREEN_VIDEO
+version = 1                         # payload schema version, not Relay v2
+action = REQUEST | ACCEPT | REJECT | CANCEL
+purpose = SCREEN_SHARE               # typed enum, not free-form text
+intent_id                            # non-empty, <= 128 bytes
+sender_peer_id                       # non-empty, <= 128 bytes
+realtime_id                          # non-empty, <= 128 bytes
+media = SCREEN_VIDEO                 # typed enum
 requires_acceptance = true
+issued_at_ms
+expires_at_ms                        # issued <= expires <= issued + 120 s
+action_revision >= 1                 # monotonic within (intent_id, sender_peer_id)
 ```
+
+整个 typed payload 上限为 4 KiB（小于现有 `RealtimeSignal` 的 256 KiB 上限）。
+`sender_peer_id` 在整个 intent 生命周期中都表示拥有屏幕内容、发起 REQUEST 的
+peer；ACCEPT/REJECT/CANCEL 只 echo 该值，动作的实际传输方由 authenticated control
+connection 的 peer binding 得出，不另造 `peer_id`/`sender_device_id` 别名。Relay
+不信任或改写 payload 中的 sender 字段。
+
+Provisional/replay/expiry 规则也属于 wire contract：接收端只保留最多 32 条 live
+provisional intent（同一 `(sender_peer_id, intent_id)` 至多一条），保存 typed
+metadata 与受保护的 pending-offer handle，不把请求交给 Feature 以外的 raw SDP；
+`expires_at_ms` 到期即删除且不可续期。每个 authenticated peer 的 replay cache
+最多 256 个 key，key 为 `(sender_peer_id, target_device_id, realtime_id, intent_id,
+action, action_revision)`，保留 5 分钟；cache 不可用时拒绝动作。重复、乱序、过期、
+未知 version/purpose/media、超限 payload 或 action_revision 不连续都 fail closed。
+
+接收端必须同时验证：外层 authenticated source/target 与本机和预期 peer 相符；
+`sender_peer_id` 与已认证的内容发送方及 pending operation 相符；`realtime_id`
+绑定同一 peer、同一当前 session generation；REQUEST 才能创建 provisional，
+ACCEPT/REJECT 只能作用于尚未过期且尚未 terminal 的匹配 REQUEST。这里的 auth
+binding 来自已认证的 Relay control connection 与 session/peer binding，payload
+不携带 bearer token、私钥或可复用 credential。`version`、`action_revision`、
+intent replay cache 与本地 generation guard 各自独立，不能互相替代。
 
 这属于 protocol source-of-truth 的后续扩展，必须先更新 schema 和 generated
 contract；不得现在通过修改 generated output 或绕过 ADR-020/021 来实现。
@@ -174,8 +251,8 @@ IncomingRequest
     ↓
 Feature 展示请求与 [接受]/[拒绝]
     ↓
-User Accept → 仅匹配 intent/realtime/peer/generation 才允许 Answer
-User Reject → 发送关闭/拒绝并且不建立 accepted media session
+User Accept → 仅匹配 intent/realtime/sender/generation 才允许 Answer
+User Reject → 发送 typed REJECT/关闭，并且不建立 accepted media session
 ```
 
 收到 Offer 不得自动 `create_answer`、自动展示远端屏幕或自动激活本机 capture。
@@ -224,16 +301,18 @@ Resolve → New RealtimeSession → New PeerConnection
 ```
 
 不得复用旧 `PeerConnection`、旧 `SessionId`、旧 endpoint、旧媒体队列或旧 generation
-的命令结果。旧结果由 ADR-026 的 correlation/generation guard 丢弃。断线后的 screen
-video 不做历史帧重放；业务可以向用户提供 Retry，但 Retry 必须创建上述全新链路。
+的命令结果。ADR-026 的 command correlation 与本 ADR 定义的独立 generation guard
+共同丢弃旧结果；前者不替代后者。断线后的 screen video 不做历史帧重放；业务可以向
+用户提供 Retry，但 Retry 必须创建上述全新链路。
 
 ### 7. 有界媒体队列、关键帧与 QoS
 
-Phase 0～Phase 7 的 screen-video transport queue 固定为 **3 frames**。作为同一
-实时链路的 capture、encode、decode、render staging queue 也必须有明确的有限上限，
-不得使用无界 `VecDeque`、无界 async channel 或无限 `StreamController`。平台实现如
-需额外 staging queue，须在自己的 owner contract 中声明小于可控的固定上限，并不得
-把网络恶化转化为 RAM 中的历史视频缓存。
+当前通用 `network-webrtc` `MediaFrame` video policy 仍是 **4 frames**，供既有通用
+Realtime 媒体使用；本 ADR 不把它改成 3，也不把 screen-share 的 profile 反向套用
+到其他媒体。Phase 0～Phase 7 的 screen-video transport queue 是独立的、固定为
+**3 frames** 的未来 contract。capture、encode、decode、render staging queue 仍由
+各自 owner contract 声明独立的有限上限；不得使用无界 `VecDeque`、无界 async
+channel 或无限 `StreamController`，也不得把网络恶化转化为 RAM 中的历史视频缓存。
 
 拥塞或过期时按以下顺序处理：
 
@@ -307,11 +386,11 @@ RTT/jitter/loss bucket、ICE path、codec 和 error category，不得包含任�
 | 范围 | 当前（截至 2026-09-04） | 本 ADR 后的 Phase 0～7 计划 |
 | --- | --- | --- |
 | Runtime/Owner | 一个 App Runtime；native `network-webrtc`、`RealtimeManager`、`RealtimeIoDriver` 已有 | 继续唯一 Owner；不增加 runtime/PeerConnection |
-| Control ABI | protobuf start/stop/state/signaling；Dart 不接 raw handle | 保持控制面；增加经 schema 批准的 consent/media-state contract |
+| Control ABI | protobuf start/stop/state/signaling；Dart 不接 raw handle；没有 screen-share consent | 保持控制面；Phase 2/5 增加经 schema 批准的 media-state/typed consent contract |
 | Media ABI | 通用有界 `MediaFrame`/QoS；无 screen-share bridge | 新增窄 native encoded-media ABI；Dart 仅 opaque endpoint ID |
 | Codec | rtc 默认 codec 注册；无 H.264-only screen contract | H.264-only；协商失败 `UnsupportedCodec`，无 VP8/AV1 fallback |
 | Consent/capture | 没有 screen-share business consent/capture gate | incoming Accept 在 Answer 前；remote accepted + WebRTC ready 后才真实采集 |
-| Queue | 通用 video policy 当前为 4 帧 | screen-video transport queue 固定 3 帧，stale/oldest non-keyframe drop |
+| Queue | 通用 video policy 当前为 4 帧；没有 screen-share transport queue | screen-share transport profile 固定 3 帧；generic 4 帧保持不变，stale/oldest non-keyframe drop |
 | Rendering/platform | 没有产品级 native screen decoder/Texture 链路 | Windows/Android native capture/codec/render；Flutter 只看高层 surface |
 | Relay/TURN | Relay signaling-only；runtime TURN config 已有 | 继续 signaling-only；Phase 6 增加认证、短期 TURN credential |
 | Recovery | 断线关闭旧 Realtime/PeerConnection | Retry 仅创建 new Session/Peer/ICE/DTLS/SRTP，绝不复用旧 generation |
@@ -344,12 +423,17 @@ git diff --check
 ```
 
 Phase 1～7 的实现必须按执行计划采用 Red → Green → Refactor，并分别验证 native
-encoded H.264 loopback、三帧队列/关键帧/断线丢帧、native decoder/render surface、
-Windows/Android capture、incoming consent、Relay signaling-only、短期 TURN、QoS/
-telemetry/privacy 和新 generation recovery。涉及 protocol 时，source-of-truth 和
-generated artifacts 必须一起更新；涉及 Owner、模块依赖或公开 Dart contract 时，
-必须通过仓库现有的 architecture、module-dependency、resource-owner、Rust/Dart/Go
-及平台门禁。未执行的门禁不得报告为 PASS。
+encoded H.264 loopback、三帧 screen profile/关键帧/断线丢帧、native decoder/render
+surface、Windows/Android capture、incoming consent、Relay signaling-only、短期 TURN、
+QoS/telemetry/privacy 和新 generation recovery。Phase 3/4 在真实设备 E2E 前必须先
+通过 deterministic synthetic/fake capture、permission、projection、codec、surface
+和 release-order 验收；synthetic 通过不等于平台产品已支持。Phase 7 的计划性能门禁
+为正常网络首帧 < 5 s、1080p15 稳定输出、连续 30 min 内存与各队列不增长、Dart
+main isolate 不复制 raw frame、Stop 后 < 1 s 停止采集/发送，并证明拥塞不会造成
+无限延迟。涉及 protocol 时，source-of-truth 和 generated artifacts 必须一起更新；
+涉及 Owner、模块依赖或公开 Dart contract 时，必须通过仓库现有的 architecture、
+module-dependency、resource-owner、Rust/Dart/Go 及平台门禁。未执行的门禁不得报告
+为 PASS。
 
 ## 关联决策
 

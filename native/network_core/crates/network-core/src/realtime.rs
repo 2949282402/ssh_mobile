@@ -955,7 +955,9 @@ async fn handle_io_event(
             );
             false
         }
-        RealtimeIoEvent::PeerFailed | RealtimeIoEvent::IceFailed => {
+        RealtimeIoEvent::PeerDisconnected
+        | RealtimeIoEvent::PeerFailed
+        | RealtimeIoEvent::IceFailed => {
             emit_realtime_state(
                 &state.event_tx,
                 realtime_id,
@@ -964,23 +966,12 @@ async fn handle_io_event(
                 session_revision(state, realtime_id).await,
                 Some(realtime_error(
                     network_protocol::NetworkErrorCode::IoError,
-                    "WebRTC peer connection failed",
+                    "WebRTC peer connection terminated",
                     "realtime_io",
                     peer_id,
                 )),
             );
             true
-        }
-        RealtimeIoEvent::PeerDisconnected => {
-            emit_realtime_state(
-                &state.event_tx,
-                realtime_id,
-                peer_id,
-                RealtimeSessionState::Negotiating as i32,
-                session_revision(state, realtime_id).await,
-                None,
-            );
-            false
         }
         RealtimeIoEvent::DataChannelMessage {
             channel_id,

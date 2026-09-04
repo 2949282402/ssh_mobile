@@ -126,15 +126,6 @@ async fn realtime_io_event_matrix_maps_lifecycle_and_failure_boundaries() {
             &state,
             realtime_id,
             "peer-a",
-            RealtimeIoEvent::PeerDisconnected,
-        )
-        .await
-    );
-    assert!(
-        !handle_io_event(
-            &state,
-            realtime_id,
-            "peer-a",
             RealtimeIoEvent::DataChannelMessage {
                 channel_id: 7,
                 is_string: false,
@@ -160,14 +151,25 @@ async fn realtime_io_event_matrix_maps_lifecycle_and_failure_boundaries() {
         Some(network_event::Payload::RealtimeState(ref state))
             if state.state == RealtimeSessionState::Connected as i32
     )));
-    assert!(state_events.iter().any(|event| matches!(
+    assert!(
+        handle_io_event(
+            &state,
+            realtime_id,
+            "peer-a",
+            RealtimeIoEvent::PeerDisconnected,
+        )
+        .await,
+        "a disconnected peer is terminal: retry needs a new session and PeerConnection"
+    );
+    let mut terminal_events = Vec::new();
+    while let Ok(event) = event_rx.try_recv() {
+        terminal_events.push(event);
+    }
+    assert!(terminal_events.iter().any(|event| matches!(
         event.payload,
         Some(network_event::Payload::RealtimeState(ref state))
-            if state.state == RealtimeSessionState::Negotiating as i32
+            if state.state == RealtimeSessionState::Failed as i32
     )));
-
-    assert!(handle_io_event(&state, realtime_id, "peer-a", RealtimeIoEvent::PeerFailed,).await);
-    assert!(handle_io_event(&state, realtime_id, "peer-a", RealtimeIoEvent::IceFailed,).await);
     remove_realtime_session(&state, realtime_id, "peer-a").await;
     assert!(!state
         .realtime
