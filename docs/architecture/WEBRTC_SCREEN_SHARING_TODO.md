@@ -44,14 +44,14 @@ ADR-034 或原始技术架构文档。
 - [ ] Phase 2 PR 接受。
 - [x] 获得授权后提交、推送并创建 Phase 2 PR（GitHub PR #67）。
 
-当前阻塞：Phase 0、Phase 1、Phase 2 的本地实现证据已齐，但 Phase 2 PR #67
-仍需评审修正、GitHub Actions 和独立 PR 接受。在这些外部门禁完成前，按架构
-规则不能实现 Phase 3–7。
+当前阻塞：Phase 0、Phase 1、Phase 2 的本地实现证据和 amended head 的 GitHub
+Actions 已齐，但 Phase 2 PR #67 仍需独立 PR 接受。在 PR 接受前，按架构规则
+不能实现 Phase 3–7。
 
 ## PR #67 评审修正清单
 
 以下项目对应评审提出的 generation、RTP、ABI、codec、release 和 evidence
-边界；`[x]` 只代表本地代码/测试证据，GitHub CI 仍以新提交的 jobs 为准。
+边界；`[x]` 代表已具备本地代码/测试证据，外部 CI 结果另在命令清单中绑定记录。
 
 - [x] generation 由 `RealtimeManager` 维护并通过 C ABI expected generation；
   generation 7 延迟创建、generation 8 替换的 stale-create race 有回归测试。
@@ -155,8 +155,9 @@ ADR-034 或原始技术架构文档。
 - [x] ignored coturn relay-only video test：显式运行并通过（1 passed）。
 - [x] live C-ABI endpoint test：create/send/receive/pull/release 全链路通过，
   并验证 malformed Annex-B、duplicate endpoint、stale generation 和 released ID。
-- [ ] GitHub Actions：当前旧 head 的失败 run 不能作为新 head 的 merge evidence，
-  必须绑定 amended commit/run 重新确认。
+- [x] GitHub Actions：amended head `bd3ae683` 的 run
+  [34075485885](https://github.com/hejulian2004/ssh_mobile/actions/runs/34075485885)
+  已完成，全部 jobs success；旧 head 的失败 run 不作为 merge evidence。
 - [x] native binding 的 Flutter FFI 测试从其 package 根目录运行，以便解析
   package native asset；从仓库根目录调用会缺少该 asset。
 - [x] surface generation 不匹配时的 detach/release/fail-closed 回归测试通过。
@@ -175,10 +176,7 @@ ADR-034 或原始技术架构文档。
 ## 下一步
 
 1. 保留当前工作树和用户提供的中文架构原文，不混入无关文件。
-2. 完成本清单中未完成的 adapter parity、live C-ABI success evidence 和受影响
-   workspace validation，并记录真实结果/环境限制。
-3. 按 git-commit Skill 显式 stage、提交并推送 Phase 2 修正；PR #67 使用新 head
-   的 commit/run 作为 CI 证据。
-4. 等待 Phase 2 PR 被接受；接受前不开始 Phase 3。
-5. PR 接受后更新本清单，再按 Phase 3 的 owner、Windows 工具链和手工 E2E
+2. 补齐仍未完成的 real Dart→native adapter parity，并记录真实结果/环境限制。
+3. 等待 Phase 2 PR 被接受；接受前不开始 Phase 3。
+4. PR 接受后更新本清单，再按 Phase 3 的 owner、Windows 工具链和手工 E2E
    入口推进。
