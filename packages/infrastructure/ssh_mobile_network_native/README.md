@@ -44,9 +44,14 @@ business state is retained above that boundary and resumes on a later connection
   Quinn connections, UDP sockets, or WebRTC raw objects.
 - `NativeNetworkRuntime.createRealtimeMediaEndpoint` and
   `releaseRealtimeMediaEndpoint` are additive lifecycle controls for an opaque
-  native screen-media endpoint. They expose only a generation-bound ID and a
-  direction; capture buffers, H.264 access units, decoder output, RTP, and
-  renderer resources never cross Dart FFI or the event stream.
+  native screen-media endpoint. Create carries the caller's expected Realtime
+  generation; native validates it under the Realtime manager lock. Media
+  lifecycle results preserve stale-generation/endpoint, direction, duplicate,
+  driver, peer, and frame-rejection categories instead of reusing the general
+  command ABI's historical `-2` value. The facade exposes only a
+  generation-bound ID and a direction; capture buffers, H.264 access units,
+  decoder output, RTP, and renderer resources never cross Dart FFI or the event
+  stream.
 - The companion native-only C ABI uses that opaque ID for bounded encoded-H.264
   push/pull between a platform capture or decoder owner and Rust. It is not
   declared in this Dart package, so it cannot become a per-frame Dart path.

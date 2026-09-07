@@ -29,6 +29,26 @@ void main() {
       NativeOperationStatus.fromNativeCode(99),
       NativeOperationStatus.failure,
     );
+    expect(
+      NativeOperationStatus.fromRealtimeMediaCode(-5),
+      NativeOperationStatus.staleGeneration,
+    );
+    expect(
+      NativeOperationStatus.fromRealtimeMediaCode(-6),
+      NativeOperationStatus.staleEndpoint,
+    );
+    expect(
+      NativeOperationStatus.fromRealtimeMediaCode(-8),
+      NativeOperationStatus.duplicateEndpoint,
+    );
+    expect(
+      NativeOperationStatus.fromRealtimeMediaCode(-9),
+      NativeOperationStatus.driverUnavailable,
+    );
+    expect(
+      NativeOperationStatus.fromRealtimeMediaCode(-11),
+      NativeOperationStatus.frameRejected,
+    );
   });
 
   test('all public V2 command builders accept bounded edge values', () {

@@ -28,7 +28,7 @@ fn media_endpoint_driver_requires_a_current_matching_realtime_session() {
         Err(crate::realtime_media::RealtimeMediaError::UnknownRealtimeSession)
     ));
 
-    manager.sessions.insert(
+    manager.insert_existing_session(
         realtime_id.into(),
         RealtimeSession {
             peer_id: "peer-a".into(),
@@ -53,6 +53,89 @@ fn media_endpoint_driver_requires_a_current_matching_realtime_session() {
 }
 
 #[tokio::test]
+async fn delayed_old_generation_cannot_create_an_endpoint_on_a_replacement_session() {
+    let (state, _event_rx) = realtime_test_state().await;
+    let realtime_id = "00112233445566778899aabbccddeeff";
+    let peer_id = "peer-a";
+    let first_driver = RealtimeIoDriver::bind(
+        WebRtcPeer::new(WebRtcConfig::default()).expect("first peer"),
+        "127.0.0.1:0".parse().expect("first bind address"),
+    )
+    .await
+    .expect("first driver")
+    .into_handle();
+    let stale_generation = {
+        let mut manager = state.realtime.lock().await;
+        manager.insert_new_session(
+            realtime_id.into(),
+            RealtimeSession {
+                peer_id: peer_id.into(),
+                connection_session_id: None,
+                peer: None,
+                driver: Some(first_driver),
+                revision: 1,
+                remote_revision: 0,
+                ice_revision: 1,
+                seen_candidates: HashSet::new(),
+            },
+        );
+        manager
+            .session_generation(realtime_id)
+            .expect("first generation")
+    };
+
+    let second_driver = RealtimeIoDriver::bind(
+        WebRtcPeer::new(WebRtcConfig::default()).expect("replacement peer"),
+        "127.0.0.1:0".parse().expect("replacement bind address"),
+    )
+    .await
+    .expect("replacement driver")
+    .into_handle();
+    let current_generation = {
+        let mut manager = state.realtime.lock().await;
+        manager.remove_session(realtime_id);
+        manager.insert_new_session(
+            realtime_id.into(),
+            RealtimeSession {
+                peer_id: peer_id.into(),
+                connection_session_id: None,
+                peer: None,
+                driver: Some(second_driver),
+                revision: 2,
+                remote_revision: 0,
+                ice_revision: 2,
+                seen_candidates: HashSet::new(),
+            },
+        );
+        manager
+            .session_generation(realtime_id)
+            .expect("replacement generation")
+    };
+    assert_ne!(stale_generation, current_generation);
+
+    assert!(matches!(
+        crate::realtime_media::create_endpoint(
+            &state,
+            realtime_id,
+            peer_id,
+            crate::realtime_media::RealtimeMediaDirection::Send,
+            stale_generation,
+        )
+        .await,
+        Err(crate::realtime_media::RealtimeMediaError::StaleGeneration)
+    ));
+    assert!(crate::realtime_media::create_endpoint(
+        &state,
+        realtime_id,
+        peer_id,
+        crate::realtime_media::RealtimeMediaDirection::Send,
+        current_generation,
+    )
+    .await
+    .is_ok());
+}
+
+#[tokio::test]
 async fn media_endpoints_bridge_native_h264_without_exposing_a_peer_handle() {
     let (state, _event_rx) = realtime_test_state().await;
     let realtime_id = "00112233445566778899aabbccddeeff";
@@ -65,7 +148,7 @@ async fn media_endpoints_bridge_native_h264_without_exposing_a_peer_handle() {
             .await
             .expect("native I/O driver")
             .into_handle();
-    state.realtime.lock().await.sessions.insert(
+    state.realtime.lock().await.insert_new_session(
         realtime_id.into(),
         RealtimeSession {
             peer_id: peer_id.into(),
@@ -78,12 +161,19 @@ async fn media_endpoints_bridge_native_h264_without_exposing_a_peer_handle() {
             seen_candidates: HashSet::new(),
         },
     );
+    let generation = state
+        .realtime
+        .lock()
+        .await
+        .session_generation(realtime_id)
+        .expect("session generation");
 
     let send = crate::realtime_media::create_endpoint(
         &state,
         realtime_id,
         peer_id,
         crate::realtime_media::RealtimeMediaDirection::Send,
+        generation,
     )
     .await
     .expect("send endpoint");
@@ -92,6 +182,7 @@ async fn media_endpoints_bridge_native_h264_without_exposing_a_peer_handle() {
         realtime_id,
         peer_id,
         crate::realtime_media::RealtimeMediaDirection::Receive,
+        generation,
     )
     .await
     .expect("receive endpoint");
@@ -176,8 +267,8 @@ fn runtime_stop_revokes_live_media_endpoints_before_runtime_state_is_released() 
             .expect("native I/O driver")
             .into_handle()
     });
-    runtime.handle().block_on(async {
-        state.realtime.lock().await.sessions.insert(
+    let generation = runtime.handle().block_on(async {
+        state.realtime.lock().await.insert_new_session(
             realtime_id.into(),
             RealtimeSession {
                 peer_id: peer_id.into(),
@@ -190,6 +281,12 @@ fn runtime_stop_revokes_live_media_endpoints_before_runtime_state_is_released() 
                 seen_candidates: HashSet::new(),
             },
         );
+        state
+            .realtime
+            .lock()
+            .await
+            .session_generation(realtime_id)
+            .expect("session generation")
     });
 
     let endpoint = runtime
@@ -197,6 +294,7 @@ fn runtime_stop_revokes_live_media_endpoints_before_runtime_state_is_released() 
             realtime_id,
             peer_id,
             crate::realtime_media::RealtimeMediaDirection::Send,
+            generation,
         )
         .expect("create runtime-owned endpoint");
 
@@ -225,6 +323,7 @@ fn runtime_stop_revokes_live_media_endpoints_before_runtime_state_is_released() 
             realtime_id,
             peer_id,
             crate::realtime_media::RealtimeMediaDirection::Send,
+            1,
         ),
         Err(crate::realtime_media::RealtimeMediaError::RuntimeNotRunning)
     ));
@@ -244,7 +343,7 @@ async fn connection_session_loss_invalidates_bound_media_endpoints() {
     .expect("native I/O driver")
     .into_handle();
 
-    state.realtime.lock().await.sessions.insert(
+    state.realtime.lock().await.insert_new_session(
         realtime_id.into(),
         RealtimeSession {
             peer_id: peer_id.into(),
@@ -257,11 +356,18 @@ async fn connection_session_loss_invalidates_bound_media_endpoints() {
             seen_candidates: HashSet::new(),
         },
     );
+    let generation = state
+        .realtime
+        .lock()
+        .await
+        .session_generation(realtime_id)
+        .expect("session generation");
     let endpoint = crate::realtime_media::create_endpoint(
         &state,
         realtime_id,
         peer_id,
         crate::realtime_media::RealtimeMediaDirection::Send,
+        generation,
     )
     .await
     .expect("media endpoint");
@@ -464,7 +570,7 @@ async fn realtime_session_io_removes_owner_after_driver_failure() {
     .await
     .expect("driver");
     let driver = driver.into_handle();
-    state.realtime.lock().await.sessions.insert(
+    state.realtime.lock().await.insert_new_session(
         realtime_id.into(),
         RealtimeSession {
             peer_id: "peer-a".into(),
@@ -2077,7 +2183,7 @@ async fn stop_realtime_session_closes_session_routes_close_and_emits_event() {
     .await
     .expect("driver")
     .into_handle();
-    state.realtime.lock().await.sessions.insert(
+    state.realtime.lock().await.insert_new_session(
         realtime_id.into(),
         RealtimeSession {
             peer_id: "peer-a".into(),
@@ -2090,11 +2196,18 @@ async fn stop_realtime_session_closes_session_routes_close_and_emits_event() {
             seen_candidates: HashSet::new(),
         },
     );
+    let generation = state
+        .realtime
+        .lock()
+        .await
+        .session_generation(realtime_id)
+        .expect("session generation");
     let endpoint = crate::realtime_media::create_endpoint(
         &state,
         realtime_id,
         "peer-a",
         crate::realtime_media::RealtimeMediaDirection::Send,
+        generation,
     )
     .await
     .expect("media endpoint");

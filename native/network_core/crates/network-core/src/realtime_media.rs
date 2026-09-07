@@ -12,6 +12,8 @@ use std::sync::{
 };
 use std::time::Instant;
 
+#[cfg(feature = "ffi-test-support")]
+use network_webrtc::media::RtpPacketizer;
 use network_webrtc::{
     EncodedVideoFrame, MediaDirection, RealtimeIoDriver, RealtimeIoDriverHandle,
     VideoEnqueueResult, WebRtcError,
@@ -21,7 +23,6 @@ use crate::runtime::RuntimeState;
 
 static NEXT_RUNTIME_GENERATION: AtomicU64 = AtomicU64::new(1);
 static NEXT_ENDPOINT_ID: AtomicU64 = AtomicU64::new(1);
-static NEXT_SESSION_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 /// Direction permitted for one opaque native endpoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,6 +66,8 @@ pub enum RealtimeMediaError {
     DuplicateEndpoint,
     #[error("endpoint is stale or released")]
     StaleEndpoint,
+    #[error("realtime session generation is stale")]
+    StaleGeneration,
     #[error("endpoint direction rejects this operation")]
     DirectionMismatch,
     #[error("encoded H.264 frame was rejected")]
@@ -110,20 +113,37 @@ impl RealtimeMediaRegistry {
         realtime_id: &str,
         peer_id: &str,
         direction: RealtimeMediaDirection,
+        expected_generation: u64,
+        session_generation: u64,
         driver: &RealtimeIoDriverHandle,
     ) -> Result<RealtimeMediaEndpointId, RealtimeMediaError> {
+        if expected_generation != session_generation {
+            return Err(RealtimeMediaError::StaleGeneration);
+        }
         let driver_weak = Arc::downgrade(driver);
         let session_generation = match self.session_bindings.get(realtime_id) {
             Some(existing)
-                if existing.peer_id == peer_id && Weak::ptr_eq(&existing.driver, &driver_weak) =>
+                if existing.peer_id == peer_id
+                    && existing.generation == session_generation
+                    && Weak::ptr_eq(&existing.driver, &driver_weak) =>
             {
                 existing.generation
             }
             Some(_) => {
                 self.invalidate_realtime(realtime_id);
-                self.insert_session_binding(realtime_id, peer_id, driver_weak.clone())
+                self.insert_session_binding(
+                    realtime_id,
+                    peer_id,
+                    session_generation,
+                    driver_weak.clone(),
+                )
             }
-            None => self.insert_session_binding(realtime_id, peer_id, driver_weak.clone()),
+            None => self.insert_session_binding(
+                realtime_id,
+                peer_id,
+                session_generation,
+                driver_weak.clone(),
+            ),
         };
 
         if self.endpoints.values().any(|endpoint| {
@@ -155,9 +175,9 @@ impl RealtimeMediaRegistry {
         &mut self,
         realtime_id: &str,
         peer_id: &str,
+        generation: u64,
         driver: Weak<Mutex<RealtimeIoDriver>>,
     ) -> u64 {
-        let generation = NEXT_SESSION_GENERATION.fetch_add(1, Ordering::Relaxed);
         self.session_bindings.insert(
             realtime_id.to_owned(),
             SessionBinding {
@@ -170,23 +190,32 @@ impl RealtimeMediaRegistry {
     }
 
     fn release(&mut self, endpoint_id: RealtimeMediaEndpointId) -> Result<(), RealtimeMediaError> {
-        let Some(endpoint) = self.endpoints.remove(&endpoint_id) else {
+        let Some((driver_weak, direction)) = self
+            .endpoints
+            .get(&endpoint_id)
+            .map(|endpoint| (endpoint.driver.clone(), endpoint.direction))
+        else {
             return Ok(());
         };
-        let Some(driver) = endpoint.driver.upgrade() else {
+        let Some(driver) = driver_weak.upgrade() else {
+            self.endpoints.remove(&endpoint_id);
             return Ok(());
         };
         let mut driver = driver
             .lock()
             .map_err(|_| RealtimeMediaError::DriverUnavailable)?;
-        let direction = match endpoint.direction {
+        let direction = match direction {
             RealtimeMediaDirection::Send => MediaDirection::Sendonly,
             RealtimeMediaDirection::Receive => MediaDirection::Recvonly,
         };
         driver
             .peer_mut()
             .clear_h264_screen_video(direction)
-            .map_err(|_| RealtimeMediaError::DriverUnavailable)
+            .map_err(|_| RealtimeMediaError::DriverUnavailable)?;
+        // Keep the lease visible until native queue/order cleanup succeeds so
+        // a caller can retry a transient driver failure deterministically.
+        self.endpoints.remove(&endpoint_id);
+        Ok(())
     }
 
     fn invalidate_realtime(&mut self, realtime_id: &str) {
@@ -239,18 +268,29 @@ pub(crate) async fn create_endpoint(
     realtime_id: &str,
     peer_id: &str,
     direction: RealtimeMediaDirection,
+    expected_generation: u64,
 ) -> Result<RealtimeMediaEndpointId, RealtimeMediaError> {
     validate_identifiers(realtime_id, peer_id)?;
     // Keep session validation and endpoint insertion under the same Realtime
     // manager lock. A close can only remove the session after this insertion,
     // at which point its invalidation removes the just-created endpoint.
     let sessions = state.realtime.lock().await;
-    let driver = sessions.media_endpoint_driver(realtime_id, peer_id)?;
+    let (driver, session_generation) = sessions.media_endpoint_driver(realtime_id, peer_id)?;
+    if expected_generation != session_generation {
+        return Err(RealtimeMediaError::StaleGeneration);
+    }
     let mut registry = state
         .realtime_media
         .lock()
         .map_err(|_| RealtimeMediaError::Internal)?;
-    registry.create(realtime_id, peer_id, direction, &driver)
+    registry.create(
+        realtime_id,
+        peer_id,
+        direction,
+        expected_generation,
+        session_generation,
+        &driver,
+    )
 }
 
 pub(crate) fn release_endpoint(
@@ -290,6 +330,33 @@ pub(crate) fn pop_endpoint(
     let now = Instant::now();
     registry.with_endpoint(endpoint_id, RealtimeMediaDirection::Receive, |driver| {
         Ok(driver.peer_mut().pop_remote_h264_screen_video(now))
+    })
+}
+
+/// Injects one packetized frame into a receive endpoint for the C-ABI
+/// success-path test. It is not available to production callers: real RTP is
+/// delivered by `RealtimeIoDriver` from the negotiated socket.
+#[cfg(feature = "ffi-test-support")]
+pub(crate) fn inject_test_endpoint_frame(
+    state: &RuntimeState,
+    endpoint_id: RealtimeMediaEndpointId,
+    frame: EncodedVideoFrame,
+) -> Result<(), RealtimeMediaError> {
+    let packets = RtpPacketizer::new(1_200, 102, 0x1357_2468, 1)
+        .packetize(&frame)
+        .map_err(|_| RealtimeMediaError::FrameRejected)?;
+    let mut registry = state
+        .realtime_media
+        .lock()
+        .map_err(|_| RealtimeMediaError::Internal)?;
+    let now = Instant::now();
+    registry.with_endpoint(endpoint_id, RealtimeMediaDirection::Receive, |driver| {
+        for packet in &packets {
+            driver
+                .peer_mut()
+                .receive_h264_screen_video_rtp(packet, now)?;
+        }
+        Ok(())
     })
 }
 

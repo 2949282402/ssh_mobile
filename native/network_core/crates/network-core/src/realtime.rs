@@ -13,12 +13,13 @@ use network_relay::v2::{
     RealtimeSignal as V2RealtimeSignal, RealtimeSignalKind as V2RealtimeSignalKind,
 };
 use network_webrtc::{
-    run_realtime_io, DescriptionType, IceCandidate, IceServerConfig, MediaDirection,
-    RealtimeIoDriver, RealtimeIoDriverHandle, RealtimeIoEvent, SessionDescription, WebRtcConfig,
-    WebRtcError, WebRtcPeer, MAX_ICE_CANDIDATE_BYTES, MAX_SDP_BYTES,
+    run_realtime_io, DescriptionType, IceCandidate, IceServerConfig, RealtimeIoDriver,
+    RealtimeIoDriverHandle, RealtimeIoEvent, SessionDescription, WebRtcConfig, WebRtcError,
+    WebRtcPeer, MAX_ICE_CANDIDATE_BYTES, MAX_SDP_BYTES,
 };
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 #[cfg(test)]
@@ -32,6 +33,7 @@ use crate::runtime::RuntimeState;
 use crate::session::SessionId;
 
 const MAX_REALTIME_SIGNAL_PAYLOAD_BYTES: usize = MAX_SDP_BYTES;
+static NEXT_REALTIME_SESSION_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 struct RealtimeSession {
     peer_id: String,
@@ -62,6 +64,9 @@ struct RealtimeSession {
 #[derive(Default)]
 pub(crate) struct RealtimeManager {
     sessions: HashMap<String, RealtimeSession>,
+    /// Generation is owned by the live Realtime manager, not inferred by the
+    /// media registry. It changes whenever a new session is inserted for an ID.
+    session_generations: HashMap<String, u64>,
 }
 
 impl RealtimeManager {
@@ -73,17 +78,80 @@ impl RealtimeManager {
         &self,
         realtime_id: &str,
         peer_id: &str,
-    ) -> Result<RealtimeIoDriverHandle, crate::realtime_media::RealtimeMediaError> {
+    ) -> Result<(RealtimeIoDriverHandle, u64), crate::realtime_media::RealtimeMediaError> {
         let Some(session) = self.sessions.get(realtime_id) else {
             return Err(crate::realtime_media::RealtimeMediaError::UnknownRealtimeSession);
         };
         if session.peer_id != peer_id {
             return Err(crate::realtime_media::RealtimeMediaError::PeerMismatch);
         }
-        session
+        let generation = self
+            .session_generations
+            .get(realtime_id)
+            .copied()
+            .ok_or(crate::realtime_media::RealtimeMediaError::StaleGeneration)?;
+        let driver = session
             .driver
             .clone()
-            .ok_or(crate::realtime_media::RealtimeMediaError::DriverUnavailable)
+            .ok_or(crate::realtime_media::RealtimeMediaError::DriverUnavailable)?;
+        Ok((driver, generation))
+    }
+
+    fn insert_new_session(&mut self, realtime_id: String, session: RealtimeSession) {
+        let generation = NEXT_REALTIME_SESSION_GENERATION.fetch_add(1, Ordering::Relaxed);
+        self.session_generations
+            .insert(realtime_id.clone(), generation);
+        self.sessions.insert(realtime_id, session);
+    }
+
+    fn insert_existing_session(&mut self, realtime_id: String, session: RealtimeSession) {
+        self.session_generations
+            .entry(realtime_id.clone())
+            .or_insert_with(|| NEXT_REALTIME_SESSION_GENERATION.fetch_add(1, Ordering::Relaxed));
+        self.sessions.insert(realtime_id, session);
+    }
+
+    fn remove_session(&mut self, realtime_id: &str) -> Option<RealtimeSession> {
+        let removed = self.sessions.remove(realtime_id);
+        if removed.is_some() {
+            self.session_generations.remove(realtime_id);
+        }
+        removed
+    }
+
+    #[cfg(test)]
+    fn session_generation(&self, realtime_id: &str) -> Option<u64> {
+        self.session_generations.get(realtime_id).copied()
+    }
+
+    /// Installs a live driver for the network-ffi C-ABI success-path test
+    /// without exposing the session owner to production callers. The helper is
+    /// compiled only when the network-ffi test-support feature is enabled.
+    #[cfg(feature = "ffi-test-support")]
+    pub(crate) fn insert_ffi_test_driver_session(
+        &mut self,
+        realtime_id: String,
+        peer_id: String,
+        driver: RealtimeIoDriverHandle,
+    ) -> u64 {
+        let generation_id = realtime_id.clone();
+        self.insert_new_session(
+            realtime_id,
+            RealtimeSession {
+                peer_id,
+                connection_session_id: None,
+                peer: None,
+                driver: Some(driver),
+                revision: 1,
+                remote_revision: 0,
+                ice_revision: 1,
+                seen_candidates: HashSet::new(),
+            },
+        );
+        self.session_generations
+            .get(&generation_id)
+            .copied()
+            .expect("inserted realtime generation")
     }
 
     /// Close every WebRTC peer before the runtime supervisor joins its tasks.
@@ -91,6 +159,7 @@ impl RealtimeManager {
         for (_, mut session) in self.sessions.drain() {
             let _ = with_session_peer(&mut session, WebRtcPeer::close);
         }
+        self.session_generations.clear();
     }
 
     /// §22：ConnectionSession 销毁（transport 丢失）时关闭绑定在该 ConnectionSession
@@ -123,7 +192,7 @@ impl RealtimeManager {
             .map(|(realtime_id, _)| realtime_id.clone())
             .collect::<Vec<_>>();
         for realtime_id in matching {
-            let Some(mut session) = self.sessions.remove(&realtime_id) else {
+            let Some(mut session) = self.remove_session(&realtime_id) else {
                 continue;
             };
             let close_revision = session.revision.saturating_add(1);
@@ -242,7 +311,7 @@ async fn start_session_with_config(
             &peer_id,
         ));
     }
-    sessions.sessions.insert(
+    sessions.insert_new_session(
         realtime_id.clone(),
         RealtimeSession {
             peer_id: peer_id.clone(),
@@ -348,7 +417,7 @@ pub(crate) async fn stop_session(
     validate_realtime_id(&command.realtime_id)?;
     let session = {
         let mut sessions = state.realtime.lock().await;
-        let session = sessions.sessions.remove(&command.realtime_id);
+        let session = sessions.remove_session(&command.realtime_id);
         if session.is_some() {
             crate::realtime_media::invalidate_realtime(state, &command.realtime_id);
         }
@@ -704,8 +773,7 @@ fn take_remote_closed_session(
         return Err(boxed_message("stale realtime signaling revision"));
     }
     manager
-        .sessions
-        .remove(realtime_id)
+        .remove_session(realtime_id)
         .ok_or_else(|| boxed_message("realtime session does not exist"))
 }
 
@@ -771,6 +839,7 @@ fn apply_signal_with_driver(
 
     match kind {
         RealtimeSignalKind::WebRtcOffer => {
+            let had_generation = manager.session_generations.contains_key(realtime_id);
             let existing = manager.sessions.remove(realtime_id);
             let had_existing = existing.is_some();
             let mut session = match existing {
@@ -810,7 +879,7 @@ fn apply_signal_with_driver(
                 Ok(description) => description,
                 Err(error) => {
                     if had_existing {
-                        manager.sessions.insert(realtime_id.to_string(), session);
+                        manager.insert_existing_session(realtime_id.to_string(), session);
                     }
                     return Err(error);
                 }
@@ -819,7 +888,7 @@ fn apply_signal_with_driver(
                 with_session_peer(&mut session, |peer| peer.accept_remote_offer(description))
             {
                 if had_existing {
-                    manager.sessions.insert(realtime_id.to_string(), session);
+                    manager.insert_existing_session(realtime_id.to_string(), session);
                 }
                 return Err(boxed_message(error.to_string()));
             }
@@ -827,7 +896,7 @@ fn apply_signal_with_driver(
                 Ok(answer) => answer,
                 Err(error) => {
                     if had_existing {
-                        manager.sessions.insert(realtime_id.to_string(), session);
+                        manager.insert_existing_session(realtime_id.to_string(), session);
                     }
                     return Err(boxed_message(error.to_string()));
                 }
@@ -842,7 +911,11 @@ fn apply_signal_with_driver(
             session.ice_revision = revision;
             session.seen_candidates.clear();
             let peer_id = session.peer_id.clone();
-            manager.sessions.insert(realtime_id.to_string(), session);
+            if had_existing || had_generation {
+                manager.insert_existing_session(realtime_id.to_string(), session);
+            } else {
+                manager.insert_new_session(realtime_id.to_string(), session);
+            }
             Ok(SignalOutcome {
                 peer_id: peer_id.clone(),
                 revision: answer_revision,
@@ -996,8 +1069,10 @@ async fn create_io_driver(
         .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
     let bind_addr = SocketAddr::new(bind_ip, 0);
     let advertised_ip = (!bind_ip.is_unspecified()).then_some(bind_ip);
-    let mut peer = WebRtcPeer::new(config)?;
-    peer.configure_h264_screen_video(MediaDirection::Sendrecv, Some(1))?;
+    // Generic Realtime sessions stay media-neutral. Phase 2 screen sharing
+    // configures the dedicated H.264 transceiver at the explicit screen-track
+    // integration point instead of changing every DataChannel SDP.
+    let peer = WebRtcPeer::new(config)?;
     RealtimeIoDriver::bind_with_advertised_ip(peer, bind_addr, advertised_ip).await
 }
 
@@ -1145,7 +1220,7 @@ fn take_realtime_session_if_owned(
                 .is_some_and(|candidate| Arc::ptr_eq(candidate, driver))
     });
     owns_driver
-        .then(|| manager.sessions.remove(realtime_id))
+        .then(|| manager.remove_session(realtime_id))
         .flatten()
 }
 
@@ -1181,7 +1256,7 @@ async fn remove_realtime_session(state: &RuntimeState, realtime_id: &str, peer_i
             .get(realtime_id)
             .is_some_and(|session| session.peer_id == peer_id);
         let removed = should_remove
-            .then(|| sessions.sessions.remove(realtime_id))
+            .then(|| sessions.remove_session(realtime_id))
             .flatten();
         if removed.is_some() {
             crate::realtime_media::invalidate_realtime(state, realtime_id);

@@ -17,6 +17,8 @@ export 'src/native_operation_status.dart';
 export 'src/native_realtime_media.dart';
 export 'src/native_realtime_protocol.dart';
 
+part 'src/native_realtime_media_bindings.dart';
+
 enum _NativeRuntimeLifecycle { running, stopping, stopped, destroyed }
 
 /// ssh_mobile_network_native 的 C ABI FFI 绑定。
@@ -46,38 +48,6 @@ external int _sshNetRuntimeStopNative(Pointer<Void> handle);
 /// 销毁已停止的原生运行时句柄。
 @Native<Int32 Function(Pointer<Void>)>(symbol: 'ssh_net_runtime_destroy')
 external int _sshNetRuntimeDestroyNative(Pointer<Void> handle);
-
-/// Creates an opaque native screen-media endpoint lease. The C ABI is limited
-/// to low-frequency lifecycle control; it has no per-frame operation.
-@Native<
-  Int32 Function(
-    Pointer<Void>,
-    Pointer<Uint8>,
-    UintPtr,
-    Pointer<Uint8>,
-    UintPtr,
-    Uint32,
-    Pointer<Uint64>,
-  )
->(symbol: 'ssh_net_realtime_media_endpoint_create')
-external int _sshNetRealtimeMediaEndpointCreateNative(
-  Pointer<Void> handle,
-  Pointer<Uint8> realtimeId,
-  int realtimeIdLength,
-  Pointer<Uint8> peerId,
-  int peerIdLength,
-  int direction,
-  Pointer<Uint64> outEndpoint,
-);
-
-/// Releases an opaque native screen-media endpoint lease.
-@Native<Int32 Function(Pointer<Void>, Uint64)>(
-  symbol: 'ssh_net_realtime_media_endpoint_release',
-)
-external int _sshNetRealtimeMediaEndpointReleaseNative(
-  Pointer<Void> handle,
-  int endpoint,
-);
 
 /// Dart 侧原生网络 SDK 操作的主入口。
 class SshMobileNetworkNative {
@@ -318,6 +288,7 @@ class NativeNetworkRuntime {
     required String realtimeId,
     required String peerId,
     required NativeRealtimeMediaDirection direction,
+    required int generation,
   }) {
     if (_handle == nullptr || _lifecycle != _NativeRuntimeLifecycle.running) {
       return const NativeRealtimeMediaEndpointCreateResult(
@@ -325,7 +296,8 @@ class NativeNetworkRuntime {
       );
     }
     if (!_isValidRealtimeMediaId(realtimeId) ||
-        !_isValidRealtimeMediaPeerId(peerId)) {
+        !_isValidRealtimeMediaPeerId(peerId) ||
+        generation <= 0) {
       return const NativeRealtimeMediaEndpointCreateResult(
         status: NativeOperationStatus.invalidArgument,
       );
@@ -337,13 +309,14 @@ class NativeNetworkRuntime {
     final peerIdPointer = peerId.toNativeUtf8();
     final outEndpoint = calloc<Uint64>();
     try {
-      final status = NativeOperationStatus.fromNativeCode(
+      final status = NativeOperationStatus.fromRealtimeMediaCode(
         _sshNetRealtimeMediaEndpointCreateNative(
           _handle,
           realtimeIdPointer.cast<Uint8>(),
           realtimeIdBytes.length,
           peerIdPointer.cast<Uint8>(),
           peerIdBytes.length,
+          generation,
           direction.nativeValue,
           outEndpoint,
         ),
@@ -370,7 +343,7 @@ class NativeNetworkRuntime {
     if (_handle == nullptr || _lifecycle != _NativeRuntimeLifecycle.running) {
       return NativeOperationStatus.success;
     }
-    return NativeOperationStatus.fromNativeCode(
+    return NativeOperationStatus.fromRealtimeMediaCode(
       _sshNetRealtimeMediaEndpointReleaseNative(_handle, endpointId.value),
     );
   }

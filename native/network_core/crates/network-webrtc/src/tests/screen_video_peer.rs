@@ -1,9 +1,12 @@
 use std::time::{Duration, Instant};
 
+use crate::media::RtpPacketizer;
 use crate::{
     EncodedVideoFrame, KeyframeRequestReason, MediaDirection, VideoCodec, VideoEnqueueResult,
     WebRtcConfig, WebRtcError, WebRtcPeer,
 };
+use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent, RTCTrackEventInit};
+use rtc::rtp::Packet;
 
 const SCREEN_SSRC: u32 = 0x1357_2468;
 
@@ -25,20 +28,37 @@ fn access_unit(sequence: u64, timestamp: u64) -> EncodedVideoFrame {
     )
 }
 
+fn packetize(frame: &EncodedVideoFrame, initial_sequence: u16) -> Vec<Packet> {
+    RtpPacketizer::new(96, 102, SCREEN_SSRC, initial_sequence)
+        .packetize(frame)
+        .expect("valid screen access unit packetizes")
+}
+
 #[test]
-fn screen_video_offer_advertises_h264_without_video_codec_fallbacks() {
+fn screen_video_offer_keeps_generic_codecs_while_advertising_h264() {
     let mut peer = WebRtcPeer::new(WebRtcConfig::default()).expect("peer");
     peer.configure_h264_screen_video(MediaDirection::Sendonly, Some(SCREEN_SSRC))
         .expect("screen video sender");
 
     let offer = peer.create_offer().expect("offer");
     assert!(offer.sdp.contains("H264"));
-    for forbidden in ["VP8", "VP9", "AV1", "H265", "HEVC"] {
-        assert!(
-            !offer.sdp.contains(forbidden),
-            "screen-video SDP must not advertise {forbidden} fallback"
-        );
-    }
+    assert!(
+        offer.sdp.contains("VP8"),
+        "generic video codecs remain registered"
+    );
+}
+
+#[test]
+fn data_channel_only_offer_does_not_add_a_screen_video_m_line() {
+    let mut peer = WebRtcPeer::new(WebRtcConfig::default()).expect("peer");
+    peer.create_data_channel("control", Default::default())
+        .expect("data channel");
+
+    let offer = peer.create_offer().expect("offer");
+    assert!(
+        !offer.sdp.contains("m=video"),
+        "generic realtime sessions must not acquire an implicit screen track"
+    );
 }
 
 #[test]
@@ -109,4 +129,63 @@ fn screen_video_recovery_requests_a_keyframe_for_ice_restart_and_decoder_reset()
         receiver.take_h264_screen_video_keyframe_request(),
         Some(KeyframeRequestReason::DecoderReset)
     );
+}
+
+#[test]
+fn packet_loss_reorder_and_duplicate_are_media_local_recovery_events() {
+    let mut peer = WebRtcPeer::new(WebRtcConfig::default()).expect("receiver");
+    peer.configure_h264_screen_video(MediaDirection::Recvonly, None)
+        .expect("receiver config");
+    let now = Instant::now();
+
+    let first = packetize(&access_unit(1, 90_000), 100);
+    for (index, packet) in first.iter().enumerate() {
+        if index == 1 {
+            continue;
+        }
+        peer.receive_h264_screen_video_rtp(packet, now)
+            .expect("packet loss must not fail the peer");
+    }
+    let next = packetize(&access_unit(2, 96_000), 200);
+    for packet in &next {
+        peer.receive_h264_screen_video_rtp(packet, now)
+            .expect("a fresh keyframe recovers after loss");
+    }
+    assert!(peer.pop_remote_h264_screen_video(now).is_some());
+
+    let reordered = packetize(&access_unit(3, 102_000), 300);
+    peer.receive_h264_screen_video_rtp(&reordered[1], now)
+        .expect("reordering must be media-local");
+    peer.receive_h264_screen_video_rtp(&reordered[0], now)
+        .expect("late first fragment must not fail the peer");
+    for packet in reordered.iter().skip(2) {
+        peer.receive_h264_screen_video_rtp(packet, now)
+            .expect("reordered frame remains recoverable");
+    }
+
+    let duplicate = packetize(&access_unit(4, 108_000), 400);
+    for packet in &duplicate {
+        peer.receive_h264_screen_video_rtp(packet, now)
+            .expect("baseline frame is accepted");
+    }
+    peer.receive_h264_screen_video_rtp(&duplicate[0], now)
+        .expect("duplicate fragment must be discarded locally");
+}
+
+#[test]
+fn mixed_rtp_tracks_do_not_enter_the_screen_h264_depacketizer() {
+    let mut peer = WebRtcPeer::new(WebRtcConfig::default()).expect("receiver");
+    peer.configure_h264_screen_video(MediaDirection::Recvonly, None)
+        .expect("receiver config");
+    peer.observe_screen_video_event(&RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnOpen(
+        RTCTrackEventInit {
+            track_id: "screen-track".to_owned(),
+            ..Default::default()
+        },
+    )));
+
+    let malformed = Packet::default();
+    peer.receive_h264_screen_video_rtp_for_track("audio-track", &malformed, Instant::now())
+        .expect("unrelated track is ignored");
+    assert!(peer.pop_remote_h264_screen_video(Instant::now()).is_none());
 }

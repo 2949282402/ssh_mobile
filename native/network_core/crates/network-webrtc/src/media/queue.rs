@@ -92,6 +92,8 @@ pub enum VideoFrameError {
     EmptyPayload,
     #[error("encoded screen-video frame exceeds the 4 MiB limit")]
     PayloadTooLarge,
+    #[error("encoded screen-video frame is not Annex-B H.264")]
+    InvalidAccessUnit,
     #[error("screen-video timestamp cannot be represented by RTP")]
     TimestampOutOfRange,
     #[error("screen-video resolution is invalid or exceeds the native limit")]
@@ -278,6 +280,9 @@ impl VideoQueue {
         {
             return Err(VideoFrameError::InvalidResolution);
         }
+        if !is_valid_annex_b(&frame.payload) {
+            return Err(VideoFrameError::InvalidAccessUnit);
+        }
         Ok(())
     }
 
@@ -299,4 +304,43 @@ impl VideoQueue {
             self.stats.dropped_stale = self.stats.dropped_stale.saturating_add(1);
         }
     }
+}
+
+/// Validates the minimum Annex-B structure required by the H.264 RTP
+/// payloader. A start code by itself is not an access unit: every NALU must
+/// have a non-zero NAL type and at least one byte after its start code.
+pub(crate) fn is_valid_annex_b(payload: &[u8]) -> bool {
+    let mut index = 0;
+    let mut found_nalu = false;
+    while index < payload.len() {
+        let Some((start, start_code_len)) = next_start_code(payload, index) else {
+            return false;
+        };
+        let nalu_start = start + start_code_len;
+        if nalu_start >= payload.len() {
+            return false;
+        }
+        let nalu_end = next_start_code(payload, nalu_start)
+            .map_or(payload.len(), |(next_start, _)| next_start);
+        if nalu_end <= nalu_start || payload[nalu_start] & 0x1f == 0 {
+            return false;
+        }
+        found_nalu = true;
+        index = nalu_end;
+    }
+    found_nalu
+}
+
+fn next_start_code(payload: &[u8], from: usize) -> Option<(usize, usize)> {
+    let mut index = from;
+    while index + 3 <= payload.len() {
+        if payload[index..].starts_with(&[0, 0, 1]) {
+            return Some((index, 3));
+        }
+        if index + 4 <= payload.len() && payload[index..].starts_with(&[0, 0, 0, 1]) {
+            return Some((index, 4));
+        }
+        index += 1;
+    }
+    None
 }

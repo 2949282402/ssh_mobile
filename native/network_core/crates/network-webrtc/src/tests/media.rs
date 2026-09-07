@@ -32,7 +32,7 @@ fn h264_frame(sequence: u64, timestamp_ms: u64, keyframe: bool, now: Instant) ->
         timestamp_ms,
         keyframe,
         now + Duration::from_secs(1),
-        vec![sequence as u8],
+        vec![0, 0, 0, 1, 0x65, sequence as u8],
     )
 }
 
@@ -61,7 +61,7 @@ fn h264_is_the_only_codec_accepted_for_screen_video_frames() {
                 1_001,
                 false,
                 now + Duration::from_secs(1),
-                vec![2],
+                vec![0, 0, 0, 1, 0x65, 2],
             ),
             now,
         );
@@ -99,6 +99,39 @@ fn oversized_frame_is_rejected_before_queue_commit() {
 }
 
 #[test]
+fn malformed_annex_b_is_rejected_at_enqueue_boundary() {
+    let now = Instant::now();
+    let mut queue = VideoQueue::new();
+    let malformed = frame(
+        VideoCodec::H264,
+        1,
+        1_000,
+        true,
+        now + Duration::from_secs(1),
+        vec![0x65, 0x01, 0x02],
+    );
+
+    assert!(matches!(
+        queue.enqueue(malformed, now),
+        Err(VideoFrameError::InvalidAccessUnit)
+    ));
+    assert!(queue.is_empty());
+
+    let empty_nalu = frame(
+        VideoCodec::H264,
+        2,
+        1_001,
+        true,
+        now + Duration::from_secs(1),
+        vec![0, 0, 0, 1],
+    );
+    assert!(matches!(
+        queue.enqueue(empty_nalu, now),
+        Err(VideoFrameError::InvalidAccessUnit)
+    ));
+}
+
+#[test]
 fn screen_video_queue_capacity_is_fixed_at_three_frames() {
     let now = Instant::now();
     let mut queue = VideoQueue::new();
@@ -123,7 +156,7 @@ fn stale_frame_is_dropped_before_queue_commit() {
         1_000,
         true,
         now - Duration::from_millis(1),
-        vec![1],
+        vec![0, 0, 0, 1, 0x65, 1],
     );
 
     assert_eq!(
@@ -260,7 +293,7 @@ fn timestamp_and_resolution_limits_reject_before_queue_commit() {
         0,
         1_080,
         true,
-        vec![1],
+        vec![0, 0, 0, 1, 0x65, 1],
         now + Duration::from_secs(1),
     );
     assert!(matches!(

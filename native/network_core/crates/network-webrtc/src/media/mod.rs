@@ -15,4 +15,4 @@ pub use queue::{
     SCREEN_VIDEO_QUEUE_CAPACITY,
 };
 pub use rtp::{RtpMediaError, RtpPacketizer, RtpReassembler};
-pub(crate) use video::{h264_codec_parameters, h264_media_engine, H264ScreenVideo};
+pub(crate) use video::{h264_media_engine, H264ScreenVideo};

@@ -39,6 +39,7 @@ void main() {
               realtimeId: 'invalid',
               peerId: 'peer-a',
               direction: NativeRealtimeMediaDirection.send,
+              generation: 1,
             )
             .status,
         NativeOperationStatus.invalidArgument,
@@ -50,6 +51,7 @@ void main() {
               realtimeId: realtimeId,
               peerId: 'peer-a',
               direction: NativeRealtimeMediaDirection.receive,
+              generation: 1,
             )
             .status,
         NativeOperationStatus.stopped,

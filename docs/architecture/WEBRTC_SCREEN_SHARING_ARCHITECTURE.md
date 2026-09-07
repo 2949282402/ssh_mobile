@@ -116,7 +116,7 @@ pass.
 | Area | Current verified baseline | Planned screen-share capability |
 | --- | --- | --- |
 | WebRTC owner | network-webrtc owns a sans-I/O peer; RealtimeIoDriver owns that peer and its UDP socket | Keeps the same sole owner; no second peer or runtime |
-| Runtime media | The sole native peer configures one H.264 screen transceiver; `RealtimeIoDriver` flushes/receives encoded RTP without DataChannel or event-stream media; a native-only C ABI pushes/pulls encoded access units by opaque endpoint ID | Platform-native capture/codec/render owners invoke that bridge in later phases |
+| Runtime media | Generic Realtime sessions remain media-neutral; the explicit screen-share integration configures one H.264 screen transceiver on the sole native peer. `RealtimeIoDriver` flushes/receives encoded RTP without DataChannel or event-stream media; a native-only C ABI pushes/pulls encoded access units by opaque endpoint ID | Platform-native capture/codec/render owners invoke that bridge before screen SDP negotiation in later phases |
 | QoS | A separate screen-video queue is fixed to three frames with keyframe-aware dropping; generic MediaFrame's four-frame policy remains unchanged | Phase 7 adaptation and telemetry |
 | Dart video shape | `network_sdk` exposes only Realtime signaling/state; `realtime_media` exposes opaque endpoint/surface lifecycle with no per-frame Dart path | Concrete platform surface adapter lifecycle notifications |
 | Capture/rendering | No production platform screen capture, H.264 codec bridge, decoder, or texture chain | Windows and Android native capture, hardware codecs, and native surfaces |

@@ -163,6 +163,7 @@ pub async fn run_realtime_io(
             }
             let mut pending_events = Vec::new();
             while let Some(event) = driver.peer.poll_event() {
+                driver.peer.observe_screen_video_event(&event);
                 for mapped in map_peer_event(event)? {
                     apply_terminal_media_policy(driver.peer_mut(), &mapped);
                     pending_events.push(mapped);
@@ -177,8 +178,10 @@ pub async fn run_realtime_io(
                             payload: message.data.to_vec(),
                         });
                     }
-                    RTCMessage::RtpPacket(_, packet) => {
-                        driver.peer.receive_h264_screen_video_rtp(&packet, now)?;
+                    RTCMessage::RtpPacket(track_id, packet) => {
+                        driver
+                            .peer
+                            .receive_h264_screen_video_rtp_for_track(&track_id, &packet, now)?;
                     }
                     _ => {}
                 }

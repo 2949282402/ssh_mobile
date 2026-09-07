@@ -11,15 +11,13 @@ use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::transport::RTCIceCandidateInit;
 use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
 use rtc::rtp_transceiver::rtp_sender::{
-    RTCRtpCodingParameters, RTCRtpEncodingParameters, RtpCodecKind,
+    RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters, RtpCodecKind,
 };
 use rtc::rtp_transceiver::{RTCRtpTransceiverDirection, RTCRtpTransceiverInit};
 use rtc::sansio::Protocol;
 use rtc::shared::TaggedBytesMut;
 
-use crate::media::{
-    h264_codec_parameters, h264_media_engine, H264ScreenVideo, RtpMediaError, VideoFrameError,
-};
+use crate::media::{h264_media_engine, H264ScreenVideo, RtpMediaError, VideoFrameError};
 use crate::qos::{MediaFrame, MediaKind, MediaQos, MediaQosConfig};
 use crate::signaling::{
     DescriptionType, IceCandidate, SessionDescription, SignalingError, SignalingState,
@@ -264,6 +262,16 @@ impl WebRtcPeer {
         direction: MediaDirection,
         ssrc: Option<u32>,
     ) -> Result<(), WebRtcError> {
+        self.add_media_transceiver_with_codec(kind, direction, ssrc, None)
+    }
+
+    pub(crate) fn add_media_transceiver_with_codec(
+        &mut self,
+        kind: MediaKind,
+        direction: MediaDirection,
+        ssrc: Option<u32>,
+        codec: Option<RTCRtpCodec>,
+    ) -> Result<(), WebRtcError> {
         let (codec_kind, rtc_direction) = match kind {
             MediaKind::Audio => (RtpCodecKind::Audio, direction),
             MediaKind::Video => (RtpCodecKind::Video, direction),
@@ -292,11 +300,7 @@ impl WebRtcPeer {
                     ssrc: Some(ssrc),
                     ..Default::default()
                 },
-                codec: if kind == MediaKind::Video {
-                    h264_codec_parameters().rtp_codec
-                } else {
-                    Default::default()
-                },
+                codec: codec.clone().unwrap_or_default(),
                 ..Default::default()
             }]
         } else {

@@ -1,18 +1,15 @@
 use std::time::Instant;
 
-use rtc::peer_connection::configuration::media_engine::{
-    MediaEngine, MIME_TYPE_H264, MIME_TYPE_OPUS,
-};
-use rtc::rtp_transceiver::rtp_sender::{
-    RTCPFeedback, RTCRtpCodec, RTCRtpCodecParameters, RtpCodecKind,
-};
+use rtc::peer_connection::configuration::media_engine::{MediaEngine, MIME_TYPE_H264};
+use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
+use rtc::rtp_transceiver::rtp_sender::{RTCPFeedback, RTCRtpCodec, RTCRtpCodecParameters};
 use rtc::rtp_transceiver::RTCRtpSenderId;
 
 use crate::peer::{rtc_error, MediaDirection, WebRtcError, WebRtcPeer};
 
 use super::{
-    EncodedVideoFrame, KeyframeRequestReason, RtpPacketizer, RtpReassembler, VideoEnqueueResult,
-    VideoQueue,
+    EncodedVideoFrame, KeyframeRequestReason, RtpMediaError, RtpPacketizer, RtpReassembler,
+    VideoEnqueueResult, VideoFrameError, VideoQueue,
 };
 
 const H264_RTP_PAYLOAD_TYPE: u8 = 102;
@@ -25,6 +22,7 @@ pub(crate) struct H264ScreenVideo {
     packetizer: Option<RtpPacketizer>,
     reassembler: RtpReassembler,
     accepts_inbound: bool,
+    inbound_track_id: Option<String>,
 }
 
 impl H264ScreenVideo {
@@ -43,6 +41,7 @@ impl H264ScreenVideo {
             }),
             reassembler: RtpReassembler::new(),
             accepts_inbound,
+            inbound_track_id: None,
         }
     }
 
@@ -55,6 +54,7 @@ impl H264ScreenVideo {
         self.outbound.on_disconnect();
         self.inbound.on_disconnect();
         self.reassembler.reset();
+        self.inbound_track_id = None;
     }
 }
 
@@ -82,7 +82,12 @@ impl WebRtcPeer {
             ));
         }
 
-        self.add_media_transceiver(crate::qos::MediaKind::Video, direction, ssrc)?;
+        self.add_media_transceiver_with_codec(
+            crate::qos::MediaKind::Video,
+            direction,
+            ssrc,
+            Some(h264_codec_parameters().rtp_codec),
+        )?;
         let sender_id = if sends {
             Some(self.peer.get_senders().last().ok_or_else(|| {
                 WebRtcError::Rtc("screen-video RTP sender was not created".to_owned())
@@ -182,6 +187,34 @@ impl WebRtcPeer {
         packet: &rtc::rtp::Packet,
         now: Instant,
     ) -> Result<(), WebRtcError> {
+        self.receive_h264_screen_video_rtp_inner(packet, now)
+    }
+
+    /// Accepts RTP only when the packet belongs to the negotiated screen
+    /// receiver. Packets from unrelated audio/video tracks are ignored and
+    /// never reach the H.264 depacketizer.
+    pub(crate) fn receive_h264_screen_video_rtp_for_track(
+        &mut self,
+        track_id: &str,
+        packet: &rtc::rtp::Packet,
+        now: Instant,
+    ) -> Result<(), WebRtcError> {
+        let matches_screen_track = self
+            .screen_video
+            .as_ref()
+            .and_then(|video| video.inbound_track_id.as_deref())
+            .is_some_and(|screen_track_id| screen_track_id == track_id);
+        if !matches_screen_track {
+            return Ok(());
+        }
+        self.receive_h264_screen_video_rtp_inner(packet, now)
+    }
+
+    fn receive_h264_screen_video_rtp_inner(
+        &mut self,
+        packet: &rtc::rtp::Packet,
+        now: Instant,
+    ) -> Result<(), WebRtcError> {
         let video = self
             .screen_video
             .as_mut()
@@ -189,10 +222,79 @@ impl WebRtcPeer {
         if !video.accepts_inbound {
             return Err(WebRtcError::ScreenVideoNotConfigured);
         }
-        if let Some(frame) = video.reassembler.push_at(packet, now)? {
-            let _ = video.inbound.enqueue(frame, now)?;
+        match video.reassembler.push_at(packet, now) {
+            Ok(Some(frame)) => match video.inbound.enqueue(frame, now) {
+                Ok(_) => {}
+                Err(VideoFrameError::InvalidAccessUnit) => {
+                    video.reassembler.reset();
+                    video
+                        .inbound
+                        .request_keyframe(KeyframeRequestReason::PacketLoss);
+                }
+                Err(error) => return Err(error.into()),
+            },
+            Ok(None) => {}
+            Err(
+                error @ (RtpMediaError::MalformedPayload
+                | RtpMediaError::StaleOrDiscontinuous
+                | RtpMediaError::ReassembledFrameTooLarge),
+            ) => {
+                let _ = error;
+                video.reassembler.reset();
+                video
+                    .inbound
+                    .request_keyframe(KeyframeRequestReason::PacketLoss);
+            }
+            Err(error) => return Err(error.into()),
         }
         Ok(())
+    }
+
+    /// Records the negotiated H.264 receiver track. The peer's event queue is
+    /// the authority for track identity; RTP packets are accepted only after
+    /// this check succeeds.
+    pub(crate) fn observe_screen_video_event(&mut self, event: &RTCPeerConnectionEvent) {
+        match event {
+            RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnOpen(init)) => {
+                let is_h264 =
+                    self.peer
+                        .rtp_receiver(init.receiver_id)
+                        .is_some_and(|mut receiver| {
+                            receiver
+                                .get_parameters()
+                                .rtp_parameters
+                                .codecs
+                                .iter()
+                                .any(|codec| {
+                                    codec
+                                        .rtp_codec
+                                        .mime_type
+                                        .eq_ignore_ascii_case(MIME_TYPE_H264)
+                                })
+                        });
+                if is_h264 {
+                    if let Some(video) = self.screen_video.as_mut() {
+                        video.inbound_track_id = Some(init.track_id.clone());
+                    }
+                }
+            }
+            RTCPeerConnectionEvent::OnTrack(
+                RTCTrackEvent::OnError(track_id)
+                | RTCTrackEvent::OnClosing(track_id)
+                | RTCTrackEvent::OnClose(track_id),
+            ) if self
+                .screen_video
+                .as_ref()
+                .and_then(|video| video.inbound_track_id.as_deref())
+                .is_some_and(|screen_track_id| screen_track_id == track_id) =>
+            {
+                if let Some(video) = self.screen_video.as_mut() {
+                    video.inbound_track_id = None;
+                    video.reassembler.reset();
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Returns an encoded remote H.264 access unit to another native owner.
@@ -258,24 +360,7 @@ impl WebRtcPeer {
 
 pub(crate) fn h264_media_engine() -> Result<MediaEngine, WebRtcError> {
     let mut media_engine = MediaEngine::default();
-    media_engine
-        .register_codec(
-            RTCRtpCodecParameters {
-                rtp_codec: RTCRtpCodec {
-                    mime_type: MIME_TYPE_OPUS.to_owned(),
-                    clock_rate: 48_000,
-                    channels: 2,
-                    sdp_fmtp_line: "minptime=10;useinbandfec=1".to_owned(),
-                    rtcp_feedback: Vec::new(),
-                },
-                payload_type: 111,
-            },
-            RtpCodecKind::Audio,
-        )
-        .map_err(rtc_error)?;
-    media_engine
-        .register_codec(h264_codec_parameters(), RtpCodecKind::Video)
-        .map_err(rtc_error)?;
+    media_engine.register_default_codecs().map_err(rtc_error)?;
     Ok(media_engine)
 }
 

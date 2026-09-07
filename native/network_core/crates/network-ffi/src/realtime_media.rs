@@ -29,6 +29,7 @@ pub const SSH_NET_REALTIME_MEDIA_DIRECTION_RECEIVE: u32 = 2;
 #[derive(Clone, Copy, Default)]
 pub struct SshNetRealtimeMediaFrameMetadata {
     pub sequence: u64,
+    /// RTP clock ticks at the fixed 90 kHz H.264 screen-video timebase.
     pub timestamp: u64,
     pub width: u32,
     pub height: u32,
@@ -41,14 +42,29 @@ pub const SSH_NET_REALTIME_MEDIA_NO_FRAME: i32 = 1;
 /// Return value for a push that was safely dropped by native queue policy.
 pub const SSH_NET_REALTIME_MEDIA_FRAME_DROPPED: i32 = 1;
 
+/// Stable lifecycle/data-plane status values for the media ABI. These are
+/// deliberately separate from the general command ABI's `-2` status.
+pub const SSH_NET_REALTIME_MEDIA_STATUS_INVALID_ARGUMENT: i32 = -1;
+pub const SSH_NET_REALTIME_MEDIA_STATUS_UNKNOWN_SESSION: i32 = -2;
+pub const SSH_NET_REALTIME_MEDIA_STATUS_INTERNAL: i32 = -3;
+pub const SSH_NET_REALTIME_MEDIA_STATUS_RUNTIME_STOPPED: i32 = -4;
+pub const SSH_NET_REALTIME_MEDIA_STATUS_STALE_GENERATION: i32 = -5;
+pub const SSH_NET_REALTIME_MEDIA_STATUS_STALE_ENDPOINT: i32 = -6;
+pub const SSH_NET_REALTIME_MEDIA_STATUS_DIRECTION_MISMATCH: i32 = -7;
+pub const SSH_NET_REALTIME_MEDIA_STATUS_DUPLICATE_ENDPOINT: i32 = -8;
+pub const SSH_NET_REALTIME_MEDIA_STATUS_DRIVER_UNAVAILABLE: i32 = -9;
+pub const SSH_NET_REALTIME_MEDIA_STATUS_PEER_MISMATCH: i32 = -10;
+pub const SSH_NET_REALTIME_MEDIA_STATUS_FRAME_REJECTED: i32 = -11;
+
 const NATIVE_MEDIA_FRAME_MAX_AGE: Duration = Duration::from_secs(1);
 
 /// Creates an opaque endpoint lease for the active native realtime generation.
 ///
 /// The ID strings are bounded UTF-8 identifiers; no media bytes, socket, peer,
-/// or renderer handle crosses this boundary. Returns zero on success, `-1` for
-/// invalid ABI arguments, `-2` for stale or absent session state, `-3` for an
-/// internal failure, and `-4` when the runtime is stopped.
+/// or renderer handle crosses this boundary. Returns zero on success or one of
+/// the stable media status codes below. `expected_generation` is compared
+/// under the same manager lock as session/driver lookup; it is never inferred
+/// from whichever driver happens to be registered now.
 ///
 /// # Safety
 /// `handle` is a live runtime handle; both identifier ranges and `out_endpoint`
@@ -60,6 +76,7 @@ pub unsafe extern "C" fn ssh_net_realtime_media_endpoint_create(
     realtime_id_len: usize,
     peer_id_ptr: *const u8,
     peer_id_len: usize,
+    expected_generation: u64,
     direction: u32,
     out_endpoint: *mut u64,
 ) -> i32 {
@@ -68,31 +85,34 @@ pub unsafe extern "C" fn ssh_net_realtime_media_endpoint_create(
         || realtime_id_len == 0
         || peer_id_ptr.is_null()
         || peer_id_len == 0
+        || expected_generation == 0
         || out_endpoint.is_null()
     {
-        return -1;
+        return SSH_NET_REALTIME_MEDIA_STATUS_INVALID_ARGUMENT;
     }
 
     let result = catch_unwind(|| {
         unsafe { *out_endpoint = 0 };
         let realtime_id = match unsafe { identifier(realtime_id_ptr, realtime_id_len) } {
             Ok(value) => value,
-            Err(()) => return -1,
+            Err(()) => return SSH_NET_REALTIME_MEDIA_STATUS_INVALID_ARGUMENT,
         };
         let peer_id = match unsafe { identifier(peer_id_ptr, peer_id_len) } {
             Ok(value) => value,
-            Err(()) => return -1,
+            Err(()) => return SSH_NET_REALTIME_MEDIA_STATUS_INVALID_ARGUMENT,
         };
         let direction = match direction {
             SSH_NET_REALTIME_MEDIA_DIRECTION_SEND => RealtimeMediaDirection::Send,
             SSH_NET_REALTIME_MEDIA_DIRECTION_RECEIVE => RealtimeMediaDirection::Receive,
-            _ => return -1,
+            _ => return SSH_NET_REALTIME_MEDIA_STATUS_INVALID_ARGUMENT,
         };
         let runtime = unsafe { &*(handle as *const SshNetRuntime) };
-        match runtime
-            .runtime
-            .create_realtime_media_endpoint(realtime_id, peer_id, direction)
-        {
+        match runtime.runtime.create_realtime_media_endpoint(
+            realtime_id,
+            peer_id,
+            direction,
+            expected_generation,
+        ) {
             Ok(endpoint) => {
                 unsafe { *out_endpoint = endpoint.raw() };
                 0
@@ -101,7 +121,7 @@ pub unsafe extern "C" fn ssh_net_realtime_media_endpoint_create(
         }
     });
 
-    result.unwrap_or(-99)
+    result.unwrap_or(SSH_NET_REALTIME_MEDIA_STATUS_INTERNAL)
 }
 
 /// Releases a previously created endpoint lease. Repeating a release remains
@@ -115,7 +135,7 @@ pub unsafe extern "C" fn ssh_net_realtime_media_endpoint_release(
     endpoint: u64,
 ) -> i32 {
     if handle.is_null() || endpoint == 0 {
-        return -1;
+        return SSH_NET_REALTIME_MEDIA_STATUS_INVALID_ARGUMENT;
     }
 
     let result = catch_unwind(|| {
@@ -129,7 +149,7 @@ pub unsafe extern "C" fn ssh_net_realtime_media_endpoint_release(
         }
     });
 
-    result.unwrap_or(-99)
+    result.unwrap_or(SSH_NET_REALTIME_MEDIA_STATUS_INTERNAL)
 }
 
 /// Pushes one encoded H.264 access unit from a platform-native capture owner.
@@ -159,7 +179,7 @@ pub unsafe extern "C" fn ssh_net_realtime_media_endpoint_push_h264(
         || payload_len > MAX_ENCODED_VIDEO_FRAME_BYTES
         || metadata.keyframe > 1
     {
-        return -1;
+        return SSH_NET_REALTIME_MEDIA_STATUS_INVALID_ARGUMENT;
     }
 
     let result = catch_unwind(|| {
@@ -189,7 +209,7 @@ pub unsafe extern "C" fn ssh_net_realtime_media_endpoint_push_h264(
         }
     });
 
-    result.unwrap_or(-99)
+    result.unwrap_or(SSH_NET_REALTIME_MEDIA_STATUS_INTERNAL)
 }
 
 /// Pulls one encoded H.264 access unit for a platform-native decoder owner.
@@ -211,7 +231,7 @@ pub unsafe extern "C" fn ssh_net_realtime_media_endpoint_pull_h264(
     out_payload: *mut SshNetBuffer,
 ) -> i32 {
     if handle.is_null() || endpoint == 0 || out_metadata.is_null() || out_payload.is_null() {
-        return -1;
+        return SSH_NET_REALTIME_MEDIA_STATUS_INVALID_ARGUMENT;
     }
 
     let result = catch_unwind(|| {
@@ -250,7 +270,7 @@ pub unsafe extern "C" fn ssh_net_realtime_media_endpoint_pull_h264(
         }
     });
 
-    result.unwrap_or(-99)
+    result.unwrap_or(SSH_NET_REALTIME_MEDIA_STATUS_INTERNAL)
 }
 
 unsafe fn identifier<'a>(pointer: *const u8, length: usize) -> Result<&'a str, ()> {
@@ -263,14 +283,18 @@ unsafe fn identifier<'a>(pointer: *const u8, length: usize) -> Result<&'a str, (
 
 fn map_error(error: RealtimeMediaError) -> i32 {
     match error {
-        RealtimeMediaError::RuntimeNotRunning => -4,
-        RealtimeMediaError::InvalidRealtimeId | RealtimeMediaError::InvalidPeerId => -1,
-        RealtimeMediaError::UnknownRealtimeSession
-        | RealtimeMediaError::PeerMismatch
-        | RealtimeMediaError::DriverUnavailable
-        | RealtimeMediaError::DuplicateEndpoint
-        | RealtimeMediaError::StaleEndpoint
-        | RealtimeMediaError::DirectionMismatch => -2,
-        RealtimeMediaError::FrameRejected | RealtimeMediaError::Internal => -3,
+        RealtimeMediaError::RuntimeNotRunning => SSH_NET_REALTIME_MEDIA_STATUS_RUNTIME_STOPPED,
+        RealtimeMediaError::InvalidRealtimeId | RealtimeMediaError::InvalidPeerId => {
+            SSH_NET_REALTIME_MEDIA_STATUS_INVALID_ARGUMENT
+        }
+        RealtimeMediaError::UnknownRealtimeSession => SSH_NET_REALTIME_MEDIA_STATUS_UNKNOWN_SESSION,
+        RealtimeMediaError::StaleGeneration => SSH_NET_REALTIME_MEDIA_STATUS_STALE_GENERATION,
+        RealtimeMediaError::StaleEndpoint => SSH_NET_REALTIME_MEDIA_STATUS_STALE_ENDPOINT,
+        RealtimeMediaError::DirectionMismatch => SSH_NET_REALTIME_MEDIA_STATUS_DIRECTION_MISMATCH,
+        RealtimeMediaError::DuplicateEndpoint => SSH_NET_REALTIME_MEDIA_STATUS_DUPLICATE_ENDPOINT,
+        RealtimeMediaError::DriverUnavailable => SSH_NET_REALTIME_MEDIA_STATUS_DRIVER_UNAVAILABLE,
+        RealtimeMediaError::PeerMismatch => SSH_NET_REALTIME_MEDIA_STATUS_PEER_MISMATCH,
+        RealtimeMediaError::FrameRejected => SSH_NET_REALTIME_MEDIA_STATUS_FRAME_REJECTED,
+        RealtimeMediaError::Internal => SSH_NET_REALTIME_MEDIA_STATUS_INTERNAL,
     }
 }

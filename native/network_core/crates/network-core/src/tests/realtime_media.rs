@@ -18,6 +18,8 @@ async fn test_driver() -> RealtimeIoDriverHandle {
 }
 
 fn frame(payload_len: usize) -> EncodedVideoFrame {
+    let mut payload = vec![0, 0, 0, 1, 0x65];
+    payload.resize(payload_len.max(5), 0x11);
     EncodedVideoFrame::new(
         VideoCodec::H264,
         1,
@@ -25,7 +27,7 @@ fn frame(payload_len: usize) -> EncodedVideoFrame {
         1280,
         720,
         true,
-        vec![0x65; payload_len],
+        payload,
         Instant::now() + Duration::from_secs(1),
     )
 }
@@ -35,11 +37,25 @@ async fn endpoint_registry_rejects_duplicate_direction_and_release_is_idempotent
     let driver = test_driver().await;
     let mut registry = RealtimeMediaRegistry::new();
     let endpoint = registry
-        .create(REALTIME_ID, PEER_ID, RealtimeMediaDirection::Send, &driver)
+        .create(
+            REALTIME_ID,
+            PEER_ID,
+            RealtimeMediaDirection::Send,
+            1,
+            1,
+            &driver,
+        )
         .expect("create send endpoint");
 
     assert!(matches!(
-        registry.create(REALTIME_ID, PEER_ID, RealtimeMediaDirection::Send, &driver),
+        registry.create(
+            REALTIME_ID,
+            PEER_ID,
+            RealtimeMediaDirection::Send,
+            1,
+            1,
+            &driver
+        ),
         Err(RealtimeMediaError::DuplicateEndpoint)
     ));
 
@@ -60,7 +76,14 @@ async fn releasing_an_endpoint_discards_its_pending_native_video_queue() {
     let driver = test_driver().await;
     let mut registry = RealtimeMediaRegistry::new();
     let endpoint = registry
-        .create(REALTIME_ID, PEER_ID, RealtimeMediaDirection::Send, &driver)
+        .create(
+            REALTIME_ID,
+            PEER_ID,
+            RealtimeMediaDirection::Send,
+            1,
+            1,
+            &driver,
+        )
         .expect("create send endpoint");
 
     registry
@@ -90,7 +113,14 @@ async fn releasing_an_endpoint_discards_its_pending_native_video_queue() {
     );
 
     let replacement = registry
-        .create(REALTIME_ID, PEER_ID, RealtimeMediaDirection::Send, &driver)
+        .create(
+            REALTIME_ID,
+            PEER_ID,
+            RealtimeMediaDirection::Send,
+            1,
+            1,
+            &driver,
+        )
         .expect("create replacement send endpoint");
     registry
         .with_endpoint(replacement, RealtimeMediaDirection::Send, |driver| {
@@ -111,6 +141,8 @@ async fn endpoint_registry_invalidates_all_leases_when_its_runtime_stops() {
             REALTIME_ID,
             PEER_ID,
             RealtimeMediaDirection::Receive,
+            1,
+            1,
             &driver,
         )
         .expect("create receive endpoint");
@@ -132,6 +164,8 @@ async fn endpoint_registry_invalidates_prior_session_generation_before_new_drive
             REALTIME_ID,
             PEER_ID,
             RealtimeMediaDirection::Send,
+            1,
+            1,
             &first_driver,
         )
         .expect("create first endpoint");
@@ -151,6 +185,8 @@ async fn endpoint_registry_invalidates_prior_session_generation_before_new_drive
             REALTIME_ID,
             PEER_ID,
             RealtimeMediaDirection::Send,
+            2,
+            2,
             &second_driver,
         )
         .expect("create endpoint for replacement driver");
@@ -171,6 +207,8 @@ async fn endpoint_registry_enforces_direction_and_queue_frame_limits() {
             REALTIME_ID,
             PEER_ID,
             RealtimeMediaDirection::Receive,
+            1,
+            1,
             &driver,
         )
         .expect("create receive endpoint");
@@ -180,7 +218,14 @@ async fn endpoint_registry_enforces_direction_and_queue_frame_limits() {
     ));
 
     let send = registry
-        .create(REALTIME_ID, PEER_ID, RealtimeMediaDirection::Send, &driver)
+        .create(
+            REALTIME_ID,
+            PEER_ID,
+            RealtimeMediaDirection::Send,
+            1,
+            1,
+            &driver,
+        )
         .expect("create send endpoint");
     assert!(matches!(
         registry.with_endpoint(send, RealtimeMediaDirection::Send, |driver| {
@@ -191,6 +236,40 @@ async fn endpoint_registry_enforces_direction_and_queue_frame_limits() {
         }),
         Err(RealtimeMediaError::FrameRejected)
     ));
+}
+
+#[tokio::test]
+async fn release_keeps_the_lease_retryable_when_queue_cleanup_fails() {
+    let driver = test_driver().await;
+    let mut registry = RealtimeMediaRegistry::new();
+    let endpoint = registry
+        .create(
+            REALTIME_ID,
+            PEER_ID,
+            RealtimeMediaDirection::Send,
+            1,
+            1,
+            &driver,
+        )
+        .expect("create send endpoint");
+
+    let poisoned_driver = driver.clone();
+    std::thread::spawn(move || {
+        let _guard = poisoned_driver.lock().expect("driver lock");
+        panic!("force cleanup lock failure");
+    })
+    .join()
+    .expect_err("thread must poison the driver mutex");
+
+    assert!(matches!(
+        registry.release(endpoint),
+        Err(RealtimeMediaError::DriverUnavailable)
+    ));
+    assert_eq!(registry.session_generation(endpoint), Some(1));
+
+    driver.clear_poison();
+    registry.release(endpoint).expect("retry cleanup");
+    assert_eq!(registry.session_generation(endpoint), None);
 }
 
 #[test]

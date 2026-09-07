@@ -1612,6 +1612,7 @@ impl NetworkRuntime {
         realtime_id: &str,
         peer_id: &str,
         direction: crate::realtime_media::RealtimeMediaDirection,
+        expected_generation: u64,
     ) -> Result<
         crate::realtime_media::RealtimeMediaEndpointId,
         crate::realtime_media::RealtimeMediaError,
@@ -1623,7 +1624,58 @@ impl NetworkRuntime {
                 realtime_id,
                 peer_id,
                 direction,
+                expected_generation,
             ))
+    }
+
+    /// Test-only seam used by network-ffi to exercise the complete C ABI
+    /// success path against a live native Realtime driver. It is excluded from
+    /// normal builds and never exposes the driver or PeerConnection handle.
+    #[cfg(feature = "ffi-test-support")]
+    #[doc(hidden)]
+    pub fn install_ffi_test_realtime_session(
+        &self,
+        realtime_id: &str,
+        peer_id: &str,
+    ) -> Result<u64, crate::realtime_media::RealtimeMediaError> {
+        let state = self.media_state()?;
+        self.runtime.block_on(async move {
+            let mut driver = network_webrtc::RealtimeIoDriver::bind(
+                network_webrtc::WebRtcPeer::new(network_webrtc::WebRtcConfig::default())
+                    .map_err(|_| crate::realtime_media::RealtimeMediaError::DriverUnavailable)?,
+                "127.0.0.1:0".parse().expect("valid loopback bind address"),
+            )
+            .await
+            .map_err(|_| crate::realtime_media::RealtimeMediaError::DriverUnavailable)?;
+            driver
+                .peer_mut()
+                .configure_h264_screen_video(
+                    network_webrtc::MediaDirection::Sendrecv,
+                    Some(0x1357_2468),
+                )
+                .map_err(|_| crate::realtime_media::RealtimeMediaError::DriverUnavailable)?;
+            let driver = driver.into_handle();
+            let mut manager = state.realtime.lock().await;
+            Ok(manager.insert_ffi_test_driver_session(
+                realtime_id.to_owned(),
+                peer_id.to_owned(),
+                driver,
+            ))
+        })
+    }
+
+    /// Test-only packet injection companion for
+    /// [`install_ffi_test_realtime_session`]. Real callers receive RTP from
+    /// the I/O driver; this only makes the pull half of the C ABI deterministic.
+    #[cfg(feature = "ffi-test-support")]
+    #[doc(hidden)]
+    pub fn inject_ffi_test_realtime_media_frame(
+        &self,
+        endpoint_id: crate::realtime_media::RealtimeMediaEndpointId,
+        frame: network_webrtc::EncodedVideoFrame,
+    ) -> Result<(), crate::realtime_media::RealtimeMediaError> {
+        let state = self.media_state()?;
+        crate::realtime_media::inject_test_endpoint_frame(&state, endpoint_id, frame)
     }
 
     /// Releases an endpoint lease. Release remains idempotent after runtime

@@ -3,6 +3,7 @@ enum RealtimeMediaErrorCode {
   invalidArgument,
   duplicateAttach,
   invalidDirection,
+  staleGeneration,
   staleEndpoint,
   useAfterRelease,
   failedState,

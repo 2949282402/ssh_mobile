@@ -10,8 +10,8 @@ use rtc::rtp::{Header, Packet};
 use thiserror::Error;
 
 use super::{
-    EncodedVideoFrame, VideoCodec, MAX_ENCODED_VIDEO_FRAME_BYTES, MAX_SCREEN_VIDEO_HEIGHT,
-    MAX_SCREEN_VIDEO_WIDTH,
+    queue::is_valid_annex_b, EncodedVideoFrame, VideoCodec, MAX_ENCODED_VIDEO_FRAME_BYTES,
+    MAX_SCREEN_VIDEO_HEIGHT, MAX_SCREEN_VIDEO_WIDTH,
 };
 
 const RTP_HEADER_BYTES: usize = 12;
@@ -68,7 +68,7 @@ impl RtpPacketizer {
         }
         if frame.payload.is_empty()
             || frame.payload.len() > MAX_ENCODED_VIDEO_FRAME_BYTES
-            || !is_annex_b(&frame.payload)
+            || !is_valid_annex_b(&frame.payload)
         {
             return Err(RtpMediaError::InvalidAccessUnit);
         }
@@ -248,10 +248,6 @@ impl RtpReassembler {
         self.pending_timestamp = None;
         self.expected_sequence = None;
     }
-}
-
-fn is_annex_b(payload: &[u8]) -> bool {
-    payload.starts_with(&[0, 0, 1]) || payload.starts_with(&[0, 0, 0, 1])
 }
 
 fn is_valid_h264_payload(payload: &Bytes) -> bool {

@@ -26,23 +26,50 @@ ADR-034 或原始技术架构文档。
 - [x] Phase 1 实现证据：Rust H.264-only RTP/ICE、三帧队列、localhost E2E、
   relay-only coturn E2E 和终止清理测试完成；PR 接受仍待完成。
 - [x] Phase 2 本地实现证据：native media bridge、generation-bound endpoint、
-  payload-free Dart lifecycle contract、FFI lifecycle 和 owner/checker 更新完成。
+  payload-free Dart lifecycle contract、FFI lifecycle 和 owner/checker 更新完成；
+  该项只表示本地实现，不表示 PR 已被接受。
 - [x] Phase 2 连接会话丢失竞态修复：session removal 与 media endpoint
   invalidation 在同一 Realtime 锁作用域内完成，并有回归测试。
 - [x] Phase 2 stale-driver 清理保护：旧 I/O teardown 只移除自己拥有的
   `(realtimeId, peerId, driver)` generation，不会误删 replacement session。
 - [x] Phase 2 endpoint release 清空 native queue/order；connection-session loss
   在 peer close 前撤销 endpoint，并有回归测试。
-- [x] Phase 2 typed native lifecycle failures fail closed：start/attach/detach
-  不会在异常后回到 ready，且有 fake-backend 回归测试。
+- [x] Phase 2 typed native lifecycle failures fail closed：controller/fake backend
+  不会在异常后回到 ready；native media ABI 也保留 stale generation/endpoint、
+  direction、duplicate、driver 和 frame rejection 的独立状态码。
+- [ ] Phase 2 real Dart→native adapter parity：同一组 lifecycle failure-state
+  断言仍需接入真实 adapter，而不能只引用 fake backend 证据。
 - [ ] Phase 0 PR 接受。
 - [ ] Phase 1 PR 接受。
 - [ ] Phase 2 PR 接受。
 - [x] 获得授权后提交、推送并创建 Phase 2 PR（GitHub PR #67）。
 
-当前阻塞：Phase 0、Phase 1、Phase 2 的本地实现证据已齐，但独立 PR 接受仍
-需要外部审阅；提交、推送和创建 PR 也需要调用者明确授权。在这两个外部门禁
-完成前，按架构规则不能实现 Phase 3–7。
+当前阻塞：Phase 0、Phase 1、Phase 2 的本地实现证据已齐，但 Phase 2 PR #67
+仍需评审修正、GitHub Actions 和独立 PR 接受。在这些外部门禁完成前，按架构
+规则不能实现 Phase 3–7。
+
+## PR #67 评审修正清单
+
+以下项目对应评审提出的 generation、RTP、ABI、codec、release 和 evidence
+边界；`[x]` 只代表本地代码/测试证据，GitHub CI 仍以新提交的 jobs 为准。
+
+- [x] generation 由 `RealtimeManager` 维护并通过 C ABI expected generation；
+  generation 7 延迟创建、generation 8 替换的 stale-create race 有回归测试。
+- [x] RTP sequence gap、乱序、重复、坏 fragment 和混合 track 在媒体 owner 内
+  reset/recovery，并请求 keyframe；不会用 `?` 终止整个 Realtime I/O owner。
+- [x] enqueue/input 边界同步验证 Annex-B、payload、timestamp（固定 90 kHz）和
+  dimensions；packetizer 不再承担首次输入校验。
+- [x] native media ABI 为 stale generation/endpoint、direction、duplicate、
+  driver unavailable、peer mismatch 和 frame rejected 保留独立状态码；
+  general command ABI 的历史 `-2` 映射保持不变。
+- [x] 默认 DataChannel-only Realtime 不隐式添加 screen-video m-line；H.264
+  codec 只通过显式 screen transceiver 配置，generic codec registration 保留。
+- [x] endpoint release 在 queue/order 清理失败时保留 lease，成功清理后才移除；
+  forced driver-cleanup failure 有 retry regression test。
+- [x] 真实 C ABI success path 已通过：live test Realtime driver 的 create →
+  push（含 malformed Annex-B rejection）→ pull → release，另覆盖 duplicate 和
+  stale-generation status；`network_sdk` public API 已独立 analyzer/test 验证；
+  ignored coturn video test 已显式运行并通过。
 
 ## 阶段清单
 
@@ -119,13 +146,17 @@ ADR-034 或原始技术架构文档。
 - [x] `dart run tool/check_module_dependencies.dart`
 - [x] `dart run tool/check_resource_owners.dart`
 - [x] `dart run tool/architecture_check.dart`
-- [x] Rust workspace test、fmt、clippy（本轮完整运行通过；workspace test 577
-  个 network-core lib 测试通过）。
-- [x] 本轮 `network-core` 全量 lib 测试：577 passed。
-- [x] Phase 1 `network-webrtc` 普通测试与 coturn relay-only 忽略测试通过。
-- [x] `realtime_media` 与 `ssh_mobile_network_native` 最近一次 analyzer/test 通过。
-- [x] 本轮 `realtime_media` Flutter snapshot analyzer/test 通过（21 项）；native
-  binding Flutter snapshot analyzer/test 通过（27 项）。
+- [x] 本轮 `network-core` 全量 lib 测试：579 passed；`network-webrtc` 普通测试：
+  46 passed、2 ignored；`network-ffi`：22 passed（含 live C-ABI success path）。
+- [x] Rust workspace clippy（`--workspace --all-targets --locked -D warnings`）通过。
+- [x] `realtime_media` analyzer/test：analyzer 无问题、21 项通过；
+  `ssh_mobile_network_native` analyzer 无问题、28 项通过；`network_sdk`
+  analyzer 无问题、88 项通过。
+- [x] ignored coturn relay-only video test：显式运行并通过（1 passed）。
+- [x] live C-ABI endpoint test：create/send/receive/pull/release 全链路通过，
+  并验证 malformed Annex-B、duplicate endpoint、stale generation 和 released ID。
+- [ ] GitHub Actions：当前旧 head 的失败 run 不能作为新 head 的 merge evidence，
+  必须绑定 amended commit/run 重新确认。
 - [x] native binding 的 Flutter FFI 测试从其 package 根目录运行，以便解析
   package native asset；从仓库根目录调用会缺少该 asset。
 - [x] surface generation 不匹配时的 detach/release/fail-closed 回归测试通过。
@@ -144,8 +175,10 @@ ADR-034 或原始技术架构文档。
 ## 下一步
 
 1. 保留当前工作树和用户提供的中文架构原文，不混入无关文件。
-2. 在获得明确授权后，按 git-commit Skill 检查、显式 stage 并提交 Phase 2。
-3. 获得推送/建 PR 授权后创建 Phase 2 PR，绑定上述验收证据。
+2. 完成本清单中未完成的 adapter parity、live C-ABI success evidence 和受影响
+   workspace validation，并记录真实结果/环境限制。
+3. 按 git-commit Skill 显式 stage、提交并推送 Phase 2 修正；PR #67 使用新 head
+   的 commit/run 作为 CI 证据。
 4. 等待 Phase 2 PR 被接受；接受前不开始 Phase 3。
 5. PR 接受后更新本清单，再按 Phase 3 的 owner、Windows 工具链和手工 E2E
    入口推进。
