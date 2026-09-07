@@ -27,6 +27,65 @@ void main() {
     await runtime.dispose();
   });
 
+  test(
+    'media endpoint controls are opaque and stop with their runtime',
+    () async {
+      final runtime = await native.createRuntime();
+      const realtimeId = '00112233445566778899aabbccddeeff';
+
+      expect(
+        runtime
+            .createRealtimeMediaEndpoint(
+              realtimeId: 'invalid',
+              peerId: 'peer-a',
+              direction: NativeRealtimeMediaDirection.send,
+              generation: 1,
+            )
+            .status,
+        NativeOperationStatus.invalidArgument,
+      );
+      expect(
+        runtime
+            .createRealtimeMediaEndpoint(
+              realtimeId: realtimeId,
+              peerId: 'peer-a',
+              direction: NativeRealtimeMediaDirection.send,
+              generation: 1,
+            )
+            .status,
+        NativeOperationStatus.unknownSession,
+      );
+      expect(
+        runtime
+            .createRealtimeMediaEndpoint(
+              realtimeId: realtimeId,
+              peerId: 'peer-a',
+              direction: NativeRealtimeMediaDirection.send,
+              generation: 0,
+            )
+            .status,
+        NativeOperationStatus.invalidArgument,
+      );
+      expect(await runtime.stop(), NativeOperationStatus.success);
+      expect(
+        runtime
+            .createRealtimeMediaEndpoint(
+              realtimeId: realtimeId,
+              peerId: 'peer-a',
+              direction: NativeRealtimeMediaDirection.receive,
+              generation: 1,
+            )
+            .status,
+        NativeOperationStatus.stopped,
+      );
+      expect(
+        runtime.releaseRealtimeMediaEndpoint(NativeRealtimeMediaEndpointId(1)),
+        NativeOperationStatus.success,
+      );
+      await runtime.dispose();
+    },
+  );
+
   test('native runtime polls events on a helper isolate', () async {
     final runtime = await native.createRuntime();
     addTearDown(runtime.dispose);

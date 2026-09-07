@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'network_models.dart';
 
@@ -19,15 +18,6 @@ enum RealtimeSessionState {
 
 /// High-level remote audio state.
 enum RealtimeAudioState { unavailable, inactive, active, muted, failed }
-
-/// A decoded or otherwise renderable remote video frame supplied by native.
-final class RealtimeVideoFrame {
-  RealtimeVideoFrame({required Uint8List bytes, required this.timestamp})
-    : bytes = Uint8List.fromList(bytes);
-
-  final Uint8List bytes;
-  final DateTime timestamp;
-}
 
 /// Events emitted by an App/native adapter into [RealtimeClient].
 sealed class RealtimeBackendEvent {
@@ -77,21 +67,6 @@ final class RealtimeSnapshotBackendEvent extends RealtimeBackendEvent {
   final RealtimeSnapshot snapshot;
 }
 
-/// A backend video event consumed by the SDK session coordinator.
-final class RealtimeRemoteVideoFrameEvent extends RealtimeBackendEvent {
-  RealtimeRemoteVideoFrameEvent({
-    required this.realtimeId,
-    required this.peerId,
-    required Uint8List bytes,
-    required this.timestamp,
-  }) : bytes = Uint8List.fromList(bytes);
-
-  final String realtimeId;
-  final String peerId;
-  final Uint8List bytes;
-  final DateTime timestamp;
-}
-
 /// A backend audio state event consumed by the SDK session coordinator.
 final class RealtimeAudioStateChangedEvent extends RealtimeBackendEvent {
   const RealtimeAudioStateChangedEvent({
@@ -133,8 +108,6 @@ abstract interface class RealtimeSession {
 
   /// Latest signaling revision observed from state/snapshot backend events.
   int get revision;
-
-  Stream<RealtimeVideoFrame> get remoteVideo;
 
   RealtimeAudioState get audioState;
 
@@ -218,12 +191,6 @@ final class RealtimeClientImpl implements RealtimeClient {
         final session = _sessions[snapshot.realtimeId];
         if (session == null || session.peerId != snapshot.peerId) return;
         session._applySnapshot(snapshot);
-      case RealtimeRemoteVideoFrameEvent(:final realtimeId, :final peerId):
-        final session = _sessions[realtimeId];
-        if (session == null || session.peerId != peerId) return;
-        session._addVideoFrame(
-          RealtimeVideoFrame(bytes: event.bytes, timestamp: event.timestamp),
-        );
       case RealtimeAudioStateChangedEvent(:final realtimeId, :final peerId):
         final session = _sessions[realtimeId];
         if (session == null || session.peerId != peerId) return;
@@ -266,8 +233,6 @@ final class _RealtimeSession implements RealtimeSession {
   });
 
   final RealtimeClientImpl _client;
-  final StreamController<RealtimeVideoFrame> _videoController =
-      StreamController<RealtimeVideoFrame>.broadcast();
   RealtimeSessionState _state = RealtimeSessionState.idle;
   RealtimeAudioState _audioState = RealtimeAudioState.unavailable;
   int _revision = 0;
@@ -287,9 +252,6 @@ final class _RealtimeSession implements RealtimeSession {
 
   @override
   int get revision => _revision;
-
-  @override
-  Stream<RealtimeVideoFrame> get remoteVideo => _videoController.stream;
 
   @override
   RealtimeAudioState get audioState => _audioState;
@@ -397,11 +359,6 @@ final class _RealtimeSession implements RealtimeSession {
     _applyState(snapshot.state, snapshot.error, revision: snapshot.revision);
   }
 
-  void _addVideoFrame(RealtimeVideoFrame frame) {
-    if (_disposed) return;
-    _videoController.add(frame);
-  }
-
   void _applyAudioState(RealtimeAudioState state) {
     if (_disposed) return;
     _audioState = state;
@@ -424,7 +381,6 @@ final class _RealtimeSession implements RealtimeSession {
       );
     }
     _state = RealtimeSessionState.stopped;
-    await _videoController.close();
   }
 
   void _ensureUsable() {

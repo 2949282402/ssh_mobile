@@ -66,6 +66,18 @@ final class _SshMobileNativeNetworkHandle implements NativeNetworkHandle {
         TransportOperationStatus.invalidArgument,
       NativeOperationStatus.stopped => TransportOperationStatus.stopped,
       NativeOperationStatus.failure => TransportOperationStatus.failure,
+      // Realtime-media lifecycle statuses are not returned by the generic
+      // command ABI. If a future native implementation leaks one through
+      // this adapter, preserve fail-closed transport semantics instead of
+      // pretending the command succeeded or was merely malformed.
+      NativeOperationStatus.unknownSession ||
+      NativeOperationStatus.staleGeneration ||
+      NativeOperationStatus.staleEndpoint ||
+      NativeOperationStatus.directionMismatch ||
+      NativeOperationStatus.duplicateEndpoint ||
+      NativeOperationStatus.driverUnavailable ||
+      NativeOperationStatus.peerMismatch ||
+      NativeOperationStatus.frameRejected => TransportOperationStatus.failure,
     };
   }
 
