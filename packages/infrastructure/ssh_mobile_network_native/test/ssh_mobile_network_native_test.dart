@@ -44,6 +44,28 @@ void main() {
             .status,
         NativeOperationStatus.invalidArgument,
       );
+      expect(
+        runtime
+            .createRealtimeMediaEndpoint(
+              realtimeId: realtimeId,
+              peerId: 'peer-a',
+              direction: NativeRealtimeMediaDirection.send,
+              generation: 1,
+            )
+            .status,
+        NativeOperationStatus.unknownSession,
+      );
+      expect(
+        runtime
+            .createRealtimeMediaEndpoint(
+              realtimeId: realtimeId,
+              peerId: 'peer-a',
+              direction: NativeRealtimeMediaDirection.send,
+              generation: 0,
+            )
+            .status,
+        NativeOperationStatus.invalidArgument,
+      );
       expect(await runtime.stop(), NativeOperationStatus.success);
       expect(
         runtime
