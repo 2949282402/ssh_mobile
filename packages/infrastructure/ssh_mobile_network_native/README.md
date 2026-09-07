@@ -1,4 +1,4 @@
-> Last updated: 2026-08-24
+> Last updated: 2026-09-07
 
 # SSH Mobile Network Native
 
@@ -42,6 +42,14 @@ business state is retained above that boundary and resumes on a later connection
   revisions, enum values, and bounded byte payloads. `events` decodes command
   results and Realtime state/signaling events without exposing Rust pointers,
   Quinn connections, UDP sockets, or WebRTC raw objects.
+- `NativeNetworkRuntime.createRealtimeMediaEndpoint` and
+  `releaseRealtimeMediaEndpoint` are additive lifecycle controls for an opaque
+  native screen-media endpoint. They expose only a generation-bound ID and a
+  direction; capture buffers, H.264 access units, decoder output, RTP, and
+  renderer resources never cross Dart FFI or the event stream.
+- The companion native-only C ABI uses that opaque ID for bounded encoded-H.264
+  push/pull between a platform capture or decoder owner and Rust. It is not
+  declared in this Dart package, so it cannot become a per-frame Dart path.
 - Delivery application acknowledgements use the current ConnectionSession Session
   ID, Channel ID, and Message ID. Recovery epochs remain native Delivery state;
   Dart must not cache or echo an epoch from an earlier event or connection.

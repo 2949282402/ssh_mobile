@@ -142,3 +142,40 @@ fn reassembler_rejects_malformed_and_stale_rtp_fragments() {
     // though its bytes are otherwise valid RTP/H.264.
     assert!(reassembler.push(&packets[0]).is_err());
 }
+
+#[test]
+fn released_endpoint_reassembler_does_not_inherit_frame_sequence() {
+    let mut packetizer = RtpPacketizer::new(RTP_MTU, H264_PAYLOAD_TYPE, SSRC, INITIAL_SEQUENCE);
+    let first_packets = packetizer
+        .packetize(&frame(1, 90_000, true))
+        .expect("first frame packetizes");
+    let second_packets = packetizer
+        .packetize(&frame(2, 96_000, true))
+        .expect("second frame packetizes");
+    let replacement_packets = packetizer
+        .packetize(&frame(3, 102_000, true))
+        .expect("replacement frame packetizes");
+
+    let mut reassembler = RtpReassembler::new();
+    let first = first_packets
+        .iter()
+        .find_map(|packet| reassembler.push(packet).expect("first packet is valid"))
+        .expect("first frame completes");
+    let second = second_packets
+        .iter()
+        .find_map(|packet| reassembler.push(packet).expect("second packet is valid"))
+        .expect("second frame completes");
+    assert_eq!(first.sequence, 0);
+    assert_eq!(second.sequence, 1);
+
+    reassembler.clear_for_endpoint_release();
+    let replacement = replacement_packets
+        .iter()
+        .find_map(|packet| {
+            reassembler
+                .push(packet)
+                .expect("replacement packet is valid")
+        })
+        .expect("replacement frame completes");
+    assert_eq!(replacement.sequence, 0);
+}

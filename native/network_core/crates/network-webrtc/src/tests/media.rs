@@ -189,6 +189,24 @@ fn disconnect_clears_pending_video_and_requests_a_keyframe() {
 }
 
 #[test]
+fn endpoint_clear_discards_frames_ordering_and_keyframe_request() {
+    let now = Instant::now();
+    let mut queue = VideoQueue::new();
+    queue.enqueue(h264_frame(1, 1_000, true, now), now).unwrap();
+    queue.request_keyframe(KeyframeRequestReason::PacketLoss);
+
+    queue.clear();
+
+    assert_eq!(queue.len(), 0);
+    assert_eq!(queue.take_keyframe_request(), None);
+    assert_eq!(
+        queue.enqueue(h264_frame(1, 1_000, true, now), now),
+        Ok(VideoEnqueueResult::Accepted),
+        "a replacement endpoint starts a fresh ordering generation"
+    );
+}
+
+#[test]
 fn decoder_reset_and_ice_restart_each_request_a_keyframe() {
     let mut queue = VideoQueue::new();
 

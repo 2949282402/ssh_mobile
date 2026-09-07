@@ -232,6 +232,16 @@ impl RtpReassembler {
         self.last_completed_timestamp = None;
     }
 
+    /// Clears all receive ordering state for a released endpoint lease.
+    ///
+    /// A decoder reset may keep its logical frame sequence within one live
+    /// endpoint, but a replacement lease starts a new generation and must not
+    /// inherit the previous endpoint's output sequence.
+    pub fn clear_for_endpoint_release(&mut self) {
+        self.reset();
+        self.next_frame_sequence = 0;
+    }
+
     fn reset_pending(&mut self) {
         self.depacketizer = H264Packet::default();
         self.pending_payload.clear();

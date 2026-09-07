@@ -222,6 +222,17 @@ impl VideoQueue {
         self.request_keyframe(KeyframeRequestReason::DecoderReset);
     }
 
+    /// Clears all queued media and ordering state without requesting a
+    /// keyframe. Endpoint release uses this neutral reset so a later lease on
+    /// the same native peer can never observe frames or sequence constraints
+    /// belonging to the released lease.
+    pub fn clear(&mut self) {
+        self.frames.clear();
+        self.last_sequence = None;
+        self.last_timestamp = None;
+        self.pending_keyframe_request = None;
+    }
+
     pub fn request_keyframe(&mut self, reason: KeyframeRequestReason) {
         if self.pending_keyframe_request.is_none() {
             self.pending_keyframe_request = Some(reason);

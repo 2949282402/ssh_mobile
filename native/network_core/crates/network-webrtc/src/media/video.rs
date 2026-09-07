@@ -219,6 +219,33 @@ impl WebRtcPeer {
         Ok(())
     }
 
+    /// Clears the queue and partial RTP reassembly state for one endpoint
+    /// direction. This is intentionally separate from connection-loss and
+    /// decoder-reset handling: releasing an endpoint must not request a
+    /// keyframe or retain ordering state for a future endpoint lease.
+    pub fn clear_h264_screen_video(
+        &mut self,
+        direction: MediaDirection,
+    ) -> Result<(), WebRtcError> {
+        let video = self
+            .screen_video
+            .as_mut()
+            .ok_or(WebRtcError::ScreenVideoNotConfigured)?;
+        match direction {
+            MediaDirection::Sendonly => video.outbound.clear(),
+            MediaDirection::Recvonly => {
+                video.inbound.clear();
+                video.reassembler.clear_for_endpoint_release();
+            }
+            MediaDirection::Sendrecv => {
+                video.outbound.clear();
+                video.inbound.clear();
+                video.reassembler.clear_for_endpoint_release();
+            }
+        }
+        Ok(())
+    }
+
     pub fn take_h264_screen_video_keyframe_request(&mut self) -> Option<KeyframeRequestReason> {
         self.screen_video.as_mut().and_then(|video| {
             video

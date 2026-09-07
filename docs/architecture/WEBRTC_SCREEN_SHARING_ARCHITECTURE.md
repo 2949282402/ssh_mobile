@@ -1,12 +1,14 @@
-Last updated: 2026-09-04
+Last updated: 2026-09-07
 
 # WebRTC Screen Sharing Architecture
 
 ## Status and authority
 
-Status: Accepted architecture for Phase 0 through Phase 7. It freezes the
-target boundaries and implementation order; it does not claim that any later
-phase is already implemented.
+Status: Accepted architecture for Phase 0 through Phase 7. Phase 0 and Phase 1
+have committed implementation evidence but no separate PR acceptance in the
+current repository state; Phase 2 has implementation evidence on its dedicated
+branch and also awaits its separate PR acceptance. Phase 3–7 remain planned
+and must not be described as shipped capability.
 
 This is only the Screen Share slice of M8 (RTC) in
 [`NETWORK_PLATFORM_IMPLEMENTATION_PLAN.md`](../NETWORK_PLATFORM_IMPLEMENTATION_PLAN.md).
@@ -18,6 +20,8 @@ This document accompanies [ADR-034](../adr/ADR-034-screen-share-realtime-media.m
 It extends, rather than changes, the accepted ownership and lifecycle decisions
 in ADR-016, ADR-020, ADR-021, ADR-024, ADR-026, and
 ADR-BUSINESS-RECOVERY-V2.
+The execution sequence and per-phase evidence checklist live in
+[`WEBRTC_SCREEN_SHARING_TODO.md`](WEBRTC_SCREEN_SHARING_TODO.md).
 
 When an earlier proposal conflicts with this architecture, this Phase 0
 decision controls:
@@ -98,28 +102,43 @@ and must not be added as a side effect of screen sharing.
 
 ## Current baseline versus planned capability
 
-The current baseline already has a single App-owned NetworkRuntime and
-NetworkFacade, Rust RealtimeManager, native network-webrtc, RealtimeIoDriver,
-authenticated Relay signaling, and typed Dart Realtime session coordination.
-Those are important prerequisites, not a completed video product. Every item in
-the planned column remains future work until its phase contract and acceptance
-evidence pass.
+The current baseline has a single App-owned NetworkRuntime and NetworkFacade,
+Rust RealtimeManager, native network-webrtc, RealtimeIoDriver, authenticated
+Relay signaling, and typed Dart Realtime session coordination. Phase 1 adds the
+native-only H.264 RTP path and fixed screen queue; Phase 2 adds a
+generation-bound native endpoint bridge with native-only H.264 push/pull plus
+the payload-free `realtime_media` lifecycle contract. These are prerequisites,
+not a completed video product:
+capture, decoding/rendering, consent UI, production TURN credentials, and QoS
+hardening remain future work until their phase contract and acceptance evidence
+pass.
 
 | Area | Current verified baseline | Planned screen-share capability |
 | --- | --- | --- |
 | WebRTC owner | network-webrtc owns a sans-I/O peer; RealtimeIoDriver owns that peer and its UDP socket | Keeps the same sole owner; no second peer or runtime |
-| Runtime media | The runtime creates a DataChannel and can declare a Video SDP transceiver | Native encoded H.264 RTP ingress and egress |
-| QoS | Generic MediaFrame queue; default video policy is four frames and is not wired to RTP; no screen queue | A separate screen-video queue fixed to three frames with keyframe-aware dropping; generic four-frame policy stays unchanged |
-| Dart video shape | A legacy RealtimeVideoFrame Uint8List placeholder exists, but native has no producer | Opaque endpoint and surface contracts; no per-frame Dart media path |
+| Runtime media | The sole native peer configures one H.264 screen transceiver; `RealtimeIoDriver` flushes/receives encoded RTP without DataChannel or event-stream media; a native-only C ABI pushes/pulls encoded access units by opaque endpoint ID | Platform-native capture/codec/render owners invoke that bridge in later phases |
+| QoS | A separate screen-video queue is fixed to three frames with keyframe-aware dropping; generic MediaFrame's four-frame policy remains unchanged | Phase 7 adaptation and telemetry |
+| Dart video shape | `network_sdk` exposes only Realtime signaling/state; `realtime_media` exposes opaque endpoint/surface lifecycle with no per-frame Dart path | Concrete platform surface adapter lifecycle notifications |
 | Capture/rendering | No production platform screen capture, H.264 codec bridge, decoder, or texture chain | Windows and Android native capture, hardware codecs, and native surfaces |
 | Consent | Existing signaling has no screen-share business intent or user-accept gate | Typed, versioned screen-share consent payload and explicit accept/reject before answer |
 | TURN | Runtime configuration may hold development credentials in memory | Authenticated, short-lived, per-session production credentials |
-| Recovery | Transport loss terminates Realtime and a new peer is required | Same rule, including invalidation of all media endpoint generations |
+| Recovery | Transport loss terminates Realtime and invalidates every bound native media endpoint before its peer closes | Same rule, with platform capture/decoder/surface cleanup in later phases |
 
 In particular, a Video SDP m-line, a generic MediaFrame queue, or a
 DataChannel test payload named like a frame is not evidence of H.264 video
-transport. No architecture, README, test name, or release note may imply that
-the video chain exists until the relevant phase succeeds.
+transport. Phase 1's native encoded H.264/RTP tests and Phase 2's endpoint
+lifecycle tests prove only their stated boundaries; no architecture, README,
+test name, or release note may imply capture-to-render video until the relevant
+later phase succeeds.
+
+### Phase implementation status
+
+| Phase | Current status | Evidence boundary |
+| --- | --- | --- |
+| 0 | Implementation evidence ready; PR acceptance pending | Accepted architecture, ADR-034, memory routing, and documentation checks |
+| 1 | Implementation evidence ready; PR acceptance pending | Native H.264-only RTP ingress/egress, exact three-frame queue, bounded frame validation, terminal media discard tests, local loopback, and relay-only coturn H.264 coverage |
+| 2 | Implementation ready; PR acceptance pending | Runtime/realtime-generation-bound opaque endpoint leases, native-only FFI create/release/H.264 push/pull controls, Dart lifecycle contract/fake tests, and no per-frame Dart API |
+| 3–7 | Not started | Remain subject to the planned acceptance matrix below |
 
 ## Layer boundaries
 
@@ -150,17 +169,21 @@ and the native binding. It owns correlation between typed command completion,
 native Realtime state, consent, and media readiness. It hides signaling,
 command IDs, sockets, FFI handles, and native objects from Feature code.
 
-The public SDK remains a low-frequency control boundary. A legacy remote-video
-bytes stream cannot become the screen-share hot path. Its producer-less
-placeholder contract must be migrated or retired under the compatibility
-inventory when the opaque endpoint and rendering contract is introduced.
+The public SDK remains a low-frequency control boundary. The previous
+producer-less remote-video bytes placeholder was retired in Phase 2 under the
+compatibility inventory; it cannot return as the screen-share hot path. Opaque
+endpoint and rendering contracts remain outside the Feature-facing SDK.
 
 ### Native media infrastructure
 
-A future realtime_media infrastructure package owns platform capture, hardware
-H.264 encoder and decoder instances, native bridge lifecycles, GPU surfaces, and
-Flutter Texture or equivalent platform rendering. It is not a Feature-owned
-platform implementation and it does not own the NetworkRuntime.
+The `realtime_media` infrastructure package currently owns the Dart
+endpoint-lifecycle contract, opaque source/surface descriptors, and payload-free
+statistics snapshots; its independent tests provide the fake backend. It does
+not own platform capture, hardware codecs, a renderer, or the NetworkRuntime.
+Future platform adapters
+under that package will own capture, H.264 encoder/decoder instances, GPU
+surfaces, and Flutter Texture or equivalent rendering while using the existing
+native bridge by endpoint lease.
 
 ### Rust runtime
 
@@ -241,9 +264,11 @@ Rust network-webrtc RTP receiver
 
 The control plane may create, bind, detach, and release a media endpoint. The
 high-frequency data plane may submit or deliver only native-resident encoded
-H.264 frames. Its concrete ABI symbols and platform buffer types are deliberately
-left to the owning Phase 1 and Phase 2 contracts, but it must obey these
-invariants:
+H.264 frames. Phase 2 defines the native-only
+`ssh_net_realtime_media_endpoint_*` C ABI for endpoint create/release and H.264
+push/pull. Its frame metadata and Rust-owned pull buffer are unavailable to the
+Dart FFI facade; platform-native capture and decoder owners use them directly.
+The boundary must obey these invariants:
 
 - Dart receives only a bounded opaque RealtimeMediaEndpointId, never a pointer,
   socket, peer, codec instance, or native buffer address.
@@ -252,8 +277,10 @@ invariants:
   Runtime replacement.
 - Native ingress validates codec, frame length, dimensions, timestamp, and
   monotonic sequence before a queue commit.
-- Releasing an endpoint is safe and idempotent. Input after release or against
-  a stale generation fails without use-after-free.
+- Releasing an endpoint is safe and idempotent. It also clears the released
+  direction's pending queue and ordering state before a replacement lease can
+  observe the native peer. Input after release or against a stale generation
+  fails without use-after-free.
 - Dart observes state, errors, statistics, and an opaque renderer capability;
   it does not observe one Uint8List per video frame.
 - Raw RGBA and YUV frames never cross the Dart main isolate. Encoded H.264
@@ -412,9 +439,9 @@ a platform capture indicator or foreground notification where available.
 ## Media lifecycle, backpressure, and recovery
 
 The current generic `network-webrtc` `MediaFrame` video policy is four frames
-and remains the policy for existing generic Realtime media. Screen sharing gets
-a separate future screen-video transport profile whose capacity is exactly
-three frames; this architecture does not change the generic four-frame default.
+and remains the policy for existing generic Realtime media. Phase 1 added a
+separate screen-video transport profile whose capacity is exactly three frames;
+this architecture does not change the generic four-frame default.
 Capture, encode, decode, and render staging queues also have explicit, small,
 fixed bounds in their respective owner contracts. Unlimited VecDeque instances,
 unbounded asynchronous channels, and unbounded StreamController instances are
@@ -543,7 +570,7 @@ on every frame.
 | --- | --- | --- | --- |
 | 0 | This architecture, ADR-034, and Memory Map routing | Companion parity, current/planned labels, link/structure checks, and no protocol/code change | Product code, protocol, UI, or platform changes |
 | 1 | Rust encoded H.264 ingress/egress, RTP loopback, 3-frame screen queue, keyframe and TURN video tests | Native encoded-access-unit loopback, H.264 negotiation/error tests, exact three-frame drop/keyframe tests, and terminal-generation discard | Dart API, UI, capture, or a second peer/runtime |
-| 2 | Native media bridge and `realtime_media` public lifecycle contract with opaque endpoint | Endpoint create/bind/detach/close, generation rejection, bounded frame validation, and native surface lifecycle tests | Real Windows/Android capture or Feature-owned native resources |
+| 2 | Native media bridge and `realtime_media` public lifecycle contract with opaque endpoint | Endpoint create/release plus native-only H.264 push/pull, generation rejection, bounded frame validation, and native surface lifecycle tests | Real Windows/Android capture or Feature-owned native resources |
 | 3 | Windows capture, hardware codec, native decode/render, and Windows-to-Windows E2E | First pass deterministic **synthetic/fake Windows capture** plus synthetic H.264/codec/surface/release-order acceptance; then Windows-to-Windows E2E. Synthetic pass is not shipped platform support | Android capture or feature UI |
 | 4 | Android MediaProjection, MediaCodec, rendering, and cross-platform E2E | First pass deterministic **synthetic permission/projection/codec/surface** acceptance for deny, revoke, rotation, background, and cleanup; then Windows↔Android and Android↔Android E2E | Screen-share business entry before consent layer |
 | 5 | Typed consent protocol and `feature_screen_share` UI/operation | Version/size/expiry/replay/auth-binding tests; explicit accept/reject before answer; no auto-answer or capture; operation/error mapping | Feature-to-Feature dependency or auto-accept |

@@ -9,5 +9,6 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 network-core = { path = "../network-core" }
 network-protocol = { path = "../network-protocol" }
+network-webrtc = { path = "../network-webrtc" }
 prost = "0.13"
 tracing = "0.1"

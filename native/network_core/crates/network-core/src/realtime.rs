@@ -13,9 +13,9 @@ use network_relay::v2::{
     RealtimeSignal as V2RealtimeSignal, RealtimeSignalKind as V2RealtimeSignalKind,
 };
 use network_webrtc::{
-    run_realtime_io, DescriptionType, IceCandidate, IceServerConfig, RealtimeIoDriver,
-    RealtimeIoDriverHandle, RealtimeIoEvent, SessionDescription, WebRtcConfig, WebRtcError,
-    WebRtcPeer, MAX_ICE_CANDIDATE_BYTES, MAX_SDP_BYTES,
+    run_realtime_io, DescriptionType, IceCandidate, IceServerConfig, MediaDirection,
+    RealtimeIoDriver, RealtimeIoDriverHandle, RealtimeIoEvent, SessionDescription, WebRtcConfig,
+    WebRtcError, WebRtcPeer, MAX_ICE_CANDIDATE_BYTES, MAX_SDP_BYTES,
 };
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -65,6 +65,27 @@ pub(crate) struct RealtimeManager {
 }
 
 impl RealtimeManager {
+    /// Resolves the current native I/O driver only while the caller still owns
+    /// this manager lock. Endpoint creation keeps that lock through registry
+    /// insertion so a terminal session removal cannot race a new lease into a
+    /// dead realtime generation.
+    pub(crate) fn media_endpoint_driver(
+        &self,
+        realtime_id: &str,
+        peer_id: &str,
+    ) -> Result<RealtimeIoDriverHandle, crate::realtime_media::RealtimeMediaError> {
+        let Some(session) = self.sessions.get(realtime_id) else {
+            return Err(crate::realtime_media::RealtimeMediaError::UnknownRealtimeSession);
+        };
+        if session.peer_id != peer_id {
+            return Err(crate::realtime_media::RealtimeMediaError::PeerMismatch);
+        }
+        session
+            .driver
+            .clone()
+            .ok_or(crate::realtime_media::RealtimeMediaError::DriverUnavailable)
+    }
+
     /// Close every WebRTC peer before the runtime supervisor joins its tasks.
     pub(crate) fn close_all(&mut self) {
         for (_, mut session) in self.sessions.drain() {
@@ -75,10 +96,22 @@ impl RealtimeManager {
     /// §22：ConnectionSession 销毁（transport 丢失）时关闭绑定在该 ConnectionSession
     /// 上的所有 RealtimeSession——移除注册、销毁 WebRTC peer。返回 `(realtime_id,
     /// peer_id, close_revision)`，供调用方取消 supervised I/O 任务并发出 Closed 事件。
+    #[cfg(test)]
     fn close_for_connection_session(
         &mut self,
         peer_id: &str,
         session_id: SessionId,
+    ) -> Vec<(String, String, u64)> {
+        self.close_for_connection_session_with_hook(peer_id, session_id, |_| {})
+    }
+
+    /// Variant used by runtime teardown to revoke borrowed media leases before
+    /// closing the peer that owns their queues.
+    fn close_for_connection_session_with_hook(
+        &mut self,
+        peer_id: &str,
+        session_id: SessionId,
+        mut before_peer_close: impl FnMut(&str),
     ) -> Vec<(String, String, u64)> {
         let mut closed = Vec::new();
         let matching = self
@@ -94,6 +127,7 @@ impl RealtimeManager {
                 continue;
             };
             let close_revision = session.revision.saturating_add(1);
+            before_peer_close(&realtime_id);
             let _ = with_session_peer(&mut session, WebRtcPeer::close);
             closed.push((realtime_id, session.peer_id, close_revision));
         }
@@ -231,7 +265,18 @@ async fn start_session_with_config(
         payload: offer.sdp.into_bytes(),
     };
     if let Err(error) = send_signal(&state, &outbound).await {
-        state.realtime.lock().await.sessions.remove(&realtime_id);
+        let removed = {
+            let mut sessions = state.realtime.lock().await;
+            let removed =
+                take_realtime_session_if_owned(&mut sessions, &realtime_id, &peer_id, &driver);
+            if removed.is_some() {
+                crate::realtime_media::invalidate_realtime(&state, &realtime_id);
+            }
+            removed
+        };
+        if let Some(mut removed) = removed {
+            let _ = with_session_peer(&mut removed, WebRtcPeer::close);
+        }
         emit_realtime_state(
             &state.event_tx,
             &realtime_id,
@@ -256,10 +301,20 @@ async fn start_session_with_config(
         )
         .is_none()
     {
-        if let Ok(mut driver) = driver.lock() {
+        let removed = {
+            let mut sessions = state.realtime.lock().await;
+            let removed =
+                take_realtime_session_if_owned(&mut sessions, &realtime_id, &peer_id, &driver);
+            if removed.is_some() {
+                crate::realtime_media::invalidate_realtime(&state, &realtime_id);
+            }
+            removed
+        };
+        if let Some(mut removed) = removed {
+            let _ = with_session_peer(&mut removed, WebRtcPeer::close);
+        } else if let Ok(mut driver) = driver.lock() {
             let _ = driver.close();
         }
-        state.realtime.lock().await.sessions.remove(&realtime_id);
         return Err(realtime_error(
             network_protocol::NetworkErrorCode::Cancelled,
             "runtime task supervisor is stopping",
@@ -291,12 +346,14 @@ pub(crate) async fn stop_session(
     command: StopRealtimeSessionCommand,
 ) -> Result<(), network_protocol::NetworkError> {
     validate_realtime_id(&command.realtime_id)?;
-    let session = state
-        .realtime
-        .lock()
-        .await
-        .sessions
-        .remove(&command.realtime_id);
+    let session = {
+        let mut sessions = state.realtime.lock().await;
+        let session = sessions.sessions.remove(&command.realtime_id);
+        if session.is_some() {
+            crate::realtime_media::invalidate_realtime(state, &command.realtime_id);
+        }
+        session
+    };
     let Some(mut session) = session else {
         return Err(protocol_error(
             network_protocol::NetworkErrorCode::InvalidArgument,
@@ -447,6 +504,34 @@ async fn handle_realtime_signal(
         .map_err(boxed_protocol_error)?;
     validate_signal(kind, revision, &payload).map_err(boxed_protocol_error)?;
 
+    if kind == RealtimeSignalKind::WebRtcClose {
+        {
+            let mut manager = state.realtime.lock().await;
+            close_remote_realtime_session(state, &mut manager, realtime_id, peer_id, revision)?;
+        }
+        state
+            .task_supervisor
+            .cancel_session(&realtime_task_key(realtime_id))
+            .await;
+        emit_realtime_signal(
+            &state.event_tx,
+            realtime_id,
+            peer_id,
+            kind as i32,
+            revision,
+            payload,
+        );
+        emit_realtime_state(
+            &state.event_tx,
+            realtime_id,
+            peer_id,
+            RealtimeSessionState::Closed as i32,
+            revision,
+            None,
+        );
+        return Ok(());
+    }
+
     let pending_driver = if kind == RealtimeSignalKind::WebRtcOffer
         && !state
             .realtime
@@ -497,8 +582,10 @@ async fn handle_realtime_signal(
     } else {
         None
     };
+    let driver_for_cleanup = driver_to_spawn.clone();
     let mut spawned_io = false;
     if let Some(driver) = driver_to_spawn {
+        let cleanup_driver = Arc::clone(&driver);
         if state
             .task_supervisor
             .spawn_session(
@@ -513,20 +600,25 @@ async fn handle_realtime_signal(
             )
             .is_none()
         {
-            let removed = state.realtime.lock().await.sessions.remove(realtime_id);
+            let removed = {
+                let mut sessions = state.realtime.lock().await;
+                let removed = take_realtime_session_if_owned(
+                    &mut sessions,
+                    realtime_id,
+                    peer_id,
+                    &cleanup_driver,
+                );
+                if removed.is_some() {
+                    crate::realtime_media::invalidate_realtime(state, realtime_id);
+                }
+                removed
+            };
             if let Some(mut removed) = removed {
                 let _ = with_session_peer(&mut removed, WebRtcPeer::close);
             }
             return Err(boxed_message("runtime task supervisor is stopping"));
         }
         spawned_io = true;
-    }
-
-    if outcome.state == RealtimeSessionState::Closed {
-        state
-            .task_supervisor
-            .cancel_session(&realtime_task_key(realtime_id))
-            .await;
     }
 
     emit_realtime_signal(
@@ -552,7 +644,9 @@ async fn handle_realtime_signal(
                     .task_supervisor
                     .cancel_session(&realtime_task_key(realtime_id))
                     .await;
-                remove_realtime_session(state, realtime_id, peer_id).await;
+                if let Some(driver) = driver_for_cleanup.as_ref() {
+                    remove_realtime_session_if_owned(state, realtime_id, peer_id, driver).await;
+                }
             }
             return Err(boxed_protocol_error(error));
         }
@@ -591,6 +685,46 @@ fn apply_signal(
     )
 }
 
+/// Removes a remotely closed session only after its immutable signal binding
+/// has been checked. Callers own the returned session and must invalidate any
+/// borrowed media endpoints before closing its native peer.
+fn take_remote_closed_session(
+    manager: &mut RealtimeManager,
+    realtime_id: &str,
+    peer_id: &str,
+    revision: u64,
+) -> Result<RealtimeSession, Box<dyn std::error::Error + Send + Sync>> {
+    let Some(session) = manager.sessions.get(realtime_id) else {
+        return Err(boxed_message("realtime session does not exist"));
+    };
+    if session.peer_id != peer_id {
+        return Err(boxed_message("realtime signal peer does not match session"));
+    }
+    if revision <= session.remote_revision {
+        return Err(boxed_message("stale realtime signaling revision"));
+    }
+    manager
+        .sessions
+        .remove(realtime_id)
+        .ok_or_else(|| boxed_message("realtime session does not exist"))
+}
+
+/// Applies a valid remote-close transition in one synchronous ownership scope.
+/// Keeping the large WebRTC session out of the async signal handler's state
+/// machine avoids retaining it across the task-supervisor await below.
+fn close_remote_realtime_session(
+    state: &RuntimeState,
+    manager: &mut RealtimeManager,
+    realtime_id: &str,
+    peer_id: &str,
+    revision: u64,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut session = take_remote_closed_session(manager, realtime_id, peer_id, revision)?;
+    crate::realtime_media::invalidate_realtime(state, realtime_id);
+    let _ = with_session_peer(&mut session, WebRtcPeer::close);
+    Ok(())
+}
+
 fn apply_signal_with_driver(
     manager: &mut RealtimeManager,
     realtime_id: &str,
@@ -605,18 +739,7 @@ fn apply_signal_with_driver(
         payload,
     } = signal;
     if kind == RealtimeSignalKind::WebRtcClose {
-        let Some(session) = manager.sessions.get(realtime_id) else {
-            return Err(boxed_message("realtime session does not exist"));
-        };
-        if session.peer_id != peer_id {
-            return Err(boxed_message("realtime signal peer does not match session"));
-        }
-        if revision <= session.remote_revision {
-            return Err(boxed_message("stale realtime signaling revision"));
-        }
-        let Some(mut session) = manager.sessions.remove(realtime_id) else {
-            return Err(boxed_message("realtime session does not exist"));
-        };
+        let mut session = take_remote_closed_session(manager, realtime_id, peer_id, revision)?;
         let _ = with_session_peer(&mut session, WebRtcPeer::close);
         return Ok(SignalOutcome {
             peer_id: peer_id.to_string(),
@@ -873,7 +996,8 @@ async fn create_io_driver(
         .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
     let bind_addr = SocketAddr::new(bind_ip, 0);
     let advertised_ip = (!bind_ip.is_unspecified()).then_some(bind_ip);
-    let peer = WebRtcPeer::new(config)?;
+    let mut peer = WebRtcPeer::new(config)?;
+    peer.configure_h264_screen_video(MediaDirection::Sendrecv, Some(1))?;
     RealtimeIoDriver::bind_with_advertised_ip(peer, bind_addr, advertised_ip).await
 }
 
@@ -888,6 +1012,7 @@ async fn run_realtime_session_io(
     driver: RealtimeIoDriverHandle,
 ) {
     let (event_tx, mut event_rx) = mpsc::channel(network_webrtc::REALTIME_IO_EVENT_CAPACITY);
+    let session_driver = Arc::clone(&driver);
     let io = run_realtime_io(driver, event_tx);
     tokio::pin!(io);
     loop {
@@ -909,13 +1034,25 @@ async fn run_realtime_session_io(
                         )),
                     );
                 }
-                remove_realtime_session(&state, &realtime_id, &peer_id).await;
+                remove_realtime_session_if_owned(
+                    &state,
+                    &realtime_id,
+                    &peer_id,
+                    &session_driver,
+                )
+                .await;
                 break;
             }
             event = event_rx.recv() => {
                 let Some(event) = event else { break; };
                 if handle_io_event(&state, &realtime_id, &peer_id, event).await {
-                    remove_realtime_session(&state, &realtime_id, &peer_id).await;
+                    remove_realtime_session_if_owned(
+                        &state,
+                        &realtime_id,
+                        &peer_id,
+                        &session_driver,
+                    )
+                    .await;
                     break;
                 }
             }
@@ -994,6 +1131,48 @@ async fn handle_io_event(
     }
 }
 
+fn take_realtime_session_if_owned(
+    manager: &mut RealtimeManager,
+    realtime_id: &str,
+    peer_id: &str,
+    driver: &RealtimeIoDriverHandle,
+) -> Option<RealtimeSession> {
+    let owns_driver = manager.sessions.get(realtime_id).is_some_and(|session| {
+        session.peer_id == peer_id
+            && session
+                .driver
+                .as_ref()
+                .is_some_and(|candidate| Arc::ptr_eq(candidate, driver))
+    });
+    owns_driver
+        .then(|| manager.sessions.remove(realtime_id))
+        .flatten()
+}
+
+async fn remove_realtime_session_if_owned(
+    state: &RuntimeState,
+    realtime_id: &str,
+    peer_id: &str,
+    driver: &RealtimeIoDriverHandle,
+) {
+    let removed = {
+        let mut sessions = state.realtime.lock().await;
+        let removed = take_realtime_session_if_owned(&mut sessions, realtime_id, peer_id, driver);
+        if removed.is_some() {
+            crate::realtime_media::invalidate_realtime(state, realtime_id);
+        }
+        removed
+    };
+    if let Some(mut session) = removed {
+        let _ = with_session_peer(&mut session, WebRtcPeer::close);
+    }
+}
+
+/// Removes a session selected only by its immutable peer binding.
+///
+/// Runtime I/O teardown must use [`remove_realtime_session_if_owned`] so a
+/// late event from an older driver cannot remove a replacement generation.
+#[cfg(test)]
 async fn remove_realtime_session(state: &RuntimeState, realtime_id: &str, peer_id: &str) {
     let removed = {
         let mut sessions = state.realtime.lock().await;
@@ -1001,9 +1180,13 @@ async fn remove_realtime_session(state: &RuntimeState, realtime_id: &str, peer_i
             .sessions
             .get(realtime_id)
             .is_some_and(|session| session.peer_id == peer_id);
-        should_remove
+        let removed = should_remove
             .then(|| sessions.sessions.remove(realtime_id))
-            .flatten()
+            .flatten();
+        if removed.is_some() {
+            crate::realtime_media::invalidate_realtime(state, realtime_id);
+        }
+        removed
     };
     if let Some(mut session) = removed {
         let _ = with_session_peer(&mut session, WebRtcPeer::close);
@@ -1021,7 +1204,14 @@ pub(crate) async fn close_realtime_sessions_for_session(
 ) {
     let closed = {
         let mut manager = state.realtime.lock().await;
-        manager.close_for_connection_session(peer_id, session_id)
+        // Keep session removal and endpoint invalidation in one ownership
+        // scope. Endpoint creation holds this same RealtimeManager lock while
+        // registering its lease; revoking before the peer close also prevents
+        // a concurrent endpoint operation from enqueueing into a terminal
+        // native queue while the driver is being shut down.
+        manager.close_for_connection_session_with_hook(peer_id, session_id, |realtime_id| {
+            crate::realtime_media::invalidate_realtime(state, realtime_id);
+        })
     };
     for (realtime_id, session_peer_id, close_revision) in closed {
         state
